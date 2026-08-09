@@ -27,7 +27,8 @@ export function parseSession(token: string | undefined): Session | null {
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString()) as Session;
-    if (session.role !== "admin" && session.role !== "captain") return null;
+    const roles: Session["role"][] = ["admin", "captain", "observer"];
+    if (!roles.includes(session.role)) return null;
     return session;
   } catch {
     return null;

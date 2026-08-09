@@ -21,15 +21,20 @@ captains placing sealed bids, one admin running the room.
 
 ## Accounts
 
-Five accounts, all set through env vars — there is no sign-up:
+Six accounts, all set through env vars — there is no sign-up:
 
-| Role | Env vars |
-| --- | --- |
-| Admin | `ADMIN_USERNAME`, `ADMIN_PASSWORD` |
-| Captain 1–4 | `CAPTAIN{n}_USERNAME`, `CAPTAIN{n}_PASSWORD`, `CAPTAIN{n}_NAME` |
+| Role | Env vars | Sees |
+| --- | --- | --- |
+| Admin | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Everything, including live bid amounts and the reserve wheel |
+| Captain 1–4 | `CAPTAIN{n}_USERNAME`, `CAPTAIN{n}_PASSWORD` | Wheel, balances, who has bid, own bid, winning amounts |
+| Observer | `OBSERVER_USERNAME`, `OBSERVER_PASSWORD` | Same as a captain minus the bid box — read-only |
 
-Without env vars the dev defaults are `admin/admin` and `captain1/draft1` … `captain4/draft4`.
-Set real values before you deploy.
+Dev defaults when the env vars are unset: `admin/admin`, `observer/watch`, and
+`captain1/draft1` … `captain4/draft4`. Set real values before you deploy.
+
+**Team names come from the login name.** A captain who signs in as `lolek` is
+`Team lolek` on the board, in the results feed and in the admin panel. Rename a team by
+changing `CAPTAIN{n}_USERNAME` — it takes effect on the next request, no reset needed.
 
 ## Local development
 
@@ -61,9 +66,10 @@ Right-hand rail, **Setup** tab:
 - **Player pool** — paste one name per line, then *Add* (append) or *Replace* (swap the
   whole main wheel). Names already drafted or held in reserve are skipped. *Load current
   pool* pulls the live list back into the box for editing.
-- **Teams & balances** — rename teams and set starting balances at any time.
+- **Starting balances** — set each team's balance at any time. Team names are read-only
+  here; they follow the captain's login name.
 - **Reset draft** — clears rosters, bids and history, returns every player to the main
-  wheel and restores `DEFAULT_BALANCE`. Team names are kept.
+  wheel and restores `DEFAULT_BALANCE`.
 
 The **Pools** tab lists the main and reserve wheels; hover a row to remove a player.
 

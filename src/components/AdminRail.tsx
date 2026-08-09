@@ -108,20 +108,11 @@ export default function AdminRail({
           </div>
 
           <div className="border-t border-hair pt-5">
-            <h3 className="eyebrow mb-3">Teams &amp; balances</h3>
+            <h3 className="eyebrow mb-3">Starting balances</h3>
             <div className="space-y-2">
               {teams.map((t, i) => (
-                <div key={t.id} className="flex gap-2">
-                  <input
-                    className="field text-xs flex-1"
-                    value={t.name}
-                    onChange={(e) => {
-                      setDirty(true);
-                      setTeams((prev) =>
-                        prev.map((p, j) => (j === i ? { ...p, name: e.target.value } : p))
-                      );
-                    }}
-                  />
+                <div key={t.id} className="flex items-center gap-2">
+                  <span className="flex-1 truncate text-xs text-chalk/80">{t.name}</span>
                   <input
                     className="field text-xs w-24"
                     inputMode="numeric"
@@ -144,17 +135,17 @@ export default function AdminRail({
               onClick={async () => {
                 await run({
                   type: "setup",
-                  captains: teams.map((t) => ({
-                    id: t.id,
-                    name: t.name,
-                    balance: Number(t.balance || 0),
-                  })),
+                  captains: teams.map((t) => ({ id: t.id, balance: Number(t.balance || 0) })),
                 });
                 setDirty(false);
               }}
             >
-              Save teams
+              Save balances
             </button>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">
+              Team names come from each captain&apos;s login name — change
+              <span className="num"> CAPTAIN&#123;n&#125;_USERNAME</span> to rename a team.
+            </p>
           </div>
 
           <div className="border-t border-hair pt-5">

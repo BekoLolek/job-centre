@@ -43,12 +43,12 @@ export type DraftState = {
   updatedAt: number;
 };
 
-export type Role = "admin" | "captain";
+export type Role = "admin" | "captain" | "observer";
 
 export type Session = {
   role: Role;
   username: string;
-  /** Captain id (c1..c4); null for admin. */
+  /** Captain id (c1..c4); null for admin and observers. */
   captainId: string | null;
 };
 

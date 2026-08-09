@@ -81,9 +81,7 @@ export async function POST(request: Request) {
           for (const raw of body.captains as Array<Record<string, unknown>>) {
             const captain = draft.captains.find((c) => c.id === raw?.id);
             if (!captain) continue;
-            if (typeof raw.name === "string" && raw.name.trim()) {
-              captain.name = raw.name.trim().slice(0, 40);
-            }
+            // Team names are derived from the captain's login name, not editable here.
             const balance = Number(raw.balance);
             if (Number.isInteger(balance) && balance >= 0) captain.balance = balance;
           }
@@ -249,11 +247,6 @@ export async function POST(request: Request) {
           : draft.mainPool;
         const fresh = seedState();
         fresh.mainPool = cleanNames(returned);
-        // Keep the team names the admin typed in; balances go back to the configured start.
-        fresh.captains = fresh.captains.map((c) => ({
-          ...c,
-          name: draft.captains.find((d) => d.id === c.id)?.name ?? c.name,
-        }));
         return fresh;
       }
 

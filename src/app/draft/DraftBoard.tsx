@@ -7,6 +7,7 @@ import CaptainsRail from "@/components/CaptainsRail";
 import BidPanel from "@/components/BidPanel";
 import AdminControls from "@/components/AdminControls";
 import AdminRail from "@/components/AdminRail";
+import ObserverPanel from "@/components/ObserverPanel";
 import { useDraft } from "@/lib/useDraft";
 import type { DraftView } from "@/lib/types";
 
@@ -95,7 +96,11 @@ export default function DraftBoard() {
               {isAdmin && view.reservePoolCount > 0 && ` · Reserve ${view.reservePoolCount}`}
             </span>
             <span className="eyebrow text-chalk/80">
-              {isAdmin ? "Admin" : view.captains.find((c) => c.id === view.captainId)?.name}
+              {isAdmin
+                ? "Admin"
+                : view.role === "observer"
+                  ? "Observer"
+                  : view.captains.find((c) => c.id === view.captainId)?.name}
             </span>
             <button className="btn px-3 py-1.5" onClick={logout}>
               Sign out
@@ -174,8 +179,10 @@ export default function DraftBoard() {
           <div className="w-full max-w-2xl">
             {isAdmin ? (
               <AdminControls view={view} player={player} spinning={spinning} run={run} />
-            ) : (
+            ) : view.role === "captain" ? (
               <BidPanel view={view} player={player} onDone={refresh} />
+            ) : (
+              <ObserverPanel view={view} player={player} spinning={spinning} />
             )}
           </div>
         </section>

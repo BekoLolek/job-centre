@@ -9,7 +9,7 @@ export function seedState(): DraftState {
   return {
     captains: captainAccounts().map((c) => ({
       id: c.id,
-      name: c.defaultName,
+      name: c.name,
       balance: DEFAULT_BALANCE,
       roster: [],
     })),
@@ -25,14 +25,20 @@ export function seedState(): DraftState {
   };
 }
 
-/** Keeps the stored captain rows in step with the configured accounts. */
+/**
+ * Keeps the stored captain rows in step with the configured accounts. The team name is
+ * always derived from the login name, so renaming a captain in the env vars renames their
+ * team everywhere without a reset.
+ */
 function reconcileCaptains(state: DraftState): DraftState {
-  const accounts = captainAccounts();
-  state.captains = accounts.map((acc) => {
+  state.captains = captainAccounts().map((acc) => {
     const existing = state.captains.find((c) => c.id === acc.id);
-    return (
-      existing ?? { id: acc.id, name: acc.defaultName, balance: DEFAULT_BALANCE, roster: [] }
-    );
+    return {
+      id: acc.id,
+      name: acc.name,
+      balance: existing?.balance ?? DEFAULT_BALANCE,
+      roster: existing?.roster ?? [],
+    };
   });
   return state;
 }
