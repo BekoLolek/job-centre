@@ -1,5 +1,6 @@
 import { mutateState, readState } from "./storage";
 import { captainAccounts } from "./users";
+import { seedTournament } from "./tournament";
 import type { DraftState, DraftView, Phase, Result, Session, WheelId } from "./types";
 
 export const SPIN_DURATION_MS = 6500;
@@ -21,6 +22,7 @@ export function seedState(): DraftState {
     bids: {},
     lastResult: null,
     history: [],
+    tournament: seedTournament(),
     updatedAt: Date.now(),
   };
 }
@@ -31,6 +33,9 @@ export function seedState(): DraftState {
  * team everywhere without a reset.
  */
 function reconcileCaptains(state: DraftState): DraftState {
+  // States written before the tournament tracker existed have no bracket yet.
+  if (!state.tournament?.matches?.length) state.tournament = seedTournament();
+
   state.captains = captainAccounts().map((acc) => {
     const existing = state.captains.find((c) => c.id === acc.id);
     return {

@@ -1,7 +1,45 @@
 # Tournament Draft
 
-Live auction-draft board for a four-team tournament. One shared wheel of players, four
-captains placing sealed bids, one admin running the room.
+A four-team Marvel Rivals tournament in two halves: an auction draft to pick the rosters,
+then a results board tracking the round robin and double-elimination bracket.
+
+| Route | Access | What it is |
+| --- | --- | --- |
+| `/` | Public, no login | Standings, fixtures, bracket, results |
+| `/draft` | Captains, admin, observer | The live auction draft board |
+| `/login` | — | Sign-in for the draft |
+
+## Tournament format
+
+- **Round robin** — every team plays every other once, a single convoy/convergence map.
+  Draws are allowed. 3 points a win, 1 a draw. Ties break on a mini-league among the level
+  teams, then map differential, then maps won; the admin can override the seeds outright.
+- **Double elimination** — seeds 1v4 and 2v3 in the upper semis. Every series is Bo3 with
+  games 1–2 on convoy/convergence and the decider on domination.
+- **Lower final doubles as the bronze match** (Bo3). Its loser is 3rd, its winner goes to
+  the grand final. Lower round 1's loser is 4th.
+- **Grand final** is Bo5 — four convoy/convergence maps and a domination decider. No
+  bracket reset: the lower-bracket team wins the title outright.
+
+The bracket fills itself in as results land. If a series ends level (a drawn decider), the
+board flags it as *needs a winner* and waits for the admin to pick one.
+
+### Admin controls on the results board
+
+Signed in as admin, every match card gains a **Record result** panel: scheduled start,
+duration in minutes, and per game a map name and both scores. Typing a score marks that
+game as played. Below the bracket:
+
+- **Auto-fill the schedule** — give it a start time for each day and it walks both days
+  block by block using 30 min convoy, 15 min domination, 5 min between games and 10 min
+  between series. Matches that run in parallel share a start time.
+- **Seeding** — override the computed seeds when the tiebreakers leave teams level.
+- **Reset tournament** — clears results, schedule and seeds. Rosters are untouched.
+
+## The draft
+
+Live auction-draft board. One shared wheel of players, four captains placing sealed bids,
+one admin running the room.
 
 ## How a lot works
 

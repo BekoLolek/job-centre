@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Wheel from "@/components/Wheel";
 import CaptainsRail from "@/components/CaptainsRail";
 import BidPanel from "@/components/BidPanel";
@@ -102,6 +103,9 @@ export default function DraftBoard() {
                   ? "Observer"
                   : view.captains.find((c) => c.id === view.captainId)?.name}
             </span>
+            <Link href="/" className="btn px-3 py-1.5">
+              Results
+            </Link>
             <button className="btn px-3 py-1.5" onClick={logout}>
               Sign out
             </button>

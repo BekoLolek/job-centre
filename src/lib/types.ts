@@ -29,6 +29,82 @@ export type Result = {
   at: number;
 };
 
+export type GameMode = "convoy" | "domination";
+
+export type Game = {
+  mode: GameMode;
+  map: string;
+  scoreA: number;
+  scoreB: number;
+  played: boolean;
+};
+
+export type BracketSlot = "ubsf1" | "ubsf2" | "ubf" | "lbr1" | "lbf" | "gf";
+
+export type Match = {
+  id: string;
+  kind: "rr" | "bracket";
+  slot: BracketSlot | null;
+  /** Round-robin round 1–3, or bracket phase 1–4. Blocks in the same phase run in parallel. */
+  phase: number;
+  label: string;
+  bestOf: 1 | 3 | 5;
+  /** Fixed for round robin; null for bracket slots, which resolve from earlier results. */
+  teamA: string | null;
+  teamB: string | null;
+  /** "YYYY-MM-DDTHH:mm" as typed into a datetime-local input. */
+  scheduledAt: string | null;
+  durationMin: number | null;
+  games: Game[];
+  /** Set by the admin when the games alone don't settle it (e.g. a drawn decider). */
+  winnerOverride: string | null;
+};
+
+export type Tournament = {
+  matches: Match[];
+  /** Admin-set seed order (captain ids, best first). Overrides the computed standings. */
+  seedOverride: string[] | null;
+};
+
+export type Standing = {
+  id: string;
+  name: string;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  scoreFor: number;
+  scoreAgainst: number;
+  diff: number;
+  points: number;
+};
+
+export type ResolvedMatch = Match & {
+  teamA: string | null;
+  teamB: string | null;
+  nameA: string;
+  nameB: string;
+  gamesWonA: number;
+  gamesWonB: number;
+  winner: string | null;
+  loser: string | null;
+  status: "pending" | "live" | "done";
+  /** Bracket only: every game is in but nobody won it, so the admin must pick. */
+  needsDecision: boolean;
+  /** Human note for what is at stake, e.g. "Loser is 4th". */
+  note: string | null;
+};
+
+export type TournamentView = {
+  now: number;
+  isAdmin: boolean;
+  teams: Array<{ id: string; name: string; roster: string[] }>;
+  standings: Standing[];
+  seeds: string[] | null;
+  matches: ResolvedMatch[];
+  placements: { first: string; second: string; third: string; fourth: string } | null;
+};
+
 export type DraftState = {
   captains: Captain[];
   mainPool: string[];
@@ -40,6 +116,7 @@ export type DraftState = {
   bids: Record<string, number>;
   lastResult: Result | null;
   history: Result[];
+  tournament: Tournament;
   updatedAt: number;
 };
 
