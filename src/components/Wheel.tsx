@@ -82,8 +82,8 @@ export default function Wheel({
   }, [spin?.startedAt, spin?.targetIndex, spin?.durationMs, spin?.turns, clockOffset]);
 
   const settled = !!spin && !spinning;
-  const showLabels = count > 0 && count <= 28;
-  const labelSize = count <= 10 ? 15 : count <= 18 ? 12 : 10;
+  const showLabels = count > 0 && count <= 40;
+  const labelSize = count <= 10 ? 14 : count <= 18 ? 12 : count <= 30 ? 10 : 9;
 
   return (
     <div className="relative w-full max-w-[420px] aspect-square select-none">
@@ -140,7 +140,10 @@ export default function Wheel({
             names.map((name, i) => {
               const seg = 360 / count;
               const mid = (i + 0.5) * seg;
-              const pos = point(mid, R * 0.66);
+              // Names run along the spoke instead of across it, so 24 thin wedges still
+              // fit. Segments past the 6 o'clock mark flip so nothing reads upside down.
+              const flip = mid > 180;
+              const pos = point(mid, R * 0.95);
               const isTarget = settled && spin?.targetIndex === i;
               return (
                 <text
@@ -150,12 +153,12 @@ export default function Wheel({
                   fill={isTarget ? "#17140b" : "#cfd4da"}
                   fontSize={labelSize}
                   fontFamily="var(--font-mono), monospace"
-                  textAnchor="middle"
+                  textAnchor={flip ? "start" : "end"}
                   dominantBaseline="middle"
-                  transform={`rotate(${mid} ${pos.x} ${pos.y})`}
+                  transform={`rotate(${flip ? mid + 90 : mid - 90} ${pos.x} ${pos.y})`}
                   style={{ pointerEvents: "none" }}
                 >
-                  {name.length > 16 ? `${name.slice(0, 15)}…` : name}
+                  {name.length > 20 ? `${name.slice(0, 19)}…` : name}
                 </text>
               );
             })}
