@@ -98,6 +98,7 @@ export function toView(state: DraftState, session: Session): DraftView {
     lastResult: state.lastResult,
     history: state.history.slice(0, 25),
     allBidsIn: allBidsIn(state),
+    activePool: poolFor(state, state.activeWheel),
     mainPool: isAdmin ? state.mainPool : null,
     reservePool: isAdmin ? state.reservePool : null,
     mainPoolCount: state.mainPool.length,

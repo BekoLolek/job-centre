@@ -70,8 +70,6 @@ export default function DraftBoard() {
   const player =
     view.currentPlayer ?? (view.spin && !spinning ? view.spin.pool[view.spin.targetIndex] : null);
   const isAdmin = view.role === "admin";
-  const activePool =
-    view.activeWheel === "main" ? (view.mainPool ?? []) : (view.reservePool ?? []);
   const result = view.lastResult;
 
   return (
@@ -135,7 +133,7 @@ export default function DraftBoard() {
           </div>
 
           <Wheel
-            pool={view.spin ? view.spin.pool : activePool}
+            pool={view.spin ? view.spin.pool : view.activePool}
             spin={view.spin}
             clockOffset={clockOffset.current}
             onSettled={() => refresh()}

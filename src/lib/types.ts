@@ -76,7 +76,9 @@ export type DraftView = {
   lastResult: Result | null;
   history: Result[];
   allBidsIn: boolean;
-  /** Admin only. */
+  /** Names on the wheel everyone is currently looking at — sent to captains too. */
+  activePool: string[];
+  /** Admin only: the full lists, including the reserve wheel while it is still hidden. */
   mainPool: string[] | null;
   reservePool: string[] | null;
   mainPoolCount: number;
