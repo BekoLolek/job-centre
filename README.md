@@ -5,9 +5,14 @@ then a results board tracking the round robin and double-elimination bracket.
 
 | Route | Access | What it is |
 | --- | --- | --- |
-| `/` | Public, no login | Standings, fixtures, bracket, results |
+| `/` | Public, no login | Read-only overview: up next, standings, fixtures, bracket |
 | `/draft` | Captains, admin, observer | The live auction draft board |
-| `/login` | — | Sign-in for the draft |
+| `/draft/schedule` | Admin only | Results and schedule entry |
+| `/login` | — | Sign-in |
+
+The root board is read-only for everyone, including the admin — it just gains a link
+across to `/draft/schedule`. Captains and the observer who try that URL are sent back to
+the public board.
 
 ## Tournament format
 
@@ -24,9 +29,9 @@ then a results board tracking the round robin and double-elimination bracket.
 The bracket fills itself in as results land. If a series ends level (a drawn decider), the
 board flags it as *needs a winner* and waits for the admin to pick one.
 
-### Admin controls on the results board
+### Admin controls at `/draft/schedule`
 
-Signed in as admin, every match card gains a **Record result** panel: scheduled start,
+Every match card gains a **Record result** panel: scheduled start,
 duration in minutes, and per game a map name and both scores. Typing a score marks that
 game as played. Below the bracket:
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { ResolvedMatch, TournamentView } from "@/lib/types";
+import type { ResolvedMatch } from "@/lib/types";
 
 const MODE_LABEL = { convoy: "Convoy / convergence", domination: "Domination" } as const;
 
@@ -38,13 +38,14 @@ function draftFrom(match: ResolvedMatch): Draft {
 
 export default function MatchCard({
   match,
-  view,
+  editable,
   run,
   featured,
 }: {
   match: ResolvedMatch;
-  view: TournamentView;
-  run: (body: Record<string, unknown>) => Promise<void>;
+  /** Only the admin schedule page passes this; the public board is read-only. */
+  editable?: boolean;
+  run?: (body: Record<string, unknown>) => Promise<void>;
   featured?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -75,6 +76,7 @@ export default function MatchCard({
   };
 
   const save = async () => {
+    if (!run) return;
     setBusy(true);
     await run({
       type: "saveMatch",
@@ -159,7 +161,7 @@ export default function MatchCard({
         </p>
       )}
 
-      {view.isAdmin && (
+      {editable && run && (
         <div className="mt-3 border-t border-hair pt-3">
           {!open ? (
             <button className="btn w-full py-1.5" onClick={() => setOpen(true)}>

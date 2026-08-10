@@ -106,6 +106,11 @@ export default function DraftBoard() {
             <Link href="/" className="btn px-3 py-1.5">
               Results
             </Link>
+            {isAdmin && (
+              <Link href="/draft/schedule" className="btn px-3 py-1.5">
+                Schedule
+              </Link>
+            )}
             <button className="btn px-3 py-1.5" onClick={logout}>
               Sign out
             </button>

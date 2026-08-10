@@ -2,13 +2,13 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import MatchCard from "./MatchCard";
+import MatchCard, { formatWhen } from "./MatchCard";
 import AdminTools from "./AdminTools";
-import type { TournamentView } from "@/lib/types";
+import type { ResolvedMatch, TournamentView } from "@/lib/types";
 
 const POLL_MS = 4000;
 
-export default function TournamentBoard() {
+export default function TournamentBoard({ admin = false }: { admin?: boolean }) {
   const [view, setView] = useState<TournamentView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,18 +70,54 @@ export default function TournamentBoard() {
   const teamName = (id: string) => view.teams.find((t) => t.id === id)?.name ?? "—";
   const podium = view.placements;
 
+  const played = view.matches.filter((m) => m.status === "done").length;
+  const live = view.matches.filter((m) => m.status === "live");
+  const upcoming = view.matches
+    .filter((m) => m.status === "pending" && m.scheduledAt)
+    .sort((a, b) => (a.scheduledAt! < b.scheduledAt! ? -1 : 1));
+  const upNext = [...live, ...upcoming].slice(0, 3);
+
+  const card = (m: ResolvedMatch, featured?: boolean) => (
+    <MatchCard
+      key={m.id}
+      match={m}
+      editable={admin}
+      run={admin ? run : undefined}
+      featured={featured}
+    />
+  );
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
         <div className="mx-auto max-w-[1400px] px-4 sm:px-6 h-16 flex items-center gap-4">
           <div className="font-display text-xl tracking-wide">
-            MARVEL RIVALS<span className="text-gold"> TOURNAMENT</span>
+            MARVEL RIVALS
+            <span className="text-gold">{admin ? " SCHEDULE" : " TOURNAMENT"}</span>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            {view.isAdmin && <span className="eyebrow text-gold">Admin</span>}
-            <Link href="/draft" className="btn px-3 py-1.5">
-              Draft board
-            </Link>
+            {admin ? (
+              <>
+                <span className="eyebrow text-gold">Admin</span>
+                <Link href="/" className="btn px-3 py-1.5">
+                  Public board
+                </Link>
+                <Link href="/draft" className="btn px-3 py-1.5">
+                  Draft
+                </Link>
+              </>
+            ) : (
+              <>
+                {view.isAdmin && (
+                  <Link href="/draft/schedule" className="btn px-3 py-1.5">
+                    Edit results
+                  </Link>
+                )}
+                <Link href="/draft" className="btn px-3 py-1.5">
+                  Draft board
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -95,7 +131,7 @@ export default function TournamentBoard() {
       )}
 
       <main className="mx-auto max-w-[1400px] px-4 sm:px-6 py-8 space-y-10">
-        {podium && (
+        {podium ? (
           <section className="panel p-6 rise">
             <div className="eyebrow mb-4">Final standings</div>
             <div className="grid gap-4 sm:grid-cols-4">
@@ -113,6 +149,42 @@ export default function TournamentBoard() {
                 </div>
               ))}
             </div>
+          </section>
+        ) : (
+          <section className="panel p-6 rise">
+            <div className="flex flex-wrap items-baseline justify-between gap-3 mb-4">
+              <div className="eyebrow">Up next</div>
+              <div className="eyebrow">
+                <span className="num text-gold">{played}</span> of {view.matches.length}{" "}
+                matches played
+              </div>
+            </div>
+            {upNext.length === 0 ? (
+              <p className="text-sm text-muted">
+                Nothing scheduled yet. The round robin opens the tournament.
+              </p>
+            ) : (
+              <ul className="grid gap-3 sm:grid-cols-3">
+                {upNext.map((m) => (
+                  <li key={m.id} className="border border-hair bg-raised/50 p-3">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="eyebrow truncate">
+                        {m.label} · Bo{m.bestOf}
+                      </span>
+                      {m.status === "live" && <span className="eyebrow text-ember">Live</span>}
+                    </div>
+                    <div className="mt-1.5 text-sm truncate">
+                      {m.nameA} <span className="text-muted">vs</span> {m.nameB}
+                    </div>
+                    {m.scheduledAt && (
+                      <div className="num mt-1 text-[11px] text-muted">
+                        {formatWhen(m.scheduledAt)}
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
           </section>
         )}
 
@@ -161,11 +233,7 @@ export default function TournamentBoard() {
             {rrRounds.map((round, i) => (
               <div key={i}>
                 <div className="eyebrow mb-2">Round {i + 1}</div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {round.map((m) => (
-                    <MatchCard key={m.id} match={m} view={view} run={run} />
-                  ))}
-                </div>
+                <div className="grid gap-4 sm:grid-cols-2">{round.map((m) => card(m))}</div>
               </div>
             ))}
           </div>
@@ -185,30 +253,28 @@ export default function TournamentBoard() {
             <div>
               <div className="eyebrow mb-2">Upper bracket</div>
               <div className="grid gap-4 lg:grid-cols-3">
-                <MatchCard match={byId("ubsf1")} view={view} run={run} />
-                <MatchCard match={byId("ubsf2")} view={view} run={run} />
-                <MatchCard match={byId("ubf")} view={view} run={run} />
+                {card(byId("ubsf1"))}
+                {card(byId("ubsf2"))}
+                {card(byId("ubf"))}
               </div>
             </div>
 
             <div>
               <div className="eyebrow mb-2">Lower bracket</div>
               <div className="grid gap-4 lg:grid-cols-3">
-                <MatchCard match={byId("lbr1")} view={view} run={run} />
-                <MatchCard match={byId("lbf")} view={view} run={run} />
+                {card(byId("lbr1"))}
+                {card(byId("lbf"))}
               </div>
             </div>
 
             <div>
               <div className="eyebrow mb-2">Grand final</div>
-              <div className="grid gap-4 lg:grid-cols-3">
-                <MatchCard match={byId("gf")} view={view} run={run} featured />
-              </div>
+              <div className="grid gap-4 lg:grid-cols-3">{card(byId("gf"), true)}</div>
             </div>
           </div>
         </section>
 
-        {view.isAdmin && <AdminTools view={view} run={run} />}
+        {admin && <AdminTools view={view} run={run} />}
       </main>
     </div>
   );
