@@ -67,8 +67,12 @@ export async function POST(request: Request) {
         // Only touch what the caller actually sent — an omitted field keeps its value,
         // an explicit null or "" clears it.
         if (body.scheduledAt !== undefined) {
-          m.scheduledAt =
-            typeof body.scheduledAt === "string" && body.scheduledAt ? body.scheduledAt : null;
+          // Normalise to a UTC instant so storage never holds a zone-less time.
+          const at =
+            typeof body.scheduledAt === "string" && body.scheduledAt
+              ? new Date(body.scheduledAt)
+              : null;
+          m.scheduledAt = at && !Number.isNaN(at.getTime()) ? at.toISOString() : null;
         }
         if (body.durationMin !== undefined) m.durationMin = intOrNull(body.durationMin);
         if (body.winnerOverride !== undefined) {

@@ -46,6 +46,14 @@ game as played. Below the bracket:
 - **Seeding** — override the computed seeds when the tiebreakers leave teams level.
 - **Reset tournament** — clears results, schedule and seeds. Rosters are untouched.
 
+### Time zones
+
+Start times are stored as absolute instants (UTC) and rendered in each viewer's own zone,
+detected from their browser — a match entered as 18:00 CEST shows as 17:00 to someone in
+the UK and 12:00 on the US east coast. The board states which zone it is showing, and the
+admin panel states which zone you are typing in, so nothing is ambiguous. Durations are
+plain minutes, so the auto-fill stays correct across a daylight-saving change.
+
 ## The draft
 
 Live auction-draft board. One shared wheel of players, four captains placing sealed bids,

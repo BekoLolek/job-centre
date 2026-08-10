@@ -1,3 +1,4 @@
+import { addMinutesTo } from "./time";
 import type {
   Captain,
   DraftState,
@@ -426,24 +427,19 @@ export function dayMinutes(timing: Timing): { day1: number; day2: number } {
   return { day1: endOf(1), day2: endOf(2) };
 }
 
-export function addMinutes(stamp: string, minutes: number): string {
-  const [date, time] = stamp.split("T");
-  const [y, mo, d] = date.split("-").map(Number);
-  const [h, mi] = time.split(":").map(Number);
-  const at = new Date(y, mo - 1, d, h, mi + minutes);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
-}
-
-/** Stamps every match with a start time from the plan. A day left blank is skipped. */
+/**
+ * Stamps every match with a start time from the plan. Day starts arrive as absolute
+ * instants, so adding minutes is real elapsed time and stays correct across zones.
+ * A day left blank is skipped.
+ */
 export function autoSchedule(state: DraftState, day1: string, day2: string, timing: Timing) {
   const byId = new Map(state.tournament.matches.map((m) => [m.id, m]));
   const starts: Record<1 | 2, string> = { 1: day1, 2: day2 };
 
   for (const phase of schedulePlan(timing)) {
     const start = starts[phase.day];
-    if (!start) continue;
-    const at = addMinutes(start, phase.offsetMin);
+    const at = start ? addMinutesTo(start, phase.offsetMin) : null;
+    if (!at) continue;
     for (const id of phase.ids) {
       const m = byId.get(id);
       if (m) m.scheduledAt = at;

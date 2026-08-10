@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import MatchCard, { formatWhen } from "./MatchCard";
+import MatchCard from "./MatchCard";
 import AdminTools from "./AdminTools";
+import { formatWhen, zoneLabel } from "@/lib/time";
 import type { ResolvedMatch, TournamentView } from "@/lib/types";
 
 const POLL_MS = 4000;
@@ -158,7 +159,7 @@ export default function TournamentBoard({ admin = false }: { admin?: boolean }) 
               <div className="eyebrow">Up next</div>
               <div className="eyebrow">
                 <span className="num text-gold">{played}</span> of {view.matches.length}{" "}
-                matches played
+                matches played · times in {zoneLabel()}
               </div>
             </div>
             {upNext.length === 0 ? (

@@ -52,7 +52,7 @@ export type Match = {
   /** Fixed for round robin; null for bracket slots, which resolve from earlier results. */
   teamA: string | null;
   teamB: string | null;
-  /** "YYYY-MM-DDTHH:mm" as typed into a datetime-local input. */
+  /** An absolute instant (ISO 8601, UTC). Rendered in each viewer's own zone. */
   scheduledAt: string | null;
   durationMin: number | null;
   games: Game[];

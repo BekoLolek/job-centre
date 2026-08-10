@@ -1,19 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { formatWhen, toInstant, toLocalInput } from "@/lib/time";
 import type { ResolvedMatch } from "@/lib/types";
 
 const MODE_LABEL = { convoy: "Convoy / convergence", domination: "Domination" } as const;
-
-export function formatWhen(stamp: string | null): string | null {
-  if (!stamp) return null;
-  const [date, time] = stamp.split("T");
-  if (!date || !time) return null;
-  const [y, m, d] = date.split("-").map(Number);
-  const at = new Date(y, m - 1, d);
-  const day = at.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
-  return `${day} · ${time}`;
-}
 
 type Draft = {
   scheduledAt: string;
@@ -24,7 +15,8 @@ type Draft = {
 
 function draftFrom(match: ResolvedMatch): Draft {
   return {
-    scheduledAt: match.scheduledAt ?? "",
+    // The input is naive; it shows the instant in the admin's own zone.
+    scheduledAt: toLocalInput(match.scheduledAt),
     durationMin: match.durationMin === null ? "" : String(match.durationMin),
     winnerOverride: match.winnerOverride ?? "",
     games: match.games.map((g) => ({
@@ -81,7 +73,7 @@ export default function MatchCard({
     await run({
       type: "saveMatch",
       matchId: match.id,
-      scheduledAt: form.scheduledAt,
+      scheduledAt: form.scheduledAt ? toInstant(form.scheduledAt) : "",
       durationMin: form.durationMin,
       winnerOverride: form.winnerOverride,
       games: form.games.map((g) => ({

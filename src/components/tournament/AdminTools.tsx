@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { DEFAULT_TIMING, addMinutes, dayMinutes, schedulePlan } from "@/lib/tournament";
+import { DEFAULT_TIMING, dayMinutes, schedulePlan } from "@/lib/tournament";
+import { addMinutesTo, formatClock, toInstant, zoneLabel } from "@/lib/time";
 import type { Timing, TournamentView } from "@/lib/types";
 
 const FIELDS: Array<{ key: keyof Timing; label: string; hint: string }> = [
@@ -17,9 +18,11 @@ function hhmm(minutes: number) {
   return `${h}h ${String(m).padStart(2, "0")}m`;
 }
 
+/** `start` is the naive datetime-local value; the clock shown is the admin's own zone. */
 function clockAt(start: string, offset: number) {
-  if (!start) return null;
-  return addMinutes(start, offset).split("T")[1];
+  const instant = start ? toInstant(start) : null;
+  const at = instant ? addMinutesTo(instant, offset) : null;
+  return at ? formatClock(at) : null;
 }
 
 export default function AdminTools({
@@ -149,7 +152,14 @@ export default function AdminTools({
             <button
               className="btn btn-gold"
               disabled={!timingValid || (!day1 && !day2)}
-              onClick={() => run({ type: "schedule", day1, day2, timing: numeric })}
+              onClick={() =>
+                run({
+                  type: "schedule",
+                  day1: toInstant(day1) ?? "",
+                  day2: toInstant(day2) ?? "",
+                  timing: numeric,
+                })
+              }
             >
               Fill start times
             </button>
@@ -176,7 +186,9 @@ export default function AdminTools({
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-muted">
             Matches inside a block run in parallel and share a start time, so a block lasts
-            as long as its slowest series. Filling start times also saves the lengths.
+            as long as its slowest series. Filling start times also saves the lengths. You
+            are entering times in <span className="text-chalk/80">{zoneLabel()}</span>; each
+            viewer sees them converted to their own zone.
           </p>
         </div>
 
