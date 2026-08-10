@@ -72,10 +72,12 @@ export default function TournamentBoard({ admin = false }: { admin?: boolean }) 
 
   const played = view.matches.filter((m) => m.status === "done").length;
   const live = view.matches.filter((m) => m.status === "live");
-  const upcoming = view.matches
-    .filter((m) => m.status === "pending" && m.scheduledAt)
+  const pending = view.matches.filter((m) => m.status === "pending");
+  const scheduled = pending
+    .filter((m) => m.scheduledAt)
     .sort((a, b) => (a.scheduledAt! < b.scheduledAt! ? -1 : 1));
-  const upNext = [...live, ...upcoming].slice(0, 3);
+  // With no schedule filled in, fall back to bracket order so the block is never empty.
+  const upNext = [...live, ...scheduled, ...pending.filter((m) => !m.scheduledAt)].slice(0, 3);
 
   const card = (m: ResolvedMatch, featured?: boolean) => (
     <MatchCard
@@ -161,7 +163,7 @@ export default function TournamentBoard({ admin = false }: { admin?: boolean }) 
             </div>
             {upNext.length === 0 ? (
               <p className="text-sm text-muted">
-                Nothing scheduled yet. The round robin opens the tournament.
+                Every match is in. Waiting on the last result to settle.
               </p>
             ) : (
               <ul className="grid gap-3 sm:grid-cols-3">

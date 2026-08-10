@@ -60,10 +60,19 @@ export type Match = {
   winnerOverride: string | null;
 };
 
+/** Minutes. Drives the schedule auto-fill and the estimate shown next to it. */
+export type Timing = {
+  convoy: number;
+  domination: number;
+  betweenGames: number;
+  betweenSeries: number;
+};
+
 export type Tournament = {
   matches: Match[];
   /** Admin-set seed order (captain ids, best first). Overrides the computed standings. */
   seedOverride: string[] | null;
+  timing: Timing;
 };
 
 export type Standing = {
@@ -101,6 +110,7 @@ export type TournamentView = {
   teams: Array<{ id: string; name: string; roster: string[] }>;
   standings: Standing[];
   seeds: string[] | null;
+  timing: Timing;
   matches: ResolvedMatch[];
   placements: { first: string; second: string; third: string; fourth: string } | null;
 };

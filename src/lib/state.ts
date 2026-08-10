@@ -1,6 +1,6 @@
 import { mutateState, readState } from "./storage";
 import { captainAccounts } from "./users";
-import { seedTournament } from "./tournament";
+import { normaliseTiming, seedTournament } from "./tournament";
 import type { DraftState, DraftView, Phase, Result, Session, WheelId } from "./types";
 
 export const SPIN_DURATION_MS = 6500;
@@ -35,6 +35,7 @@ export function seedState(): DraftState {
 function reconcileCaptains(state: DraftState): DraftState {
   // States written before the tournament tracker existed have no bracket yet.
   if (!state.tournament?.matches?.length) state.tournament = seedTournament();
+  state.tournament.timing = normaliseTiming(state.tournament.timing);
 
   state.captains = captainAccounts().map((acc) => {
     const existing = state.captains.find((c) => c.id === acc.id);

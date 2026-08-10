@@ -6,17 +6,32 @@ import type {
   Match,
   ResolvedMatch,
   Standing,
+  Timing,
   Tournament,
   TournamentView,
 } from "./types";
 
-/** Agreed timings, in minutes. Used by the schedule auto-fill. */
-export const TIMING = {
+/** Starting point for the schedule auto-fill. The admin can change all four. */
+export const DEFAULT_TIMING: Timing = {
   convoy: 30,
   domination: 15,
   betweenGames: 5,
   betweenSeries: 10,
 };
+
+export function normaliseTiming(input: Partial<Timing> | undefined | null): Timing {
+  const clamp = (value: unknown, fallback: number, max: number) => {
+    const n = Math.round(Number(value));
+    return Number.isFinite(n) && n >= 0 && n <= max ? n : fallback;
+  };
+  return {
+    convoy: clamp(input?.convoy, DEFAULT_TIMING.convoy, 600) || DEFAULT_TIMING.convoy,
+    domination:
+      clamp(input?.domination, DEFAULT_TIMING.domination, 600) || DEFAULT_TIMING.domination,
+    betweenGames: clamp(input?.betweenGames, DEFAULT_TIMING.betweenGames, 240),
+    betweenSeries: clamp(input?.betweenSeries, DEFAULT_TIMING.betweenSeries, 240),
+  };
+}
 
 export const POINTS = { win: 3, draw: 1, loss: 0 };
 
@@ -112,7 +127,7 @@ export function seedTournament(): Tournament {
     );
   }
 
-  return { matches, seedOverride: null };
+  return { matches, seedOverride: null, timing: { ...DEFAULT_TIMING } };
 }
 
 // --- results ------------------------------------------------------------------------
@@ -276,6 +291,16 @@ const NOTES: Partial<Record<string, string>> = {
   gf: "Winner is champion",
 };
 
+/** Shown in place of a team name while the slot is still waiting on an earlier result. */
+const SLOT_SOURCES: Record<string, [string, string]> = {
+  ubsf1: ["Seed 1", "Seed 4"],
+  ubsf2: ["Seed 2", "Seed 3"],
+  ubf: ["Upper semi 1 winner", "Upper semi 2 winner"],
+  lbr1: ["Upper semi 1 loser", "Upper semi 2 loser"],
+  lbf: ["Upper final loser", "Lower round 1 winner"],
+  gf: ["Upper final winner", "Lower final winner"],
+};
+
 export function resolveMatches(state: DraftState): ResolvedMatch[] {
   const names = new Map(state.captains.map((c: Captain) => [c.id, c.name]));
   const seeds = seedsFor(state);
@@ -314,10 +339,11 @@ export function resolveMatches(state: DraftState): ResolvedMatch[] {
     // A drawn round-robin map is a finished match. A drawn bracket series is not —
     // somebody has to advance, so it waits on the admin's override.
     const settled = m.kind === "rr" ? done : done && !!winner;
+    const [sourceA, sourceB] = SLOT_SOURCES[m.id] ?? ["TBD", "TBD"];
     return {
       ...withTeams,
-      nameA: t.a ? (names.get(t.a) ?? "—") : "—",
-      nameB: t.b ? (names.get(t.b) ?? "—") : "—",
+      nameA: t.a ? (names.get(t.a) ?? sourceA) : sourceA,
+      nameB: t.b ? (names.get(t.b) ?? sourceB) : sourceB,
       gamesWonA: wins.a,
       gamesWonB: wins.b,
       winner: winner === "a" ? t.a : winner === "b" ? t.b : null,
@@ -346,6 +372,7 @@ export function toTournamentView(state: DraftState, isAdmin: boolean): Tournamen
     teams: state.captains.map((c) => ({ id: c.id, name: c.name, roster: c.roster })),
     standings: standingsFor(state),
     seeds: seedsFor(state),
+    timing: normaliseTiming(state.tournament.timing),
     matches,
     placements: placementsFor(matches),
   };
@@ -354,27 +381,52 @@ export function toTournamentView(state: DraftState, isAdmin: boolean): Tournamen
 // --- schedule auto-fill ---------------------------------------------------------------
 
 /** Longest a series can run, in minutes, including the breaks between its own games. */
-export function seriesMinutes(bestOf: 1 | 3 | 5): number {
+export function seriesMinutes(bestOf: 1 | 3 | 5, timing: Timing): number {
   const games = Array.from({ length: bestOf }, (_, i) =>
-    modeForGame(bestOf, i + 1) === "domination" ? TIMING.domination : TIMING.convoy
+    modeForGame(bestOf, i + 1) === "domination" ? timing.domination : timing.convoy
   );
-  return games.reduce((sum, m) => sum + m, 0) + (bestOf - 1) * TIMING.betweenGames;
+  return games.reduce((sum, m) => sum + m, 0) + (bestOf - 1) * timing.betweenGames;
 }
 
-const DAY1_PHASES: Array<{ ids: string[]; bestOf: 1 | 3 | 5 }> = [
-  { ids: ["rr-c1-c2", "rr-c3-c4"], bestOf: 1 },
-  { ids: ["rr-c1-c3", "rr-c2-c4"], bestOf: 1 },
-  { ids: ["rr-c1-c4", "rr-c2-c3"], bestOf: 1 },
-  { ids: ["ubsf1", "ubsf2"], bestOf: 3 },
-  { ids: ["ubf", "lbr1"], bestOf: 3 },
+type Phase = { day: 1 | 2; label: string; ids: string[]; bestOf: 1 | 3 | 5 };
+
+const PHASES: Phase[] = [
+  { day: 1, label: "Round robin 1", ids: ["rr-c1-c2", "rr-c3-c4"], bestOf: 1 },
+  { day: 1, label: "Round robin 2", ids: ["rr-c1-c3", "rr-c2-c4"], bestOf: 1 },
+  { day: 1, label: "Round robin 3", ids: ["rr-c1-c4", "rr-c2-c3"], bestOf: 1 },
+  { day: 1, label: "Upper semis", ids: ["ubsf1", "ubsf2"], bestOf: 3 },
+  { day: 1, label: "Upper final + lower round 1", ids: ["ubf", "lbr1"], bestOf: 3 },
+  { day: 2, label: "Lower final · bronze", ids: ["lbf"], bestOf: 3 },
+  { day: 2, label: "Grand final", ids: ["gf"], bestOf: 5 },
 ];
 
-const DAY2_PHASES: Array<{ ids: string[]; bestOf: 1 | 3 | 5 }> = [
-  { ids: ["lbf"], bestOf: 3 },
-  { ids: ["gf"], bestOf: 5 },
-];
+export type PlannedPhase = Phase & { offsetMin: number; lengthMin: number };
 
-function addMinutes(stamp: string, minutes: number): string {
+/**
+ * Both days laid out block by block. Matches inside a block run in parallel, so the next
+ * block starts one series break after the longest series in this one finishes.
+ */
+export function schedulePlan(timing: Timing): PlannedPhase[] {
+  const cursor = { 1: 0, 2: 0 };
+  return PHASES.map((phase) => {
+    const lengthMin = seriesMinutes(phase.bestOf, timing);
+    const offsetMin = cursor[phase.day];
+    cursor[phase.day] = offsetMin + lengthMin + timing.betweenSeries;
+    return { ...phase, offsetMin, lengthMin };
+  });
+}
+
+/** Wall-clock length of each day: last block's end, without a trailing break. */
+export function dayMinutes(timing: Timing): { day1: number; day2: number } {
+  const plan = schedulePlan(timing);
+  const endOf = (day: 1 | 2) =>
+    plan
+      .filter((p) => p.day === day)
+      .reduce((max, p) => Math.max(max, p.offsetMin + p.lengthMin), 0);
+  return { day1: endOf(1), day2: endOf(2) };
+}
+
+export function addMinutes(stamp: string, minutes: number): string {
   const [date, time] = stamp.split("T");
   const [y, mo, d] = date.split("-").map(Number);
   const [h, mi] = time.split(":").map(Number);
@@ -383,23 +435,18 @@ function addMinutes(stamp: string, minutes: number): string {
   return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}T${pad(at.getHours())}:${pad(at.getMinutes())}`;
 }
 
-/**
- * Walks the two days block by block. Matches inside a block run in parallel, so the next
- * block starts one series break after the longest series in the current one finishes.
- */
-export function autoSchedule(state: DraftState, day1: string, day2: string) {
+/** Stamps every match with a start time from the plan. A day left blank is skipped. */
+export function autoSchedule(state: DraftState, day1: string, day2: string, timing: Timing) {
   const byId = new Map(state.tournament.matches.map((m) => [m.id, m]));
-  const run = (phases: typeof DAY1_PHASES, start: string) => {
-    let cursor = start;
-    for (const phase of phases) {
-      for (const id of phase.ids) {
-        const m = byId.get(id);
-        if (m) m.scheduledAt = cursor;
-      }
-      cursor = addMinutes(cursor, seriesMinutes(phase.bestOf) + TIMING.betweenSeries);
+  const starts: Record<1 | 2, string> = { 1: day1, 2: day2 };
+
+  for (const phase of schedulePlan(timing)) {
+    const start = starts[phase.day];
+    if (!start) continue;
+    const at = addMinutes(start, phase.offsetMin);
+    for (const id of phase.ids) {
+      const m = byId.get(id);
+      if (m) m.scheduledAt = at;
     }
-    return cursor;
-  };
-  if (day1) run(DAY1_PHASES, day1);
-  if (day2) run(DAY2_PHASES, day2);
+  }
 }

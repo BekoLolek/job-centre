@@ -301,7 +301,11 @@ function TeamRow({
     <div className="flex items-baseline gap-3">
       <span
         className={`flex-1 truncate ${
-          dim ? "text-muted/50" : won ? "text-gold font-display text-lg leading-tight" : "text-chalk"
+          dim
+            ? "text-muted italic"
+            : won
+              ? "text-gold font-display text-lg leading-tight"
+              : "text-chalk"
         }`}
       >
         {name}

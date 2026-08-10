@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/session";
 import { loadState, updateState } from "@/lib/state";
-import { autoSchedule, blankGamesFor, seedTournament, toTournamentView } from "@/lib/tournament";
-import type { DraftState, Match } from "@/lib/types";
+import {
+  autoSchedule,
+  blankGamesFor,
+  normaliseTiming,
+  seedTournament,
+  toTournamentView,
+} from "@/lib/tournament";
+import type { DraftState, Match, Timing } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,6 +32,7 @@ type Body = {
   seedOverride?: unknown;
   day1?: unknown;
   day2?: unknown;
+  timing?: unknown;
 };
 
 function findMatch(state: DraftState, id: unknown): Match | undefined {
@@ -106,11 +113,17 @@ export async function POST(request: Request) {
         return;
       }
 
+      case "timing": {
+        draft.tournament.timing = normaliseTiming(body.timing as Partial<Timing>);
+        return;
+      }
+
       case "schedule": {
         const day1 = typeof body.day1 === "string" ? body.day1 : "";
         const day2 = typeof body.day2 === "string" ? body.day2 : "";
+        if (body.timing) draft.tournament.timing = normaliseTiming(body.timing as Partial<Timing>);
         if (!day1 && !day2) return fail("Pick a start time for at least one day");
-        autoSchedule(draft, day1, day2);
+        autoSchedule(draft, day1, day2, draft.tournament.timing);
         return;
       }
 

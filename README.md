@@ -26,8 +26,10 @@ the public board.
 - **Grand final** is Bo5 — four convoy/convergence maps and a domination decider. No
   bracket reset: the lower-bracket team wins the title outright.
 
-The bracket fills itself in as results land. If a series ends level (a drawn decider), the
-board flags it as *needs a winner* and waits for the admin to pick one.
+The bracket fills itself in as results land. Slots that are still waiting show where their
+team will come from — *Seed 1*, *Upper semi 2 loser*, *Lower round 1 winner* — rather than a
+blank. If a series ends level (a drawn decider), the board flags it as *needs a winner* and
+waits for the admin to pick one.
 
 ### Admin controls at `/draft/schedule`
 
@@ -35,9 +37,12 @@ Every match card gains a **Record result** panel: scheduled start,
 duration in minutes, and per game a map name and both scores. Typing a score marks that
 game as played. Below the bracket:
 
-- **Auto-fill the schedule** — give it a start time for each day and it walks both days
-  block by block using 30 min convoy, 15 min domination, 5 min between games and 10 min
-  between series. Matches that run in parallel share a start time.
+- **Schedule** — set the four lengths that drive everything (convoy/convergence map,
+  domination map, break between games in a series, break between series), give each day a
+  start time, and it walks both days block by block. Matches that run in parallel share a
+  start time, so a block lasts as long as its slowest series. A live preview shows every
+  block's clock time and both day totals before you commit; *Save lengths only* stores the
+  timings without touching existing start times. Defaults are 30 / 15 / 5 / 10 minutes.
 - **Seeding** — override the computed seeds when the tiebreakers leave teams level.
 - **Reset tournament** — clears results, schedule and seeds. Rosters are untouched.
 
