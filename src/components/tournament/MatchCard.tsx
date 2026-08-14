@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { formatWhen, toInstant, toLocalInput } from "@/lib/time";
+import { formatClock, formatWhen, toInstant, toLocalInput } from "@/lib/time";
 import type { ResolvedMatch } from "@/lib/types";
 
 const MODE_LABEL = { convoy: "Convoy / convergence", domination: "Domination" } as const;
@@ -102,8 +102,15 @@ export default function MatchCard({
         </div>
         <div className="text-right shrink-0">
           {when && <div className="num text-[11px] text-muted">{when}</div>}
-          {match.durationMin !== null && (
-            <div className="num text-[11px] text-muted">{match.durationMin} min</div>
+          {match.finishedAt ? (
+            <div className="num text-[11px] text-muted">
+              ran to {formatClock(match.finishedAt)}
+              {match.durationMin !== null && ` · ${match.durationMin} min`}
+            </div>
+          ) : (
+            match.durationMin !== null && (
+              <div className="num text-[11px] text-muted">{match.durationMin} min</div>
+            )
           )}
           {match.needsDecision ? (
             <div className="eyebrow text-ember mt-1">Needs a winner</div>

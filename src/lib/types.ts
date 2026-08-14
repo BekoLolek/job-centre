@@ -54,6 +54,8 @@ export type Match = {
   teamB: string | null;
   /** An absolute instant (ISO 8601, UTC). Rendered in each viewer's own zone. */
   scheduledAt: string | null;
+  /** When the match actually finished — stamped the moment it becomes decided. */
+  finishedAt: string | null;
   durationMin: number | null;
   games: Game[];
   /** Set by the admin when the games alone don't settle it (e.g. a drawn decider). */

@@ -57,11 +57,15 @@ function blankGames(bestOf: 1 | 3 | 5): Game[] {
 }
 
 function match(
-  partial: Omit<Match, "games" | "scheduledAt" | "durationMin" | "winnerOverride">
+  partial: Omit<
+    Match,
+    "games" | "scheduledAt" | "finishedAt" | "durationMin" | "winnerOverride"
+  >
 ): Match {
   return {
     ...partial,
     scheduledAt: null,
+    finishedAt: null,
     durationMin: null,
     games: blankGames(partial.bestOf),
     winnerOverride: null,
@@ -154,6 +158,11 @@ function isDecided(m: Match, wins: { a: number; b: number }) {
   const target = seriesTarget(m.bestOf);
   if (wins.a >= target || wins.b >= target) return true;
   return m.games.every((g) => g.played);
+}
+
+/** Whether the games alone (or an override) settle the match — teams are not needed. */
+export function isMatchDecided(m: Match): boolean {
+  return isDecided(m, gameWins(m));
 }
 
 function outcome(m: Match): {
@@ -442,7 +451,78 @@ export function autoSchedule(state: DraftState, day1: string, day2: string, timi
     if (!at) continue;
     for (const id of phase.ids) {
       const m = byId.get(id);
-      if (m) m.scheduledAt = at;
+      // A match that has already been played keeps the slot it actually ran in.
+      if (m && !m.finishedAt) m.scheduledAt = at;
     }
+  }
+  recalculateSchedule(state);
+}
+
+/**
+ * Re-flows each day from what has actually happened.
+ *
+ * Matches inside a block run in parallel, so the block is over only once the slowest of
+ * them finishes — that is when the break starts, and every later block on that day shifts
+ * with it. Blocks that have not been played yet fall back to their planned length. Days
+ * are independent: day 1 running late never moves day 2, which has its own start time.
+ */
+export function recalculateSchedule(state: DraftState) {
+  const timing = normaliseTiming(state.tournament.timing);
+  const byId = new Map(state.tournament.matches.map((m) => [m.id, m]));
+  const plan = schedulePlan(timing);
+  const latest = (stamps: string[]) => stamps.reduce((max, s) => (s > max ? s : max));
+
+  for (const day of [1, 2] as const) {
+    const phases = plan.filter((p) => p.day === day);
+    const first = phases.findIndex((p) => p.ids.some((id) => byId.get(id)?.scheduledAt));
+    if (first < 0) continue; // this day was never given a start time
+
+    let cursor: string | null =
+      phases[first].ids.map((id) => byId.get(id)?.scheduledAt).find(Boolean) ?? null;
+
+    for (const phase of phases.slice(first)) {
+      if (!cursor) break;
+      const matches = phase.ids
+        .map((id) => byId.get(id))
+        .filter((m): m is Match => Boolean(m));
+      if (matches.length === 0) continue;
+
+      for (const m of matches) if (!m.finishedAt) m.scheduledAt = cursor;
+
+      const ends = matches.map(
+        (m) => m.finishedAt ?? addMinutesTo(cursor as string, phase.lengthMin)
+      );
+      const known = ends.filter((e): e is string => Boolean(e));
+      cursor = known.length === matches.length ? addMinutesTo(latest(known), timing.betweenSeries) : null;
+    }
+  }
+}
+
+/**
+ * Keeps finishedAt and durationMin in step after an edit. An explicit duration wins;
+ * otherwise the finish is stamped now and the duration derived from the scheduled start.
+ */
+export function syncFinish(m: Match, durationWasGiven: boolean, now = new Date()) {
+  if (!isMatchDecided(m)) {
+    m.finishedAt = null;
+    return;
+  }
+  if (!m.finishedAt) {
+    // A match cannot end before it starts — guards against recording against a
+    // schedule that is still in the future.
+    const stamp = now.toISOString();
+    m.finishedAt = m.scheduledAt && stamp < m.scheduledAt ? m.scheduledAt : stamp;
+  }
+
+  if (durationWasGiven && m.scheduledAt && m.durationMin !== null) {
+    m.finishedAt = addMinutesTo(m.scheduledAt, m.durationMin) ?? m.finishedAt;
+    return;
+  }
+  if (m.durationMin === null && m.scheduledAt) {
+    const mins = Math.round(
+      (Date.parse(m.finishedAt) - Date.parse(m.scheduledAt)) / 60_000
+    );
+    // Ignore nonsense windows — a stale schedule shouldn't invent a 3-day match.
+    if (mins > 0 && mins <= 1440) m.durationMin = mins;
   }
 }

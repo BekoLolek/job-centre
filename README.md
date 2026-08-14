@@ -44,7 +44,23 @@ game as played. Below the bracket:
   block's clock time and both day totals before you commit; *Save lengths only* stores the
   timings without touching existing start times. Defaults are 30 / 15 / 5 / 10 minutes.
 - **Seeding** — override the computed seeds when the tiebreakers leave teams level.
+- The schedule keeps itself honest as the day runs — see below.
 - **Reset tournament** — clears results, schedule and seeds. Rosters are untouched.
+
+### The schedule re-flows itself
+
+Recording a result stamps the match as finished at that moment, and fills in its duration
+from the scheduled start if you left the field blank. Type a duration yourself and that
+wins — useful for entering a match after the fact.
+
+Matches in a block run in parallel, so the block is only over once the *slowest* of them
+finishes: if one team is done in 26 minutes and the other in 31, the break starts at 31.
+Every later block that day then shifts with it, using recorded finishes where they exist
+and planned lengths where they don't. Running early pulls the day forward just the same.
+
+Days are independent — day 1 overrunning never moves day 2, which keeps its own start
+time. Clearing a result puts the day back on its planned estimate, and a match that has
+already been played keeps the slot it actually ran in even if you re-run the auto-fill.
 
 ### Time zones
 

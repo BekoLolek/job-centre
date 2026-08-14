@@ -190,6 +190,11 @@ export default function AdminTools({
             are entering times in <span className="text-chalk/80">{zoneLabel()}</span>; each
             viewer sees them converted to their own zone.
           </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted">
+            Once a block is complete the rest of that day re-flows from when it actually
+            finished, so running late or early carries forward on its own. The other day
+            keeps its own start time.
+          </p>
         </div>
 
         <div className="space-y-8">

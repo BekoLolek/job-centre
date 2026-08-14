@@ -5,7 +5,9 @@ import {
   autoSchedule,
   blankGamesFor,
   normaliseTiming,
+  recalculateSchedule,
   seedTournament,
+  syncFinish,
   toTournamentView,
 } from "@/lib/tournament";
 import type { DraftState, Match, Timing } from "@/lib/types";
@@ -93,6 +95,9 @@ export async function POST(request: Request) {
             game.played = row.played === true;
           });
         }
+
+        syncFinish(m, body.durationMin !== undefined && intOrNull(body.durationMin) !== null);
+        recalculateSchedule(draft);
         return;
       }
 
@@ -102,6 +107,8 @@ export async function POST(request: Request) {
         m.games = blankGamesFor(m.bestOf);
         m.winnerOverride = null;
         m.durationMin = null;
+        m.finishedAt = null;
+        recalculateSchedule(draft);
         return;
       }
 
@@ -119,6 +126,7 @@ export async function POST(request: Request) {
 
       case "timing": {
         draft.tournament.timing = normaliseTiming(body.timing as Partial<Timing>);
+        recalculateSchedule(draft);
         return;
       }
 

@@ -73,12 +73,10 @@ export default function TournamentBoard({ admin = false }: { admin?: boolean }) 
 
   const played = view.matches.filter((m) => m.status === "done").length;
   const live = view.matches.filter((m) => m.status === "live");
+  // The matches array is already in play order, and a later match having a start time
+  // while an earlier one does not must not float it to the front.
   const pending = view.matches.filter((m) => m.status === "pending");
-  const scheduled = pending
-    .filter((m) => m.scheduledAt)
-    .sort((a, b) => (a.scheduledAt! < b.scheduledAt! ? -1 : 1));
-  // With no schedule filled in, fall back to bracket order so the block is never empty.
-  const upNext = [...live, ...scheduled, ...pending.filter((m) => !m.scheduledAt)].slice(0, 3);
+  const upNext = [...live, ...pending].slice(0, 3);
 
   const card = (m: ResolvedMatch, featured?: boolean) => (
     <MatchCard
