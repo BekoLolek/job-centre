@@ -34,8 +34,9 @@ waits for the admin to pick one.
 ### Admin controls at `/draft/schedule`
 
 Every match card gains a **Record result** panel: scheduled start,
-duration in minutes, and per game a map name and both scores. Typing a score marks that
-game as played. Below the bracket:
+duration in minutes, and per game a map name, a referee and both scores. Typing a score
+marks that game as played. Referees are per game, so a Bo3 can have a different one each
+map; they show under the game on the public board. Below the bracket:
 
 - **Schedule** — set the four lengths that drive everything (convoy/convergence map,
   domination map, break between games in a series, break between series), give each day a

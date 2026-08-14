@@ -34,6 +34,7 @@ export type GameMode = "convoy" | "domination";
 export type Game = {
   mode: GameMode;
   map: string;
+  referee: string;
   scoreA: number;
   scoreB: number;
   played: boolean;

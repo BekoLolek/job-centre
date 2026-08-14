@@ -50,6 +50,7 @@ function blankGames(bestOf: 1 | 3 | 5): Game[] {
   return Array.from({ length: bestOf }, (_, i) => ({
     mode: modeForGame(bestOf, i + 1),
     map: "",
+    referee: "",
     scoreA: 0,
     scoreB: 0,
     played: false,

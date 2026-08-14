@@ -90,6 +90,7 @@ export async function POST(request: Request) {
             if (!game || typeof raw !== "object" || raw === null) return;
             const row = raw as Record<string, unknown>;
             if (typeof row.map === "string") game.map = row.map.trim().slice(0, 60);
+            if (typeof row.referee === "string") game.referee = row.referee.trim().slice(0, 40);
             game.scoreA = intOrNull(row.scoreA) ?? 0;
             game.scoreB = intOrNull(row.scoreB) ?? 0;
             game.played = row.played === true;

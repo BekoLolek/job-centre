@@ -10,7 +10,13 @@ type Draft = {
   scheduledAt: string;
   durationMin: string;
   winnerOverride: string;
-  games: Array<{ map: string; scoreA: string; scoreB: string; played: boolean }>;
+  games: Array<{
+    map: string;
+    referee: string;
+    scoreA: string;
+    scoreB: string;
+    played: boolean;
+  }>;
 };
 
 function draftFrom(match: ResolvedMatch): Draft {
@@ -21,6 +27,7 @@ function draftFrom(match: ResolvedMatch): Draft {
     winnerOverride: match.winnerOverride ?? "",
     games: match.games.map((g) => ({
       map: g.map,
+      referee: g.referee ?? "",
       scoreA: String(g.scoreA),
       scoreB: String(g.scoreB),
       played: g.played,
@@ -78,6 +85,7 @@ export default function MatchCard({
       winnerOverride: form.winnerOverride,
       games: form.games.map((g) => ({
         map: g.map,
+        referee: g.referee,
         scoreA: g.scoreA,
         scoreB: g.scoreB,
         played: g.played,
@@ -139,26 +147,36 @@ export default function MatchCard({
         <ul className="mt-3 border-t border-hair pt-3 space-y-1">
           {match.games.map((g, i) =>
             g.played ? (
-              <li key={i} className="flex items-baseline gap-2 text-[11px]">
-                <span className="eyebrow shrink-0">G{i + 1}</span>
-                <span className="text-muted truncate flex-1">
-                  {g.map || MODE_LABEL[g.mode]}
-                  {g.map && g.mode === "domination" ? " · domination" : ""}
-                </span>
-                <span className="num text-chalk/80">
-                  {g.scoreA}–{g.scoreB}
-                </span>
+              <li key={i} className="text-[11px]">
+                <div className="flex items-baseline gap-2">
+                  <span className="eyebrow shrink-0">G{i + 1}</span>
+                  <span className="text-muted truncate flex-1">
+                    {g.map || MODE_LABEL[g.mode]}
+                    {g.map && g.mode === "domination" ? " · domination" : ""}
+                  </span>
+                  <span className="num text-chalk/80">
+                    {g.scoreA}–{g.scoreB}
+                  </span>
+                </div>
+                {g.referee && (
+                  <div className="pl-7 text-muted/70">Referee: {g.referee}</div>
+                )}
               </li>
             ) : null
           )}
         </ul>
       )}
 
-      {playedGames.length > 0 && match.bestOf === 1 && match.games[0].map && (
-        <p className="mt-3 border-t border-hair pt-3 text-[11px] text-muted">
-          {match.games[0].map}
-        </p>
-      )}
+      {playedGames.length > 0 &&
+        match.bestOf === 1 &&
+        (match.games[0].map || match.games[0].referee) && (
+          <div className="mt-3 border-t border-hair pt-3 text-[11px] text-muted">
+            {match.games[0].map && <p>{match.games[0].map}</p>}
+            {match.games[0].referee && (
+              <p className="text-muted/70">Referee: {match.games[0].referee}</p>
+            )}
+          </div>
+        )}
 
       {editable && run && (
         <div className="mt-3 border-t border-hair pt-3">
@@ -222,6 +240,19 @@ export default function MatchCard({
                         ...form,
                         games: form.games.map((x, j) =>
                           j === i ? { ...x, map: e.target.value } : x
+                        ),
+                      })
+                    }
+                  />
+                  <input
+                    className="field text-[11px] py-1.5 mb-1.5"
+                    placeholder="Referee"
+                    value={g.referee}
+                    onChange={(e) =>
+                      setForm({
+                        ...form,
+                        games: form.games.map((x, j) =>
+                          j === i ? { ...x, referee: e.target.value } : x
                         ),
                       })
                     }

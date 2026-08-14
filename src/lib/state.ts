@@ -36,6 +36,10 @@ function reconcileCaptains(state: DraftState): DraftState {
   // States written before the tournament tracker existed have no bracket yet.
   if (!state.tournament?.matches?.length) state.tournament = seedTournament();
   state.tournament.timing = normaliseTiming(state.tournament.timing);
+  // Games recorded before the referee field existed have no value for it.
+  for (const m of state.tournament.matches) {
+    for (const g of m.games) g.referee = g.referee ?? "";
+  }
 
   state.captains = captainAccounts().map((acc) => {
     const existing = state.captains.find((c) => c.id === acc.id);
