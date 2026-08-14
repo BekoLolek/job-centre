@@ -57,6 +57,9 @@ export default function MatchCard({
 
   const when = formatWhen(match.scheduledAt);
   const playedGames = match.games.filter((g) => g.played);
+  const referees = Array.from(
+    new Set(match.games.map((g) => g.referee?.trim()).filter(Boolean))
+  ) as string[];
   const aWins = match.status === "done" && match.winner === match.teamA;
   const bWins = match.status === "done" && match.winner === match.teamB;
 
@@ -120,6 +123,11 @@ export default function MatchCard({
               <div className="num text-[11px] text-muted">{match.durationMin} min</div>
             )
           )}
+          {referees.length > 0 && (
+            <div className="text-[11px] text-muted/80 truncate max-w-[160px]">
+              Referee: <span className="text-chalk/70">{referees.join(" · ")}</span>
+            </div>
+          )}
           {match.needsDecision ? (
             <div className="eyebrow text-ember mt-1">Needs a winner</div>
           ) : match.status === "live" ? (
@@ -158,7 +166,8 @@ export default function MatchCard({
                     {g.scoreA}–{g.scoreB}
                   </span>
                 </div>
-                {g.referee && (
+                {/* Only worth repeating per game when the series had more than one. */}
+                {referees.length > 1 && g.referee && (
                   <div className="pl-7 text-muted/70">Referee: {g.referee}</div>
                 )}
               </li>
@@ -167,16 +176,11 @@ export default function MatchCard({
         </ul>
       )}
 
-      {playedGames.length > 0 &&
-        match.bestOf === 1 &&
-        (match.games[0].map || match.games[0].referee) && (
-          <div className="mt-3 border-t border-hair pt-3 text-[11px] text-muted">
-            {match.games[0].map && <p>{match.games[0].map}</p>}
-            {match.games[0].referee && (
-              <p className="text-muted/70">Referee: {match.games[0].referee}</p>
-            )}
-          </div>
-        )}
+      {playedGames.length > 0 && match.bestOf === 1 && match.games[0].map && (
+        <p className="mt-3 border-t border-hair pt-3 text-[11px] text-muted">
+          {match.games[0].map}
+        </p>
+      )}
 
       {editable && run && (
         <div className="mt-3 border-t border-hair pt-3">
