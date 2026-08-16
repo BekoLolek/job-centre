@@ -22,15 +22,18 @@ Legend: `[x]` done · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
 ## Phase 1 — identity `[~]` in progress
 
-- [~] Postgres schema in Drizzle: users, games, profile fields and values, settings
-- [~] Local development and tests on PGlite, so no cloud account is needed to build
-- [ ] Migrations and a seed (Marvel Rivals with its rank ladder, Jackbox without one)
-- [ ] Auth.js with the Discord provider
-- [ ] Guild gate — sign-in restricted to members of the Job Centre server
-- [ ] First admin seeded from `ADMIN_DISCORD_IDS`
+- [x] Postgres schema in Drizzle: users, games, profile fields and values, settings
+- [x] Local development and tests on PGlite, so no cloud account is needed to build
+- [x] Migrations and a seed (Marvel Rivals with its 23-rank ladder, Jackbox without one)
+- [x] Auth.js with the Discord provider — database sessions, `identify guilds` scopes
+- [x] Guild gate — sign-in restricted to members of the Job Centre server, with the guild
+      id and the on/off switch read from `settings` so admin can change both later
+- [x] First admin seeded from `ADMIN_DISCORD_IDS` — applied on first sign-in as well as by
+      the seed, and only ever grants the flag, never removes it
+- [x] `/signin` and `getCurrentUser` / `requireUser` / `requireAdmin` for the pages to come
 - [ ] `/me/profile` — per-game profile, click-first inputs
 - [ ] `/admin/games` — define a game and the questions it asks
-- [ ] Legacy password login left running alongside, so the draft board keeps working
+- [x] Legacy password login left running alongside, so the draft board keeps working
 
 **Blocked on you:** `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_GUILD_ID`,
 `ADMIN_DISCORD_IDS`, `DATABASE_URL`. Everything above can be built and tested against
