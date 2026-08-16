@@ -22,8 +22,8 @@ const mono = Azeret_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Tournament Draft",
-  description: "Live auction draft board",
+  title: "Job Centre Events",
+  description: "Draft boards, schedules and live results for Job Centre community events",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

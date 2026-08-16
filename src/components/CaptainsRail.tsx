@@ -1,5 +1,6 @@
 "use client";
 
+import { Badge, EmptyState, Eyebrow, Panel } from "@/components/ui";
 import type { DraftView } from "@/lib/types";
 
 const money = (n: number) => n.toLocaleString("en-US");
@@ -9,10 +10,10 @@ export default function CaptainsRail({ view }: { view: DraftView }) {
   const spent = sold.reduce((total, r) => total + (r.amount ?? 0), 0);
 
   return (
-    <aside className="panel p-5 h-fit lg:sticky lg:top-24">
+    <Panel as="aside" padding="md" className="h-fit lg:sticky lg:top-24">
       <div className="flex items-baseline justify-between mb-5">
-        <h2 className="eyebrow">Captains</h2>
-        <span className="eyebrow">{view.allBidsIn ? "All bids in" : "Awaiting bids"}</span>
+        <Eyebrow as="h2">Captains</Eyebrow>
+        <Eyebrow as="span">{view.allBidsIn ? "All bids in" : "Awaiting bids"}</Eyebrow>
       </div>
 
       <ul className="space-y-3">
@@ -42,7 +43,7 @@ export default function CaptainsRail({ view }: { view: DraftView }) {
                       </span>
                     )}
                   </div>
-                  {isMe && <div className="eyebrow mt-1 text-gold/70">You</div>}
+                  {isMe && <Eyebrow className="mt-1 text-gold/70">You</Eyebrow>}
                 </div>
                 <div className="text-right shrink-0">
                   <div className="num text-gold text-base leading-none">{money(c.balance)}</div>
@@ -55,12 +56,7 @@ export default function CaptainsRail({ view }: { view: DraftView }) {
               {c.roster.length > 0 && (
                 <div className="mt-3 flex flex-wrap gap-1">
                   {c.roster.map((p) => (
-                    <span
-                      key={p}
-                      className="border border-hair bg-ink/60 px-1.5 py-0.5 text-[11px] text-chalk/80"
-                    >
-                      {p}
-                    </span>
+                    <Badge key={p}>{p}</Badge>
                   ))}
                 </div>
               )}
@@ -77,16 +73,16 @@ export default function CaptainsRail({ view }: { view: DraftView }) {
 
       <div className="mt-6 border-t border-hair pt-4">
         <div className="flex items-baseline justify-between mb-3">
-          <h3 className="eyebrow">Lots</h3>
+          <Eyebrow as="h3">Lots</Eyebrow>
           {view.history.length > 0 && (
-            <span className="eyebrow">
+            <Eyebrow as="span">
               <span className="num text-gold">{sold.length}</span> sold ·{" "}
               <span className="num text-gold">{money(spent)}</span> spent
-            </span>
+            </Eyebrow>
           )}
         </div>
         {view.history.length === 0 ? (
-          <p className="text-xs text-muted">Nothing drafted yet.</p>
+          <EmptyState size="sm">Nothing drafted yet.</EmptyState>
         ) : (
           // Every lot, newest first — the list scrolls rather than being cut short.
           <ul className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
@@ -108,6 +104,6 @@ export default function CaptainsRail({ view }: { view: DraftView }) {
           </ul>
         )}
       </div>
-    </aside>
+    </Panel>
   );
 }

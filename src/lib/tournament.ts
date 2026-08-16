@@ -456,7 +456,9 @@ export function autoSchedule(state: DraftState, day1: string, day2: string, timi
       if (m && !m.finishedAt) m.scheduledAt = at;
     }
   }
-  recalculateSchedule(state);
+  // Pass the day starts through: an explicit auto-fill is the admin stating when the day
+  // begins, and it must win over the historical start of anything already played.
+  recalculateSchedule(state, { timing, anchors: { 1: day1, 2: day2 } });
 }
 
 /**
@@ -467,8 +469,11 @@ export function autoSchedule(state: DraftState, day1: string, day2: string, timi
  * with it. Blocks that have not been played yet fall back to their planned length. Days
  * are independent: day 1 running late never moves day 2, which has its own start time.
  */
-export function recalculateSchedule(state: DraftState) {
-  const timing = normaliseTiming(state.tournament.timing);
+export function recalculateSchedule(
+  state: DraftState,
+  opts: { timing?: Timing; anchors?: Partial<Record<1 | 2, string>> } = {}
+) {
+  const timing = normaliseTiming(opts.timing ?? state.tournament.timing);
   const byId = new Map(state.tournament.matches.map((m) => [m.id, m]));
   const plan = schedulePlan(timing);
   const latest = (stamps: string[]) => stamps.reduce((max, s) => (s > max ? s : max));
@@ -478,8 +483,20 @@ export function recalculateSchedule(state: DraftState) {
     const first = phases.findIndex((p) => p.ids.some((id) => byId.get(id)?.scheduledAt));
     if (first < 0) continue; // this day was never given a start time
 
+    // Anchor priority: an explicit day start, then the first block's first *unplayed*
+    // match. Sniffing a played match's start would drag the day back to when that match
+    // happened to run, which is not where the admin just said the day begins.
+    const firstBlock = phases[first].ids
+      .map((id) => byId.get(id))
+      .filter((m): m is Match => Boolean(m));
+    const anchor = opts.anchors?.[day];
     let cursor: string | null =
-      phases[first].ids.map((id) => byId.get(id)?.scheduledAt).find(Boolean) ?? null;
+      // addMinutesTo(_, 0) normalises: a naive datetime-local value becomes an instant,
+      // and anything unparseable becomes null and falls through.
+      (anchor ? addMinutesTo(anchor, 0) : null) ||
+      firstBlock.find((m) => !m.finishedAt && m.scheduledAt)?.scheduledAt ||
+      firstBlock.find((m) => m.scheduledAt)?.scheduledAt ||
+      null;
 
     for (const phase of phases.slice(first)) {
       if (!cursor) break;

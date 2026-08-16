@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button, EmptyState, Eyebrow, Field, Panel, Tabs, Textarea } from "@/components/ui";
 import type { DraftView } from "@/lib/types";
 
 export default function AdminRail({
@@ -27,20 +28,17 @@ export default function AdminRail({
   const reservePool = view.reservePool ?? [];
 
   return (
-    <aside className="panel p-5 h-fit xl:sticky xl:top-24">
-      <div className="flex border border-hair mb-5">
-        {(["pools", "setup"] as const).map((t) => (
-          <button
-            key={t}
-            className={`btn flex-1 border-0 ${
-              tab === t ? "text-gold bg-gold/10" : "text-muted bg-transparent"
-            }`}
-            onClick={() => setTab(t)}
-          >
-            {t === "pools" ? "Pools" : "Setup"}
-          </button>
-        ))}
-      </div>
+    <Panel as="aside" padding="md" className="h-fit xl:sticky xl:top-24">
+      <Tabs
+        items={[
+          { value: "pools", label: "Pools" },
+          { value: "setup", label: "Setup" },
+        ]}
+        value={tab}
+        onChange={setTab}
+        fill
+        className="mb-5"
+      />
 
       {tab === "pools" ? (
         <div className="space-y-6">
@@ -67,16 +65,18 @@ export default function AdminRail({
       ) : (
         <div className="space-y-6">
           <div>
-            <h3 className="eyebrow mb-3">Player pool</h3>
-            <textarea
-              className="field h-40 text-xs leading-relaxed resize-y"
+            <Eyebrow as="h3" className="mb-3">
+              Player pool
+            </Eyebrow>
+            <Textarea
+              className="h-40 text-xs leading-relaxed resize-y"
               placeholder={"One name per line\nJordan Reyes\nSam Okafor"}
               value={roster}
               onChange={(e) => setRoster(e.target.value)}
             />
             <div className="mt-2 flex gap-2">
-              <button
-                className="btn flex-1"
+              <Button
+                className="flex-1"
                 disabled={!roster.trim()}
                 onClick={async () => {
                   await run({ type: "addPlayers", players: roster.split("\n") });
@@ -84,9 +84,10 @@ export default function AdminRail({
                 }}
               >
                 Add
-              </button>
-              <button
-                className="btn btn-ember flex-1"
+              </Button>
+              <Button
+                variant="ember"
+                className="flex-1"
                 disabled={!roster.trim()}
                 onClick={async () => {
                   await run({ type: "setup", players: roster.split("\n") });
@@ -95,26 +96,25 @@ export default function AdminRail({
                 title="Replace the main wheel with exactly this list"
               >
                 Replace
-              </button>
+              </Button>
             </div>
             {mainPool.length > 0 && (
-              <button
-                className="btn w-full mt-2"
-                onClick={() => setRoster(mainPool.join("\n"))}
-              >
+              <Button className="w-full mt-2" onClick={() => setRoster(mainPool.join("\n"))}>
                 Load current pool
-              </button>
+              </Button>
             )}
           </div>
 
           <div className="border-t border-hair pt-5">
-            <h3 className="eyebrow mb-3">Starting balances</h3>
+            <Eyebrow as="h3" className="mb-3">
+              Starting balances
+            </Eyebrow>
             <div className="space-y-2">
               {teams.map((t, i) => (
                 <div key={t.id} className="flex items-center gap-2">
                   <span className="flex-1 truncate text-xs text-chalk/80">{t.name}</span>
-                  <input
-                    className="field text-xs w-24"
+                  <Field
+                    className="text-xs w-24"
                     inputMode="numeric"
                     value={t.balance}
                     onChange={(e) => {
@@ -129,8 +129,8 @@ export default function AdminRail({
                 </div>
               ))}
             </div>
-            <button
-              className="btn w-full mt-2"
+            <Button
+              className="w-full mt-2"
               disabled={!dirty}
               onClick={async () => {
                 await run({
@@ -141,7 +141,7 @@ export default function AdminRail({
               }}
             >
               Save balances
-            </button>
+            </Button>
             <p className="mt-2 text-[11px] leading-relaxed text-muted">
               Team names come from each captain&apos;s login name — change
               <span className="num"> CAPTAIN&#123;n&#125;_USERNAME</span> to rename a team.
@@ -149,9 +149,12 @@ export default function AdminRail({
           </div>
 
           <div className="border-t border-hair pt-5">
-            <h3 className="eyebrow mb-3">Danger zone</h3>
-            <button
-              className="btn btn-ember w-full"
+            <Eyebrow as="h3" className="mb-3">
+              Danger zone
+            </Eyebrow>
+            <Button
+              variant="ember"
+              className="w-full"
               onClick={() => {
                 if (
                   confirm(
@@ -163,11 +166,11 @@ export default function AdminRail({
               }}
             >
               Reset draft
-            </button>
+            </Button>
           </div>
         </div>
       )}
-    </aside>
+    </Panel>
   );
 }
 
@@ -186,9 +189,11 @@ function PoolList({
 }) {
   return (
     <div>
-      <h3 className={`eyebrow mb-3 ${accent ? "text-gold/80" : ""}`}>{title}</h3>
+      <Eyebrow as="h3" className={`mb-3 ${accent ? "text-gold/80" : ""}`}>
+        {title}
+      </Eyebrow>
       {players.length === 0 ? (
-        <p className="text-xs text-muted">{empty}</p>
+        <EmptyState size="sm">{empty}</EmptyState>
       ) : (
         <ul className="max-h-64 overflow-y-auto pr-1 space-y-1">
           {players.map((p) => (

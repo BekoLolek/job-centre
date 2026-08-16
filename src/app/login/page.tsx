@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { Eyebrow } from "@/components/ui";
 import { getSession } from "@/lib/session";
 import LoginForm from "./LoginForm";
 
@@ -11,16 +12,16 @@ export default async function LoginPage() {
   return (
     <main className="min-h-screen grid lg:grid-cols-[1.15fr_1fr]">
       <section className="relative hidden lg:flex flex-col justify-between p-12 border-r border-hair overflow-hidden">
-        <div className="eyebrow rise">Auction Board · Access Restricted</div>
+        <Eyebrow className="rise">Auction Board · Access Restricted</Eyebrow>
 
         <div className="relative">
           <h1 className="font-display leading-[0.82] tracking-tight">
-            <span className="block text-[clamp(3rem,8vw,7.5rem)] rise">TOURNAMENT</span>
+            <span className="block text-[clamp(3rem,8vw,7.5rem)] rise">JOB CENTRE</span>
             <span
               className="block text-[clamp(3rem,8vw,7.5rem)] text-gold rise"
               style={{ animationDelay: "90ms" }}
             >
-              DRAFT
+              EVENTS
             </span>
           </h1>
           <p
@@ -32,13 +33,10 @@ export default async function LoginPage() {
           </p>
         </div>
 
-        <div
-          className="eyebrow flex items-center gap-3 rise"
-          style={{ animationDelay: "260ms" }}
-        >
+        <Eyebrow className="flex items-center gap-3 rise" style={{ animationDelay: "260ms" }}>
           <span className="inline-block h-2 w-2 rounded-full bg-ember live-dot" />
           Captains only
-        </div>
+        </Eyebrow>
 
         <div className="pointer-events-none absolute -right-24 top-1/2 -translate-y-1/2 h-[520px] w-[520px] rounded-full border border-hair hatch opacity-40" />
         <div className="pointer-events-none absolute -right-10 top-1/2 -translate-y-1/2 h-[340px] w-[340px] rounded-full border border-hair opacity-30" />

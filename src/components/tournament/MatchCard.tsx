@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button, Eyebrow, Field, Panel, Select } from "@/components/ui";
 import { formatClock, formatWhen, toInstant, toLocalInput } from "@/lib/time";
 import type { ResolvedMatch } from "@/lib/types";
 
@@ -99,17 +100,19 @@ export default function MatchCard({
   };
 
   return (
-    <article
-      className={`panel p-4 ${featured ? "border-gold/40" : ""} ${
+    <Panel
+      as="article"
+      padding="sm"
+      className={`${featured ? "border-gold/40" : ""} ${
         match.status === "live" ? "border-ember/40" : ""
       }`}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <div className="min-w-0">
-          <div className="eyebrow truncate">
+          <Eyebrow className="truncate">
             {match.label} · Bo{match.bestOf}
-          </div>
-          {match.note && <div className="eyebrow text-muted/70 mt-1">{match.note}</div>}
+          </Eyebrow>
+          {match.note && <Eyebrow className="text-muted/70 mt-1">{match.note}</Eyebrow>}
         </div>
         <div className="text-right shrink-0">
           {when && <div className="num text-[11px] text-muted">{when}</div>}
@@ -129,9 +132,9 @@ export default function MatchCard({
             </div>
           )}
           {match.needsDecision ? (
-            <div className="eyebrow text-ember mt-1">Needs a winner</div>
+            <Eyebrow className="text-ember mt-1">Needs a winner</Eyebrow>
           ) : match.status === "live" ? (
-            <div className="eyebrow text-ember mt-1">In progress</div>
+            <Eyebrow className="text-ember mt-1">In progress</Eyebrow>
           ) : null}
         </div>
       </div>
@@ -157,7 +160,9 @@ export default function MatchCard({
             g.played ? (
               <li key={i} className="text-[11px]">
                 <div className="flex items-baseline gap-2">
-                  <span className="eyebrow shrink-0">G{i + 1}</span>
+                  <Eyebrow as="span" className="shrink-0">
+                    G{i + 1}
+                  </Eyebrow>
                   <span className="text-muted truncate flex-1">
                     {g.map || MODE_LABEL[g.mode]}
                     {g.map && g.mode === "domination" ? " · domination" : ""}
@@ -185,26 +190,26 @@ export default function MatchCard({
       {editable && run && (
         <div className="mt-3 border-t border-hair pt-3">
           {!open ? (
-            <button className="btn w-full py-1.5" onClick={() => setOpen(true)}>
+            <Button className="w-full py-1.5" onClick={() => setOpen(true)}>
               Record result
-            </button>
+            </Button>
           ) : (
             <div className="space-y-3">
               <div className="flex gap-2">
                 <label className="flex-1">
                   <span className="eyebrow block mb-1">Start</span>
-                  <input
+                  <Field
                     type="datetime-local"
-                    className="field text-[11px] py-1.5"
+                    className="text-[11px] py-1.5"
                     value={form.scheduledAt}
                     onChange={(e) => setForm({ ...form, scheduledAt: e.target.value })}
                   />
                 </label>
                 <label className="w-24">
                   <span className="eyebrow block mb-1">Mins</span>
-                  <input
+                  <Field
                     inputMode="numeric"
-                    className="field text-[11px] py-1.5"
+                    className="text-[11px] py-1.5"
                     value={form.durationMin}
                     onChange={(e) =>
                       setForm({ ...form, durationMin: e.target.value.replace(/[^0-9]/g, "") })
@@ -216,9 +221,9 @@ export default function MatchCard({
               {form.games.map((g, i) => (
                 <div key={i} className="border border-hair p-2">
                   <div className="flex items-center justify-between mb-1.5">
-                    <span className="eyebrow">
+                    <Eyebrow as="span">
                       G{i + 1} · {MODE_LABEL[match.games[i].mode]}
-                    </span>
+                    </Eyebrow>
                     <label className="flex items-center gap-1.5 eyebrow cursor-pointer">
                       <input
                         type="checkbox"
@@ -235,8 +240,8 @@ export default function MatchCard({
                       Played
                     </label>
                   </div>
-                  <input
-                    className="field text-[11px] py-1.5 mb-1.5"
+                  <Field
+                    className="text-[11px] py-1.5 mb-1.5"
                     placeholder="Map"
                     value={g.map}
                     onChange={(e) =>
@@ -248,8 +253,8 @@ export default function MatchCard({
                       })
                     }
                   />
-                  <input
-                    className="field text-[11px] py-1.5 mb-1.5"
+                  <Field
+                    className="text-[11px] py-1.5 mb-1.5"
                     placeholder="Referee"
                     value={g.referee}
                     onChange={(e) =>
@@ -262,16 +267,18 @@ export default function MatchCard({
                     }
                   />
                   <div className="flex items-center gap-2">
-                    <input
+                    <Field
                       inputMode="numeric"
-                      className="field text-[11px] py-1.5"
+                      className="text-[11px] py-1.5"
                       value={g.scoreA}
                       onChange={(e) => setScore(i, "scoreA", e.target.value)}
                     />
-                    <span className="eyebrow shrink-0">vs</span>
-                    <input
+                    <Eyebrow as="span" className="shrink-0">
+                      vs
+                    </Eyebrow>
+                    <Field
                       inputMode="numeric"
-                      className="field text-[11px] py-1.5"
+                      className="text-[11px] py-1.5"
                       value={g.scoreB}
                       onChange={(e) => setScore(i, "scoreB", e.target.value)}
                     />
@@ -282,27 +289,28 @@ export default function MatchCard({
               {match.bestOf > 1 && (
                 <label className="block">
                   <span className="eyebrow block mb-1">Winner override</span>
-                  <select
-                    className="field text-[11px] py-1.5"
+                  <Select
+                    className="text-[11px] py-1.5"
                     value={form.winnerOverride}
                     onChange={(e) => setForm({ ...form, winnerOverride: e.target.value })}
                   >
                     <option value="">Decide from the games</option>
                     {match.teamA && <option value={match.teamA}>{match.nameA}</option>}
                     {match.teamB && <option value={match.teamB}>{match.nameB}</option>}
-                  </select>
+                  </Select>
                 </label>
               )}
 
               <div className="flex gap-2">
-                <button className="btn btn-gold flex-1 py-1.5" disabled={busy} onClick={save}>
+                <Button variant="gold" className="flex-1 py-1.5" disabled={busy} onClick={save}>
                   {busy ? "Saving…" : "Save"}
-                </button>
-                <button className="btn py-1.5" onClick={() => setOpen(false)}>
+                </Button>
+                <Button className="py-1.5" onClick={() => setOpen(false)}>
                   Cancel
-                </button>
-                <button
-                  className="btn btn-ember py-1.5"
+                </Button>
+                <Button
+                  variant="ember"
+                  className="py-1.5"
                   onClick={async () => {
                     if (!confirm(`Clear all recorded games for ${match.label}?`)) return;
                     await run({ type: "clearMatch", matchId: match.id });
@@ -310,13 +318,13 @@ export default function MatchCard({
                   }}
                 >
                   Clear
-                </button>
+                </Button>
               </div>
             </div>
           )}
         </div>
       )}
-    </article>
+    </Panel>
   );
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Button, Eyebrow, Field, Panel } from "@/components/ui";
 import type { DraftView } from "@/lib/types";
 
 const money = (n: number) => n.toLocaleString("en-US");
@@ -51,30 +52,30 @@ export default function BidPanel({
 
   if (placed) {
     return (
-      <div className="panel p-6 text-center rise">
-        <div className="eyebrow mb-3">Your bid is locked</div>
+      <Panel className="text-center rise">
+        <Eyebrow className="mb-3">Your bid is locked</Eyebrow>
         <div className="font-display text-5xl text-signal leading-none stamp">
           {money(me.bid ?? 0)}
         </div>
         <p className="mt-4 text-sm text-muted">
           Waiting on the other captains. Nobody sees your number until the lot is settled.
         </p>
-      </div>
+      </Panel>
     );
   }
 
   return (
-    <form onSubmit={submit} className="panel p-6 rise">
+    <Panel as="form" onSubmit={submit} className="rise">
       <div className="flex items-baseline justify-between mb-4">
-        <span className="eyebrow">Your bid</span>
-        <span className="eyebrow">
+        <Eyebrow as="span">Your bid</Eyebrow>
+        <Eyebrow as="span">
           Balance <span className="num text-gold">{money(me.balance)}</span>
-        </span>
+        </Eyebrow>
       </div>
 
       <div className="flex gap-3">
-        <input
-          className="field text-2xl"
+        <Field
+          className="text-2xl"
           inputMode="numeric"
           pattern="[0-9]*"
           placeholder="0"
@@ -82,9 +83,9 @@ export default function BidPanel({
           disabled={!open || busy}
           onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ""))}
         />
-        <button type="submit" className="btn btn-gold px-8" disabled={!open || !valid || busy}>
+        <Button type="submit" variant="gold" className="px-8" disabled={!open || !valid || busy}>
           {busy ? "Sending…" : "Submit"}
-        </button>
+        </Button>
       </div>
 
       {!open && (
@@ -98,6 +99,6 @@ export default function BidPanel({
         </p>
       )}
       {error && <p className="mt-3 text-xs text-ember">{error}</p>}
-    </form>
+    </Panel>
   );
 }

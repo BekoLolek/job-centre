@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import Link from "next/link";
+import { Alert, Button, Eyebrow } from "@/components/ui";
 import Wheel from "@/components/Wheel";
 import CaptainsRail from "@/components/CaptainsRail";
 import BidPanel from "@/components/BidPanel";
@@ -60,7 +60,7 @@ export default function DraftBoard() {
   if (!view) {
     return (
       <div className="min-h-screen grid place-items-center">
-        <div className="eyebrow animate-pulse">Loading the board…</div>
+        <Eyebrow className="animate-pulse">Loading the board…</Eyebrow>
       </div>
     );
   }
@@ -79,50 +79,48 @@ export default function DraftBoard() {
       <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
         <div className="mx-auto max-w-[1500px] px-4 sm:px-6 h-16 flex items-center gap-4">
           <div className="font-display text-xl tracking-wide">
-            TOURNAMENT<span className="text-gold">DRAFT</span>
+            JOB CENTRE<span className="text-gold"> DRAFT</span>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 eyebrow">
+          <Eyebrow className="hidden sm:flex items-center gap-2">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
                 offline ? "bg-ember" : "bg-signal"
               } ${offline ? "" : "live-dot"}`}
             />
             {offline ? "Reconnecting" : "Live"}
-          </div>
+          </Eyebrow>
 
           <div className="ml-auto flex items-center gap-4">
-            <span className="hidden md:inline eyebrow">
+            <Eyebrow as="span" className="hidden md:inline">
               Pool {view.mainPoolCount}
               {isAdmin && view.reservePoolCount > 0 && ` · Reserve ${view.reservePoolCount}`}
-            </span>
-            <span className="eyebrow text-chalk/80">
+            </Eyebrow>
+            <Eyebrow as="span" className="text-chalk/80">
               {isAdmin
                 ? "Admin"
                 : view.role === "observer"
                   ? "Observer"
                   : view.captains.find((c) => c.id === view.captainId)?.name}
-            </span>
-            <Link href="/" className="btn px-3 py-1.5">
+            </Eyebrow>
+            <Button href="/" size="sm">
               Results
-            </Link>
+            </Button>
             {isAdmin && (
-              <Link href="/draft/schedule" className="btn px-3 py-1.5">
+              <Button href="/draft/schedule" size="sm">
                 Schedule
-              </Link>
+              </Button>
             )}
-            <button className="btn px-3 py-1.5" onClick={logout}>
+            <Button size="sm" onClick={logout}>
               Sign out
-            </button>
+            </Button>
           </div>
         </div>
       </header>
 
       {error && (
         <div className="mx-auto max-w-[1500px] px-4 sm:px-6 pt-4">
-          <div className="border border-ember/40 bg-ember/10 px-3 py-2 text-sm text-ember">
-            {error}
-          </div>
+          <Alert>{error}</Alert>
         </div>
       )}
 
@@ -134,7 +132,7 @@ export default function DraftBoard() {
         <CaptainsRail view={view} />
 
         <section className="flex flex-col items-center gap-6 min-w-0">
-          <div className="eyebrow flex items-center gap-2">
+          <Eyebrow className="flex items-center gap-2">
             {view.activeWheel === "reserve" ? "Reserve wheel" : "Main wheel"}
             <span className="text-hair">/</span>
             {spinning ? (
@@ -144,7 +142,7 @@ export default function DraftBoard() {
             ) : (
               <span>Standby</span>
             )}
-          </div>
+          </Eyebrow>
 
           <Wheel
             pool={view.spin ? view.spin.pool : view.activePool}
@@ -154,7 +152,7 @@ export default function DraftBoard() {
           />
 
           <div className="w-full max-w-2xl text-center">
-            <div className="eyebrow mb-2">On the block</div>
+            <Eyebrow className="mb-2">On the block</Eyebrow>
             <div
               key={player ?? "none"}
               className={`font-display text-[clamp(2rem,6vw,4rem)] leading-none ${

@@ -1,5 +1,6 @@
 "use client";
 
+import { Eyebrow, Panel } from "@/components/ui";
 import type { DraftView } from "@/lib/types";
 
 const money = (n: number) => n.toLocaleString("en-US");
@@ -17,12 +18,12 @@ export default function ObserverPanel({
   const result = view.lastResult;
 
   return (
-    <div className="panel p-6 rise">
+    <Panel className="rise">
       <div className="flex items-baseline justify-between mb-4">
-        <span className="eyebrow">Watching</span>
-        <span className="eyebrow">
+        <Eyebrow as="span">Watching</Eyebrow>
+        <Eyebrow as="span">
           Bids in <span className="num text-gold">{submitted}</span>/{view.captains.length}
-        </span>
+        </Eyebrow>
       </div>
 
       <div className="flex gap-1.5 mb-5">
@@ -46,7 +47,7 @@ export default function ObserverPanel({
         <p className="text-sm text-muted">The wheel is running.</p>
       ) : result?.action === "award" ? (
         <div>
-          <div className="eyebrow mb-2">Last sale</div>
+          <Eyebrow className="mb-2">Last sale</Eyebrow>
           <div className="font-display text-3xl leading-none">
             {result.player}{" "}
             <span className="text-muted text-xl">→ {result.winnerName}</span>
@@ -56,6 +57,6 @@ export default function ObserverPanel({
       ) : (
         <p className="text-sm text-muted">Waiting on the next spin.</p>
       )}
-    </div>
+    </Panel>
   );
 }

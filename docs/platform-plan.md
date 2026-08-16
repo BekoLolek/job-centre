@@ -4,7 +4,10 @@ Turning the single-purpose Marvel Rivals draft board into a community event plat
 Discord login, customisable events with applications, player profiles, and a much more
 configurable tournament engine.
 
-**Status: plan only. Nothing here is built yet.**
+**Status: in build.** The open questions in §13 are answered; §15 tracks progress and what
+is still needed from outside the repo.
+
+The product is **Job Centre Events**. The repo is `BekoLolek/job-centre`.
 
 ---
 
@@ -89,9 +92,10 @@ removes the whole password-distribution problem.
 - Session strategy: database sessions, so an admin can revoke access.
 - Admin is a flag on the user row, seeded from a `ADMIN_DISCORD_IDS` env allowlist so the
   first admin can exist before there is an admin UI.
-- **Open question:** restrict login to members of a specific Discord guild? The provider can
-  request the `guilds` scope and we can reject anyone not in the server. Recommended — it
-  makes the site private without any password.
+- **Guild-gated.** Sign-in requires membership of a configured Discord guild — the provider
+  requests the `guilds` scope and anyone outside the server is rejected. The guild id and
+  the gate itself are admin settings, not constants, so it can be relaxed or pointed at a
+  different server without a deploy.
 - Captains and participants are ordinary users with per-event roles, not accounts.
 
 ### 3.3 Keep one Next.js app
@@ -445,24 +449,56 @@ already written and tested.
 Answers to these change the plan, so worth settling before Phase 1.
 
 1. **Guild-gated login?** Restrict sign-in to members of a specific Discord server, or let
-   anyone with a Discord account in? (Recommend: guild-gated.)
+   anyone with a Discord account in? (Recommend: guild-gated.): Guild gated, can be changed and customized in admin
 2. **Are captains also draftable?** Does a captain occupy a roster slot, or sit outside the
-   pool entirely?
+   pool entirely?: they do the drafting so they are already in the team
 3. **Applications: approval or open?** Should the default be admin-approved, or first-come
-   with a cap and a waitlist? Both are supportable; which is the default?
+   with a cap and a waitlist? Both are supportable; which is the default?: first come with waitlist
 4. **Profile data scope.** Per game (`rivals`, `jackbox`) or one flat profile? Per game is
-   more work but stops a Jackbox night asking for your Rivals rank.
+   more work but stops a Jackbox night asking for your Rivals rank.: per game. As an admin I want to be able to add a new game and say what I want info I want from players
 5. **Does an event need a real name/brand for the site itself?** The header currently says
-   "Marvel Rivals Tournament", which stops making sense once it hosts Jackbox nights.
+   "Marvel Rivals Tournament", which stops making sense once it hosts Jackbox nights.: Discord server name is Job Centre, so lets call it Job Centre Events
 6. **Discord notifications** — announce new events, application decisions and match results
-   to a channel via webhook? Cheap to add, high value.
+   to a channel via webhook? Cheap to add, high value.: good to have an integration
 7. **Repo**: keep pushing to `tournament-draft`, or start a new repo with a name that fits?
-   The folder is now `Job Centre/Website`, which suggests a rename is due.
+   The folder is now `Job Centre/Website`, which suggests a rename is due.: keep repo, but rename it to Job Centre
 
 ---
 
-## 14. Housekeeping
+## 14. Consequences of the answers
 
-The workspace dev-server config at `.claude/launch.json` still points at
-`Tournament Draft/`, which no longer exists after the move. It needs updating to
-`Job Centre/Website` before the preview server will start again.
+Folding §13 back into the design:
+
+- **Guild-gated sign-in**, configurable in admin — see §3.2. Adds a `settings` table (or a
+  single-row config) for the guild id and the gate toggle.
+- **Captains occupy a roster slot.** A captain is a `team_members` row with
+  `is_captain = true` and `price = 0`; they never enter the draft pool. Roster-size limits
+  and any "keep enough balance to fill your roster" rule must count the captain.
+- **First-come with a waitlist** is the default application mode. `applications.status`
+  gains an ordering rule: accepted until the cap is reached, then `waitlisted` in
+  submission order, with automatic promotion when someone withdraws. Admin approval stays
+  available as a per-event switch.
+- **Per-game profiles, with admin-defined games.** `profile_fields.scope` is not an enum —
+  it points at a `games` table the admin can add rows to. Creating "Jackbox" and giving it
+  three questions is a UI action, not a migration.
+- **Discord notifications** are in scope (Phase 5): new event published, application
+  accepted/waitlisted, match result recorded. Outgoing webhook, no bot to host.
+
+## 15. Progress and prerequisites
+
+**Done**
+- Repo renamed to `job-centre`; local remote updated.
+- Workspace dev-server config repointed at `Job Centre/Website`.
+
+**Phase 0 — in progress**
+- Vitest plus a unit suite over the existing pure logic, as a safety net before the
+  tournament engine is generalised.
+- `src/components/ui/` extracted from the copy-pasted patterns, and the rebrand to
+  Job Centre Events.
+
+**Needed before Phase 1 can start** (external, cannot be created from the repo)
+1. A **Discord application**: client id, client secret, and the guild id to gate against.
+   Redirect URIs must be registered for both `http://localhost:3400` and the production
+   domain.
+2. A **Postgres connection string** — a Neon project (via Vercel's marketplace or directly),
+   ideally with a separate branch or database for local development.

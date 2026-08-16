@@ -1,7 +1,9 @@
-# Tournament Draft
+# Job Centre Events
 
-A four-team Marvel Rivals tournament in two halves: an auction draft to pick the rosters,
-then a results board tracking the round robin and double-elimination bracket.
+The events site for the Job Centre Discord. It runs a competition in two halves: an auction
+draft to pick the rosters, then a results board tracking the round robin and
+double-elimination bracket. The first event it hosts is a four-team Marvel Rivals
+tournament, but nothing about the board is tied to that game.
 
 | Route | Access | What it is |
 | --- | --- | --- |

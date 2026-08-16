@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button, Eyebrow, Field, Panel, Select } from "@/components/ui";
 import { DEFAULT_TIMING, dayMinutes, schedulePlan } from "@/lib/tournament";
 import { addMinutesTo, formatClock, toInstant, zoneLabel } from "@/lib/time";
 import type { Timing, TournamentView } from "@/lib/types";
@@ -57,7 +58,7 @@ export default function AdminTools({
   const changed = FIELDS.some((f) => numeric[f.key] !== view.timing[f.key]);
 
   return (
-    <section className="panel p-6">
+    <Panel as="section">
       <h2 className="font-display text-2xl mb-1">Admin tools</h2>
       <p className="text-sm text-muted mb-6">
         Only visible to you. Everyone else sees the board read-only.
@@ -65,22 +66,26 @@ export default function AdminTools({
 
       <div className="grid gap-8 lg:grid-cols-3">
         <div className="lg:col-span-2">
-          <h3 className="eyebrow mb-3">Schedule</h3>
+          <Eyebrow as="h3" className="mb-3">
+            Schedule
+          </Eyebrow>
 
           <div className="grid gap-3 sm:grid-cols-4 mb-4">
             {FIELDS.map((f) => (
               <label key={f.key}>
                 <span className="eyebrow block mb-1 truncate">{f.label}</span>
                 <div className="flex items-center gap-2">
-                  <input
+                  <Field
                     inputMode="numeric"
-                    className="field text-xs py-1.5"
+                    className="text-xs py-1.5"
                     value={timing[f.key]}
                     onChange={(e) =>
                       setTiming({ ...timing, [f.key]: e.target.value.replace(/[^0-9]/g, "") })
                     }
                   />
-                  <span className="eyebrow shrink-0">min</span>
+                  <Eyebrow as="span" className="shrink-0">
+                    min
+                  </Eyebrow>
                 </div>
                 <span className="eyebrow block mt-1 text-muted/70">{f.hint}</span>
               </label>
@@ -96,18 +101,18 @@ export default function AdminTools({
           <div className="grid gap-3 sm:grid-cols-2 mb-4">
             <label>
               <span className="eyebrow block mb-1">Day 1 start</span>
-              <input
+              <Field
                 type="datetime-local"
-                className="field text-xs py-1.5"
+                className="text-xs py-1.5"
                 value={day1}
                 onChange={(e) => setDay1(e.target.value)}
               />
             </label>
             <label>
               <span className="eyebrow block mb-1">Day 2 start</span>
-              <input
+              <Field
                 type="datetime-local"
-                className="field text-xs py-1.5"
+                className="text-xs py-1.5"
                 value={day2}
                 onChange={(e) => setDay2(e.target.value)}
               />
@@ -117,11 +122,11 @@ export default function AdminTools({
           {timingValid && (
             <div className="border border-hair mb-4">
               <div className="flex items-baseline justify-between px-3 py-2 border-b border-hair">
-                <span className="eyebrow">Preview · longest case</span>
-                <span className="eyebrow">
+                <Eyebrow as="span">Preview · longest case</Eyebrow>
+                <Eyebrow as="span">
                   Day 1 <span className="num text-gold">{hhmm(days.day1)}</span> · Day 2{" "}
                   <span className="num text-gold">{hhmm(days.day2)}</span>
-                </span>
+                </Eyebrow>
               </div>
               <ul>
                 {plan.map((p) => {
@@ -133,7 +138,9 @@ export default function AdminTools({
                       key={p.label}
                       className="flex items-baseline gap-3 px-3 py-1.5 text-[11px] border-b border-hair/50 last:border-0"
                     >
-                      <span className="eyebrow w-12 shrink-0">Day {p.day}</span>
+                      <Eyebrow as="span" className="w-12 shrink-0">
+                        Day {p.day}
+                      </Eyebrow>
                       <span className="flex-1 truncate text-chalk/80">{p.label}</span>
                       <span className="num text-muted shrink-0">
                         {at ? `${at} – ${end}` : `+${hhmm(p.offsetMin)}`}
@@ -149,8 +156,8 @@ export default function AdminTools({
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button
-              className="btn btn-gold"
+            <Button
+              variant="gold"
               disabled={!timingValid || (!day1 && !day2)}
               onClick={() =>
                 run({
@@ -162,16 +169,14 @@ export default function AdminTools({
               }
             >
               Fill start times
-            </button>
-            <button
-              className="btn"
+            </Button>
+            <Button
               disabled={!timingValid || !changed}
               onClick={() => run({ type: "timing", timing: numeric })}
             >
               Save lengths only
-            </button>
-            <button
-              className="btn"
+            </Button>
+            <Button
               onClick={() =>
                 setTiming({
                   convoy: String(DEFAULT_TIMING.convoy),
@@ -182,7 +187,7 @@ export default function AdminTools({
               }
             >
               Reset to defaults
-            </button>
+            </Button>
           </div>
           <p className="mt-2 text-[11px] leading-relaxed text-muted">
             Matches inside a block run in parallel and share a start time, so a block lasts
@@ -199,7 +204,9 @@ export default function AdminTools({
 
         <div className="space-y-8">
           <div>
-            <h3 className="eyebrow mb-3">Seeding</h3>
+            <Eyebrow as="h3" className="mb-3">
+              Seeding
+            </Eyebrow>
             <p className="text-[11px] leading-relaxed text-muted mb-3">
               Seeds come from the standings automatically. Override them here if the
               tiebreakers leave two teams level.
@@ -208,8 +215,8 @@ export default function AdminTools({
               {[0, 1, 2, 3].map((i) => (
                 <div key={i} className="flex items-center gap-2">
                   <span className="num text-xs text-muted w-4">{i + 1}</span>
-                  <select
-                    className="field text-xs py-1.5"
+                  <Select
+                    className="text-xs py-1.5"
                     value={seeds[i] ?? ""}
                     onChange={(e) =>
                       setSeeds(seeds.map((s, j) => (j === i ? e.target.value : s)))
@@ -220,7 +227,7 @@ export default function AdminTools({
                         {t.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </div>
               ))}
             </div>
@@ -228,19 +235,16 @@ export default function AdminTools({
               <p className="text-[11px] text-ember mb-2">Each team can hold only one seed.</p>
             )}
             <div className="flex gap-2">
-              <button
-                className="btn flex-1"
+              <Button
+                className="flex-1"
                 disabled={!seedsValid}
                 onClick={() => run({ type: "seedOverride", seedOverride: seeds })}
               >
                 Lock seeds
-              </button>
-              <button
-                className="btn"
-                onClick={() => run({ type: "seedOverride", seedOverride: [] })}
-              >
+              </Button>
+              <Button onClick={() => run({ type: "seedOverride", seedOverride: [] })}>
                 Auto
-              </button>
+              </Button>
             </div>
             <p className="mt-2 text-[11px] text-muted">
               Current: {view.seeds ? view.seeds.map(name).join(", ") : "not set yet"}
@@ -248,13 +252,16 @@ export default function AdminTools({
           </div>
 
           <div>
-            <h3 className="eyebrow mb-3">Danger zone</h3>
+            <Eyebrow as="h3" className="mb-3">
+              Danger zone
+            </Eyebrow>
             <p className="text-[11px] leading-relaxed text-muted mb-3">
               Wipes every recorded game, schedule and seed override. The draft and rosters
               are untouched.
             </p>
-            <button
-              className="btn btn-ember w-full"
+            <Button
+              variant="ember"
+              className="w-full"
               onClick={() => {
                 if (confirm("Clear every match result and start the tournament over?")) {
                   run({ type: "resetTournament" });
@@ -262,10 +269,10 @@ export default function AdminTools({
               }}
             >
               Reset tournament
-            </button>
+            </Button>
           </div>
         </div>
       </div>
-    </section>
+    </Panel>
   );
 }

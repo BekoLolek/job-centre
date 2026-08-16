@@ -1,5 +1,6 @@
 "use client";
 
+import { Button, Eyebrow, Panel, Tabs } from "@/components/ui";
 import type { DraftView } from "@/lib/types";
 
 const money = (n: number) => n.toLocaleString("en-US");
@@ -21,38 +22,30 @@ export default function AdminControls({
   const top = bids.reduce((best, c) => (c.bid! > (best?.bid ?? -1) ? c : best), bids[0]);
 
   return (
-    <div className="panel p-6 rise">
+    <Panel className="rise">
       <div className="flex flex-wrap items-center gap-3 mb-5">
-        <div className="flex border border-hair">
-          {(["main", "reserve"] as const).map((w) => (
-            <button
-              key={w}
-              className={`btn border-0 ${
-                view.activeWheel === w ? "text-gold bg-gold/10" : "text-muted bg-transparent"
-              }`}
-              disabled={!!player}
-              onClick={() => run({ type: "setWheel", wheel: w })}
-            >
-              {w === "main" ? `Main ${view.mainPoolCount}` : `Reserve ${view.reservePoolCount}`}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          items={[
+            { value: "main", label: `Main ${view.mainPoolCount}` },
+            { value: "reserve", label: `Reserve ${view.reservePoolCount}` },
+          ]}
+          value={view.activeWheel}
+          onChange={(wheel) => run({ type: "setWheel", wheel })}
+          disabled={!!player}
+        />
 
-        <button
-          className="btn btn-gold flex-1 min-w-[160px] text-sm"
+        <Button
+          variant="gold"
+          className="flex-1 min-w-[160px] text-sm"
           disabled={spinning || !!player || poolSize === 0}
           onClick={() => run({ type: "spin" })}
         >
           {spinning ? "Spinning…" : "Spin the wheel"}
-        </button>
+        </Button>
 
-        <button
-          className="btn"
-          disabled={view.history.length === 0}
-          onClick={() => run({ type: "undo" })}
-        >
+        <Button disabled={view.history.length === 0} onClick={() => run({ type: "undo" })}>
           Undo
-        </button>
+        </Button>
       </div>
 
       {!lotOpen ? (
@@ -66,10 +59,14 @@ export default function AdminControls({
       ) : (
         <>
           <div className="flex items-baseline justify-between mb-3">
-            <span className="eyebrow">
+            <Eyebrow as="span">
               Bids · {bids.length}/{view.captains.length}
-            </span>
-            {!view.allBidsIn && <span className="eyebrow text-ember">Incomplete</span>}
+            </Eyebrow>
+            {!view.allBidsIn && (
+              <Eyebrow as="span" className="text-ember">
+                Incomplete
+              </Eyebrow>
+            )}
           </div>
 
           <ul className="space-y-2 mb-5">
@@ -86,46 +83,42 @@ export default function AdminControls({
                   <span className="num text-lg text-gold w-24 text-right">
                     {c.hasBid ? money(c.bid ?? 0) : "—"}
                   </span>
-                  <button
-                    className="btn px-3 py-1.5"
+                  <Button
+                    size="sm"
                     disabled={!c.hasBid}
                     onClick={() => run({ type: "clearBid", captainId: c.id })}
                     title="Clear this bid so they can re-enter it"
                   >
                     Clear
-                  </button>
-                  <button
-                    className={`btn px-3 py-1.5 ${isTop ? "btn-gold" : ""}`}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={isTop ? "gold" : "default"}
                     disabled={!c.hasBid || (c.bid ?? 0) > c.balance}
                     onClick={() => run({ type: "award", captainId: c.id })}
                   >
                     Award
-                  </button>
+                  </Button>
                 </li>
               );
             })}
           </ul>
 
           <div className="flex flex-wrap gap-2">
-            <button className="btn btn-ember" onClick={() => run({ type: "discard" })}>
+            <Button variant="ember" onClick={() => run({ type: "discard" })}>
               Take off the list
-            </button>
-            <button
-              className="btn"
+            </Button>
+            <Button
               disabled={view.activeWheel === "reserve"}
               onClick={() => run({ type: "toReserve" })}
             >
               Move to reserve wheel
-            </button>
-            <button className="btn" onClick={() => run({ type: "clearBids" })}>
-              Clear all bids
-            </button>
-            <button className="btn" onClick={() => run({ type: "cancel" })}>
-              Cancel lot
-            </button>
+            </Button>
+            <Button onClick={() => run({ type: "clearBids" })}>Clear all bids</Button>
+            <Button onClick={() => run({ type: "cancel" })}>Cancel lot</Button>
           </div>
         </>
       )}
-    </div>
+    </Panel>
   );
 }
