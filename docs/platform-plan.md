@@ -543,9 +543,12 @@ Tracked in detail in [checklist.md](./checklist.md); the summary lives here.
 extracted, rebrand to Job Centre Events, repo renamed to `job-centre`. The suite caught two
 real scheduling bugs, both fixed with regression tests.
 
-**Phase 1 — in progress.** Schema, migrations and profiles. Local development and tests run
-on PGlite (Postgres compiled to WASM), so the whole phase can be built and tested without a
-cloud account; the same schema points at Neon in production by setting one variable.
+**Phase 1 — done bar the credentials.** Schema, migrations, Discord auth with the guild
+gate, `/me/profile` and `/admin/games`. Local development and tests run on PGlite (Postgres
+compiled to WASM), so the whole phase was built and tested without a cloud account; the same
+schema points at Neon in production by setting one variable. A development-only sign-in
+(`/dev-login`, gated on `NODE_ENV=development` **and** `DEV_LOGIN=1`) stands in for Discord
+until the application below exists.
 
 **Still needed from outside the repo** — only the live sign-in flow depends on these:
 1. A **Discord application**: client id, client secret, and the guild id to gate against.

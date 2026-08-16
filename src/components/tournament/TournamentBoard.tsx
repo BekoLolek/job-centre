@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import MatchCard from "./MatchCard";
 import AdminTools from "./AdminTools";
 import {
@@ -22,7 +22,17 @@ import type { ResolvedMatch, TournamentView } from "@/lib/types";
 
 const POLL_MS = 4000;
 
-export default function TournamentBoard({ admin = false }: { admin?: boolean }) {
+export default function TournamentBoard({
+  admin = false,
+  /**
+   * The session-aware links from plan §4 (Profile, and Admin for admins),
+   * rendered on the server and passed in — this component cannot read a cookie.
+   */
+  nav,
+}: {
+  admin?: boolean;
+  nav?: ReactNode;
+}) {
   const [view, setView] = useState<TournamentView | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,6 +144,7 @@ export default function TournamentBoard({ admin = false }: { admin?: boolean }) 
                 </Button>
               </>
             )}
+            {nav}
           </div>
         </div>
       </header>

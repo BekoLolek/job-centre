@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Anton, Familjen_Grotesk, Azeret_Mono } from "next/font/google";
+import DevLoginBanner from "@/components/DevLoginBanner";
 import "./globals.css";
 
 const display = Anton({
@@ -31,6 +32,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${display.variable} ${body.variable} ${mono.variable}`}>
       <body className="grain">
         <div className="stage min-h-screen">{children}</div>
+        {/* Renders nothing unless the development sign-in is switched on. */}
+        <DevLoginBanner />
       </body>
     </html>
   );

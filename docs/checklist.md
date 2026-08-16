@@ -20,7 +20,7 @@ Legend: `[x]` done · `[ ]` not started · `[~]` in progress · `[!]` blocked
 - [x] Rebrand to Job Centre Events
 - [x] Repo renamed to `job-centre`
 
-## Phase 1 — identity `[~]` in progress
+## Phase 1 — identity `[x]` complete (bar the live Discord credentials)
 
 - [x] Postgres schema in Drizzle: users, games, profile fields and values, settings
 - [x] Local development and tests on PGlite, so no cloud account is needed to build
@@ -31,13 +31,27 @@ Legend: `[x]` done · `[ ]` not started · `[~]` in progress · `[!]` blocked
 - [x] First admin seeded from `ADMIN_DISCORD_IDS` — applied on first sign-in as well as by
       the seed, and only ever grants the flag, never removes it
 - [x] `/signin` and `getCurrentUser` / `requireUser` / `requireAdmin` for the pages to come
-- [ ] `/me/profile` — per-game profile, click-first inputs
-- [ ] `/admin/games` — define a game and the questions it asks
+- [x] `/me/profile` — per-game profile, click-first inputs: pill rows, toggle chips, a
+      two-tap rank picker over the 23-rank ladder, steppers, and free text only where the
+      field type genuinely is text. Each section saves itself; no page-wide submit
+- [x] `/admin/games` — define a game and the questions it asks: create, rename, reorder,
+      activate/deactivate; edit the rank ladder; add, retype, reorder and delete questions,
+      with the number of answers an edit or delete would destroy shown first
+- [x] Development sign-in (`/dev-login`), so the pages above could be built and driven in a
+      browser before the Discord app exists. Requires `NODE_ENV=development` **and**
+      `DEV_LOGIN=1`; unreachable from a deployment, and loudly banner-ed while live
+- [x] Session-aware navigation — Profile for members, Admin as well for admins
 - [x] Legacy password login left running alongside, so the draft board keeps working
 
 **Blocked on you:** `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_GUILD_ID`,
 `ADMIN_DISCORD_IDS`, `DATABASE_URL`. Everything above can be built and tested against
 PGlite without them; only the live sign-in flow needs the real values.
+
+**Known dev-only gotcha:** `next dev` runs route handlers in a different process from page
+renders, and PGlite lives inside whichever process opened it — so a row written by an
+`/api/*` route is invisible to pages until the server restarts. Anything that writes to
+Postgres and expects a page to see it must be a server action, not a route handler. Neon
+makes the problem disappear, since then there is one real database.
 
 ## Phase 2 — events and applications `[ ]`
 
