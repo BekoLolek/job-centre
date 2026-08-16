@@ -54,6 +54,13 @@ burden. This is the cheapest moment to change the foundations.
 - Availability per day/slot, and attendance confirmation closer to the date
 - See own applications and their status
 
+**Signing up must be clicks, not typing.** The Google Forms flow died of friction: the same
+answers retyped every event, in prose, unvalidated. The replacement rule is that every
+question is a choice — select, multi-select, toggle, stepper, rank picker, availability
+chips — and free text appears only where it genuinely cannot be avoided (an in-game name,
+an optional "anything else"). A returning player's application should be: check the
+prefilled profile is still right, tap the days you can make, submit.
+
 **Admin**
 - Create events from templates: Rivals tournament, casual 6v6, Jackbox, REPO, anything
 - Design the application form per event
@@ -268,8 +275,14 @@ instants — the timezone lesson from the current build applies everywhere.
 
 | Table | Key columns |
 | --- | --- |
-| `profile_fields` | `scope` (global / game key e.g. `rivals`), `key`, `label`, `type`, `options`, `required`, `sort` |
+| `games` | `key` unique, `name`, `sort`, `is_active`, `rank_ladder` jsonb — an ordered list of ranks, lowest first. Empty for games without ranks, like Jackbox. |
+| `profile_fields` | `game_id` (null means a global field), `key`, `label`, `type`, `options` jsonb, `required`, `sort` |
 | `profile_values` | `user_id`, `field_id`, `value` jsonb, `updated_at` — unique on (user, field) |
+
+`type` is deliberately click-first: `select`, `multiselect`, `rank`, `bool`, `number`, and
+`text` only as a last resort. A `rank` field reads its options from the game's
+`rank_ladder`, which is what makes the entry thresholds in §8.3 a comparison of two
+positions rather than string-matching someone's typed guess at their own rank.
 
 Admin-defined fields, so "what's your rank", "preferred role", "in-game name" are data, not
 code. They persist across events and pre-fill application forms, which is exactly what the
@@ -352,7 +365,45 @@ Options that are currently hardcoded and become settings: bronze match (none / l
 doubles as bronze / separate match), bracket reset on/off, and round-robin points and
 tiebreakers.
 
-### 8.3 What carries over
+### 8.3 Entry requirements
+
+Two thresholds, both per event, both optional:
+
+- **Minimum rank to enter** — provisionally Platinum 3.
+- **Minimum rank to captain** — provisionally Diamond 2.
+
+Neither number is settled, which is precisely why they are settings rather than constants.
+They work because rank is structured data: each game carries an ordered `rankLadder`, a
+player's rank is a picker on their profile rather than a typed string, and eligibility is
+therefore a comparison of two positions in that list. The application form can then say
+"you need Platinum 3 for this one" before someone wastes their time, and the captain
+dropdown can grey out anyone below the captain threshold.
+
+Two things to get right when it is built:
+
+- Ranks drift. A stored rank is a claim made on some past date, so the signup step should
+  show it back and ask "still right?" rather than trusting it silently.
+- An admin override must exist. Gates are guidance, not a wall — sometimes you want the
+  Gold player who is filling in for a mate.
+
+### 8.4 Map selection — proposed, not decided
+
+**Held pending feedback from the group. Not in any phase.**
+
+The idea: teams alternate bans from the mode's map pool, and whichever team did *not* ban
+first picks the map from what remains. It trades away pure randomness for agency, and it
+gives the second banner something back for going second.
+
+If it goes ahead, the shape is roughly: a map pool per mode attached to the game, a veto
+sequence per series length (`ban, ban, pick` for a Bo3 decider; longer for a Bo5), a rule
+for who bans first (higher seed, or a coin flip), and the recorded map per game becoming
+the output of the veto rather than something the admin types in afterwards.
+
+Worth deciding before building: does the veto happen live in the app — which means another
+real-time surface, like the draft room — or offline in Discord with the admin recording the
+result? The offline version is a fraction of the work and probably where to start.
+
+### 8.5 What carries over
 
 `resolveMatches` already does the right thing — it just needs its hardcoded six-slot table
 replaced by generated slots. `standingsFor`, the mini-league tiebreak, and the drawn-series
@@ -478,7 +529,7 @@ Folding §13 back into the design:
   gains an ordering rule: accepted until the cap is reached, then `waitlisted` in
   submission order, with automatic promotion when someone withdraws. Admin approval stays
   available as a per-event switch.
-- **Per-game profiles, with admin-defined games.** `profile_fields.scope` is not an enum —
+- **Per-game profiles, with admin-defined games.** `profile_fields.game_id` is not an enum —
   it points at a `games` table the admin can add rows to. Creating "Jackbox" and giving it
   three questions is a UI action, not a migration.
 - **Discord notifications** are in scope (Phase 5): new event published, application
@@ -486,19 +537,19 @@ Folding §13 back into the design:
 
 ## 15. Progress and prerequisites
 
-**Done**
-- Repo renamed to `job-centre`; local remote updated.
-- Workspace dev-server config repointed at `Job Centre/Website`.
+Tracked in detail in [checklist.md](./checklist.md); the summary lives here.
 
-**Phase 0 — in progress**
-- Vitest plus a unit suite over the existing pure logic, as a safety net before the
-  tournament engine is generalised.
-- `src/components/ui/` extracted from the copy-pasted patterns, and the rebrand to
-  Job Centre Events.
+**Phase 0 — done.** Vitest with 236 tests over the existing logic, `src/components/ui/`
+extracted, rebrand to Job Centre Events, repo renamed to `job-centre`. The suite caught two
+real scheduling bugs, both fixed with regression tests.
 
-**Needed before Phase 1 can start** (external, cannot be created from the repo)
+**Phase 1 — in progress.** Schema, migrations and profiles. Local development and tests run
+on PGlite (Postgres compiled to WASM), so the whole phase can be built and tested without a
+cloud account; the same schema points at Neon in production by setting one variable.
+
+**Still needed from outside the repo** — only the live sign-in flow depends on these:
 1. A **Discord application**: client id, client secret, and the guild id to gate against.
-   Redirect URIs must be registered for both `http://localhost:3400` and the production
-   domain.
-2. A **Postgres connection string** — a Neon project (via Vercel's marketplace or directly),
-   ideally with a separate branch or database for local development.
+   Register the redirect URI for `http://localhost:3400`, and for the Vercel URL once it
+   exists. No custom domain for now.
+2. A **Neon connection string** as `DATABASE_URL`. Absent it, everything falls back to
+   PGlite on disk, which is fine for development but not for a deployment.
