@@ -112,7 +112,8 @@ export function toView(state: DraftState, session: Session): DraftView {
     // reveals it at the same moment for everyone.
     currentPlayer: phase === "spinning" ? null : state.currentPlayer,
     lastResult: state.lastResult,
-    history: state.history.slice(0, 25),
+    // The full record, not a window — a draft's prices are the point of keeping it.
+    history: state.history,
     allBidsIn: allBidsIn(state),
     activePool: poolFor(state, state.activeWheel),
     mainPool: isAdmin ? state.mainPool : null,
@@ -124,7 +125,7 @@ export function toView(state: DraftState, session: Session): DraftView {
 
 export function recordResult(state: DraftState, result: Result) {
   state.lastResult = result;
-  state.history = [result, ...state.history].slice(0, 100);
+  state.history = [result, ...state.history].slice(0, 1000);
   state.spin = null;
   state.currentPlayer = null;
   state.bids = {};

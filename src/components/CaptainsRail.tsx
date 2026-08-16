@@ -5,6 +5,9 @@ import type { DraftView } from "@/lib/types";
 const money = (n: number) => n.toLocaleString("en-US");
 
 export default function CaptainsRail({ view }: { view: DraftView }) {
+  const sold = view.history.filter((r) => r.action === "award");
+  const spent = sold.reduce((total, r) => total + (r.amount ?? 0), 0);
+
   return (
     <aside className="panel p-5 h-fit lg:sticky lg:top-24">
       <div className="flex items-baseline justify-between mb-5">
@@ -73,12 +76,21 @@ export default function CaptainsRail({ view }: { view: DraftView }) {
       </ul>
 
       <div className="mt-6 border-t border-hair pt-4">
-        <h3 className="eyebrow mb-3">Recent lots</h3>
+        <div className="flex items-baseline justify-between mb-3">
+          <h3 className="eyebrow">Lots</h3>
+          {view.history.length > 0 && (
+            <span className="eyebrow">
+              <span className="num text-gold">{sold.length}</span> sold ·{" "}
+              <span className="num text-gold">{money(spent)}</span> spent
+            </span>
+          )}
+        </div>
         {view.history.length === 0 ? (
           <p className="text-xs text-muted">Nothing drafted yet.</p>
         ) : (
-          <ul className="space-y-2">
-            {view.history.slice(0, 8).map((r, i) => (
+          // Every lot, newest first — the list scrolls rather than being cut short.
+          <ul className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+            {view.history.map((r, i) => (
               <li key={`${r.player}-${r.at}-${i}`} className="text-xs leading-snug">
                 <span className="text-chalk/90">{r.player}</span>{" "}
                 {r.action === "award" ? (
