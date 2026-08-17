@@ -25,6 +25,10 @@ describe("migrations", () => {
       "applications",
       "availability",
       "confirmations",
+      "draft_bids",
+      "draft_configs",
+      "draft_lots",
+      "draft_pool_entries",
       "event_days",
       "event_questions",
       "event_templates",
@@ -34,6 +38,8 @@ describe("migrations", () => {
       "profile_values",
       "sessions",
       "settings",
+      "team_members",
+      "teams",
       "users",
       "verification_tokens",
     ]);
@@ -78,7 +84,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(15);
+    expect(await tableNames(ctx.client)).toHaveLength(21);
   });
 
   it("mints uuid primary keys database-side", async () => {
@@ -92,7 +98,10 @@ describe("migrations", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     );
     await client.close();
-  });
+    // Booting a second WASM Postgres and replaying every migration into it is
+    // seconds of work on its own, and more so with a dozen workers doing the
+    // same thing at once. The sibling test below already allows for that.
+  }, 30_000);
 });
 
 describe("driver selection", () => {

@@ -28,9 +28,11 @@
 
 import { relations, sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   boolean,
   check,
   customType,
+  foreignKey,
   index,
   integer,
   pgEnum,
@@ -627,6 +629,408 @@ export const confirmations = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Teams and the draft (§7, §9, §14)                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A team in one event.
+ *
+ * Note what §7's sketch had and this does not: `balance_left`. A stored
+ * remaining balance is a second copy of "start, minus everything you have won",
+ * and the moment an award is voided or a price corrected the two disagree —
+ * with the stored one winning, because it is the one the bid check reads. So
+ * the balance is derived from the awarded lots every time (`balanceFor` in
+ * src/lib/draft-policy.ts), for exactly the reason there is no
+ * `applications_open` column on `events`.
+ *
+ * `(id, event_id)` is unique for no reason of its own: it is the target of the
+ * composite foreign key on `team_members` below, which is what lets Postgres —
+ * not just the application code — guarantee that nobody is on two teams in the
+ * same event.
+ */
+export const teams = pgTable(
+  "teams",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /**
+     * The captain. Nullable because an admin names the teams before they choose
+     * who leads them, and `set null` because deleting a member must not delete
+     * a team that has already drafted a roster.
+     */
+    captainUserId: uuid("captain_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** Bracket seeding (Phase 4). Null while it is undecided. */
+    seed: integer("seed"),
+    /** What this team had to spend before the draft started. */
+    balanceStart: integer("balance_start").notNull().default(0),
+    sort: integer("sort").notNull().default(0),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("teams_event_name_uniq").on(table.eventId, table.name),
+    // Nulls are distinct by default, so any number of teams may sit without a
+    // captain — but one person cannot lead two teams in the same event.
+    unique("teams_event_captain_uniq").on(table.eventId, table.captainUserId),
+    unique("teams_id_event_uniq").on(table.id, table.eventId),
+    index("teams_event_sort_idx").on(table.eventId, table.sort),
+    check("teams_balance_start_positive", sql`${table.balanceStart} >= 0`),
+  ]
+);
+
+/**
+ * One player on one roster.
+ *
+ * §14 settles that **a captain occupies a roster slot**: they are a row here
+ * with `is_captain = true` and `price = 0`, and they never enter the draft
+ * pool. Roster-size limits and the "keep enough to fill your roster" rule
+ * therefore count them without a special case anywhere.
+ *
+ * `event_id` is redundant with `teams.event_id` and is here on purpose: paired
+ * with the composite foreign key it is provably the team's event, and it makes
+ * `(event_id, user_id)` unique enforceable — the one invariant a race could
+ * otherwise break, two admins awarding the same player to two teams at once.
+ */
+export const teamMembers = pgTable(
+  "team_members",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    teamId: uuid("team_id").notNull(),
+    /** Always equal to the team's event; the composite key below proves it. */
+    eventId: uuid("event_id").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** What they cost. Zero for a captain, who was never bid for. */
+    price: integer("price").notNull().default(0),
+    acquiredAt: instant("acquired_at").notNull().defaultNow(),
+    isCaptain: boolean("is_captain").notNull().default(false),
+    /** The lot that produced this row; null for a captain. */
+    lotId: uuid("lot_id").references((): AnyPgColumn => draftLots.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.teamId, table.eventId],
+      foreignColumns: [teams.id, teams.eventId],
+      name: "team_members_team_event_fk",
+    }).onDelete("cascade"),
+    unique("team_members_team_user_uniq").on(table.teamId, table.userId),
+    unique("team_members_event_user_uniq").on(table.eventId, table.userId),
+    index("team_members_team_id_idx").on(table.teamId),
+    index("team_members_user_id_idx").on(table.userId),
+    check("team_members_price_positive", sql`${table.price} >= 0`),
+    // A captain is never bought, so a non-zero captain price is a bug, not a
+    // handicap. §14 is explicit that they cost nothing and fill a slot.
+    check(
+      "team_members_captain_is_free",
+      sql`${table.isCaptain} = false or ${table.price} = 0`
+    ),
+  ]
+);
+
+/** The two wheels. `main` is the draft proper; `reserve` is the second pass. */
+export const draftPoolKind = pgEnum("draft_pool_kind", ["main", "reserve"]);
+
+export type DraftPoolKind = (typeof draftPoolKind.enumValues)[number];
+
+/**
+ * A player waiting to be drafted.
+ *
+ * §7 sketched this as a `draft_pools` row holding an ordered `user_ids` array.
+ * Rows instead, one per player: moving somebody to the reserve pool is then an
+ * update of one column rather than a rewrite of two arrays that can disagree
+ * about who is where, and "is this player still in the pool" is an index lookup
+ * rather than a scan of a blob.
+ *
+ * Unique on (event, user), so a player is in exactly one pool at a time — the
+ * invariant the array model could not state at all.
+ */
+export const draftPoolEntries = pgTable(
+  "draft_pool_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: draftPoolKind("kind").notNull().default("main"),
+    sort: integer("sort").notNull().default(0),
+    addedAt: instant("added_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("draft_pool_entries_event_user_uniq").on(table.eventId, table.userId),
+    index("draft_pool_entries_event_kind_sort_idx").on(table.eventId, table.kind, table.sort),
+  ]
+);
+
+/**
+ * How a lot ended.
+ *
+ * `voided` is the undo, and it is a status rather than a delete because
+ * checklist.md's standing rule is that nothing is destructive: an undone award
+ * keeps its winner and its price so the history can say what was undone, and
+ * every derived figure — balances above all — simply ignores it.
+ */
+export const draftLotStatus = pgEnum("draft_lot_status", [
+  /** On the block now. At most one per event. */
+  "open",
+  "awarded",
+  /** Nobody wanted them, or the admin pulled them. Out of the draft. */
+  "discarded",
+  /** Sent to the reserve pool to come round again later. */
+  "reserved",
+  /** Undone. Kept for the record; counts for nothing. */
+  "voided",
+]);
+
+export type DraftLotStatus = (typeof draftLotStatus.enumValues)[number];
+
+/**
+ * Everything a viewer needs to animate the same spin as everybody else.
+ *
+ * The pool snapshot, the landing index, the start instant and the duration are
+ * jointly deterministic: two browsers opening the page mid-spin compute the
+ * identical wheel angle, and one opening it afterwards can replay it. Stored as
+ * one jsonb blob because it is written once, read whole, and never queried by
+ * field — the opposite of the pool, which is why that one is rows.
+ */
+export type DraftSpin = {
+  /** The pool exactly as it stood, in order — user ids. */
+  pool: string[];
+  /** Index into `pool` the wheel lands on. */
+  targetIndex: number;
+  /** Epoch milliseconds. Absolute, like every other instant here. */
+  startedAt: number;
+  durationMs: number;
+  turns: number;
+};
+
+export const draftLots = pgTable(
+  "draft_lots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    playerUserId: uuid("player_user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: draftLotStatus("status").notNull().default("open"),
+    /** Which pool they were pulled from, so an undo puts them back in it. */
+    fromKind: draftPoolKind("from_kind").notNull().default("main"),
+
+    openedAt: instant("opened_at").notNull().defaultNow(),
+    openedBy: uuid("opened_by").references(() => users.id, { onDelete: "set null" }),
+    /** When the lot stopped taking bids — award, discard or reserve. */
+    closedAt: instant("closed_at"),
+    closedBy: uuid("closed_by").references(() => users.id, { onDelete: "set null" }),
+
+    winnerTeamId: uuid("winner_team_id"),
+    price: integer("price"),
+
+    /** Null when the admin picked the player rather than spinning for them. */
+    spin: json<DraftSpin | null>("spin"),
+
+    /** The undo trace. The award columns above are left exactly as they were. */
+    voidedAt: instant("voided_at"),
+    voidedBy: uuid("voided_by").references(() => users.id, { onDelete: "set null" }),
+  },
+  (table) => [
+    // The winning team must belong to the same event as the lot. Nullable
+    // winner plus MATCH SIMPLE means an unawarded lot is not checked at all.
+    //
+    // Deliberately no `on delete` action. `set null` would fight the
+    // `award_complete` check below — an awarded lot with its winner blanked is
+    // a state the check forbids — and `cascade` would delete the price along
+    // with the team, which checklist.md rules out. So deleting a team that has
+    // won lots is simply refused, which is the same answer `setTeams` gives;
+    // deleting the whole event still works, because the lots go with it in the
+    // same statement.
+    foreignKey({
+      columns: [table.winnerTeamId, table.eventId],
+      foreignColumns: [teams.id, teams.eventId],
+      name: "draft_lots_winner_event_fk",
+    }),
+    index("draft_lots_event_opened_idx").on(table.eventId, table.openedAt),
+    index("draft_lots_event_status_idx").on(table.eventId, table.status),
+    index("draft_lots_player_idx").on(table.playerUserId),
+    // One player on the block at a time, per event. The admin screen refuses a
+    // second spin, but two admins clicking at once is a race the screen cannot
+    // see and this index can.
+    uniqueIndex("draft_lots_one_open_per_event")
+      .on(table.eventId)
+      .where(sql`status = 'open'`),
+    check("draft_lots_price_positive", sql`${table.price} is null or ${table.price} >= 0`),
+    // An award without a winner or without a price is not an award. This is the
+    // constraint that makes "balance derived from awarded lots" total: every
+    // row the sum touches has a number in it.
+    check(
+      "draft_lots_award_complete",
+      sql`${table.status} <> 'awarded' or (${table.winnerTeamId} is not null and ${table.price} is not null)`
+    ),
+    check(
+      "draft_lots_voided_stamped",
+      sql`(${table.status} = 'voided') = (${table.voidedAt} is not null)`
+    ),
+  ]
+);
+
+/**
+ * One team's bid on one lot.
+ *
+ * Unique on (lot, team) as §7 asks, which is what makes a sealed bid final and
+ * a double-clicked submit harmless. Open bidding raises the *same* row rather
+ * than adding another, so the constraint holds either way and "what did they
+ * bid" never needs a max over a history.
+ */
+export const draftBids = pgTable(
+  "draft_bids",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    lotId: uuid("lot_id")
+      .notNull()
+      .references(() => draftLots.id, { onDelete: "cascade" }),
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    amount: integer("amount").notNull(),
+    placedAt: instant("placed_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("draft_bids_lot_team_uniq").on(table.lotId, table.teamId),
+    index("draft_bids_lot_id_idx").on(table.lotId),
+    check("draft_bids_amount_positive", sql`${table.amount} >= 0`),
+  ]
+);
+
+/** Uniform balances, or one per team so an admin can handicap (§9). */
+export const draftBalanceMode = pgEnum("draft_balance_mode", ["uniform", "per_team"]);
+
+export type DraftBalanceMode = (typeof draftBalanceMode.enumValues)[number];
+
+/** Sealed (today's behaviour) or open with a minimum increment (§9). */
+export const draftBiddingMode = pgEnum("draft_bidding_mode", ["sealed", "open"]);
+
+export type DraftBiddingMode = (typeof draftBiddingMode.enumValues)[number];
+
+/** How the next player is chosen (§9). */
+export const draftSelectionMode = pgEnum("draft_selection_mode", [
+  "wheel",
+  "admin_pick",
+  "fixed_order",
+]);
+
+export type DraftSelectionMode = (typeof draftSelectionMode.enumValues)[number];
+
+/**
+ * Who sees a bid amount, and when (§9's last bullet).
+ *
+ * A settled lot's *winning* amount is public under every setting — a draft
+ * whose prices are secret afterwards is not a draft anyone would run — so this
+ * only governs what is visible while a lot is still open.
+ */
+export const draftBidVisibility = pgEnum("draft_bid_visibility", [
+  /** Today's behaviour: admin sees all, a captain sees their own, nobody else. */
+  "admin_only",
+  /** Every captain sees every amount live. What open bidding requires. */
+  "captains",
+  /** The room sees them live too. */
+  "everyone",
+]);
+
+export type DraftBidVisibility = (typeof draftBidVisibility.enumValues)[number];
+
+/**
+ * One event's draft rules.
+ *
+ * ## Why this is a table and not `events.config`
+ *
+ * `events.config` is the right home for the capability flags §8.1 describes —
+ * `teams`, `draft`, `bracket` — which are a handful of booleans read by page
+ * code deciding which tabs exist. The draft rules are a different animal, and
+ * three things settle it:
+ *
+ *  1. **`updateEvent` merges `config` one level deep** (`{...current, ...patch}`).
+ *     A nested `draft: {…}` object would be *replaced* by any partial patch, so
+ *     an admin saving the Basics tab with a stale form would silently reset the
+ *     roster size. Losing a bidding rule to a shallow merge is the kind of bug
+ *     that is invisible until the money is wrong.
+ *  2. **These values are read on the hot path.** `canPlaceBid` consults the
+ *     roster target, the minimum increment and the must-fill rule on every bid;
+ *     they deserve typed columns with check constraints, not a jsonb reach that
+ *     every caller has to re-validate because a config written last month might
+ *     hold anything.
+ *  3. **Postgres can state the invariants.** `roster_target > 0`, a non-negative
+ *     default balance, an increment of at least one — a jsonb blob can hold
+ *     nonsense and nothing notices until a division by zero.
+ *
+ * The cost is one table and one join, and neither is felt: it is one row per
+ * event, read once per draft screen. Absent, every reader falls back to
+ * `DEFAULT_DRAFT_CONFIG` in src/lib/draft-policy.ts, so an event that has never
+ * opened the Draft tab still has complete, sane rules.
+ */
+export const draftConfigs = pgTable(
+  "draft_configs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .unique()
+      .references(() => events.id, { onDelete: "cascade" }),
+
+    /** Uniform balances, or per team (§9's handicapping). */
+    balanceMode: draftBalanceMode("balance_mode").notNull().default("uniform"),
+    /** What a team starts with under `uniform`, and the default under `per_team`. */
+    defaultBalance: integer("default_balance").notNull().default(1000),
+
+    biddingMode: draftBiddingMode("bidding_mode").notNull().default("sealed"),
+    /** The floor for any bid. Zero — today's behaviour — means free is a bid. */
+    minBid: integer("min_bid").notNull().default(0),
+    /** Open bidding only: how far above the standing bid a raise must go. */
+    minIncrement: integer("min_increment").notNull().default(1),
+    /** Null is no timer, which is how the draft runs today. */
+    bidTimerSeconds: integer("bid_timer_seconds"),
+
+    selectionMode: draftSelectionMode("selection_mode").notNull().default("wheel"),
+
+    reserveEnabled: boolean("reserve_enabled").notNull().default(true),
+    /**
+     * How many times a reserve player may come back round. Null is unlimited.
+     * §9 asks for the number without saying what it counts; see the note in
+     * src/lib/draft-policy.ts.
+     */
+    reserveRounds: integer("reserve_rounds"),
+
+    /** Roster size including the captain (§14). */
+    rosterTarget: integer("roster_target").notNull().default(6),
+    /** §9's blind-bid protection. */
+    mustFillRoster: boolean("must_fill_roster").notNull().default(true),
+
+    bidVisibility: draftBidVisibility("bid_visibility").notNull().default("admin_only"),
+
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    check("draft_configs_balance_positive", sql`${table.defaultBalance} >= 0`),
+    check("draft_configs_min_bid_positive", sql`${table.minBid} >= 0`),
+    check("draft_configs_increment_positive", sql`${table.minIncrement} >= 1`),
+    check("draft_configs_roster_target_positive", sql`${table.rosterTarget} >= 1`),
+    check(
+      "draft_configs_timer_positive",
+      sql`${table.bidTimerSeconds} is null or ${table.bidTimerSeconds} > 0`
+    ),
+    check(
+      "draft_configs_reserve_rounds_positive",
+      sql`${table.reserveRounds} is null or ${table.reserveRounds} >= 1`
+    ),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
 /* Relations — for db.query.* joins                                   */
 /* ------------------------------------------------------------------ */
 
@@ -707,6 +1111,39 @@ export const confirmationsRelations = relations(confirmations, ({ one }) => ({
   }),
 }));
 
+export const teamsRelations = relations(teams, ({ one, many }) => ({
+  event: one(events, { fields: [teams.eventId], references: [events.id] }),
+  captain: one(users, { fields: [teams.captainUserId], references: [users.id] }),
+  members: many(teamMembers),
+  bids: many(draftBids),
+}));
+
+export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
+  team: one(teams, { fields: [teamMembers.teamId], references: [teams.id] }),
+  user: one(users, { fields: [teamMembers.userId], references: [users.id] }),
+}));
+
+export const draftPoolEntriesRelations = relations(draftPoolEntries, ({ one }) => ({
+  event: one(events, { fields: [draftPoolEntries.eventId], references: [events.id] }),
+  user: one(users, { fields: [draftPoolEntries.userId], references: [users.id] }),
+}));
+
+export const draftLotsRelations = relations(draftLots, ({ one, many }) => ({
+  event: one(events, { fields: [draftLots.eventId], references: [events.id] }),
+  player: one(users, { fields: [draftLots.playerUserId], references: [users.id] }),
+  winner: one(teams, { fields: [draftLots.winnerTeamId], references: [teams.id] }),
+  bids: many(draftBids),
+}));
+
+export const draftBidsRelations = relations(draftBids, ({ one }) => ({
+  lot: one(draftLots, { fields: [draftBids.lotId], references: [draftLots.id] }),
+  team: one(teams, { fields: [draftBids.teamId], references: [teams.id] }),
+}));
+
+export const draftConfigsRelations = relations(draftConfigs, ({ one }) => ({
+  event: one(events, { fields: [draftConfigs.eventId], references: [events.id] }),
+}));
+
 /* ------------------------------------------------------------------ */
 /* Row types                                                          */
 /* ------------------------------------------------------------------ */
@@ -733,3 +1170,15 @@ export type Application = typeof applications.$inferSelect;
 export type NewApplication = typeof applications.$inferInsert;
 export type AvailabilityRow = typeof availability.$inferSelect;
 export type Confirmation = typeof confirmations.$inferSelect;
+export type Team = typeof teams.$inferSelect;
+export type NewTeam = typeof teams.$inferInsert;
+export type TeamMember = typeof teamMembers.$inferSelect;
+export type NewTeamMember = typeof teamMembers.$inferInsert;
+export type DraftPoolEntry = typeof draftPoolEntries.$inferSelect;
+export type NewDraftPoolEntry = typeof draftPoolEntries.$inferInsert;
+export type DraftLot = typeof draftLots.$inferSelect;
+export type NewDraftLot = typeof draftLots.$inferInsert;
+export type DraftBid = typeof draftBids.$inferSelect;
+export type NewDraftBid = typeof draftBids.$inferInsert;
+export type DraftConfigRow = typeof draftConfigs.$inferSelect;
+export type NewDraftConfigRow = typeof draftConfigs.$inferInsert;

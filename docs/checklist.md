@@ -215,9 +215,9 @@ makes the problem disappear, since then there is one real database.
 
 745 tests. The board, the draft and the schedule are untouched beyond their route.
 
-## Phase 3 — teams and the draft `[ ]`
+## Phase 3 — teams and the draft `[~]` in progress
 
-- [ ] Teams, 2–8 per event
+- [~] Teams, 2–8 per event
 - [ ] Admin picks captains from accepted applicants; a captain fills a roster slot
 - [ ] Draft configuration: balances, bidding style, reserve pool, roster limits
 - [ ] Port the draft room onto the database

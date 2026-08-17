@@ -15,6 +15,13 @@
       "when": 1786962140514,
       "tag": "0001_marvelous_scrambler",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786972594650,
+      "tag": "0002_draft",
+      "breakpoints": true
     }
   ]
 }
