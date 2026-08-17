@@ -192,15 +192,28 @@ renders, and PGlite lives inside whichever process opened it — so a row writte
 Postgres and expects a page to see it must be a server action, not a route handler. Neon
 makes the problem disappear, since then there is one real database.
 
-## Phase 2 — events and applications `[~]` in progress
+## Phase 2 — events and applications `[x]` complete
 
-- [~] Events, event days, event templates
-- [ ] Application form builder (admin)
-- [ ] Click-first application flow — prefilled from the profile, one submit
-- [ ] First-come with a waitlist, automatic promotion on withdrawal
-- [ ] Rank gates: minimum rank to enter, minimum rank to captain
-- [ ] Availability per day, attendance confirmation
-- [ ] Public hub, events list, event page, archive
+- [x] Events, event days, event templates
+- [x] Application form builder (admin) — `/admin/events/[id]`, tab per concern
+- [x] Click-first application flow — prefilled from the profile, one submit. A
+      returning member with a filled-in profile applies in **three taps**:
+      confirm the prefilled answers, "I can make every day", submit. Two if they
+      have applied to that event before, since their availability is kept
+- [x] First-come with a waitlist, automatic promotion on withdrawal — the member
+      sees what withdrawing costs ("2 people waiting — the first takes your seat")
+      before they confirm it
+- [x] Rank gates: minimum rank to enter, minimum rank to captain. The entry rule
+      is shown *before* the form, never after it
+- [x] Availability per day, attendance confirmation — day chips on `/me/events`,
+      saved on the tap
+- [x] Public hub, events list, event page, archive — `/`, `/events`,
+      `/events/[slug]`, plus `/me` and `/me/events` for members. Nothing public
+      needs a session; the invitation to sign in appears at the point of applying
+- [x] The tournament board moved from `/` to `/board`, unchanged, and the hub
+      links to it
+
+745 tests. The board, the draft and the schedule are untouched beyond their route.
 
 ## Phase 3 — teams and the draft `[ ]`
 

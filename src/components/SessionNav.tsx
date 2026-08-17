@@ -1,7 +1,8 @@
 /**
  * The session-aware half of the top bar (docs/platform-plan.md §4).
  *
- * "Signed-in members get **Profile**, admins get an extra **Admin** link."
+ * "Signed-in members get **My events** and **Profile**, admins get an extra
+ * **Admin** link."
  * That is the whole remit, and this stays that small on purpose — the boards
  * each have their own header full of board-specific controls, and the point of
  * §4 is that the *identity* links look the same wherever they appear rather
@@ -29,6 +30,9 @@ export default async function SessionNav() {
 
   return (
     <>
+      <Button href="/me/events" size="sm">
+        My events
+      </Button>
       <Button href="/me/profile" size="sm">
         Profile
       </Button>

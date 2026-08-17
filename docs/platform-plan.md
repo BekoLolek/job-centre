@@ -550,6 +550,14 @@ schema points at Neon in production by setting one variable. A development-only 
 (`/dev-login`, gated on `NODE_ENV=development` **and** `DEV_LOGIN=1`) stands in for Discord
 until the application below exists.
 
+**Phase 2 — done.** Events, days, questions and the admin editor; then the public side and
+the member flow: the hub, `/events`, `/events/[slug]`, `/events/[slug]/apply`, `/me` and
+`/me/events`. The old tournament board moved to `/board` unchanged. The application is the
+part that mattered: prefilled from the profile, confirmed in one tap, availability as day
+chips, one submit — three taps for a returning member, and the rank gate is shown before the
+form rather than after it. Waitlisting, automatic promotion on withdrawal, availability and
+attendance confirmation are all live.
+
 **Still needed from outside the repo** — only the live sign-in flow depends on these:
 1. A **Discord application**: client id, client secret, and the guild id to gate against.
    Register the redirect URI for `http://localhost:3400`, and for the Vercel URL once it

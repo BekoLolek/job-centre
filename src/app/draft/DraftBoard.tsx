@@ -103,7 +103,7 @@ export default function DraftBoard() {
                   ? "Observer"
                   : view.captains.find((c) => c.id === view.captainId)?.name}
             </Eyebrow>
-            <Button href="/" size="sm">
+            <Button href="/board" size="sm">
               Results
             </Button>
             {isAdmin && (

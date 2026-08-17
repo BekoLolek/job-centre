@@ -9,7 +9,7 @@
  */
 
 import type { Status } from "@/components/ui";
-import type { EventStatus } from "@/db/schema";
+import type { EventConfig, EventStatus } from "@/db/schema";
 import type { ApplicationsState } from "@/lib/events-policy";
 import type { ApplicationStatus } from "@/db/schema";
 
@@ -148,6 +148,46 @@ export function eventTypeLabel(type: string): string {
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
+}
+
+/* ------------------------------------------------------------------ */
+/* The format, in plain words                                         */
+/* ------------------------------------------------------------------ */
+
+export type FormatView = {
+  type: string;
+  config: EventConfig | null | undefined;
+  /** How many `event_days` rows it has. */
+  days: number;
+  /** Null is unlimited. */
+  capacity: number | null;
+};
+
+/**
+ * "Tournament · 8 teams · bid draft · 2 days · 24 seats" — plan §6.2's format
+ * summary in plain words, as phrases a page can lay out however it likes.
+ *
+ * Deliberately says only what the event data actually knows. §8.1 makes a type
+ * a capability set rather than a code branch, so a Jackbox night comes back as
+ * "Jackbox · 1 day · 12 seats" without anything here testing for Jackbox — and
+ * the series lengths and bracket shape §6.2 mentions arrive in Phase 4, at
+ * which point they are more phrases here rather than a new component.
+ */
+export function formatSummary(event: FormatView): string[] {
+  const parts: string[] = [eventTypeLabel(event.type)];
+  const config = event.config ?? {};
+
+  const teams = typeof config.teams === "number" ? config.teams : null;
+  if (teams && teams > 0) parts.push(`${teams} teams`);
+  if (config.draft === true) parts.push("bid draft");
+  if (config.bracket === true) parts.push("bracket");
+
+  if (event.days > 0) parts.push(event.days === 1 ? "one day" : `${event.days} days`);
+
+  parts.push(event.capacity === null ? "no seat limit" : `${event.capacity} seats`);
+  if (config.waitlist === false) parts.push("no waitlist");
+
+  return parts;
 }
 
 /* ------------------------------------------------------------------ */

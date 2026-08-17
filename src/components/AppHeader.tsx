@@ -6,6 +6,7 @@
  * keep their own headers — this is for the pages that have no board.
  */
 
+import Link from "next/link";
 import type { ReactNode } from "react";
 import SessionNav from "./SessionNav";
 import { Button } from "@/components/ui";
@@ -22,14 +23,14 @@ export default function AppHeader({
   return (
     <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-4 px-4 sm:px-6">
-        <div className="font-display text-xl tracking-wide">
+        <Link href="/" className="font-display text-xl tracking-wide hover:text-gold">
           JOB CENTRE<span className="text-gold"> {section}</span>
-        </div>
+        </Link>
 
         <div className="ml-auto flex items-center gap-3">
           {children}
-          <Button href="/" size="sm">
-            Board
+          <Button href="/events" size="sm">
+            Events
           </Button>
           <SessionNav />
         </div>

@@ -221,7 +221,7 @@ function NotConfigured({ missing }: { missing: string[] }) {
         </p>
       </Panel>
 
-      <Button href="/" className="w-full">
+      <Button href="/board" className="w-full">
         Back to the board
       </Button>
 

@@ -8,6 +8,6 @@ export default async function SchedulePage() {
   const session = await getSession();
   if (!session) redirect("/login");
   // Captains and the observer get the public board; results entry is the admin's alone.
-  if (session.role !== "admin") redirect("/");
+  if (session.role !== "admin") redirect("/board");
   return <TournamentBoard admin />;
 }

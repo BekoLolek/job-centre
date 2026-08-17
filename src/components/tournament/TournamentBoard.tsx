@@ -125,7 +125,7 @@ export default function TournamentBoard({
                 <Eyebrow as="span" className="text-gold">
                   Admin
                 </Eyebrow>
-                <Button href="/" size="sm">
+                <Button href="/board" size="sm">
                   Public board
                 </Button>
                 <Button href="/draft" size="sm">
