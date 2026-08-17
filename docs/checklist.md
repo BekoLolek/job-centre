@@ -223,13 +223,21 @@ makes the problem disappear, since then there is one real database.
 - [ ] Port the draft room onto the database
 - [ ] Draft as immutable lots and bids, so prices survive forever
 
-## Phase 4 — the format engine `[ ]`
+## Phase 4 — the format engine `[~]` in progress
 
-- [ ] Bracket generation for 2–8 teams with byes
-- [ ] Formats: single elim, double elim, round robin, group into playoff
-- [ ] Series length per stage and per round
-- [ ] Map and mode rules per series
-- [ ] Multi-day scheduling, up to 4 days
+The foundation is built and tested; the boards still run on the old module.
+
+- [x] Schema: `stages`, `matches`, `match_games`, with `source_a` / `source_b`
+- [x] Bracket generation for 2–8 teams with byes — `src/lib/bracket.ts`
+- [x] Formats: single elim, double elim, round robin, group into playoff, plus
+      Swiss round 1 and its pairing rule
+- [x] Series length per stage, per half, per round and per slot
+- [x] Map and mode rules per series length, as data
+- [x] Bronze options and the bracket reset, defaulting off
+- [x] Resolve-on-read generalised — `src/lib/format-resolve.ts`
+- [x] Multi-day scheduling, up to 4 days, with `concurrentLobbies` a setting
+- [x] Proof that the generated 4-team double elimination is the hardcoded one,
+      slot for slot and minute for minute — `src/lib/__tests__/format-parity.test.ts`
 - [ ] Port the results board and scheduler onto the new model
 
 ## Phase 5 — polish `[ ]`

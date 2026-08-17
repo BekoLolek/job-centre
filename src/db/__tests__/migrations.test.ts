@@ -34,10 +34,15 @@ describe("migrations", () => {
       "event_templates",
       "events",
       "games",
+      // §7 sketched this as `games` too; the catalogue above already has that
+      // name, so the per-match maps are `match_games`.
+      "match_games",
+      "matches",
       "profile_fields",
       "profile_values",
       "sessions",
       "settings",
+      "stages",
       "team_members",
       "teams",
       "users",
@@ -84,7 +89,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(21);
+    expect(await tableNames(ctx.client)).toHaveLength(24);
   });
 
   it("mints uuid primary keys database-side", async () => {

@@ -1031,6 +1031,219 @@ export const draftConfigs = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Competition — the format engine (§7, §8.2, §10)                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What shape a stage is. §7 lists four; `group_playoff` is the fifth §8.2 asks
+ * for, and it is one stage rather than two because its bracket's sources point
+ * *into* its own group tables (`group:a:rank:2`) — splitting it would put a
+ * source reference across a stage boundary for no gain.
+ */
+export const stageKind = pgEnum("stage_kind", [
+  "round_robin",
+  "single_elim",
+  "double_elim",
+  /** Round 1 is generated; later rounds are paired from the table as it fills. */
+  "swiss",
+  "group_playoff",
+]);
+
+export type StageKindValue = (typeof stageKind.enumValues)[number];
+
+/**
+ * A stage's rules as stored. The shape is `StageConfig` in
+ * src/lib/format-policy.ts, which is also the only thing that reads it —
+ * `normaliseStageConfig` fills every gap, so a config written by an older
+ * admin screen is a normal thing to meet, exactly as with `events.config`.
+ *
+ * jsonb rather than columns, unlike `draft_configs`: nothing here is on a hot
+ * path, half of it is a map keyed by round or by slot (which columns cannot
+ * express at all), and the format tab saves the whole object at once so the
+ * shallow-merge hazard that settled the draft's case does not arise.
+ */
+export type StageConfigJson = Record<string, unknown>;
+
+/**
+ * One phase of an event's competition: a group stage, a bracket, or both.
+ *
+ * `(id, event_id)` is unique for the same reason `teams`' pair is: it is the
+ * target of the composite foreign key on `matches`, which is what lets Postgres
+ * — not just the application code — guarantee that a match, its stage and its
+ * two teams all belong to the same event.
+ */
+export const stages = pgTable(
+  "stages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** What the tabs call it: "Group stage", "Playoffs". */
+    name: text("name"),
+    kind: stageKind("kind").notNull(),
+    sort: integer("sort").notNull().default(0),
+    config: json<StageConfigJson>("config")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("stages_id_event_uniq").on(table.id, table.eventId),
+    index("stages_event_sort_idx").on(table.eventId, table.sort),
+  ]
+);
+
+/**
+ * One match. The row holds what actually happened; everything else about it —
+ * its label, its stakes note, which round it belongs to on the board — is
+ * regenerated from the stage's kind, team count and config, because that
+ * generation is deterministic and a stored copy is a copy that goes stale.
+ *
+ * ## `source_a` / `source_b` are the point of the table
+ *
+ * A slot says *where* its teams come from, not who they are: `seed:1`,
+ * `winner:ubsf1`, `loser:ubf`, `group:a:rank:2`. Correcting a score from three
+ * days ago re-propagates the whole bracket on the next read, because there is
+ * nothing downstream to be stale (§1.1, §8.5). `team_a_id` is filled in anyway
+ * for a table game, where the pairing is known from the start and there is
+ * nothing to resolve.
+ *
+ * ## `event_id` is redundant, and deliberate
+ *
+ * It is always the stage's event — the composite key below proves it — and it
+ * is what makes the team references checkable: a match cannot name a team from
+ * a different event, which is the one mistake a stale admin form could
+ * otherwise make silently. Deleting a team that has played is simply refused
+ * (no `on delete` action), for the same reason `draft_lots` refuses it: `set
+ * null` cannot null one column of a composite key, and cascading would erase a
+ * completed result, which checklist.md rules out. Deleting the event still
+ * works, since everything goes in the same statement.
+ */
+export const matches = pgTable(
+  "matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    stageId: uuid("stage_id").notNull(),
+    /**
+     * Always equal to the stage's event; the composite key below proves it.
+     *
+     * The plain cascade here is doing real work as well as documenting intent:
+     * without it, deleting an event cascades to `teams` and to `stages`, and
+     * the team references below — which are deliberately `no action` — can fire
+     * before the stage cascade has taken the matches away. With it, the matches
+     * go in the same statement and nothing is ever momentarily orphaned. This
+     * is the same pairing `draft_lots` uses.
+     */
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** Unique within the stage: `rr-1-2`, `ubsf1`, `lbf`, `gf`. */
+    slot: text("slot").notNull(),
+    /** Round within this match's own half of the stage. */
+    round: integer("round").notNull().default(1),
+    /** Dependency depth. Everything sharing a phase can be played at once. */
+    phase: integer("phase").notNull().default(1),
+    bestOf: integer("best_of").notNull().default(1),
+
+    teamAId: uuid("team_a_id"),
+    teamBId: uuid("team_b_id"),
+    sourceA: text("source_a"),
+    sourceB: text("source_b"),
+
+    /** An absolute instant. Rendered in each viewer's own zone. */
+    scheduledAt: instant("scheduled_at"),
+    /** When it actually finished — stamped the moment it becomes decided. */
+    finishedAt: instant("finished_at"),
+    durationMin: integer("duration_min"),
+    /** Set by the admin when the games alone do not settle it (a drawn decider). */
+    winnerOverrideId: uuid("winner_override_id"),
+
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.stageId, table.eventId],
+      foreignColumns: [stages.id, stages.eventId],
+      name: "matches_stage_event_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.teamAId, table.eventId],
+      foreignColumns: [teams.id, teams.eventId],
+      name: "matches_team_a_event_fk",
+    }),
+    foreignKey({
+      columns: [table.teamBId, table.eventId],
+      foreignColumns: [teams.id, teams.eventId],
+      name: "matches_team_b_event_fk",
+    }),
+    foreignKey({
+      columns: [table.winnerOverrideId, table.eventId],
+      foreignColumns: [teams.id, teams.eventId],
+      name: "matches_winner_override_event_fk",
+    }),
+    unique("matches_stage_slot_uniq").on(table.stageId, table.slot),
+    index("matches_stage_phase_idx").on(table.stageId, table.phase),
+    // The schedule reads "what is on, soonest first" across a whole event.
+    index("matches_event_scheduled_idx").on(table.eventId, table.scheduledAt),
+    // An even series cannot be won without a tiebreak nobody asked for.
+    check("matches_best_of_odd", sql`${table.bestOf} >= 1 and ${table.bestOf} % 2 = 1`),
+    check("matches_round_positive", sql`${table.round} >= 1`),
+    check("matches_phase_positive", sql`${table.phase} >= 1`),
+    check(
+      "matches_duration_positive",
+      sql`${table.durationMin} is null or ${table.durationMin} > 0`
+    ),
+    // A team cannot play itself. Both null is the normal unresolved state.
+    check(
+      "matches_distinct_teams",
+      sql`${table.teamAId} is null or ${table.teamBId} is null or ${table.teamAId} <> ${table.teamBId}`
+    ),
+  ]
+);
+
+/**
+ * One map of one series.
+ *
+ * `mode` is text rather than an enum on purpose: the modes belong to the game
+ * (`games` catalogue), so adding "Escort" must be a row somewhere, never a
+ * migration — the same rule that keeps `events.type` text.
+ *
+ * The table is `match_games` and not `games` because `games` above is the admin
+ * catalogue; §7's sketch used the same name for both.
+ */
+export const matchGames = pgTable(
+  "match_games",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    matchId: uuid("match_id")
+      .notNull()
+      .references(() => matches.id, { onDelete: "cascade" }),
+    /** Position in the series, from 0. */
+    index: integer("index").notNull(),
+    mode: text("mode").notNull().default(""),
+    map: text("map").notNull().default(""),
+    referee: text("referee").notNull().default(""),
+    scoreA: integer("score_a").notNull().default(0),
+    scoreB: integer("score_b").notNull().default(0),
+    /**
+     * Ticked off by the admin. A score typed in but not ticked counts for
+     * nothing anywhere — which is what lets an admin fill a card in advance.
+     */
+    played: boolean("played").notNull().default(false),
+  },
+  (table) => [
+    unique("match_games_match_index_uniq").on(table.matchId, table.index),
+    index("match_games_match_id_idx").on(table.matchId),
+    check("match_games_index_positive", sql`${table.index} >= 0`),
+    check(
+      "match_games_scores_positive",
+      sql`${table.scoreA} >= 0 and ${table.scoreB} >= 0`
+    ),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
 /* Relations — for db.query.* joins                                   */
 /* ------------------------------------------------------------------ */
 
@@ -1144,6 +1357,23 @@ export const draftConfigsRelations = relations(draftConfigs, ({ one }) => ({
   event: one(events, { fields: [draftConfigs.eventId], references: [events.id] }),
 }));
 
+export const stagesRelations = relations(stages, ({ one, many }) => ({
+  event: one(events, { fields: [stages.eventId], references: [events.id] }),
+  matches: many(matches),
+}));
+
+export const matchesRelations = relations(matches, ({ one, many }) => ({
+  stage: one(stages, { fields: [matches.stageId], references: [stages.id] }),
+  event: one(events, { fields: [matches.eventId], references: [events.id] }),
+  teamA: one(teams, { fields: [matches.teamAId], references: [teams.id] }),
+  teamB: one(teams, { fields: [matches.teamBId], references: [teams.id] }),
+  games: many(matchGames),
+}));
+
+export const matchGamesRelations = relations(matchGames, ({ one }) => ({
+  match: one(matches, { fields: [matchGames.matchId], references: [matches.id] }),
+}));
+
 /* ------------------------------------------------------------------ */
 /* Row types                                                          */
 /* ------------------------------------------------------------------ */
@@ -1182,3 +1412,9 @@ export type DraftBid = typeof draftBids.$inferSelect;
 export type NewDraftBid = typeof draftBids.$inferInsert;
 export type DraftConfigRow = typeof draftConfigs.$inferSelect;
 export type NewDraftConfigRow = typeof draftConfigs.$inferInsert;
+export type Stage = typeof stages.$inferSelect;
+export type NewStage = typeof stages.$inferInsert;
+export type MatchRow = typeof matches.$inferSelect;
+export type NewMatchRow = typeof matches.$inferInsert;
+export type MatchGameRow = typeof matchGames.$inferSelect;
+export type NewMatchGameRow = typeof matchGames.$inferInsert;
