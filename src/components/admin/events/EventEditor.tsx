@@ -10,10 +10,13 @@ import CaptainsTab from "./CaptainsTab";
 import DaysTab from "./DaysTab";
 import DraftTab from "./DraftTab";
 import EntryRulesTab from "./EntryRulesTab";
+import FormatTab from "./FormatTab";
 import PublishTab from "./PublishTab";
 import QuestionsTab from "./QuestionsTab";
+import ResultsTab from "./ResultsTab";
+import ScheduleTab from "./ScheduleTab";
 import TeamsTab from "./TeamsTab";
-import type { DraftTabData, GameOption, LinkableField } from "./types";
+import type { DraftTabData, FormatTabData, GameOption, LinkableField } from "./types";
 
 /**
  * The event editor shell — plan §6.3.
@@ -32,6 +35,12 @@ import type { DraftTabData, GameOption, LinkableField } from "./types";
  * because they are three views of the same thing: the captain the middle tab
  * chooses is the roster row the last one prices. Tabs holding separate reads
  * could show a captain who is not yet on the roster the balance came from.
+ *
+ * The three format tabs share one `format` bundle for exactly the same reason,
+ * and it is a stronger case: the shape the Format tab generates *is* the block
+ * plan the Schedule tab lays out and *is* the cards the Results tab records
+ * against. Three separate reads could show a schedule for a bracket that no
+ * longer exists.
  */
 
 type TabKey =
@@ -43,6 +52,9 @@ type TabKey =
   | "teams"
   | "captains"
   | "draft"
+  | "format"
+  | "schedule"
+  | "results"
   | "publish";
 
 export default function EventEditor({
@@ -51,8 +63,10 @@ export default function EventEditor({
   games,
   linkableFields,
   draft,
+  format,
   maxDays,
   maxQuestions,
+  maxStages,
 }: {
   event: EventDetail;
   applicants: ApplicantView[];
@@ -60,6 +74,8 @@ export default function EventEditor({
   linkableFields: LinkableField[];
   /** Teams, captains, rules and the pool — one read, three tabs. */
   draft: DraftTabData;
+  /** Stages, matches, blocks and the schedule settings — one read, three tabs. */
+  format: FormatTabData;
   /**
    * `MAX_EVENT_DAYS` / `MAX_EVENT_QUESTIONS`, handed down from the server page.
    * They live in `src/lib/events.ts`, which reaches the database — importing it
@@ -68,6 +84,8 @@ export default function EventEditor({
    */
   maxDays: number;
   maxQuestions: number;
+  /** `MAX_STAGES`, for the same reason — `src/lib/format.ts` reaches Postgres. */
+  maxStages: number;
 }) {
   const [tab, setTab] = useState<TabKey>("basics");
 
@@ -76,6 +94,15 @@ export default function EventEditor({
     (row) => row.status === "waitlisted" && row.decidedAt === null
   ).length;
   const captains = draft.teams.filter((team) => team.captainUserId !== null).length;
+
+  // Rows, not resolved slots: `formatFor` resolves a stage's matches from its
+  // generated spec whether or not it has been generated, so counting those
+  // would put "0/6 played" on a tab with nothing in the database.
+  const allMatches = format.view.stages
+    .flatMap((stage) => stage.matches)
+    .filter((match) => format.matchIds[match.slot]);
+  const playedMatches = allMatches.filter((match) => match.status === "done").length;
+  const needsDecision = allMatches.filter((match) => match.needsDecision).length;
 
   return (
     <div className="space-y-6">
@@ -136,6 +163,17 @@ export default function EventEditor({
             }`,
           },
           { value: "draft", label: `Draft (${draft.pool.main.length})` },
+          {
+            value: "format",
+            label: `Format (${format.view.stages.length})`,
+          },
+          { value: "schedule", label: `Schedule (${format.view.days}d)` },
+          {
+            value: "results",
+            label: `Results (${playedMatches}/${allMatches.length})${
+              needsDecision > 0 ? " •" : ""
+            }`,
+          },
           { value: "publish", label: "Publish" },
         ]}
         value={tab}
@@ -166,6 +204,30 @@ export default function EventEditor({
       )}
       {tab === "draft" && (
         <DraftTab eventId={event.id} applicants={applicants} data={draft} />
+      )}
+      {tab === "format" && (
+        <FormatTab
+          eventId={event.id}
+          format={format.view}
+          matchIds={format.matchIds}
+          maxStages={maxStages}
+        />
+      )}
+      {tab === "schedule" && (
+        <ScheduleTab
+          eventId={event.id}
+          event={event}
+          format={format.view}
+          settings={format.settings}
+          matchIds={format.matchIds}
+        />
+      )}
+      {tab === "results" && (
+        <ResultsTab
+          eventId={event.id}
+          format={format.view}
+          matchIds={format.matchIds}
+        />
       )}
       {tab === "publish" && (
         <PublishTab event={event} applicants={applicants} queue={queue} />

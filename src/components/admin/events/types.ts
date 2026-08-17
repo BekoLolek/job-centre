@@ -1,6 +1,7 @@
 import type { PlayerBook, TeamLike } from "@/components/draft";
 import type { ProfileFieldOption, ProfileFieldType } from "@/db/schema";
 import type { DraftConfig } from "@/lib/draft-policy";
+import type { FormatView, ScheduleSettings } from "@/lib/format";
 
 /**
  * The props the event editor's tabs share.
@@ -65,4 +66,34 @@ export type DraftTabData = {
    * rejection.
    */
   started: boolean;
+};
+
+/**
+ * Everything the Format, Schedule and Results tabs read, in one bundle.
+ *
+ * One server read builds it and all three tabs share it, for the same reason
+ * `DraftTabData` is shared — and here the argument is stronger. The shape the
+ * Format tab generates *is* the block plan the Schedule tab lays out and *is*
+ * the cards the Results tab records against, all three of them derived from one
+ * `formatFor` call. Tabs holding separate reads could show a running order for
+ * a bracket that had already been regenerated underneath it.
+ */
+export type FormatTabData = {
+  /** `formatFor` — stages, resolved matches, standings, blocks and day totals. */
+  view: FormatView;
+  /**
+   * `scheduleSettingsFrom(event.config)`. `FormatView` carries the three
+   * numbers the board needs but not `blockDays`, which only the Schedule tab
+   * edits — so it comes across separately rather than being guessed at.
+   */
+  settings: ScheduleSettings;
+  /**
+   * Slot to `matches.id`, from `matchIdsFor`.
+   *
+   * A `ResolvedMatch` carries no id: it is a generated slot plus whatever is
+   * stored against it, and the generated half has no row — which is exactly
+   * what lets a bracket be previewed before it exists. The writes take a row
+   * id, so the mapping travels alongside the board.
+   */
+  matchIds: Record<string, string>;
 };

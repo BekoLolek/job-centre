@@ -18,7 +18,7 @@ import { notFound } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import EventEditor from "@/components/admin/events/EventEditor";
-import type { DraftTabData } from "@/components/admin/events/types";
+import type { DraftTabData, FormatTabData } from "@/components/admin/events/types";
 import { loadAdminGames } from "@/lib/admin-games";
 import {
   getDiscardedPlayers,
@@ -34,6 +34,7 @@ import {
   getApplicationsForEvent,
   getEventById,
 } from "@/lib/events";
+import { MAX_STAGES, formatFor, matchIdsFor, scheduleSettingsFrom } from "@/lib/format";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -55,17 +56,29 @@ export default async function AdminEventPage({
   const event = await getEventById(id);
   if (!event) notFound();
 
-  const [applicants, adminGames, teams, draftConfig, pool, unpooled, discarded, lots] =
-    await Promise.all([
-      getApplicationsForEvent(event.id),
-      loadAdminGames(),
-      getTeams(event.id),
-      getDraftConfig(event.id),
-      getDraftPool(event.id),
-      getUnpooledApplicants(event.id),
-      getDiscardedPlayers(event.id),
-      getDraftHistory(event.id),
-    ]);
+  const [
+    applicants,
+    adminGames,
+    teams,
+    draftConfig,
+    pool,
+    unpooled,
+    discarded,
+    lots,
+    formatView,
+    matchIds,
+  ] = await Promise.all([
+    getApplicationsForEvent(event.id),
+    loadAdminGames(),
+    getTeams(event.id),
+    getDraftConfig(event.id),
+    getDraftPool(event.id),
+    getUnpooledApplicants(event.id),
+    getDiscardedPlayers(event.id),
+    getDraftHistory(event.id),
+    formatFor(event.id),
+    matchIdsFor(event.id),
+  ]);
 
   // What a question on this event may prefill from: its game's profile fields
   // plus the global ones. A field belonging to another game would prefill an
@@ -136,6 +149,24 @@ export default async function AdminEventPage({
     started: lots.some((lot) => lot.status === "awarded"),
   };
 
+  // One `formatFor` for all three format tabs. It cannot be null here — the
+  // event was just read — but the type says it can, because an event deleted
+  // between the two reads is a real thing rather than an impossible one.
+  const format: FormatTabData = {
+    view: formatView ?? {
+      eventId: event.id,
+      teams: [],
+      stages: [],
+      blocks: [],
+      dayMinutes: [],
+      timing: scheduleSettingsFrom(event.config).timing,
+      concurrentLobbies: scheduleSettingsFrom(event.config).concurrentLobbies,
+      days: scheduleSettingsFrom(event.config).days,
+    },
+    settings: scheduleSettingsFrom(event.config),
+    matchIds,
+  };
+
   return (
     <div className="min-h-screen">
       <AppHeader section="ADMIN">
@@ -154,8 +185,10 @@ export default async function AdminEventPage({
           }))}
           linkableFields={linkableFields}
           draft={draft}
+          format={format}
           maxDays={MAX_EVENT_DAYS}
           maxQuestions={MAX_EVENT_QUESTIONS}
+          maxStages={MAX_STAGES}
         />
       </main>
     </div>

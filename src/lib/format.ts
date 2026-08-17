@@ -384,6 +384,32 @@ export async function formatFor(
   };
 }
 
+/**
+ * Slot to row id, for every match in an event.
+ *
+ * A `ResolvedMatch` deliberately carries no id: it is a *generated* slot plus
+ * whatever happens to be stored against it, and the generated half has no row —
+ * which is exactly what lets a bracket be previewed before it exists. The
+ * writes below all take a row id, so a screen that renders the board and then
+ * wants to record against it needs this one mapping, and it is cheaper and more
+ * honest than hanging a nullable id off every resolved match.
+ *
+ * Keyed by slot alone rather than by stage and slot, which is the assumption
+ * `writeSchedule` and `setWinnerOverride` already make: the running order and
+ * the re-flow index every match of an event by slot, so two stages sharing one
+ * would already be indistinguishable to the scheduler.
+ */
+export async function matchIdsFor(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<Record<string, string>> {
+  const rows = await database
+    .select({ id: matches.id, slot: matches.slot })
+    .from(matches)
+    .where(eq(matches.eventId, eventId));
+  return Object.fromEntries(rows.map((row) => [row.slot, row.id]));
+}
+
 function defaultStageName(kind: StageKind): string {
   switch (kind) {
     case "round_robin":
@@ -730,6 +756,50 @@ export async function setWinnerOverride(
     await tx.update(matches).set({ winnerOverrideId: teamId }).where(eq(matches.id, matchId));
     await reflow(tx, match.eventId);
     return withData(null);
+  });
+}
+
+/**
+ * Move one match, then re-flow the rest of its day.
+ *
+ * `applySchedule` below lays a whole event out from a start time per day, which
+ * is the setting §10 describes and the one the schedule screen offers. This is
+ * the other half of the same job and the one the *results* screen needs: a
+ * match that actually kicked off twenty minutes late is a fact about that
+ * match, not a new plan for the day, and recording it is how the day's anchor
+ * moves without re-running an auto-fill over results that already exist.
+ *
+ * The re-flow afterwards is not optional. `durationMin` is derived from the gap
+ * between the start and the finish, and every later block that day hangs off
+ * when this one ends — so changing a start and leaving the rest alone would
+ * leave the board internally inconsistent, which is exactly what `recordGames`
+ * goes to the trouble of preventing.
+ */
+export async function setMatchSchedule(
+  matchId: string,
+  scheduledAt: string | null,
+  database: Database = defaultDb
+): Promise<FormatResult<{ scheduledAt: string | null }>> {
+  return database.transaction(async (tx) => {
+    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
+    if (!match) return fail("That match no longer exists.");
+
+    const event = await lockEvent(tx, match.eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    let at: Date | null = null;
+    if (scheduledAt) {
+      at = new Date(scheduledAt);
+      if (Number.isNaN(at.getTime())) return fail("That start time is not a time.");
+    }
+
+    await tx.update(matches).set({ scheduledAt: at }).where(eq(matches.id, matchId));
+    await reflow(tx, match.eventId);
+
+    // Read back rather than echo: the re-flow may well have moved it again, and
+    // the screen should show where the match actually ended up.
+    const [after] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
+    return withData({ scheduledAt: iso(after?.scheduledAt ?? null) });
   });
 }
 

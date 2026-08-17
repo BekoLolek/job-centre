@@ -12,11 +12,19 @@
  * bracket, so it never shows a bracket tab (§8.1's capability set, made
  * literal); an event with one day and no applicants yet is a single page with
  * no tab strip at all, because a row of tabs where two are empty is worse than
- * no tabs.
+ * no tabs. Which tabs have content is decided once, by
+ * `getEventBoard`'s `has`, rather than as six conditions retyped here.
  *
- * No session is required to read any of this. A draft is the one exception: it
- * is invisible to everyone but an admin, and answers 404 rather than 403 —
- * members must not be able to learn that an unpublished event exists.
+ * No session is required to read any of this — including the whole tournament
+ * surface: Teams, Schedule, Bracket and Results are all in §11's public row. A
+ * draft event is the one exception: it is invisible to everyone but an admin,
+ * and answers 404 rather than 403, because members must not be able to learn
+ * that an unpublished event exists.
+ *
+ * **No instant is formatted in this file.** Every time on the page goes through
+ * a client component (`EventDateRange`, `LocalTime`, or a whole tab that is
+ * `"use client"`), because the reader's zone is the only honest one to print in
+ * and the server does not know it.
  */
 
 import Link from "next/link";
@@ -32,6 +40,7 @@ import {
   eventStatusMeaning,
   eventTypeLabel,
   formatSummary,
+  iso,
   viewerAction,
 } from "@/components/events";
 import {
@@ -46,7 +55,13 @@ import {
   cx,
   plural,
 } from "@/components/ui";
-import { getTeams } from "@/lib/draft";
+import { podiumEntries } from "@/components/format/board";
+import { dayBySlot as dayOfSlot } from "@/components/format/columns";
+import BracketTab from "./BracketTab";
+import ResultsTab from "./ResultsTab";
+import ScheduleTab from "./ScheduleTab";
+import TeamsTab from "./TeamsTab";
+import { getEventBoard, podiumFor, teamNames } from "@/lib/event-board";
 import {
   type EventDetail,
   getApplicationsForEvent,
@@ -68,7 +83,14 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   };
 }
 
-type Tab = "overview" | "who" | "schedule";
+type Tab = "overview" | "who" | "teams" | "schedule" | "bracket" | "results";
+
+/** Gold for the winner, then down to muted. Fourth and below share the last one. */
+const PODIUM_TONE: Record<number, string> = {
+  1: "text-gold",
+  2: "text-chalk",
+  3: "text-chalk/80",
+};
 
 export default async function EventPage({
   params,
@@ -89,9 +111,18 @@ export default async function EventPage({
   // their rank check. A visitor's action is decided by the clock alone.
   const mine = user ? await loadApplicationForm(event.id, user.id, { now }) : null;
   const applicants = await getApplicationsForEvent(event.id);
-  // The draft room is public to watch (§11), but it is only worth offering once
-  // there are teams to watch draft — before that it is an empty wheel.
-  const teams = await getTeams(event.id);
+  // Rosters, the resolved bracket and the running order — everything §4's four
+  // public tabs draw, in one read. The draft room link below hangs off the same
+  // team list: watching is public (§11), but it is only worth offering once
+  // there are teams to watch draft, because before that it is an empty wheel.
+  const board = await getEventBoard(event.id, { days: event.days.length });
+  const podium = podiumFor(board);
+  const names = teamNames(board);
+  // Which day each slot runs on. It comes from the block plan rather than from
+  // the instant, because a Saturday session that overruns past midnight is
+  // still Saturday — and because a day worked out from `Date#getDate` would
+  // come out differently on the server and in the browser.
+  const dayBySlot = Object.fromEntries(dayOfSlot(board.format?.blocks ?? []));
 
   const action = viewerAction({
     slug: event.slug,
@@ -104,14 +135,25 @@ export default async function EventPage({
   const accepted = applicants.filter((row) => row.status === "accepted");
   const queued = applicants.filter((row) => row.status === "waitlisted");
 
+  // §6.2's tab strip, in its order, and every entry conditional on having
+  // something behind it.
   const tabs: Array<{ value: Tab; label: string; count?: number }> = [
     { value: "overview", label: "Overview" },
   ];
   if (accepted.length + queued.length > 0) {
     tabs.push({ value: "who", label: "Who's in", count: accepted.length });
   }
-  if (event.days.length > 0) {
-    tabs.push({ value: "schedule", label: "Schedule", count: event.days.length });
+  if (board.has.teams) {
+    tabs.push({ value: "teams", label: "Teams", count: board.teams.length });
+  }
+  if (board.has.schedule) {
+    tabs.push({ value: "schedule", label: "Schedule" });
+  }
+  if (board.has.bracket) {
+    tabs.push({ value: "bracket", label: "Bracket" });
+  }
+  if (board.has.results) {
+    tabs.push({ value: "results", label: "Results" });
   }
 
   const raw = (await searchParams).tab;
@@ -196,7 +238,7 @@ export default async function EventPage({
                 />
               )}
 
-              {teams.length > 0 && (
+              {board.teams.length > 0 && (
                 <div>
                   <Eyebrow className="mb-2">The draft</Eyebrow>
                   <Button href={`/events/${event.slug}/draft`} variant="gold" size="sm">
@@ -209,6 +251,23 @@ export default async function EventPage({
             </div>
           </div>
         </Panel>
+
+        {/* --- The podium, once somebody has won -------------------- */}
+        {podium.length > 0 && (
+          <Panel as="section" className="rise">
+            <Eyebrow className="mb-4">Final standings</Eyebrow>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              {podiumEntries(podium).map((entry) => (
+                <StatTile
+                  key={`${entry.position}-${entry.teamId}`}
+                  label={entry.label}
+                  value={names.get(entry.teamId) ?? "—"}
+                  valueClassName={PODIUM_TONE[entry.position] ?? "text-muted"}
+                />
+              ))}
+            </div>
+          </Panel>
+        )}
 
         {/* --- Tabs, only when there is more than one --------------- */}
         {tabs.length > 1 && (
@@ -272,30 +331,25 @@ export default async function EventPage({
           </Panel>
         )}
 
+        {tab === "teams" && <TeamsTab board={board} />}
+
         {tab === "schedule" && (
-          <Panel as="section">
-            <Eyebrow className="mb-4">Running order</Eyebrow>
-            <ol className="space-y-2">
-              {event.days.map((day) => (
-                <li
-                  key={day.id}
-                  className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border border-hair bg-raised px-4 py-3"
-                >
-                  <span className="eyebrow">Day {day.dayIndex + 1}</span>
-                  <span className="text-sm">{day.label ?? `Day ${day.dayIndex + 1}`}</span>
-                  <EventDateRange
-                    startsAt={day.startsAt}
-                    fallback="Time to be confirmed"
-                    className="ml-auto"
-                  />
-                </li>
-              ))}
-            </ol>
-            <p className="mt-4 text-xs text-muted">
-              Times are shown in your own timezone. Applicants say which days they can make;
-              the running order for matches arrives with the format engine.
-            </p>
-          </Panel>
+          <ScheduleTab
+            matches={board.matches}
+            dayBySlot={dayBySlot}
+            days={event.days.map((day) => ({
+              id: day.id,
+              dayIndex: day.dayIndex,
+              label: day.label,
+              startsAt: iso(day.startsAt),
+            }))}
+          />
+        )}
+
+        {tab === "bracket" && <BracketTab stages={board.format?.stages ?? []} />}
+
+        {tab === "results" && (
+          <ResultsTab matches={board.matches} dayBySlot={dayBySlot} />
         )}
       </main>
     </div>
