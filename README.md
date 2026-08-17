@@ -1,161 +1,86 @@
 # Job Centre Events
 
-The events site for the Job Centre Discord. It runs a competition in two halves: an auction
-draft to pick the rosters, then a results board tracking the round robin and
-double-elimination bracket. The first event it hosts is a four-team Marvel Rivals
-tournament, but nothing about the board is tied to that game.
+The events site for the Job Centre Discord. It runs whatever the community runs — Marvel
+Rivals tournaments, casual 6v6, Jackbox nights, REPO — from sign-ups through to a bracket
+and a permanent record of who won and what they cost.
+
+You sign in with Discord. There are no passwords to hand out.
+
+## Routes
 
 | Route | Access | What it is |
 | --- | --- | --- |
-| `/` | Public, no login | Read-only overview: up next, standings, fixtures, bracket |
-| `/draft` | Captains, admin, observer | The live auction draft board |
-| `/draft/schedule` | Admin only | Results and schedule entry |
-| `/login` | — | Sign-in |
+| `/` | Public | Hub: live now, next up, recent results |
+| `/events`, `/events/[slug]` | Public | Every event; teams, schedule, bracket and results as tabs |
+| `/events/[slug]/apply` | Members | The application form |
+| `/events/[slug]/draft` | Public to watch, captains bid | The live auction draft room |
+| `/me`, `/me/profile`, `/me/events` | Members | Your profile, applications, availability |
+| `/admin/events`, `/admin/games` | Admin | Everything that creates or records |
+| `/signin` | — | Discord sign-in |
 
-The root board is read-only for everyone, including the admin — it just gains a link
-across to `/draft/schedule`. Captains and the observer who try that URL are sent back to
-the public board.
+## How an event works
 
-## Tournament format
+1. **Create it** from the admin editor: basics, days, an application form, entry rules.
+   Adding a new *kind* of event is a template row, not a code change.
+2. **People apply.** Questions can be linked to their profile, so a returning member
+   applies in three taps and types nothing. Places are first come, with a waitlist that
+   promotes automatically when somebody withdraws.
+3. **Rank gates**, if you want them: a minimum to enter and a minimum to captain, compared
+   against a position in that game's rank ladder rather than a typed string. They are
+   guidance — an admin can accept someone below the bar deliberately.
+4. **Pick captains and draft.** 2–8 teams. Captains bid; only the admin sees the amounts
+   until a lot settles, and then only the winning price becomes public. Every lot and bid
+   is a row, so the prices survive forever.
+5. **Generate the bracket.** Single elim, double elim, round robin, or groups into a
+   playoff, for any team count from 2 to 8, with byes falling where they should. Series
+   lengths, map and mode sequences, bronze handling and the bracket reset are all settings.
+6. **Schedule it** across up to four days. Give each day a start time and it works out the
+   running order; record a result and the rest of that day re-flows from when the match
+   actually finished.
+7. **Record results** — maps, referees, scores, times. Nothing is ever deleted.
 
-- **Round robin** — every team plays every other once, a single convoy/convergence map.
-  Draws are allowed. 3 points a win, 1 a draw. Ties break on a mini-league among the level
-  teams, then map differential, then maps won; the admin can override the seeds outright.
-- **Double elimination** — seeds 1v4 and 2v3 in the upper semis. Every series is Bo3 with
-  games 1–2 on convoy/convergence and the decider on domination.
-- **Lower final doubles as the bronze match** (Bo3). Its loser is 3rd, its winner goes to
-  the grand final. Lower round 1's loser is 4th.
-- **Grand final** is Bo5 — four convoy/convergence maps and a domination decider. No
-  bracket reset: the lower-bracket team wins the title outright.
+## Times
 
-The bracket fills itself in as results land. Slots that are still waiting show where their
-team will come from — *Seed 1*, *Upper semi 2 loser*, *Lower round 1 winner* — rather than a
-blank. If a series ends level (a drawn decider), the board flags it as *needs a winner* and
-waits for the admin to pick one.
+Every instant is stored in UTC and rendered in the reader's own timezone, which the page
+states. **Never format an instant in a server component** — the server does not know the
+reader's zone, and `suppressHydrationWarning` will not save you: it leaves the server's
+string in the DOM while React believes it holds the client's. Use `LocalTime`
+(`src/components/format/`) or `EventDateRange` (`src/components/events/`), both of which
+re-key on mount.
 
-### Admin controls at `/draft/schedule`
-
-Every match card gains a **Record result** panel: scheduled start,
-duration in minutes, and per game a map name, a referee and both scores. Typing a score
-marks that game as played. Referees are per game, so a Bo3 can have a different one each
-map; the match header lists them, and each game is attributed individually only when a
-series had more than one. Below the bracket:
-
-- **Schedule** — set the four lengths that drive everything (convoy/convergence map,
-  domination map, break between games in a series, break between series), give each day a
-  start time, and it walks both days block by block. Matches that run in parallel share a
-  start time, so a block lasts as long as its slowest series. A live preview shows every
-  block's clock time and both day totals before you commit; *Save lengths only* stores the
-  timings without touching existing start times. Defaults are 30 / 15 / 5 / 10 minutes.
-- **Seeding** — override the computed seeds when the tiebreakers leave teams level.
-- The schedule keeps itself honest as the day runs — see below.
-- **Reset tournament** — clears results, schedule and seeds. Rosters are untouched.
-
-### The schedule re-flows itself
-
-Recording a result stamps the match as finished at that moment, and fills in its duration
-from the scheduled start if you left the field blank. Type a duration yourself and that
-wins — useful for entering a match after the fact.
-
-Matches in a block run in parallel, so the block is only over once the *slowest* of them
-finishes: if one team is done in 26 minutes and the other in 31, the break starts at 31.
-Every later block that day then shifts with it, using recorded finishes where they exist
-and planned lengths where they don't. Running early pulls the day forward just the same.
-
-Days are independent — day 1 overrunning never moves day 2, which keeps its own start
-time. Clearing a result puts the day back on its planned estimate, and a match that has
-already been played keeps the slot it actually ran in even if you re-run the auto-fill.
-
-### Time zones
-
-Start times are stored as absolute instants (UTC) and rendered in each viewer's own zone,
-detected from their browser — a match entered as 18:00 CEST shows as 17:00 to someone in
-the UK and 12:00 on the US east coast. The board states which zone it is showing, and the
-admin panel states which zone you are typing in, so nothing is ambiguous. Durations are
-plain minutes, so the auto-fill stays correct across a daylight-saving change.
-
-## The draft
-
-Live auction-draft board. One shared wheel of players, four captains placing sealed bids,
-one admin running the room.
-
-## How a lot works
-
-1. **Admin spins** the wheel. Every browser animates the same spin off the same server
-   timestamp, so all five people see it land at the same moment on the same name.
-2. **Bidding opens** automatically when the wheel stops. Each captain types a whole number
-   up to their balance and submits. A green check appears next to their team — the amount
-   stays hidden.
-3. **Admin resolves** the lot, three possible outcomes:
-   - **Award** to a captain: that captain's bid is deducted, the player joins their roster,
-     and the winning amount becomes public in the results feed. Losing bids are never shown.
-   - **Take off the list**: player is removed entirely, nobody pays.
-   - **Move to reserve wheel**: player goes into a second wheel only the admin can see.
-     Switch the active wheel to *Reserve* later to draft those players with the same flow.
-
-`Undo` reverses the last resolved lot (refunds the money, puts the player back).
-
-## Accounts
-
-Six accounts, all set through env vars — there is no sign-up:
-
-| Role | Env vars | Sees |
-| --- | --- | --- |
-| Admin | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | Everything, including live bid amounts and the reserve wheel |
-| Captain 1–4 | `CAPTAIN{n}_USERNAME`, `CAPTAIN{n}_PASSWORD` | Wheel, balances, who has bid, own bid, winning amounts |
-| Observer | `OBSERVER_USERNAME`, `OBSERVER_PASSWORD` | Same as a captain minus the bid box — read-only |
-
-Dev defaults when the env vars are unset: `admin/admin`, `observer/watch`, and
-`captain1/draft1` … `captain4/draft4`. Set real values before you deploy.
-
-**Team names come from the login name.** A captain who signs in as `lolek` is
-`Team lolek` on the board, in the results feed and in the admin panel. Rename a team by
-changing `CAPTAIN{n}_USERNAME` — it takes effect on the next request, no reset needed.
-
-## Local development
+## Development
 
 ```bash
 npm install
-cp .env.example .env.local   # optional — defaults work out of the box
-npm run dev
+npm run dev          # http://localhost:3400
+npm test             # 1448 tests
+npm run typecheck
 ```
 
-State is written to `./data/draft.json` (gitignored) when no Redis env vars are present.
+With no `DATABASE_URL` the app runs on **PGlite** — real Postgres compiled to WebAssembly,
+persisted in `./data/pg` — so nothing external is needed to develop or test. Set
+`DATABASE_URL` and it switches to Neon with no other change.
 
-## Deploying to Vercel
+```bash
+npm run db:migrate   # apply ./drizzle
+npm run db:seed      # games, profile fields, guild-gate settings
+npm run db:studio
+```
 
-1. Push the repo and import it in Vercel.
-2. Storage → add the **Upstash for Redis** integration. It injects `KV_REST_API_URL` and
-   `KV_REST_API_TOKEN`; `src/lib/storage.ts` picks them up automatically. Writes take a
-   short-lived lock so two simultaneous bids can't clobber each other.
-3. Add the account env vars plus `SESSION_SECRET` (a long random string) and optionally
-   `DEFAULT_BALANCE`.
-4. Deploy.
+Discord sign-in needs a real application; see `docs/checklist.md` for the by-hand setup.
+Without it, `/dev-login` mints a real session locally — it requires `NODE_ENV=development`
+**and** `DEV_LOGIN=1`, and cannot exist in a deployment.
 
-Without Redis on Vercel the app still boots, but serverless instances don't share a
-filesystem — captains would each see their own copy of the draft. Add the integration.
+## Layout
 
-## Admin setup panel
+```
+src/app/          routes: public, member, admin
+src/components/   ui/ (the kit) · events/ · draft/ · format/ · profile/ · admin/
+src/db/           Drizzle schema, driver, migrations, seed
+src/lib/          the rules: events, draft, bracket, format, auth, profiles
+docs/             platform-plan.md (what and why) · checklist.md (what is done)
+```
 
-Right-hand rail, **Setup** tab:
-
-- **Player pool** — paste one name per line, then *Add* (append) or *Replace* (swap the
-  whole main wheel). Names already drafted or held in reserve are skipped. *Load current
-  pool* pulls the live list back into the box for editing.
-- **Starting balances** — set each team's balance at any time. Team names are read-only
-  here; they follow the captain's login name.
-- **Reset draft** — clears rosters, bids and history, returns every player to the main
-  wheel and restores `DEFAULT_BALANCE`.
-
-The **Pools** tab lists the main and reserve wheels; hover a row to remove a player.
-
-## Notes
-
-- Bids are whole numbers from `0` up to and including the captain's full balance — bidding
-  everything is allowed. A bid of `0` is effectively a pass.
-- A captain's bid locks once submitted; the admin can clear it (per-team or all) to reopen.
-- The admin can award before all four bids are in — useful if someone drops out.
-
-## Stack
-
-Next.js 15 (App Router) · TypeScript · Tailwind · Upstash Redis or local JSON.
+Business rules live in `src/lib` as pure functions with the data layer beside them.
+Components display; they never decide. If a page computes what a captain may bid, that is
+a bug.

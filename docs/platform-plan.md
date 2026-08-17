@@ -11,33 +11,33 @@ The product is **Job Centre Events**. The repo is `BekoLolek/job-centre`.
 
 ---
 
-## 1. Where we are today
+## 1. What this replaced
 
-| Piece | Today | Verdict |
+Retired in Phase 4, once everything it did existed on Postgres. Kept here because the
+reasoning still explains why the current design looks the way it does.
+
+| Piece | Was | Became |
 | --- | --- | --- |
-| Framework | Next.js 16 App Router, TypeScript, Tailwind 3 | Keep |
-| Auth | 6 accounts from env vars, signed cookie | Replace with Discord |
-| Storage | One JSON blob in Upstash Redis (or a local file) | Replace with Postgres |
-| Tournament | One hardcoded 4-team double elim | Generalise to 2–8 teams, many formats |
-| Draft | One wheel, 4 fixed captains, fixed rules | Generalise, admin picks captains |
-| Pages | `/`, `/draft`, `/draft/schedule`, `/login` | Grow into public / member / admin areas |
+| Auth | 6 accounts from env vars, signed cookie | Discord, guild-gated |
+| Storage | One JSON blob in Upstash Redis or a local file | Postgres via Drizzle; PGlite locally |
+| Tournament | One hardcoded 4-team double elim | Generated brackets, 2–8 teams, four formats |
+| Draft | One wheel, 4 fixed captains, fixed rules | Lots and bids as rows; the admin picks captains |
+| Pages | `/`, `/draft`, `/draft/schedule`, `/login` | Public hub, member and admin areas |
 
-Three things from the current build are worth carrying forward deliberately, because they
-already solve problems the bigger version will hit harder:
+Three things were carried forward deliberately, because they solve problems the bigger
+version hits harder, not less:
 
 1. **Results resolve on read.** Bracket slots are derived from earlier results every time
-   rather than written down, so correcting an old score re-propagates everything. This gets
-   more valuable with 8 teams and four days, not less.
+   rather than written down, so correcting an old score re-propagates everything. The
+   hardcoded six-slot table became generated `sourceA`/`sourceB` references; a parity test
+   held both implementations side by side until the old one was deleted.
 2. **The schedule re-flows from actual finish times.** Blocks end when their slowest match
-   ends; later blocks that day shift automatically.
+   ends; later blocks that day shift automatically. Now over four days and any format.
 3. **The visual language.** Anton / Familjen Grotesk / Azeret Mono on near-black with
    amber, ember and signal accents. It reads as a broadcast board, which is the point.
 
-Two things do **not** survive contact with the new scope: the single-blob storage model and
-the env-var account list. Everything else is refactor, not rewrite.
-
-There is no production data — the app has never been deployed — so there is no migration
-burden. This is the cheapest moment to change the foundations.
+The wheel itself survives untouched: `src/components/Wheel.tsx` is the same component,
+which is why the spin payload shape was kept identical through every rewrite.
 
 ---
 

@@ -224,22 +224,6 @@ export default async function HubPage() {
           </section>
         )}
 
-        {/* --- 5. The board ----------------------------------------- */}
-        <Panel as="section" className="flex flex-wrap items-center gap-5">
-          <div className="min-w-0">
-            <Eyebrow className="mb-2">Marvel Rivals tournament</Eyebrow>
-            <p className="text-sm leading-relaxed text-muted">
-              The live bracket, schedule and draft board for the running tournament are on
-              their own screen, exactly as they were.
-            </p>
-          </div>
-          <div className="ml-auto flex flex-wrap gap-2">
-            <Button href="/board">Tournament board</Button>
-            <Button href="/draft" size="sm">
-              Draft
-            </Button>
-          </div>
-        </Panel>
       </main>
     </div>
   );
@@ -273,7 +257,6 @@ function LivePanel({ event }: { event: EventSummary }) {
           <Button href={`/events/${event.slug}`} variant="gold">
             Follow it
           </Button>
-          <Button href="/board">Live board</Button>
         </div>
       </div>
     </Panel>

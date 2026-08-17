@@ -221,13 +221,12 @@ function NotConfigured({ missing }: { missing: string[] }) {
         </p>
       </Panel>
 
-      <Button href="/board" className="w-full">
-        Back to the board
+      <Button href="/" className="w-full">
+        Back to the site
       </Button>
 
       <p className="mt-8 text-xs text-muted leading-relaxed">
-        The draft board&apos;s own captain logins are unaffected and still live at{" "}
-        <span className="font-mono">/login</span>.
+        Discord is the only way in. There are no passwords to hand out and none to lose.
       </p>
     </>
   );

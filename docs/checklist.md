@@ -131,9 +131,8 @@ you. Same product, fewer steps, but no separate `dev` branch unless you add one.
 - [ ] **F2.** **Discord announcements** (Phase 5) — in Discord: **Server Settings** →
       **Integrations** → **Webhooks** → **New Webhook** → pick the channel → **Copy Webhook
       URL** → set as `DISCORD_WEBHOOK_URL`.
-- [ ] **F3.** **Upstash Redis** — only if you want the *old* draft board working on the
-      deployment before Phase 3 ports it onto Postgres. Vercel → **Storage** → **Upstash for
-      Redis**. Once Phase 3 lands this is not needed at all.
+- [x] **F3.** ~~Upstash Redis~~ — not needed. The draft board that wanted it was retired
+      in Phase 4; the draft lives in Postgres like everything else.
 
 ## Common failures
 
@@ -223,9 +222,7 @@ makes the problem disappear, since then there is one real database.
 - [ ] Port the draft room onto the database
 - [ ] Draft as immutable lots and bids, so prices survive forever
 
-## Phase 4 — the format engine `[~]` in progress
-
-The foundation is built and tested; the boards still run on the old module.
+## Phase 4 — the format engine `[x]` complete
 
 - [x] Schema: `stages`, `matches`, `match_games`, with `source_a` / `source_b`
 - [x] Bracket generation for 2–8 teams with byes — `src/lib/bracket.ts`
@@ -236,9 +233,18 @@ The foundation is built and tested; the boards still run on the old module.
 - [x] Bronze options and the bracket reset, defaulting off
 - [x] Resolve-on-read generalised — `src/lib/format-resolve.ts`
 - [x] Multi-day scheduling, up to 4 days, with `concurrentLobbies` a setting
-- [x] Proof that the generated 4-team double elimination is the hardcoded one,
-      slot for slot and minute for minute — `src/lib/__tests__/format-parity.test.ts`
-- [ ] Port the results board and scheduler onto the new model
+- [x] Proof that the generated 4-team double elimination was the hardcoded one, slot for
+      slot and minute for minute. That test compared the two implementations directly, so
+      it retired with the old one — its deletion is the evidence it did its job
+- [x] Admin Format, Schedule and Results tabs
+- [x] Public Teams, Schedule, Bracket and Results tabs
+- [x] Fix: `suppressHydrationWarning` left the server's clock in the DOM, so every time on
+      the site would have rendered in the deployment's zone (UTC on Vercel) under a heading
+      claiming the reader's. It suppresses the warning *and* the correction
+- [x] Legacy retired: `state.ts`, `tournament.ts`, `storage.ts`, `types.ts`, `useDraft.ts`,
+      `session.ts`, `users.ts`, the `/board`, `/draft` and `/login` routes, the old API
+      routes, and the five legacy components. `Wheel.tsx` and `time.ts` survive
+- [x] Discord is now the only way in — the env-var password accounts are gone
 
 ## Phase 5 — polish `[ ]`
 

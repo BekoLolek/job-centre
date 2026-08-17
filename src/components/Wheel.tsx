@@ -1,7 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Spin } from "@/lib/types";
+
+/**
+ * Everything the wheel needs to animate a spin, and nothing else. `DraftSpin` in
+ * `src/db/schema.ts` is this same shape over user ids; the draft room maps those
+ * to display names before handing them over, so this component never learns what
+ * a user is.
+ *
+ * Declared here rather than imported because the wheel outlived the module it
+ * used to share a type with.
+ */
+export type WheelSpin = {
+  /** Snapshot of the pool at spin time — clients animate against this exact order. */
+  pool: string[];
+  targetIndex: number;
+  startedAt: number;
+  durationMs: number;
+  turns: number;
+};
 
 const SIZE = 420;
 const CX = SIZE / 2;
@@ -34,7 +51,7 @@ export default function Wheel({
   onSettled,
 }: {
   pool: string[];
-  spin: Spin | null;
+  spin: WheelSpin | null;
   /** serverNow - clientNow, so every browser animates on the same clock. */
   clockOffset: number;
   onSettled?: (player: string) => void;

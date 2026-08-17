@@ -21,9 +21,7 @@
  * checklist.md's Phase 1 note: `next dev` runs route handlers in a different
  * process from page renders, and PGlite lives inside whichever process opened
  * it, so a write from an `/api/*` route is invisible to the pages that render
- * next. The legacy board is polling `/api/state` and gets away with it only
- * because it never touches Postgres. Anything here that writes has to be an
- * action.
+ * next. Anything here that writes has to be an action.
  *
  * ## Nothing revalidates
  *

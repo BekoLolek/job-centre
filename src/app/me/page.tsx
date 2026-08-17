@@ -298,9 +298,6 @@ export default async function MePage() {
           <Button href="/events" size="sm">
             All events
           </Button>
-          <Button href="/board" size="sm">
-            Tournament board
-          </Button>
           {user.isAdmin && (
             <Button href="/admin/events" size="sm" className="ml-auto">
               Admin

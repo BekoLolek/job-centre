@@ -28,11 +28,11 @@
  * mid-handshake, and `auth()` simply returns `null`. `/signin` renders the
  * not-configured state. Nothing throws.
  *
- * ## The legacy login is untouched
+ * ## The only way in
  *
- * `src/app/api/auth/login` and `logout` still sign the draft board in with
- * their own cookie (`src/lib/session.ts`). Auth.js owns `/api/auth/signin`,
- * `/callback/*`, `/session`, `/csrf` and `/signout`; the two never collide.
+ * The env-var password accounts this replaced are gone as of Phase 4. Auth.js
+ * owns every `/api/auth/*` path, and a Discord account in the gated guild is
+ * the sole route to a session.
  */
 
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
