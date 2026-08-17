@@ -7,6 +7,146 @@ Legend: `[x]` done · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
 ---
 
+# Setup by hand
+
+Things only you can do — accounts, credentials, external services. Nothing is blocked on
+these today; the whole build runs locally on PGlite without them. They are what turn a
+local build into a site other people can sign into.
+
+Work top to bottom. Each value goes into `.env.local` (already created, keys already
+present, just fill in the blanks).
+
+## A. Discord application `[ ]`
+
+Gives the site its login. No bot, no permissions, no hosting — just OAuth.
+
+- [ ] **A1.** Go to <https://discord.com/developers/applications> and sign in.
+- [ ] **A2.** **New Application** (top right) → name it `Job Centre Events` → accept the
+      terms → **Create**.
+- [ ] **A3.** Left sidebar → **OAuth2**. Copy **Client ID** into `DISCORD_CLIENT_ID`.
+- [ ] **A4.** Same page → **Client Secret** → **Reset Secret** → confirm → copy it into
+      `DISCORD_CLIENT_SECRET`. It is shown **once**; if you lose it, reset again.
+- [ ] **A5.** Same page → **Redirects** → **Add Redirect** → paste exactly:
+
+      http://localhost:3400/api/auth/callback/discord
+
+      Then **Save Changes** at the bottom. The path matters — a trailing slash or a
+      different port and Discord refuses the login with a mismatch error.
+- [ ] **A6.** Optional polish: **General Information** → give it an icon and description.
+      That is what members see on the "authorise" screen.
+
+Nothing needs installing to a server. Do **not** create a Bot for this.
+
+## B. Discord IDs `[ ]`
+
+Two 18–19 digit numbers. Both need Developer Mode.
+
+- [ ] **B1.** In the Discord app: **User Settings** (cog, bottom-left) → **Advanced** →
+      turn on **Developer Mode**.
+- [ ] **B2.** Right-click the **Job Centre server icon** in the left rail → **Copy Server
+      ID** → paste into `DISCORD_GUILD_ID`. This is the server whose members are allowed
+      to sign in.
+- [ ] **B3.** Right-click **your own name** in any message or the member list → **Copy
+      User ID** → paste into `ADMIN_DISCORD_IDS`. Comma-separate if you want more than one
+      admin: `123...,456...`.
+
+This is what makes you admin on first sign-in. Without it nobody can reach `/admin`.
+
+## C. Database — Neon `[ ]`
+
+Free, no card. Skip this entirely while developing locally; only a deployment needs it.
+
+- [ ] **C1.** <https://neon.tech> → **Sign up** (signing in with GitHub is quickest).
+- [ ] **C2.** **Create project**. Name it `job-centre`. For region pick the one nearest
+      you — **Europe (Frankfurt)** for CEST. Postgres version: leave the default.
+- [ ] **C3.** On the project dashboard find **Connection string**. Make sure the toggle
+      says **Pooled connection** — the host contains `-pooler`. Serverless needs the
+      pooled one.
+- [ ] **C4.** Paste it into `DATABASE_URL`. It looks like:
+
+      postgresql://user:pass@ep-something-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require
+
+- [ ] **C5.** Optional but recommended: **Branches** → **Create branch** → name it `dev`.
+      A branch is a full copy with its own connection string, so local work never touches
+      what the community is using. Use the `dev` string locally and the main one on Vercel.
+
+**Alternative:** if you would rather not manage it, Vercel's **Storage** tab has a Neon
+integration that creates the database and injects `DATABASE_URL` into the deployment for
+you. Same product, fewer steps, but no separate `dev` branch unless you add one.
+
+## D. Wire it up locally `[ ]`
+
+- [ ] **D1.** Fill the blanks in `.env.local` from A–C. `AUTH_SECRET` is already generated.
+- [ ] **D2.** Apply the schema and seed the starting data:
+
+      npm run db:migrate
+      npm run db:seed
+
+- [ ] **D3.** `npm run dev`, open <http://localhost:3400/signin>, and sign in with Discord.
+      You should land back on the site as an admin.
+- [ ] **D4.** Sanity checks: `/admin/games` loads, and signing in from an account that is
+      **not** in the server is refused with "you're not in the Job Centre server".
+
+## E. Deploy to Vercel `[ ]`
+
+- [ ] **E1.** <https://vercel.com/new> → **Import** `BekoLolek/job-centre`.
+- [ ] **E2.** Leave Framework (Next.js) and Root Directory (`./`) alone — the repo root
+      *is* the app.
+- [ ] **E3.** Before the first deploy, add these under **Environment Variables**:
+
+      | Variable | Value |
+      | --- | --- |
+      | `DATABASE_URL` | the Neon pooled string |
+      | `DISCORD_CLIENT_ID` | from A3 |
+      | `DISCORD_CLIENT_SECRET` | from A4 |
+      | `DISCORD_GUILD_ID` | from B2 |
+      | `ADMIN_DISCORD_IDS` | from B3 |
+      | `AUTH_SECRET` | a fresh one — see below |
+
+      Generate a production `AUTH_SECRET` rather than reusing the local one:
+
+      node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
+
+- [ ] **E4.** **Do not set `AUTH_URL` on Vercel.** Auth.js works the host out from the
+      deployment; a hardcoded value is the usual cause of a broken callback.
+- [ ] **E5.** **Do not set `DEV_LOGIN` on Vercel.** It cannot work there anyway, but do not
+      plant it.
+- [ ] **E6.** Deploy. Note the URL, something like `job-centre.vercel.app`.
+- [ ] **E7.** Back in Discord (A5), add a second redirect:
+
+      https://your-project.vercel.app/api/auth/callback/discord
+
+- [ ] **E8.** Run the migration against Neon once — easiest is locally with `DATABASE_URL`
+      temporarily pointed at the production string:
+
+      npm run db:migrate
+      npm run db:seed
+
+- [ ] **E9.** Sign in on the live URL and confirm you are admin.
+
+## F. Later, when you want them `[ ]`
+
+- [ ] **F1.** **Custom domain** — Vercel → project → **Settings** → **Domains**. Then add a
+      third redirect URI in Discord for it. Nothing in the code changes.
+- [ ] **F2.** **Discord announcements** (Phase 5) — in Discord: **Server Settings** →
+      **Integrations** → **Webhooks** → **New Webhook** → pick the channel → **Copy Webhook
+      URL** → set as `DISCORD_WEBHOOK_URL`.
+- [ ] **F3.** **Upstash Redis** — only if you want the *old* draft board working on the
+      deployment before Phase 3 ports it onto Postgres. Vercel → **Storage** → **Upstash for
+      Redis**. Once Phase 3 lands this is not needed at all.
+
+## Common failures
+
+| Symptom | Cause |
+| --- | --- |
+| "Invalid OAuth2 redirect_uri" | The redirect in A5/E7 does not match character for character, including the port and `/api/auth/callback/discord`. |
+| Signed in but not admin | `ADMIN_DISCORD_IDS` was blank at first sign-in. Fill it in and sign out and back in — it is applied on every sign-in. |
+| Everyone rejected at sign-in | `DISCORD_GUILD_ID` is wrong or blank. The gate fails closed on purpose. |
+| Callback fails only in production | `AUTH_URL` is set on Vercel. Delete it. |
+| Local login works, live one does not | The production `AUTH_SECRET` is missing, or the migration in E8 was never run. |
+
+---
+
 ## Phase 0 — foundations `[x]` complete
 
 - [x] Vitest, with the timezone pinned so results are deterministic
@@ -43,9 +183,8 @@ Legend: `[x]` done · `[ ]` not started · `[~]` in progress · `[!]` blocked
 - [x] Session-aware navigation — Profile for members, Admin as well for admins
 - [x] Legacy password login left running alongside, so the draft board keeps working
 
-**Blocked on you:** `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, `DISCORD_GUILD_ID`,
-`ADMIN_DISCORD_IDS`, `DATABASE_URL`. Everything above can be built and tested against
-PGlite without them; only the live sign-in flow needs the real values.
+**Waiting on the manual setup above** (sections A–D). Everything here is built and tested
+against PGlite without it; only a real sign-in needs the credentials.
 
 **Known dev-only gotcha:** `next dev` runs route handlers in a different process from page
 renders, and PGlite lives inside whichever process opened it — so a row written by an
@@ -53,9 +192,9 @@ renders, and PGlite lives inside whichever process opened it — so a row writte
 Postgres and expects a page to see it must be a server action, not a route handler. Neon
 makes the problem disappear, since then there is one real database.
 
-## Phase 2 — events and applications `[ ]`
+## Phase 2 — events and applications `[~]` in progress
 
-- [ ] Events, event days, event templates
+- [~] Events, event days, event templates
 - [ ] Application form builder (admin)
 - [ ] Click-first application flow — prefilled from the profile, one submit
 - [ ] First-come with a waitlist, automatic promotion on withdrawal
