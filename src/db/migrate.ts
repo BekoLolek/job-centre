@@ -33,7 +33,7 @@ export async function applyMigrations(
     return;
   }
 
-  const { migrate } = await import("drizzle-orm/neon-http/migrator");
+  const { migrate } = await import("drizzle-orm/neon-serverless/migrator");
   await migrate(database as never, { migrationsFolder });
 }
 

@@ -22,6 +22,13 @@ describe("migrations", () => {
   it("apply cleanly to an empty database", async () => {
     expect(await tableNames(ctx.client)).toEqual([
       "accounts",
+      "applications",
+      "availability",
+      "confirmations",
+      "event_days",
+      "event_questions",
+      "event_templates",
+      "events",
       "games",
       "profile_fields",
       "profile_values",
@@ -71,7 +78,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(8);
+    expect(await tableNames(ctx.client)).toHaveLength(15);
   });
 
   it("mints uuid primary keys database-side", async () => {

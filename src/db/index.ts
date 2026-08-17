@@ -31,17 +31,19 @@
  * mismatch. The only place the difference is visible is `migrate.ts`, which has
  * to pick a matching migrator.
  *
- * Transactions: the Neon HTTP driver does not support interactive transactions.
- * Nothing in Phase 1 needs one; anything that does should use `db.batch()` or
- * move to the WebSocket `neon-serverless` driver.
+ * Transactions: this uses the WebSocket `Pool`, not the HTTP driver. HTTP has no
+ * interactive transactions at all — `db.transaction()` throws — and Phase 2 needs
+ * them for real: deciding accepted-vs-waitlisted from a count and then inserting
+ * has to be atomic, or two people take the last seat. That is a race that would
+ * only ever show up in production, on the one night it matters.
  */
 
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
-import { neon } from "@neondatabase/serverless";
+import { Pool } from "@neondatabase/serverless";
 import type { ExtractTablesWithRelations } from "drizzle-orm";
-import { drizzle as drizzleNeon } from "drizzle-orm/neon-http";
+import { drizzle as drizzleNeon } from "drizzle-orm/neon-serverless";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import * as schema from "./schema";
@@ -79,7 +81,7 @@ export function createDatabase(options: { url?: string; dataDir?: string } = {})
   const url = options.url ?? process.env.DATABASE_URL;
 
   if (driverFor(url) === "neon") {
-    return drizzleNeon(neon(url as string), { schema });
+    return drizzleNeon(new Pool({ connectionString: url as string }), { schema });
   }
 
   const dataDir = path.resolve(options.dataDir ?? LOCAL_DATA_DIR);
