@@ -46,6 +46,7 @@ import {
   cx,
   plural,
 } from "@/components/ui";
+import { getTeams } from "@/lib/draft";
 import {
   type EventDetail,
   getApplicationsForEvent,
@@ -88,6 +89,9 @@ export default async function EventPage({
   // their rank check. A visitor's action is decided by the clock alone.
   const mine = user ? await loadApplicationForm(event.id, user.id, { now }) : null;
   const applicants = await getApplicationsForEvent(event.id);
+  // The draft room is public to watch (§11), but it is only worth offering once
+  // there are teams to watch draft — before that it is an empty wheel.
+  const teams = await getTeams(event.id);
 
   const action = viewerAction({
     slug: event.slug,
@@ -190,6 +194,15 @@ export default async function EventPage({
                     />
                   }
                 />
+              )}
+
+              {teams.length > 0 && (
+                <div>
+                  <Eyebrow className="mb-2">The draft</Eyebrow>
+                  <Button href={`/events/${event.slug}/draft`} variant="gold" size="sm">
+                    Watch the draft room
+                  </Button>
+                </div>
               )}
 
               <EventAction action={action} />

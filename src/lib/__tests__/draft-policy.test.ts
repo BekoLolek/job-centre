@@ -437,6 +437,34 @@ describe("biddingOpen / bidsCloseAt", () => {
     const settled = { ...lot, status: "awarded" as const };
     expect(biddingOpen(settled, config(), new Date(T0))).toBe(false);
   });
+
+  // Nobody can bid on a name they cannot see yet, so the clock starts when the
+  // wheel stops. Measured from openedAt, a 60s timer on a 6.5s spin is a 53.5s
+  // timer, and the captains only find that out live.
+  it("starts the timer when the wheel stops, not when the lot opened", () => {
+    const spun = {
+      ...lot,
+      spin: {
+        pool: ["a", "b"],
+        targetIndex: 1,
+        startedAt: T0,
+        durationMs: SPIN_DURATION_MS,
+        turns: 6,
+      },
+    };
+    expect(bidsCloseAt(spun, cfg)?.getTime()).toBe(T0 + SPIN_DURATION_MS + 60_000);
+    expect(biddingOpen(spun, cfg, new Date(T0 + 60_000))).toBe(true);
+    expect(biddingOpen(spun, cfg, new Date(T0 + SPIN_DURATION_MS + 59_999))).toBe(true);
+    expect(biddingOpen(spun, cfg, new Date(T0 + SPIN_DURATION_MS + 60_000))).toBe(false);
+  });
+
+  it("ignores a spin that somehow finished before the lot opened", () => {
+    const stale = {
+      ...lot,
+      spin: { pool: ["a"], targetIndex: 0, startedAt: T0 - 60_000, durationMs: 1000, turns: 6 },
+    };
+    expect(bidsCloseAt(stale, cfg)?.getTime()).toBe(T0 + 60_000);
+  });
 });
 
 /* ------------------------------------------------------------------ */

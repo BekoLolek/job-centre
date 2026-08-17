@@ -1003,6 +1003,8 @@ export async function placeBid(
       {
         status: lot.status,
         openedAt: lot.openedAt,
+        // The timer runs from when the wheel stops, so the spin has to travel too.
+        spin: lot.spin,
         bids: bids.map((bid) => ({ teamId: bid.teamId, amount: bid.amount })),
       },
       config,

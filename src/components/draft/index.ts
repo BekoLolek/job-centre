@@ -43,5 +43,17 @@ export {
 } from "./labels";
 export type { Choice, ExclusionReason } from "./labels";
 
+export {
+  completionSentence,
+  lotLine,
+  lotSentence,
+  poolLabel,
+  stageLabel,
+  teamNameFor,
+  undoPlan,
+  undoTarget,
+} from "./story";
+export type { LotContext, LotLine, LotTone, NamedTeam, UndoPlan } from "./story";
+
 export { playerName } from "./types";
 export type { MemberLike, PlayerBook, PlayerLike, TeamLike } from "./types";

@@ -343,21 +343,35 @@ export type LotBidView = {
   status: DraftLotStatus;
   /** When the lot opened, for the optional timer. */
   openedAt: Date;
+  /**
+   * The spin, when the wheel chose this player. The timer runs from the moment
+   * the wheel stops, not from when the lot opened — nobody can bid on a name
+   * they cannot see yet, and a 20 second timer that spends its first 6.5 on the
+   * animation is really a 13 second timer.
+   */
+  spin?: DraftSpin | null;
   /** Every bid already on this lot, this team's included. */
   bids: readonly BidView[];
 };
+
+/** When this lot actually started taking bids. */
+function biddingOpensAt(lot: LotBidView): number {
+  const opened = lot.openedAt.getTime();
+  if (!lot.spin) return opened;
+  return Math.max(opened, lot.spin.startedAt + lot.spin.durationMs);
+}
 
 /** Whether the lot is still accepting bids at `now`. */
 export function biddingOpen(lot: LotBidView, config: DraftConfig, now: Date): boolean {
   if (lot.status !== "open") return false;
   if (config.bidTimerSeconds === null) return true;
-  return now.getTime() < lot.openedAt.getTime() + config.bidTimerSeconds * 1000;
+  return now.getTime() < biddingOpensAt(lot) + config.bidTimerSeconds * 1000;
 }
 
 /** When the lot stops taking bids, or null when it has no timer. */
 export function bidsCloseAt(lot: LotBidView, config: DraftConfig): Date | null {
   if (config.bidTimerSeconds === null) return null;
-  return new Date(lot.openedAt.getTime() + config.bidTimerSeconds * 1000);
+  return new Date(biddingOpensAt(lot) + config.bidTimerSeconds * 1000);
 }
 
 /** The standing bid from anybody but `teamId`. Zero when there is none. */
