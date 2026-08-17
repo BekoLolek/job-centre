@@ -21,6 +21,7 @@ import {
   setCaptains,
   setDraftConfig,
   setDraftPool,
+  setPoolKind,
   setTeams,
   viewerFor,
   voidLastLot,
@@ -471,6 +472,54 @@ describe("setDraftConfig", () => {
 /* ------------------------------------------------------------------ */
 /* The pool                                                           */
 /* ------------------------------------------------------------------ */
+
+describe("setPoolKind", () => {
+  it("holds a player over and brings them back without touching the history", async () => {
+    const fixture = await seededEvent(3);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    const [held] = fixture.members;
+
+    const over = unwrap(await setPoolKind(fixture.eventId, held, "reserve", db));
+    expect(over.moved).toBe(true);
+    expect(over.reserve.map((entry) => entry.userId)).toEqual([held]);
+    expect(over.main.map((entry) => entry.userId)).not.toContain(held);
+
+    const back = unwrap(await setPoolKind(fixture.eventId, held, "main", db));
+    expect(back.main.map((entry) => entry.userId)).toContain(held);
+    expect(back.reserve).toHaveLength(0);
+
+    // Setting the pool up beforehand is bookkeeping, not something that
+    // happened in front of everyone — it must leave no lot behind.
+    expect(await getDraftHistory(fixture.eventId, db)).toHaveLength(0);
+  });
+
+  it("is a no-op when they are already in that pool", async () => {
+    const fixture = await seededEvent(2);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    const again = unwrap(await setPoolKind(fixture.eventId, fixture.members[0], "main", db));
+    expect(again.moved).toBe(false);
+    expect(again.main).toHaveLength(2);
+  });
+
+  it("refuses somebody who is not in the pool, and says why when they are drafted", async () => {
+    const fixture = await seededEvent(3);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+
+    const stranger = await makeUser(db, { displayName: "Stranger" });
+    const missing = await setPoolKind(fixture.eventId, stranger, "reserve", db);
+    expect(missing.ok === false && missing.error).toMatch(/not in this draft's pool/i);
+
+    const [team] = unwrap(
+      await setTeams(fixture.eventId, [{ name: "Reds", balanceStart: 1000 }], db)
+    ).teams;
+    const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.members[0] }, db));
+    unwrap(await placeBid(lot.id, team.id, 10, {}, db));
+    unwrap(await awardLot(lot.id, team.id, {}, db));
+
+    const drafted = await setPoolKind(fixture.eventId, fixture.members[0], "reserve", db);
+    expect(drafted.ok === false && drafted.error).toMatch(/already on a team/i);
+  });
+});
 
 describe("setDraftPool", () => {
   it("seeds from the accepted applications in the order they arrived", async () => {

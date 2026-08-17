@@ -778,6 +778,56 @@ export async function getDraftPool(
   };
 }
 
+/**
+ * Move one player between the main and reserve pools before the draft reaches
+ * them — the admin deciding up front that somebody is held over.
+ *
+ * This is deliberately not the same act as `moveToReserve`, which closes an open
+ * lot and belongs in the history because it happened *during* the draft, in
+ * front of everyone. Setting up the pool beforehand is bookkeeping and should
+ * leave no lot behind; composing the two would record a spin that never
+ * happened and cost two transactions to undo.
+ *
+ * A no-op when the player is already in that pool. Refuses anyone who has
+ * already been drafted, since their place is a roster row, not a pool entry.
+ */
+export async function setPoolKind(
+  eventId: string,
+  userId: string,
+  kind: DraftPoolKind,
+  database: Database = defaultDb
+): Promise<DraftResult<{ main: PoolPlayer[]; reserve: PoolPlayer[]; moved: boolean }>> {
+  return database.transaction(async (tx) => {
+    const event = await readEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    const entries = await readPool(tx, eventId);
+    const entry = entries.find((row) => row.userId === userId);
+    if (!entry) {
+      const [member] = await tx
+        .select()
+        .from(teamMembers)
+        .where(and(eq(teamMembers.eventId, eventId), eq(teamMembers.userId, userId)))
+        .limit(1);
+      return fail(
+        member
+          ? "That player is already on a team. Undo the lot that put them there first."
+          : "That player is not in this draft's pool."
+      );
+    }
+
+    if (entry.kind !== kind) {
+      await tx
+        .update(draftPoolEntries)
+        .set({ kind, sort: nextSort(entries, kind) })
+        .where(eq(draftPoolEntries.id, entry.id));
+    }
+
+    const pool = await getDraftPool(eventId, tx);
+    return withData({ ...pool, moved: entry.kind !== kind });
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* Lots                                                               */
 /* ------------------------------------------------------------------ */

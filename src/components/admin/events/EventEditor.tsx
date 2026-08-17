@@ -6,16 +6,19 @@ import { EventDateRange, EventSeats, EventStatusPill, eventTypeLabel } from "@/c
 import type { ApplicantView, EventDetail } from "@/lib/events";
 import ApplicantsTab from "./ApplicantsTab";
 import BasicsTab from "./BasicsTab";
+import CaptainsTab from "./CaptainsTab";
 import DaysTab from "./DaysTab";
+import DraftTab from "./DraftTab";
 import EntryRulesTab from "./EntryRulesTab";
 import PublishTab from "./PublishTab";
 import QuestionsTab from "./QuestionsTab";
-import type { GameOption, LinkableField } from "./types";
+import TeamsTab from "./TeamsTab";
+import type { DraftTabData, GameOption, LinkableField } from "./types";
 
 /**
  * The event editor shell — plan §6.3.
  *
- * Six tabs, each saving itself. The shell owns which tab is showing and
+ * Nine tabs, each saving itself. The shell owns which tab is showing and
  * absolutely nothing else: no draft state is lifted up here, because a tab that
  * cannot be understood without reading its parent is a tab nobody will edit
  * with confidence.
@@ -24,15 +27,30 @@ import type { GameOption, LinkableField } from "./types";
  * them — status, seats, queue length — because a decision made on the
  * Applicants tab changes what the Publish tab should say, and an admin should
  * not have to click to find that out.
+ *
+ * The three draft tabs share one `draft` bundle rather than fetching their own,
+ * because they are three views of the same thing: the captain the middle tab
+ * chooses is the roster row the last one prices. Tabs holding separate reads
+ * could show a captain who is not yet on the roster the balance came from.
  */
 
-type TabKey = "basics" | "days" | "questions" | "rules" | "applicants" | "publish";
+type TabKey =
+  | "basics"
+  | "days"
+  | "questions"
+  | "rules"
+  | "applicants"
+  | "teams"
+  | "captains"
+  | "draft"
+  | "publish";
 
 export default function EventEditor({
   event,
   applicants,
   games,
   linkableFields,
+  draft,
   maxDays,
   maxQuestions,
 }: {
@@ -40,6 +58,8 @@ export default function EventEditor({
   applicants: ApplicantView[];
   games: GameOption[];
   linkableFields: LinkableField[];
+  /** Teams, captains, rules and the pool — one read, three tabs. */
+  draft: DraftTabData;
   /**
    * `MAX_EVENT_DAYS` / `MAX_EVENT_QUESTIONS`, handed down from the server page.
    * They live in `src/lib/events.ts`, which reaches the database — importing it
@@ -55,6 +75,7 @@ export default function EventEditor({
   const undecided = applicants.filter(
     (row) => row.status === "waitlisted" && row.decidedAt === null
   ).length;
+  const captains = draft.teams.filter((team) => team.captainUserId !== null).length;
 
   return (
     <div className="space-y-6">
@@ -107,6 +128,14 @@ export default function EventEditor({
             value: "applicants",
             label: `Applicants (${applicants.length})${undecided > 0 ? " •" : ""}`,
           },
+          { value: "teams", label: `Teams (${draft.teams.length})` },
+          {
+            value: "captains",
+            label: `Captains (${captains}/${draft.teams.length})${
+              draft.teams.length > 0 && captains < draft.teams.length ? " •" : ""
+            }`,
+          },
+          { value: "draft", label: `Draft (${draft.pool.main.length})` },
           { value: "publish", label: "Publish" },
         ]}
         value={tab}
@@ -126,6 +155,18 @@ export default function EventEditor({
       )}
       {tab === "rules" && <EntryRulesTab event={event} />}
       {tab === "applicants" && <ApplicantsTab event={event} applicants={applicants} />}
+      {tab === "teams" && <TeamsTab eventId={event.id} data={draft} />}
+      {tab === "captains" && (
+        <CaptainsTab
+          eventId={event.id}
+          event={event}
+          applicants={applicants}
+          data={draft}
+        />
+      )}
+      {tab === "draft" && (
+        <DraftTab eventId={event.id} applicants={applicants} data={draft} />
+      )}
       {tab === "publish" && (
         <PublishTab event={event} applicants={applicants} queue={queue} />
       )}

@@ -7,16 +7,27 @@
  * back to fix the capacity has to re-save the questions too, and re-saving
  * questions is not free — it re-validates every stored answer.
  *
- * Everything on screen comes from `src/lib/events.ts`. The eligibility column
- * in the applicants table is `getApplicationsForEvent`'s, not this page's;
- * the legal status moves are `nextStatuses`'s. Nothing here re-derives a rule.
+ * Everything on screen comes from `src/lib/events.ts` and `src/lib/draft.ts`.
+ * The eligibility column in the applicants table is `getApplicationsForEvent`'s,
+ * not this page's; the legal status moves are `nextStatuses`'s; every balance
+ * and every roster count is `getTeams`'s, derived from the awarded lots rather
+ * than stored. Nothing here re-derives a rule.
  */
 
 import { notFound } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import EventEditor from "@/components/admin/events/EventEditor";
+import type { DraftTabData } from "@/components/admin/events/types";
 import { loadAdminGames } from "@/lib/admin-games";
+import {
+  getDiscardedPlayers,
+  getDraftConfig,
+  getDraftHistory,
+  getDraftPool,
+  getTeams,
+  getUnpooledApplicants,
+} from "@/lib/draft";
 import {
   MAX_EVENT_DAYS,
   MAX_EVENT_QUESTIONS,
@@ -44,10 +55,17 @@ export default async function AdminEventPage({
   const event = await getEventById(id);
   if (!event) notFound();
 
-  const [applicants, adminGames] = await Promise.all([
-    getApplicationsForEvent(event.id),
-    loadAdminGames(),
-  ]);
+  const [applicants, adminGames, teams, draftConfig, pool, unpooled, discarded, lots] =
+    await Promise.all([
+      getApplicationsForEvent(event.id),
+      loadAdminGames(),
+      getTeams(event.id),
+      getDraftConfig(event.id),
+      getDraftPool(event.id),
+      getUnpooledApplicants(event.id),
+      getDiscardedPlayers(event.id),
+      getDraftHistory(event.id),
+    ]);
 
   // What a question on this event may prefill from: its game's profile fields
   // plus the global ones. A field belonging to another game would prefill an
@@ -78,6 +96,46 @@ export default async function AdminEventPage({
     })),
   ];
 
+  // Everyone the three draft tabs might name. Applications cover the whole
+  // cast — a captain, a pool entry and a drafted player are all applicants to
+  // this event — and the display name is already on the row, so this costs no
+  // extra read. `playerName` has a fallback for the one case it cannot cover:
+  // an account removed while the event is still standing.
+  const draft: DraftTabData = {
+    teams: teams.map((team) => ({
+      id: team.id,
+      name: team.name,
+      seed: team.seed,
+      captainUserId: team.captainUserId,
+      balanceStart: team.balanceStart,
+      balance: team.balance,
+      roster: team.roster,
+      members: team.members.map((member) => ({
+        teamId: member.teamId,
+        userId: member.userId,
+        price: member.price,
+        isCaptain: member.isCaptain,
+      })),
+    })),
+    config: draftConfig,
+    pool: {
+      main: pool.main.map((entry) => entry.userId),
+      reserve: pool.reserve.map((entry) => entry.userId),
+    },
+    unpooled,
+    discarded,
+    players: Object.fromEntries(
+      applicants.map((row) => [
+        row.member.id,
+        {
+          displayName: row.member.displayName ?? row.member.discordId ?? "Unknown member",
+          avatarUrl: row.member.avatarUrl,
+        },
+      ])
+    ),
+    started: lots.some((lot) => lot.status === "awarded"),
+  };
+
   return (
     <div className="min-h-screen">
       <AppHeader section="ADMIN">
@@ -95,6 +153,7 @@ export default async function AdminEventPage({
             rankLadder: game.rankLadder,
           }))}
           linkableFields={linkableFields}
+          draft={draft}
           maxDays={MAX_EVENT_DAYS}
           maxQuestions={MAX_EVENT_QUESTIONS}
         />
