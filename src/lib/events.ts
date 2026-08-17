@@ -835,6 +835,107 @@ export async function publishEvent(
 /* Days                                                               */
 /* ------------------------------------------------------------------ */
 
+export type EventDaysImpact = {
+  /** The days this list drops, as they stand today, so they can be named. */
+  removed: Array<{
+    id: string;
+    dayIndex: number;
+    label: string | null;
+    startsAt: Date | null;
+  }>;
+  /** Availability answers stored against them — what the write would clear. */
+  clearedAvailability: number;
+  /** How many applicants lose at least one of those answers. */
+  affectedApplicants: number;
+  /** Days that survive but change position, so a reorder can be described. */
+  moved: Array<{ id: string; from: number; to: number }>;
+  /** Why `setEventDays` would refuse this list. Null when it would go through. */
+  problem: string | null;
+};
+
+/**
+ * What writing this day list would cost, without writing it.
+ *
+ * `setEventDays` reports `clearedAvailability` in its *result*, which is the
+ * honest number but arrives one moment too late to put on a confirm dialog —
+ * by the time it is readable the answers are already gone. This is the same
+ * question asked beforehand, and it is deliberately the twin of
+ * `previewFieldEdit` in `admin-games.ts`: same shape of answer, same purpose,
+ * same standing rule from checklist.md that nothing is destructive without the
+ * number being said out loud first.
+ *
+ * Note what does *not* cost anything: reordering days whose ids are passed back
+ * keeps every row, so `moved` is reported separately from `removed` and carries
+ * no loss. A "reorder" only destroys availability when the caller drops the ids
+ * and sends new days, which this function then reports as what it is — a delete
+ * and an insert.
+ *
+ * Validation mirrors `setEventDays` exactly, so a preview that reports a
+ * `problem` is a write that would have been refused.
+ */
+export async function previewEventDays(
+  eventId: string,
+  days: readonly EventDayInput[],
+  database: Database = defaultDb
+): Promise<EventDaysImpact> {
+  const nothing = {
+    removed: [],
+    clearedAvailability: 0,
+    affectedApplicants: 0,
+    moved: [],
+  } satisfies Omit<EventDaysImpact, "problem">;
+
+  const event = await readEvent(database, eventId);
+  if (!event) return { ...nothing, problem: "That event no longer exists." };
+
+  if (days.length > MAX_EVENT_DAYS) {
+    return { ...nothing, problem: `An event runs over at most ${MAX_EVENT_DAYS} days.` };
+  }
+
+  const existing = await readDays(database, eventId);
+  const existingIds = new Set(existing.map((day) => day.id));
+  for (const day of days) {
+    if (day.id && !existingIds.has(day.id)) {
+      return { ...nothing, problem: "One of those days belongs to a different event." };
+    }
+  }
+
+  const keeping = new Set(days.map((day) => day.id).filter((id): id is string => Boolean(id)));
+  const doomed = existing.filter((day) => !keeping.has(day.id));
+
+  const byId = new Map(existing.map((day) => [day.id, day]));
+  const moved = days.flatMap((day, index) => {
+    const current = day.id ? byId.get(day.id) : undefined;
+    if (!current || current.dayIndex === index) return [];
+    return [{ id: current.id, from: current.dayIndex, to: index }];
+  });
+
+  if (doomed.length === 0) return { ...nothing, moved, problem: null };
+
+  const rows = await database
+    .select({ applicationId: availability.applicationId })
+    .from(availability)
+    .where(
+      inArray(
+        availability.eventDayId,
+        doomed.map((day) => day.id)
+      )
+    );
+
+  return {
+    removed: doomed.map((day) => ({
+      id: day.id,
+      dayIndex: day.dayIndex,
+      label: day.label,
+      startsAt: day.startsAt,
+    })),
+    clearedAvailability: rows.length,
+    affectedApplicants: new Set(rows.map((row) => row.applicationId)).size,
+    moved,
+    problem: null,
+  };
+}
+
 /**
  * Replace an event's days with this list, in this order.
  *
@@ -842,7 +943,8 @@ export async function publishEvent(
  * reorder throwing away everyone's availability. A day that is *not* in the
  * list is deleted, and its availability answers go with it — so the count comes
  * back in the result, the same way `/admin/games` says how many answers a
- * delete would destroy before it destroys them.
+ * delete would destroy before it destroys them. {@link previewEventDays} asks
+ * the same question early enough to put on a confirm dialog.
  */
 export async function setEventDays(
   eventId: string,
@@ -1529,6 +1631,37 @@ export async function setApplicationStatus(
 }
 
 /**
+ * Write the admin's note on an application, and nothing else.
+ *
+ * This is not `setApplicationStatus(id, current.status, { note })` with the
+ * status left alone, and the difference matters: that call recomputes
+ * `waitlistPosition` from `nextWaitlistPosition`, so re-affirming `waitlisted`
+ * on the person at the front of the queue sends them to the back of it. Adding
+ * "said they might be late" to somebody's row must not cost them their place,
+ * so the note gets its own write that touches one column.
+ */
+export async function setApplicationNote(
+  applicationId: string,
+  note: string | null,
+  database: Database = defaultDb
+): Promise<EventResult<ApplicationView>> {
+  const [current] = await database
+    .select()
+    .from(applications)
+    .where(eq(applications.id, applicationId))
+    .limit(1);
+  if (!current) return fail("That application no longer exists.");
+
+  const [updated] = await database
+    .update(applications)
+    .set({ note: cleanNullable(note, NOTE_MAX) })
+    .where(eq(applications.id, applicationId))
+    .returning();
+
+  return withData(await decorateOne(database, updated));
+}
+
+/**
  * Set one application's per-day availability.
  *
  * Days are checked against *this application's* event: a day id from another
@@ -1665,6 +1798,49 @@ export async function listEvents(
   );
   // The archive reads newest first; what is coming up reads soonest first.
   return options.upcoming ? filtered : filtered.reverse();
+}
+
+/** Every status, at zero. The shape a caller can index without checking. */
+function noApplications(): Record<ApplicationStatus, number> {
+  return { accepted: 0, waitlisted: 0, declined: 0, withdrawn: 0 };
+}
+
+/**
+ * How many applications each of these events holds, split by status.
+ *
+ * `EventSummary.seats` answers "how full is it", which is the number a member
+ * cares about. An admin list also wants "how many people applied at all",
+ * including the ones who were declined or pulled out — and that is not
+ * derivable from a `CapacityState`. One grouped query covers the whole list
+ * rather than one per event, for the same reason `listEvents` groups its own.
+ *
+ * Events with no applications are absent from the map; callers should fall back
+ * to a zeroed record.
+ */
+export async function countApplicationsByStatus(
+  eventIds: readonly string[],
+  database: Database = defaultDb
+): Promise<Map<string, Record<ApplicationStatus, number>>> {
+  const out = new Map<string, Record<ApplicationStatus, number>>();
+  if (eventIds.length === 0) return out;
+
+  const rows = await database
+    .select({ eventId: applications.eventId, status: applications.status, total: count() })
+    .from(applications)
+    .where(inArray(applications.eventId, [...eventIds]))
+    .groupBy(applications.eventId, applications.status);
+
+  for (const row of rows) {
+    const bag = out.get(row.eventId) ?? noApplications();
+    bag[row.status] += Number(row.total);
+    out.set(row.eventId, bag);
+  }
+  return out;
+}
+
+/** The zeroed record, for a caller reading a map `countApplicationsByStatus` built. */
+export function emptyApplicationCounts(): Record<ApplicationStatus, number> {
+  return noApplications();
 }
 
 function summarise(

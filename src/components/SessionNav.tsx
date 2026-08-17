@@ -33,7 +33,9 @@ export default async function SessionNav() {
         Profile
       </Button>
       {user.isAdmin && (
-        <Button href="/admin/games" size="sm">
+        // Lands on the events list rather than on games: §4 makes `/admin/events`
+        // the admin's working surface, and `AdminNav` carries the rest from there.
+        <Button href="/admin/events" size="sm">
           Admin
         </Button>
       )}
