@@ -4,9 +4,9 @@ Turning the single-purpose Marvel Rivals draft board into a community event plat
 Discord login, customisable events with applications, player profiles, and a much more
 configurable tournament engine.
 
-**Status: built.** Phases 0 to 5 are complete; the open questions in §13 are answered.
-§15 tracks what landed and what is still needed from outside the repo — which is now only
-credentials, not code.
+**Status: built.** Phases 0 to 5 are complete, §4's admin routes all exist, and the open
+questions in §13 are answered. §15 tracks what landed and what is still needed from outside
+the repo — which is now only credentials, not code.
 
 The product is **Job Centre Events**. The repo is `BekoLolek/job-centre`.
 
@@ -653,6 +653,57 @@ accounts were deleted in the same phase — Discord is now the only way in.
   of two library calls and so bypassed every rule about it, and a team's starting balance
   could be moved after lots were awarded, silently rewriting what every past lot appeared
   to have cost.
+
+**The two admin screens §4 listed and nobody had built — done.** Seven of §4's nine admin
+routes existed; these are the other two, and neither was cosmetic.
+
+- **`/admin/users`** (§4, §7, §11). Every member with their handle, when they joined, when
+  they were last seen, and how many events they have played — counted exactly the way
+  `/players/[handle]` counts it, because two screens disagreeing about somebody's event
+  count is worse than either number being arguable. The point of the screen is the admin
+  flag: until it existed the only way to promote somebody was to edit `ADMIN_DISCORD_IDS`
+  and redeploy, which put the site's permission model in a variable nobody could read from
+  inside the site.
+
+  Two rules hold, both pure functions in `src/lib/admin-users-policy.ts` so the greyed-out
+  button and the server refusal are one rule rather than two copies. **An admin cannot
+  revoke their own flag** — locking yourself out is not an action anyone means to take and
+  the recovery is a redeploy, so somebody else has to do it. **The site can never reach
+  zero admins** — the last one is refused with a sentence saying why. That second rule is a
+  concurrency backstop rather than something a person meets: `requireAdmin()` guarantees
+  the actor is an admin, so a sole admin hits the self refusal first. It earns its place
+  anyway, because two admins demoting each other at the same instant would otherwise both
+  pass the self check; `revokeAdmin` re-reads the count itself and the update is a
+  compare-and-set on `is_admin = true`.
+
+  The allowlist is stated rather than left to be found: `shouldBeAdmin` re-grants on every
+  sign-in and only ever grants, so revoking somebody named in `ADMIN_DISCORD_IDS` works and
+  then comes back. Undocumented that reads as a bug; on the screen it reads as the
+  bootstrap that rescues a locked-out deployment, which is what it is.
+
+  And `user_notes` — the table §7 asked for and Phase 1 never built. Admin-only free text,
+  several per member, each recording who wrote it and when, append-only like the audit log
+  and never public: `src/lib/players.ts` does not import it, and the test asserts that
+  against `getPlayerProfile`'s output rather than against the source.
+
+- **`/admin/templates`** (§4, §7, §8.1). `event_templates` has existed since Phase 2 and
+  the create-event flow has read it since, but nothing could ever write one. List, create,
+  edit, duplicate, deactivate — and, the direction that actually gets used, **make one from
+  an existing event**. Its type, game, config (including `config.format`, §10's schedule
+  and stage settings) and whole question set come across, with each question's
+  `profile_field_id` turned back into the profile field's *key*, because ids differ per
+  deployment and `resolveTemplateQuestions` resolves the key against the new event's game
+  on the way back in.
+
+  The screen shows what each template would produce, from the same pure function the tests
+  use, and how many events have come from it — `events.created_from_template_id`, a new
+  column that is provenance only. Nothing reads it to decide anything, so a template is
+  still *copied and then forgotten* and editing one cannot rewrite an event that is already
+  taking applications. Deactivating drops it out of `listEventTemplates` and therefore out
+  of the picker, while every event made from it is untouched.
+
+One migration for both, generated not hand-written: `drizzle/0006_puzzling_shockwave.sql`.
+**1654 tests.**
 
 **Still needed from outside the repo** — none of it is code:
 1. A **Discord application**: client id, client secret, and the guild id to gate against.

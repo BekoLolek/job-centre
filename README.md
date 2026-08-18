@@ -74,6 +74,18 @@ npm run db:seed      # games, profile fields, guild-gate settings
 npm run db:studio
 ```
 
+### Migrations run on build
+
+`npm run build` applies pending migrations before `next build`, so a deploy can never
+serve code against a schema that is behind it. That failure is worse than it sounds: Auth.js
+collapses any adapter error into a generic "configuration" message, so a missing column
+reads as "check your client id and secret" and sends you looking in the wrong place. A bad
+migration now fails the deploy instead, before anyone is served.
+
+**This means a local `npm run build` migrates whatever `DATABASE_URL` points at.** If that
+is production, the build applies pending migrations to production. Use `npm run build:only`
+to compile without touching a database.
+
 Discord sign-in needs a real application; see `docs/checklist.md` for the by-hand setup.
 Without it, `/dev-login` mints a real session locally — it requires `NODE_ENV=development`
 **and** `DEV_LOGIN=1`, and cannot exist in a deployment.

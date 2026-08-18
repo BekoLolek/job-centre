@@ -3,11 +3,12 @@
 Companion to [platform-plan.md](./platform-plan.md). The plan says *what and why*; this
 file tracks *what is done*. Updated at the end of each phase.
 
-**Status: every phase built.** Phases 0 to 5 are complete against 1549 tests. What is
-left is not code — it is the by-hand setup below: a Discord application, a Neon
-connection string, and a Vercel deploy. Until those exist the site runs locally on
-PGlite with `/dev-login` standing in for Discord, which is how all six phases were
-built and driven.
+**Status: every phase built, and §4's information architecture is now complete.** Phases 0
+to 5 are complete against **1654 tests**, and the two admin screens §4 listed but nobody
+had built — `/admin/users` and `/admin/templates` — landed after them. What is left is not
+code: it is the by-hand setup below, a Discord application, a Neon connection string, and a
+Vercel deploy. Until those exist the site runs locally on PGlite with `/dev-login` standing
+in for Discord, which is how everything here was built and driven.
 
 Legend: `[x]` done · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
@@ -360,6 +361,105 @@ to sit under **Held**. See plan §8.4.
 Bo1, Bo3, Bo5 and Bo7, that the map chooser is always the other team, that the assignment
 is stable across reads and does not move when the results around it do, and both re-flip
 refusals with the coin checked to be untouched afterwards.
+
+---
+
+## The two admin screens §4 promised `[x]` complete
+
+Plan §4 lists nine admin routes. Seven existed. These are the other two, and neither was
+cosmetic: without the first, the only way to make somebody an admin was to edit
+`ADMIN_DISCORD_IDS` and redeploy; without the second, `event_templates` could be *read* by
+the create-event flow and never written, so the picker offered whatever a seed had left
+there and nothing else.
+
+### `/admin/users` — members, admin flags, notes
+
+- [x] **Every member, from one screen.** Avatar, display name, handle, when they joined,
+      when they were last seen, the admin flag, and how many events they have played —
+      counted the same way `/players/[handle]` counts it (accepted application or roster
+      row, on an event that exists publicly), because two screens disagreeing about
+      somebody's event count is worse than either number being arguable
+- [x] **Grant and revoke the admin flag**, so a promotion is a row rather than a deploy
+- [x] **An admin cannot revoke their own flag.** Locking yourself out of your own site is
+      not an action anyone means to take and the recovery is a redeploy, so somebody else
+      has to do it. The button is disabled with the sentence next to it, and React refuses
+      to fire a disabled button's `onClick` at all — the server refuses it independently
+- [x] **The site can never reach zero admins.** The last one is refused with a sentence
+      saying why. Both rules are pure functions in `src/lib/admin-users-policy.ts`, so the
+      greyed-out button and the server refusal are the *same* rule rather than two copies
+      of it — and `revokeAdmin` re-reads the admin count itself rather than trusting the
+      one the page was rendered with, because two admins demoting each other at the same
+      instant is exactly the case a stale count gets wrong. The update is a compare-and-set
+      on `is_admin = true` for the same reason
+- [x] **The allowlist is said out loud.** `ADMIN_DISCORD_IDS` grants the flag on *every*
+      sign-in and only ever grants, so revoking somebody named there works and then comes
+      back next time they sign in. That is deliberate — it is the bootstrap that rescues a
+      locked-out deployment — so the screen carries a panel explaining it, badges everyone
+      it covers, and lists the ids on it that have never signed in. Left undocumented it
+      reads as a bug
+- [x] **Notes** — `user_notes` per §7, which the plan asked for and Phase 1 never built.
+      Admin-only free text about a member, several per member, each recording who wrote it
+      and when. Append-only like the audit log: no edit, no delete. The author's name is
+      snapshotted onto the row so a note still says who wrote it after their account goes,
+      and the note goes with the member when theirs does
+- [x] **Never public.** `src/lib/players.ts` does not import the table, and the test
+      asserts it against `getPlayerProfile`'s actual output rather than by reading the
+      source, so it stays true if somebody adds a join later. The bodies are also fetched
+      only when the dialog opens, so admin-only prose is not sitting in the HTML of a page
+      that merely lists members
+- [x] Search by name or handle, and a filter for admins — client-side, because the whole
+      list is already there and the counts the rules read are of *everybody* rather than of
+      what is currently on screen
+- [x] Every grant, revoke and note goes through `recordAudit`. The note's line records that
+      one was written and about whom, never what it said
+
+### `/admin/templates` — event templates
+
+- [x] **List, create, edit, duplicate, deactivate.** A template carries a name, an event
+      type, an optional game, default config and default questions
+- [x] **Make one from an existing event** — the direction that earns its place. Running a
+      good Rivals tournament and then saying "do that again next month" is the point;
+      retyping its eleven questions is not. Its type, game, config — `config.format`
+      included, which is §10's schedule and stage settings — and its whole question set
+      come across, with each question's `profile_field_id` turned back into the profile
+      field's **key**. A template cannot hold an id: ids differ per deployment, and
+      `resolveTemplateQuestions` resolves the key against the new event's game on the way
+      back in. The round trip is the test the feature turns on
+- [x] **What it will not carry is on the screen**, not left to be discovered: days and
+      dates, capacity, the rank thresholds, and the generated bracket. The first two are
+      always different next month, the thresholds are decisions about one event rather than
+      about a format, and a bracket is rows in `stages` regenerated from the teams that
+      turn up
+- [x] **Shows what each template would produce** — "Marvel Rivals · 8 teams · bid draft ·
+      bracket · 4 questions · 2 prefilled from the profile · format settings" — from
+      `describeTemplate`, a pure function shared by the list, the live preview under the
+      editor and the tests, so the sentence cannot drift from what `createEvent` does
+- [x] **And how many events came from it.** `events.created_from_template_id` is a new
+      column and is *provenance only* — nothing reads it to decide anything. A template is
+      still copied and then forgotten, which is what makes editing one safe while an event
+      made from it is already taking applications
+- [x] **Deactivate rather than delete**, per the standing rule. An inactive template drops
+      out of `listEventTemplates` — the only read the create-event flow does — so it leaves
+      the picker while every event ever made from it keeps working and keeps its provenance
+- [x] Every create, edit, duplicate and activation change goes through `recordAudit`
+
+**Schema:** one migration, `drizzle/0006_puzzling_shockwave.sql` — the `user_notes` table
+(§7) and `events.created_from_template_id`. Generated with `npm run db:generate`, never
+hand-written.
+
+**1654 tests** — 72 new: 34 in `src/lib/__tests__/admin-users.test.ts` and 38 in
+`src/lib/__tests__/admin-templates.test.ts`. The ones that matter are the two admin
+refusals asserted as pure functions *and* through Postgres, the stale-count case, that a
+note never reaches `getPlayerProfile`, and the event → template → event round trip with the
+prefill link still attached at the far end.
+
+**One thing worth knowing about the last-admin rule.** It cannot be reached from the screen
+by one person: `requireAdmin()` guarantees the actor holds the flag, so "only one admin
+left" and "the target is not me" cannot both be true — a sole admin meets the *self*
+refusal instead. It is a concurrency backstop, and it earns its place there: without it,
+two admins demoting each other at the same instant would both pass the self check and leave
+the site with nobody. That is the case the fresh count and the compare-and-set close, and
+the case the test drives.
 
 ---
 

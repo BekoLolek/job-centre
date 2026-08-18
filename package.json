@@ -1,10 +1,10 @@
 {
-  "name": "tournament-draft",
+  "name": "job-centre",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3400",
-    "build": "next build",
+    "build": "npm run db:migrate && next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -12,7 +12,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env.local ./node_modules/tsx/dist/cli.mjs src/db/migrate.ts",
     "db:seed": "node --env-file-if-exists=.env.local ./node_modules/tsx/dist/cli.mjs src/db/seed.ts",
-    "db:studio": "node --env-file-if-exists=.env.local ./node_modules/drizzle-kit/bin.cjs studio"
+    "db:studio": "node --env-file-if-exists=.env.local ./node_modules/drizzle-kit/bin.cjs studio",
+    "build:only": "next build"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.11.3",

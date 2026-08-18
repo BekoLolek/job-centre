@@ -77,6 +77,15 @@ export const AUDIT_ACTIONS = {
   "format.generated": "Bracket generated",
   "settings.announcements": "Announcements changed",
   "announcement.failed": "Announcement failed",
+  "user.admin.granted": "Admin granted",
+  "user.admin.revoked": "Admin revoked",
+  "user.note": "Note added",
+  "template.created": "Template created",
+  "template.updated": "Template changed",
+  "template.duplicated": "Template duplicated",
+  "template.from_event": "Template made from an event",
+  "template.activated": "Template activated",
+  "template.deactivated": "Template deactivated",
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
@@ -95,11 +104,19 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   "format.generated",
   "format.stages",
   "announcement.failed",
+  // Taking the admin flag away is the one line on this log that changes who can
+  // read the log, so it gets the colour that says "look at this one".
+  "user.admin.revoked",
+  "template.deactivated",
 ]);
+
+/** The actions that hand something out. Read next to `DESTRUCTIVE` above. */
+const NOTABLE: ReadonlySet<string> = new Set(["user.admin.granted"]);
 
 export function actionTone(action: string): "gold" | "ember" | "muted" {
   if (DESTRUCTIVE.has(action)) return "ember";
   if (action === "announcement.failed") return "ember";
+  if (NOTABLE.has(action)) return "gold";
   return action.startsWith("draft.") || action.startsWith("result.") ? "gold" : "muted";
 }
 

@@ -664,6 +664,10 @@ export async function createEvent(
       bannerUrl: cleanNullable(input.bannerUrl, 500),
       gameId,
       config: { ...(template?.config ?? {}), ...(input.config ?? {}) },
+      // Provenance only — nothing reads it to decide anything. The template is
+      // still copied and then forgotten; this is what lets `/admin/templates`
+      // say how many events a template has produced.
+      createdFromTemplateId: template?.id ?? null,
       createdBy: input.createdBy ?? null,
       ...next,
     })

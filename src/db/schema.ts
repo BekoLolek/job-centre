@@ -168,6 +168,44 @@ export const verificationTokens = pgTable(
   (table) => [primaryKey({ columns: [table.identifier, table.token] })]
 );
 
+/**
+ * Admin-only free text about a member (§7).
+ *
+ * Several per member, newest first, each recording who wrote it and when.
+ * **Never public.** `src/lib/players.ts` is the only module that builds the
+ * public profile and it does not import this table; the guard is that there is
+ * no read of `user_notes` anywhere outside `src/lib/admin-users.ts`, which is
+ * itself only reachable from `/admin/users`.
+ *
+ * `author_user_id` is `set null` on delete with the name copied alongside, for
+ * the same reason `audit_log` does it: a note that reads "somebody said this"
+ * the day an account goes is not a note. `user_id` cascades, because a note
+ * about a member who no longer exists is about nobody.
+ *
+ * There is no edit and no delete path, matching the audit log and the standing
+ * rule in checklist.md — a note is a record of what somebody thought at the
+ * time, and a rewritable one is not a record.
+ */
+export const userNotes = pgTable(
+  "user_notes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** Who wrote it. Null only once their account is gone. */
+    authorUserId: uuid("author_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** What the author was called at the time. Never rewritten. */
+    authorName: text("author_name"),
+    body: text("body").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // The only read: one member's notes, newest first.
+    index("user_notes_user_created_idx").on(table.userId, table.createdAt),
+  ]
+);
+
 /* ------------------------------------------------------------------ */
 /* Games catalogue (§14)                                              */
 /* ------------------------------------------------------------------ */
@@ -459,6 +497,19 @@ export const events = pgTable(
     config: json<EventConfig>("config")
       .notNull()
       .default(sql`'{}'::jsonb`),
+    /**
+     * Which template this event was started from, if any.
+     *
+     * Provenance only. A template is *copied* at creation and never read again,
+     * so this changes nothing about the event — it exists so `/admin/templates`
+     * can say "used 4 times", which is the number that tells an admin whether a
+     * template is earning its place. `set null` on delete rather than cascade,
+     * for the obvious reason that losing a template must not lose the events.
+     */
+    createdFromTemplateId: uuid("created_from_template_id").references(
+      () => eventTemplates.id,
+      { onDelete: "set null" }
+    ),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
@@ -468,6 +519,8 @@ export const events = pgTable(
     // everything with this status".
     index("events_status_starts_at_idx").on(table.status, table.startsAt),
     index("events_game_id_idx").on(table.gameId),
+    // `/admin/templates` counts events per template, which is this index.
+    index("events_created_from_template_idx").on(table.createdFromTemplateId),
     check("events_capacity_positive", sql`${table.capacity} is null or ${table.capacity} > 0`),
   ]
 );
@@ -1367,6 +1420,17 @@ export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   profileValues: many(profileValues),
   applications: many(applications),
+  notes: many(userNotes),
+}));
+
+export const userNotesRelations = relations(userNotes, ({ one }) => ({
+  user: one(users, { fields: [userNotes.userId], references: [users.id] }),
+  author: one(users, { fields: [userNotes.authorUserId], references: [users.id] }),
+}));
+
+export const eventTemplatesRelations = relations(eventTemplates, ({ one, many }) => ({
+  game: one(games, { fields: [eventTemplates.gameId], references: [games.id] }),
+  events: many(events),
 }));
 
 export const accountsRelations = relations(accounts, ({ one }) => ({
@@ -1397,6 +1461,10 @@ export const profileValuesRelations = relations(profileValues, ({ one }) => ({
 
 export const eventsRelations = relations(events, ({ one, many }) => ({
   game: one(games, { fields: [events.gameId], references: [games.id] }),
+  template: one(eventTemplates, {
+    fields: [events.createdFromTemplateId],
+    references: [eventTemplates.id],
+  }),
   creator: one(users, { fields: [events.createdBy], references: [users.id] }),
   days: many(eventDays),
   questions: many(eventQuestions),
@@ -1495,6 +1563,8 @@ export const matchGamesRelations = relations(matchGames, ({ one }) => ({
 
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
+export type UserNote = typeof userNotes.$inferSelect;
+export type NewUserNote = typeof userNotes.$inferInsert;
 export type Account = typeof accounts.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Game = typeof games.$inferSelect;

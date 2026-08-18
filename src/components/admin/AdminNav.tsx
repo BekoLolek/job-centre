@@ -21,7 +21,9 @@ import { cx } from "@/components/ui";
 const SECTIONS = [
   { href: "/admin", label: "Tonight", exact: true },
   { href: "/admin/events", label: "Events" },
+  { href: "/admin/templates", label: "Templates" },
   { href: "/admin/games", label: "Games" },
+  { href: "/admin/users", label: "Members" },
   { href: "/admin/audit", label: "Audit" },
   { href: "/admin/settings", label: "Settings" },
 ] as const;

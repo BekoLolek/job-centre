@@ -46,6 +46,7 @@ describe("migrations", () => {
       "stages",
       "team_members",
       "teams",
+      "user_notes",
       "users",
       "verification_tokens",
     ]);
@@ -90,7 +91,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(25);
+    expect(await tableNames(ctx.client)).toHaveLength(26);
   });
 
   it("mints uuid primary keys database-side", async () => {

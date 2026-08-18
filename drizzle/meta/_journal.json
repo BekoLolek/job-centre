@@ -43,6 +43,13 @@
       "when": 1787048857788,
       "tag": "0005_kind_chimera",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1787069190314,
+      "tag": "0006_puzzling_shockwave",
+      "breakpoints": true
     }
   ]
 }
