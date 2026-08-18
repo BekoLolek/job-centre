@@ -36,6 +36,7 @@ import {
   plural,
 } from "@/components/ui";
 import { getEventById, getMyApplications, listEvents } from "@/lib/events";
+import { handleOf } from "@/lib/players";
 import { loadProfile } from "@/lib/profile";
 import { requireUser } from "@/lib/session-guards";
 
@@ -52,10 +53,12 @@ export default async function MePage() {
   const user = await requireUser();
   const now = new Date();
 
-  const [mine, upcoming, profile] = await Promise.all([
+  const [mine, upcoming, profile, handle] = await Promise.all([
     getMyApplications(user.id, { now }),
     listEvents({ status: "published", upcoming: true, now }),
     loadProfile(user.id),
+    // Assigns one if they have not got it yet, so the link below always works.
+    handleOf(user.id),
   ]);
 
   const live = mine.filter(
@@ -139,11 +142,14 @@ export default async function MePage() {
             <div className="min-w-0">
               <Eyebrow className="mb-1">Signed in</Eyebrow>
               <h1 className="font-display text-4xl leading-none tracking-wide">{name}</h1>
-              {user.isAdmin && (
-                <p className="mt-2">
-                  <Badge tone="gold">Admin</Badge>
-                </p>
-              )}
+              <p className="mt-2 flex flex-wrap items-center gap-2">
+                {user.isAdmin && <Badge tone="gold">Admin</Badge>}
+                {handle && (
+                  <Link href={`/players/${handle}`} className="text-xs text-muted hover:text-gold">
+                    Your public profile → /players/{handle}
+                  </Link>
+                )}
+              </p>
             </div>
 
             <div className="ml-auto flex gap-8">
@@ -295,11 +301,16 @@ export default async function MePage() {
           <Button href="/me/profile" size="sm">
             My profile
           </Button>
+          {handle && (
+            <Button href={`/players/${handle}`} size="sm">
+              Public profile
+            </Button>
+          )}
           <Button href="/events" size="sm">
             All events
           </Button>
           {user.isAdmin && (
-            <Button href="/admin/events" size="sm" className="ml-auto">
+            <Button href="/admin" size="sm" className="ml-auto">
               Admin
             </Button>
           )}

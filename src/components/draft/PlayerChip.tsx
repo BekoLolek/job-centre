@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { Avatar, cx } from "@/components/ui";
 
@@ -13,6 +14,11 @@ import { Avatar, cx } from "@/components/ui";
 
 export type PlayerChipProps = {
   name: string;
+  /**
+   * Their public profile. Omitted — or null — draws the name as plain text,
+   * which is what a member with no handle yet gets. See `playerHref`.
+   */
+  href?: string | null;
   /** Small mono line under the name — a rank, a price, a reason. */
   meta?: ReactNode;
   /** To the right of the name, before the actions — badges, a figure. */
@@ -28,6 +34,7 @@ export type PlayerChipProps = {
 
 export default function PlayerChip({
   name,
+  href,
   meta,
   trailing,
   actions,
@@ -50,7 +57,13 @@ export default function PlayerChip({
       <Avatar name={name} size="sm" />
 
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm leading-tight">{name}</span>
+        {href ? (
+          <Link href={href} className="block truncate text-sm leading-tight hover:text-gold">
+            {name}
+          </Link>
+        ) : (
+          <span className="block truncate text-sm leading-tight">{name}</span>
+        )}
         {meta && <span className="eyebrow block truncate">{meta}</span>}
       </span>
 

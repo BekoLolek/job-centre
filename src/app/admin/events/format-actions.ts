@@ -42,6 +42,7 @@ import {
   type GamePatch,
   type StageInput,
   applySchedule,
+  clearMatch,
   formatFor,
   generateMatches,
   matchIdsFor,
@@ -53,6 +54,8 @@ import {
 } from "@/lib/format";
 import type { FormatTiming, StageConfig } from "@/lib/format-policy";
 import { updateEvent } from "@/lib/events";
+import { recordAudit } from "@/lib/audit";
+import { announceMatchResult } from "@/lib/discord";
 import { requireAdmin } from "@/lib/session-guards";
 
 /** Both admin screens, plus the public event page once it exists. */
@@ -199,7 +202,7 @@ export async function saveStagesAction(
   eventId: string,
   input: StageFields[]
 ): Promise<FormatResult<{ stages: Array<StageFields & { id: string }> }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const stages: StageInput[] = input.map((stage) => ({
     id: stage.id,
@@ -210,6 +213,14 @@ export async function saveStagesAction(
 
   const result = await setStages(eventId, stages);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "format.stages",
+    actor: admin,
+    eventId,
+    summary: `Set the format to ${result.data.map((stage) => `${stage.name ?? stage.kind} (${stage.kind})`).join(" then ")}.`,
+    detail: { stages: result.data.length },
+  });
 
   refresh(eventId);
   return {
@@ -239,10 +250,19 @@ export async function generateStageAction(
   eventId: string,
   stageId: string
 ): Promise<FormatResult<{ created: number; view: FormatView | null }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await generateMatches(stageId);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "format.generated",
+    actor: admin,
+    eventId,
+    subject: stageId,
+    summary: `Generated ${result.data.created} matches.`,
+    detail: { created: result.data.created },
+  });
 
   refresh(eventId);
   return { ok: true, data: { created: result.data.created, view: await formatFor(eventId) } };
@@ -316,13 +336,21 @@ export async function applyScheduleAction(
   dayStarts: Array<string | null>,
   settings: ScheduleSettingsFields
 ): Promise<FormatResult<{ scheduled: number; view: FormatView | null }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const saved = await saveScheduleSettingsAction(eventId, settings);
   if (!saved.ok) return saved;
 
   const result = await applySchedule(eventId, dayStarts);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "schedule.applied",
+    actor: admin,
+    eventId,
+    summary: `Rebuilt the running order — ${result.data.scheduled} matches given a start time across ${settings.days} days.`,
+    detail: { scheduled: result.data.scheduled, days: settings.days },
+  });
 
   refresh(eventId);
   return { ok: true, data: { scheduled: result.data.scheduled, view: await formatFor(eventId) } };
@@ -354,7 +382,7 @@ export async function recordGamesAction(
   matchId: string,
   fields: RecordFields
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   if (fields.scheduledAt !== undefined) {
     const moved = await setMatchSchedule(matchId, fields.scheduledAt);
@@ -369,7 +397,45 @@ export async function recordGamesAction(
   if (!result.ok) return result;
 
   refresh(eventId);
-  return { ok: true, data: { view: await formatFor(eventId) } };
+  const view = await formatFor(eventId);
+
+  // The board is re-read anyway, so the line the log stores is the scoreline
+  // the screen is about to show — no third description of the same series.
+  const line = matchLine(view, matchId, await matchIdsFor(eventId));
+  await recordAudit({
+    action: "result.recorded",
+    actor: admin,
+    eventId,
+    subject: matchId,
+    summary: line ? `Recorded ${line}.` : "Recorded a result.",
+    detail: { games: fields.games.length },
+  });
+
+  // Only a decided series is announced; `announceMatchResult` re-reads the
+  // board and returns without posting for a card that is half filled in.
+  announceMatchResult(matchId);
+
+  return { ok: true, data: { view } };
+}
+
+/**
+ * One match as a sentence — "Upper semi-final: Rivals Red 2–1 Rivals Blue".
+ *
+ * Built from the resolved board rather than from the patch, because a patch
+ * says what changed and a log line has to say where the series *ended up*.
+ * Returns `null` when the match is not on the board any more, which is the one
+ * case where a generic line is the honest one.
+ */
+function matchLine(
+  view: FormatView | null,
+  matchId: string,
+  ids: Record<string, string>
+): string | null {
+  const slot = Object.entries(ids).find(([, id]) => id === matchId)?.[0];
+  if (!view || !slot) return null;
+  const match = view.stages.flatMap((stage) => stage.matches).find((row) => row.slot === slot);
+  if (!match) return null;
+  return `${match.displayLabel}: ${match.nameA} ${match.gamesWonA}–${match.gamesWonB} ${match.nameB}`;
 }
 
 /**
@@ -384,46 +450,72 @@ export async function setWinnerOverrideAction(
   matchId: string,
   teamId: string | null
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await setWinnerOverride(matchId, teamId);
   if (!result.ok) return result;
 
   refresh(eventId);
-  return { ok: true, data: { view: await formatFor(eventId) } };
+  const view = await formatFor(eventId);
+  const ids = await matchIdsFor(eventId);
+  const line = matchLine(view, matchId, ids);
+  const named = teamId
+    ? (view?.teams.find((team) => team.id === teamId)?.name ?? "a team")
+    : null;
+
+  await recordAudit({
+    action: "result.override",
+    actor: admin,
+    eventId,
+    subject: matchId,
+    summary: named
+      ? `Called ${line ?? "a series"} for ${named}.`
+      : `Dropped the winner override on ${line ?? "a series"}.`,
+    detail: { teamId },
+  });
+
+  // An override is what settles a drawn series, so it is a result like any
+  // other — and the one the room has actually been waiting for.
+  announceMatchResult(matchId);
+
+  return { ok: true, data: { view } };
 }
 
 /**
  * Wipe one series back to an unplayed card.
  *
- * The old board's "Clear", carried over: it is the only way back from a score
- * typed against the wrong match, and doing it as a patch — every game untick
- * and zeroed, the override dropped, the duration cleared — means it goes
- * through exactly the same validation and the same re-flow as recording one.
+ * The composition that used to live here — clear the override, then patch every
+ * game back to nothing — has moved into `clearMatch` in `src/lib/format.ts`,
+ * and the move is the whole point. Assembling the site's most destructive
+ * operation out of two library calls put it *outside* every rule the library
+ * enforces about that operation: it reached both writes without ever asking
+ * whether the event was finished. An action that composes is an action that has
+ * business logic in it, and this file says it must not.
+ *
+ * What is left is the same shape as everything else here: guard, delegate, log.
  */
 export async function clearMatchAction(
   eventId: string,
   matchId: string,
   gameCount: number
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
-  const cleared = await setWinnerOverride(matchId, null);
-  if (!cleared.ok) return cleared;
+  // The line is read *before* the wipe: afterwards there is nothing left to
+  // describe, and "cleared a match" is not a log entry anybody can act on.
+  const before = matchLine(await formatFor(eventId), matchId, await matchIdsFor(eventId));
 
-  const result = await recordGames(
-    matchId,
-    Array.from({ length: Math.max(0, gameCount) }, (_, index) => ({
-      index,
-      map: "",
-      referee: "",
-      scoreA: 0,
-      scoreB: 0,
-      played: false,
-    })),
-    { durationMin: null }
-  );
+  const result = await clearMatch(matchId, gameCount);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "result.cleared",
+    actor: admin,
+    eventId,
+    subject: matchId,
+    summary: before ? `Cleared ${before} back to an unplayed card.` : "Cleared a series.",
+    detail: { games: gameCount },
+  });
 
   refresh(eventId);
   return { ok: true, data: { view: await formatFor(eventId) } };

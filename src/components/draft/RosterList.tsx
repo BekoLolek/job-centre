@@ -2,7 +2,7 @@ import { Badge, EmptyState } from "@/components/ui";
 import Money from "./MoneyFigure";
 import PlayerChip from "./PlayerChip";
 import type { MemberLike, PlayerBook } from "./types";
-import { playerName } from "./types";
+import { playerHref, playerName } from "./types";
 
 /**
  * A team's roster, captain first, with the empty slots drawn in.
@@ -54,6 +54,11 @@ export default function RosterList({
         <li key={member.userId}>
           <PlayerChip
             name={playerName(players, member.userId)}
+            // Every roster on the site — the public Teams tab, the admin's
+            // Teams tab and the live room — is this one component, so linking
+            // here is what makes §4's player profiles reachable from all three
+            // at once rather than from whichever page somebody remembered.
+            href={playerHref(players, member.userId)}
             trailing={
               member.isCaptain ? (
                 <Badge tone="gold">Captain</Badge>

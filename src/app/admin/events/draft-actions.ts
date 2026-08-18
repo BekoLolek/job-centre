@@ -43,6 +43,8 @@ import {
   setTeams,
 } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
+import { recordAudit } from "@/lib/audit";
+import { displayNamesFor } from "@/lib/players";
 import { requireAdmin } from "@/lib/session-guards";
 
 /** Both admin screens: a team or a pool change alters what the list summarises. */
@@ -148,10 +150,21 @@ export async function saveTeamsAction(
   eventId: string,
   input: TeamFields[]
 ): Promise<DraftResult<{ teams: Array<TeamFields & { id: string }>; removed: number }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await setTeams(eventId, input.map(toTeamInput));
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "team.set",
+    actor: admin,
+    eventId,
+    summary:
+      result.data.removed > 0
+        ? `Saved ${result.data.teams.length} teams and removed ${result.data.removed}: ${result.data.teams.map((team) => team.name).join(", ")}.`
+        : `Saved ${result.data.teams.length} teams: ${result.data.teams.map((team) => team.name).join(", ")}.`,
+    detail: { teams: result.data.teams.length, removed: result.data.removed },
+  });
 
   refresh(eventId);
   return {
@@ -184,10 +197,30 @@ export async function saveCaptainsAction(
   eventId: string,
   input: CaptainInput[]
 ): Promise<DraftResult<{ captains: Array<{ teamId: string; userId: string | null }> }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await setCaptains(eventId, input);
   if (!result.ok) return result;
+
+  // Names, not ids. A log line reading "Made 4c9f… captain of 8a21…" is a line
+  // nobody can use, and looking the pair up later is exactly what a summary
+  // written at the time exists to avoid.
+  const names = await displayNamesFor(result.data.teams.map((team) => team.captainUserId));
+  const led = result.data.teams
+    .filter((team) => team.captainUserId)
+    .map((team) => `${names.get(team.captainUserId as string) ?? "somebody"} → ${team.name}`);
+  const empty = result.data.teams.filter((team) => !team.captainUserId).length;
+
+  await recordAudit({
+    action: "team.captains",
+    actor: admin,
+    eventId,
+    summary:
+      led.length > 0
+        ? `Set captains: ${led.join(", ")}.${empty > 0 ? ` ${empty} still without one.` : ""}`
+        : "Cleared every captain.",
+    detail: { captains: led.length, without: empty },
+  });
 
   refresh(eventId);
   return {
@@ -221,10 +254,27 @@ export async function saveDraftConfigAction(
   eventId: string,
   patch: Partial<DraftConfig>
 ): Promise<DraftResult<{ config: DraftConfig; rebalanced: number }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await setDraftConfig(eventId, patch);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "draft.config",
+    actor: admin,
+    eventId,
+    summary:
+      result.data.rebalanced > 0
+        ? `Changed the draft rules — ${result.data.config.defaultBalance} each, ${result.data.config.biddingMode} bidding, rosters of ${result.data.config.rosterTarget}. ${result.data.rebalanced} team balances were reset.`
+        : `Changed the draft rules — ${result.data.config.defaultBalance} each, ${result.data.config.biddingMode} bidding, rosters of ${result.data.config.rosterTarget}.`,
+    detail: {
+      defaultBalance: result.data.config.defaultBalance,
+      biddingMode: result.data.config.biddingMode,
+      balanceMode: result.data.config.balanceMode,
+      rosterTarget: result.data.config.rosterTarget,
+      rebalanced: result.data.rebalanced,
+    },
+  });
 
   refresh(eventId);
   return { ok: true, data: result.data };
@@ -259,10 +309,22 @@ export async function seedDraftPoolAction(
   eventId: string,
   input: { userIds?: string[]; keepReserve?: boolean } = {}
 ): Promise<DraftResult<{ added: number; removed: number; pool: PoolState }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await setDraftPool(eventId, input);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "draft.pool",
+    actor: admin,
+    eventId,
+    summary: `Re-seeded the draft pool — ${result.data.added.length} added, ${result.data.removed.length} taken out.`,
+    detail: {
+      added: result.data.added.length,
+      removed: result.data.removed.length,
+      fromAccepted: input.userIds === undefined,
+    },
+  });
 
   refresh(eventId);
   return {

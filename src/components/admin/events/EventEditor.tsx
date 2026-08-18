@@ -16,6 +16,7 @@ import QuestionsTab from "./QuestionsTab";
 import ResultsTab from "./ResultsTab";
 import ScheduleTab from "./ScheduleTab";
 import TeamsTab from "./TeamsTab";
+import type { TabKey } from "./tabs";
 import type { DraftTabData, FormatTabData, GameOption, LinkableField } from "./types";
 
 /**
@@ -43,22 +44,9 @@ import type { DraftTabData, FormatTabData, GameOption, LinkableField } from "./t
  * longer exists.
  */
 
-type TabKey =
-  | "basics"
-  | "days"
-  | "questions"
-  | "rules"
-  | "applicants"
-  | "teams"
-  | "captains"
-  | "draft"
-  | "format"
-  | "schedule"
-  | "results"
-  | "publish";
-
 export default function EventEditor({
   event,
+  initialTab = "basics",
   applicants,
   games,
   linkableFields,
@@ -69,6 +57,8 @@ export default function EventEditor({
   maxStages,
 }: {
   event: EventDetail;
+  /** Which tab to open on, from `?tab=` — see {@link tabFrom}. */
+  initialTab?: TabKey;
   applicants: ApplicantView[];
   games: GameOption[];
   linkableFields: LinkableField[];
@@ -87,7 +77,10 @@ export default function EventEditor({
   /** `MAX_STAGES`, for the same reason — `src/lib/format.ts` reaches Postgres. */
   maxStages: number;
 }) {
-  const [tab, setTab] = useState<TabKey>("basics");
+  // Seeded from the URL, then owned here. Deep-linking is what makes an admin
+  // dashboard line actionable; keeping the URL in step afterwards is not worth
+  // a router push per tab click on a page that is already `force-dynamic`.
+  const [tab, setTab] = useState<TabKey>(initialTab);
 
   const queue = applicants.filter((row) => row.status === "waitlisted").length;
   const undecided = applicants.filter(

@@ -14,12 +14,16 @@ import { cx } from "@/components/ui";
  * per §4's "no hamburger menus on desktop".
  *
  * `startsWith` rather than equality, so `/admin/events/[id]` still lights the
- * Events link.
+ * Events link — except for `/admin` itself, which is a prefix of every other
+ * link here and would otherwise light permanently. It gets an exact match.
  */
 
 const SECTIONS = [
+  { href: "/admin", label: "Tonight", exact: true },
   { href: "/admin/events", label: "Events" },
   { href: "/admin/games", label: "Games" },
+  { href: "/admin/audit", label: "Audit" },
+  { href: "/admin/settings", label: "Settings" },
 ] as const;
 
 export default function AdminNav({ className }: { className?: string }) {
@@ -28,7 +32,10 @@ export default function AdminNav({ className }: { className?: string }) {
   return (
     <nav className={cx("flex border border-hair", className)} aria-label="Admin sections">
       {SECTIONS.map((section) => {
-        const active = pathname === section.href || pathname.startsWith(`${section.href}/`);
+        const active =
+          "exact" in section && section.exact
+            ? pathname === section.href
+            : pathname === section.href || pathname.startsWith(`${section.href}/`);
         return (
           <Link
             key={section.href}

@@ -35,6 +35,7 @@ import type { DraftPoolKind } from "@/db/schema";
 import {
   awardLot,
   clearBid,
+  describeLot,
   discardLot,
   getDraftSnapshot,
   moveToReserve,
@@ -44,6 +45,8 @@ import {
   voidLastLot,
   voidLot,
 } from "@/lib/draft";
+import { recordAudit } from "@/lib/audit";
+import { announceLotSold } from "@/lib/discord";
 import type { BidRefusalReason } from "@/lib/draft-policy";
 import { getCurrentUser, requireAdmin, requireUser } from "@/lib/session-guards";
 import { type RoomPayload, checkBid, loadRoom } from "./room";
@@ -197,15 +200,44 @@ export async function runDraftAction(
     case "award": {
       if (!lotId) return done(false, "Nobody is on the block right now.");
       const result = await awardLot(lotId, command.teamId, { closedBy: admin.id });
-      return result.ok
-        ? done(true, null, `Awarded for ${result.data.lot.price ?? 0}.`)
-        : done(false, result.error);
+      if (!result.ok) return done(false, result.error);
+
+      // The one line in this file that must survive everything: a price paid.
+      // `describeLot` re-reads it rather than composing the ids the command
+      // carried, so the sentence names the player and the team as they were
+      // when the money moved.
+      const sold = await describeLot(lotId);
+      await recordAudit({
+        action: "draft.awarded",
+        actor: admin,
+        eventId,
+        subject: lotId,
+        summary: sold
+          ? `${sold.player} → ${sold.team ?? "a team"} for ${sold.price ?? 0}.`
+          : `A lot was awarded for ${result.data.lot.price ?? 0}.`,
+        detail: { price: result.data.lot.price ?? 0, teamId: command.teamId },
+      });
+
+      announceLotSold(lotId);
+
+      return done(true, null, `Awarded for ${result.data.lot.price ?? 0}.`);
     }
 
     case "discard": {
       if (!lotId) return done(false, "Nobody is on the block right now.");
+      const discarded = await describeLot(lotId);
       const result = await discardLot(lotId, { closedBy: admin.id });
-      return result.ok ? done(true) : done(false, result.error);
+      if (!result.ok) return done(false, result.error);
+
+      await recordAudit({
+        action: "draft.discarded",
+        actor: admin,
+        eventId,
+        subject: lotId,
+        summary: `${discarded?.player ?? "A player"} was taken out of the draft — nobody bid.`,
+      });
+
+      return done(true);
     }
 
     case "reserve": {
@@ -240,15 +272,44 @@ export async function runDraftAction(
 
     case "cancel": {
       if (!lotId) return done(false, "Nobody is on the block right now.");
+      const cancelling = await describeLot(lotId);
       const result = await voidLot(lotId, { voidedBy: admin.id });
-      return result.ok
-        ? done(true, null, "Lot cancelled. Nobody paid anything.")
-        : done(false, result.error);
+      if (!result.ok) return done(false, result.error);
+
+      await recordAudit({
+        action: "draft.voided",
+        actor: admin,
+        eventId,
+        subject: lotId,
+        summary: `Cancelled the open lot on ${cancelling?.player ?? "a player"}. Nobody paid anything.`,
+      });
+
+      return done(true, null, "Lot cancelled. Nobody paid anything.");
     }
 
     case "undo": {
       const result = await voidLastLot(eventId, { voidedBy: admin.id });
       if (!result.ok) return done(false, result.error);
+
+      // Read *after* the void, deliberately. The row keeps its winner and its
+      // price — that is the whole reason a void is a status and not a delete —
+      // so the log can say exactly what was undone rather than that something
+      // was.
+      const undone = await describeLot(result.data.lot.id);
+      await recordAudit({
+        action: "draft.voided",
+        actor: admin,
+        eventId,
+        subject: result.data.lot.id,
+        summary:
+          result.data.refunded !== null
+            ? `Undid ${undone?.player ?? "a lot"} → ${undone?.team ?? "a team"}; ${result.data.refunded} given back.`
+            : `Undid the lot on ${undone?.player ?? "a player"}.`,
+        detail: {
+          refunded: result.data.refunded,
+          returnedTo: result.data.returnedTo,
+        },
+      });
       const { refunded, returnedTo } = result.data;
       const parts: string[] = [];
       if (refunded !== null) parts.push(`${refunded} given back`);

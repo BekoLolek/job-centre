@@ -72,6 +72,7 @@ import {
   profileValues,
   users,
 } from "@/db";
+import { LOCKED, lockRefusal } from "./archive-policy";
 import {
   type ApplicationsState,
   type CapacityState,
@@ -740,6 +741,17 @@ export async function updateEvent(
     return fail(`An event cannot go from ${current.status} to ${patch.status}.`);
   }
 
+  // A finished event keeps its title, its description and its dates editable —
+  // fixing a typo on an archived record is not destructive, and forbidding it
+  // would only teach an admin to un-finish the event to do it. `config` is the
+  // exception: `config.format` is where the schedule settings live (§10), and
+  // rewriting them changes the block plan the running order was derived from.
+  // That is the recorded shape of an event that has already happened.
+  if ("config" in patch && patch.config !== undefined) {
+    const locked = lockRefusal(current, LOCKED.reschedule);
+    if (locked) return fail(locked);
+  }
+
   const gameId = patch.gameId !== undefined ? (patch.gameId ?? null) : current.gameId;
   const game = await readGame(database, gameId);
   if (gameId && !game) return fail("That game no longer exists.");
@@ -958,6 +970,12 @@ export async function setEventDays(
     return fail(`An event runs over at most ${MAX_EVENT_DAYS} days.`);
   }
 
+  // Rewriting the day list deletes the days it drops, and every availability
+  // answer cascades with them. On a finished event those answers are part of
+  // the record of who could make which night.
+  const lockedDays = lockRefusal(event, LOCKED.days);
+  if (lockedDays) return fail(lockedDays);
+
   const existing = await readDays(database, eventId);
   const existingIds = new Set(existing.map((day) => day.id));
 
@@ -1104,6 +1122,11 @@ export async function setEventQuestions(
   if (questions.length > MAX_EVENT_QUESTIONS) {
     return fail(`${MAX_EVENT_QUESTIONS} questions is already more than anyone will answer.`);
   }
+
+  // Rewriting the question set drops the questions it does not keep and scrubs
+  // every answer to them out of `applications.answers`.
+  const lockedQuestions = lockRefusal(event, LOCKED.questions);
+  if (lockedQuestions) return fail(lockedQuestions);
 
   const game = await readGame(database, event.gameId);
   const existing = await readQuestions(database, eventId);
@@ -1914,6 +1937,61 @@ export async function getEventById(
  * their eligibility, so the captain picker can grey out anyone below the
  * captain threshold (§8.3) without a second pass over the database.
  */
+/** Enough of an application to write a sentence about it. */
+export type ApplicationLabel = {
+  applicationId: string;
+  eventId: string;
+  eventTitle: string;
+  eventSlug: string;
+  userId: string;
+  member: string;
+  status: ApplicationStatus;
+  waitlistPosition: number | null;
+};
+
+/**
+ * One application, named — the member and the event, in one read.
+ *
+ * The audit log needs this and nothing else: a line saying "Accepted Beko Lolek
+ * for the March Rivals Cup" has to be written *at the time*, because a summary
+ * rebuilt on read from two ids is a summary that changes meaning when somebody
+ * is renamed. Returns `null` for an application that has since gone.
+ */
+export async function describeApplication(
+  applicationId: string,
+  database: Database = defaultDb
+): Promise<ApplicationLabel | null> {
+  const [row] = await database
+    .select({
+      applicationId: applications.id,
+      eventId: applications.eventId,
+      eventTitle: events.title,
+      eventSlug: events.slug,
+      userId: applications.userId,
+      displayName: users.displayName,
+      name: users.name,
+      status: applications.status,
+      waitlistPosition: applications.waitlistPosition,
+    })
+    .from(applications)
+    .innerJoin(events, eq(applications.eventId, events.id))
+    .innerJoin(users, eq(applications.userId, users.id))
+    .where(eq(applications.id, applicationId))
+    .limit(1);
+
+  if (!row) return null;
+  return {
+    applicationId: row.applicationId,
+    eventId: row.eventId,
+    eventTitle: row.eventTitle,
+    eventSlug: row.eventSlug,
+    userId: row.userId,
+    member: row.displayName ?? row.name ?? "A member",
+    status: row.status,
+    waitlistPosition: row.waitlistPosition,
+  };
+}
+
 export async function getApplicationsForEvent(
   eventId: string,
   database: Database = defaultDb

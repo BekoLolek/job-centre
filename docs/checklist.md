@@ -3,6 +3,12 @@
 Companion to [platform-plan.md](./platform-plan.md). The plan says *what and why*; this
 file tracks *what is done*. Updated at the end of each phase.
 
+**Status: every phase built.** Phases 0 to 5 are complete against 1549 tests. What is
+left is not code — it is the by-hand setup below: a Discord application, a Neon
+connection string, and a Vercel deploy. Until those exist the site runs locally on
+PGlite with `/dev-login` standing in for Discord, which is how all six phases were
+built and driven.
+
 Legend: `[x]` done · `[ ]` not started · `[~]` in progress · `[!]` blocked
 
 ---
@@ -128,9 +134,12 @@ you. Same product, fewer steps, but no separate `dev` branch unless you add one.
 
 - [ ] **F1.** **Custom domain** — Vercel → project → **Settings** → **Domains**. Then add a
       third redirect URI in Discord for it. Nothing in the code changes.
-- [ ] **F2.** **Discord announcements** (Phase 5) — in Discord: **Server Settings** →
+- [ ] **F2.** **Discord announcements** — in Discord: **Server Settings** →
       **Integrations** → **Webhooks** → **New Webhook** → pick the channel → **Copy Webhook
-      URL** → set as `DISCORD_WEBHOOK_URL`.
+      URL** → set as `DISCORD_WEBHOOK_URL`. The code is built and tested (Phase 5); this
+      is the one value it needs. Until it is set the whole feature is an inert no-op and
+      `/admin/settings` says so. Once it is, that page is where you choose which of the
+      five announcements actually fire.
 - [x] **F3.** ~~Upstash Redis~~ — not needed. The draft board that wanted it was retired
       in Phase 4; the draft lives in Postgres like everything else.
 
@@ -214,13 +223,17 @@ makes the problem disappear, since then there is one real database.
 
 745 tests. The board, the draft and the schedule are untouched beyond their route.
 
-## Phase 3 — teams and the draft `[~]` in progress
+## Phase 3 — teams and the draft `[x]` complete
 
-- [~] Teams, 2–8 per event
-- [ ] Admin picks captains from accepted applicants; a captain fills a roster slot
-- [ ] Draft configuration: balances, bidding style, reserve pool, roster limits
-- [ ] Port the draft room onto the database
-- [ ] Draft as immutable lots and bids, so prices survive forever
+- [x] Teams, 2–8 per event
+- [x] Admin picks captains from accepted applicants; a captain fills a roster slot
+- [x] Draft configuration: balances, bidding style, reserve pool, roster limits
+- [x] Port the draft room onto the database
+- [x] Draft as immutable lots and bids, so prices survive forever
+
+This was still ticked `[~]` when Phase 5 started, which was simply stale: Phase 4
+was built on top of it and the live room, the lots, the bids and the config have
+been running since. Corrected rather than done.
 
 ## Phase 4 — the format engine `[x]` complete
 
@@ -246,13 +259,64 @@ makes the problem disappear, since then there is one real database.
       routes, and the five legacy components. `Wheel.tsx` and `time.ts` survive
 - [x] Discord is now the only way in — the env-var password accounts are gone
 
-## Phase 5 — polish `[ ]`
+## Phase 5 — polish `[x]` complete
 
-- [ ] Discord webhook announcements
-- [ ] Public player profiles
-- [ ] Admin dashboard
-- [ ] Audit log
-- [ ] Event archive — nothing destructive, ever
+- [x] **Discord webhook announcements** — `src/lib/announce.ts` builds the
+      messages as pure functions, `src/lib/discord.ts` posts them. Five kinds:
+      an event published, an application accepted, an application waitlisted, a
+      draft lot sold, a result recorded. Which of them fire is an admin setting
+      (`discord.announcements`), edited at `/admin/settings`, defaulting to
+      everything except the waitlist one — a full event would post one of those
+      per applicant
+- [x] **It cannot fail the action that triggered it.** `announce*` returns
+      `void`, not a promise, so nothing can await it; the work runs in Next's
+      `after()`, so the response is already sent before the `fetch` starts; and
+      every path is inside a `try`. A missing, malformed or dead webhook is a
+      no-op. With `DISCORD_WEBHOOK_URL` unset the whole feature never even reads
+      a setting
+- [x] **The failure is visible.** A failed post writes `announcement.failed` to
+      the audit log with the status code and the reason, as well as a console
+      line — so it is findable at `/admin/audit` by somebody who was not
+      watching the server
+- [x] **Public player profiles** — `/players/[handle]`, no login. Events played,
+      the team they were on, what they were bought for, and where they finished.
+      `users.handle` is derived from the Discord name once and never recomputed,
+      so a rename cannot break a link that has been posted. Linked from every
+      roster (one component, so the public Teams tab, the admin's Teams tab and
+      the live room all get it) and from the draft's lot history
+- [x] **Nothing a member would be surprised is public.** Application answers are
+      never read by that module; declined and withdrawn applications are not
+      listed; nothing about a draft event appears at all. Prices and results are
+      already public on the event page
+- [x] **Admin dashboard** — `/admin`, what needs attention: applicants the cap
+      queued and nobody has decided, teams without a captain, a lot on the block,
+      a series that needs a winner, matches with no time, an event ready to
+      publish. Every line links to the exact tab that fixes it, which is why the
+      editor now reads `?tab=`. Every count is derived, so a line disappears when
+      the thing is done
+- [x] **Audit log** — an `audit_log` table and `recordAudit`, called from the
+      action layer and nowhere else: the actions are the trust boundary and the
+      only layer that knows who is acting. Readable at `/admin/audit`, newest
+      first, filterable by event. Append-only — there is no update or delete path
+      anywhere
+- [x] **Nothing destructive, ever — enforced rather than promised.** A finished
+      event is read-only. `src/lib/archive-policy.ts` is the single rule and
+      `src/lib/__tests__/archive-lock.test.ts` is the evidence: every write that
+      could erase a completed event's results, rosters or draft prices is
+      attempted against a finished event, refused, and the data checked to still
+      be there afterwards
+- [x] Fix: `clearMatchAction` — the site's most destructive operation — was
+      *composed* in the action file out of `setWinnerOverride` + `recordGames`,
+      which meant it reached both writes without passing through any rule about
+      the operation itself. It is now `clearMatch` in `src/lib/format.ts`, where
+      the refusal can be attached to it
+- [x] Fix: a team's `balanceStart` could be rewritten after lots had been
+      awarded. Every remaining balance is derived from it, so moving it silently
+      changed what every past lot appeared to have cost. Refused once a lot has
+      been awarded, on any event
+
+**1549 tests** — 101 new ones over Phase 5, of which the twenty in
+`archive-lock.test.ts` are the ones the standing rule rests on.
 
 ---
 
@@ -273,4 +337,7 @@ These are recorded so they are not lost, but are deliberately not in any phase y
 - Every phase ends deployable. No half-migrated states.
 - The test suite goes green before a phase is called done.
 - Nothing destructive: no feature may erase a completed event's results or draft prices.
+  Enforced as of Phase 5 rather than promised — `src/lib/archive-policy.ts` is the rule,
+  `src/lib/__tests__/archive-lock.test.ts` is the proof, and a new destructive write
+  should add a case to both.
 - Signups are clicks, not typing. Free text only where genuinely unavoidable.

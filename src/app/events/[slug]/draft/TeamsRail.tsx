@@ -15,8 +15,9 @@
  * different pages.
  */
 
+import Link from "next/link";
 import { Badge, EmptyState, Eyebrow, Panel } from "@/components/ui";
-import { Money, TeamCard, lotLine, playerName } from "@/components/draft";
+import { Money, TeamCard, lotLine, playerHref, playerName } from "@/components/draft";
 import type { DraftRoomView } from "@/lib/draft";
 
 export type TeamsRailProps = {
@@ -100,13 +101,27 @@ export default function TeamsRail({ view }: TeamsRailProps) {
           <ul className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
             {view.history.map((lot) => {
               const line = lotLine(lot, { players: view.players, teams: view.teams });
+              // The lot history is the other half of §4's "link to it from
+              // rosters and the draft history": this list is a permanent record
+              // of what somebody went for, so the name in it should reach the
+              // page that collects every such record for them.
+              const href = playerHref(view.players, lot.playerUserId);
+              const name = (
+                <span
+                  className={lot.status === "voided" ? "text-muted line-through" : "text-chalk/90"}
+                >
+                  {line.player}
+                </span>
+              );
               return (
                 <li key={lot.id} className="text-xs leading-snug">
-                  <span
-                    className={lot.status === "voided" ? "text-muted line-through" : "text-chalk/90"}
-                  >
-                    {line.player}
-                  </span>{" "}
+                  {href ? (
+                    <Link href={href} className="hover:text-gold">
+                      {name}
+                    </Link>
+                  ) : (
+                    name
+                  )}{" "}
                   <span className={line.tone === "ember" ? "text-ember/80" : "text-muted"}>
                     {line.outcome}
                   </span>

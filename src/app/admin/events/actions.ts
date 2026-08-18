@@ -21,6 +21,22 @@
  * Passing a `Date` through the action boundary would work, but the string is
  * what the form actually holds and one conversion is easier to be sure of than
  * two.
+ *
+ * ## The audit log and the announcements live here, and only here
+ *
+ * Phase 5 adds two side effects to some of these actions. Both belong at this
+ * layer and nowhere below it:
+ *
+ *  - `recordAudit` needs to know **who** is acting, and `requireAdmin()`'s
+ *    return value is the only place that is known. `src/lib/events.ts` takes a
+ *    `Database` and is called by tests and by seeds; an insert down there would
+ *    log a phantom for every fixture and nothing for the person who clicked.
+ *  - `announce*` is fire-and-forget by construction. It returns `void`, the
+ *    work happens after the response, and a webhook that is down can therefore
+ *    not fail the decision that triggered it — see `src/lib/discord.ts`.
+ *
+ * Both run only after the library has said `ok`. Nothing is logged that did not
+ * happen, and nothing is announced that did not stick.
  */
 
 import { revalidatePath } from "next/cache";
@@ -31,6 +47,7 @@ import {
   type EventQuestionInput,
   type EventResult,
   createEvent,
+  describeApplication,
   previewEventDays,
   publishEvent,
   setApplicationNote,
@@ -40,6 +57,8 @@ import {
   setEventQuestions,
   updateEvent,
 } from "@/lib/events";
+import { recordAudit } from "@/lib/audit";
+import { announceApplicationDecision, announceEventPublished } from "@/lib/discord";
 import { isFieldType } from "@/lib/profile-fields";
 import { requireAdmin } from "@/lib/session-guards";
 import { parseStamp } from "@/lib/time";
@@ -83,6 +102,14 @@ export async function createEventAction(
     createdBy: admin.id,
   });
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "event.created",
+    actor: admin,
+    eventId: result.data.id,
+    summary: `Created "${result.data.title}".`,
+    detail: { slug: result.data.slug, template: input.templateId ?? null },
+  });
 
   refresh(result.data.id);
   return { ok: true, data: { id: result.data.id, slug: result.data.slug } };
@@ -154,10 +181,23 @@ export async function setEventStatusAction(
   eventId: string,
   status: EventStatus
 ): Promise<EventResult<{ status: EventStatus }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await updateEvent(eventId, { status });
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "event.status",
+    actor: admin,
+    eventId,
+    summary: `Moved "${result.data.title}" to ${result.data.status}.`,
+    detail: { status: result.data.status },
+  });
+
+  // Reaching `published` from the status dropdown is the same event as reaching
+  // it from the Publish tab, so it announces the same thing. Announcing from
+  // one of the two paths is how a feature ends up looking unreliable.
+  if (result.data.status === "published") announceEventPublished(eventId);
 
   refresh(eventId);
   return { ok: true, data: { status: result.data.status } };
@@ -167,10 +207,20 @@ export async function setEventStatusAction(
 export async function publishEventAction(
   eventId: string
 ): Promise<EventResult<{ status: EventStatus }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await publishEvent(eventId);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "event.published",
+    actor: admin,
+    eventId,
+    summary: `Published "${result.data.title}".`,
+    detail: { slug: result.data.slug },
+  });
+
+  announceEventPublished(eventId);
 
   refresh(eventId);
   return { ok: true, data: { status: result.data.status } };
@@ -224,10 +274,24 @@ export async function saveEventDaysAction(
   eventId: string,
   days: DayFields[]
 ): Promise<EventResult<{ clearedAvailability: number; days: DayFields[] }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const result = await setEventDays(eventId, days.map(toDayInput));
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "event.days",
+    actor: admin,
+    eventId,
+    summary:
+      result.data.clearedAvailability > 0
+        ? `Rewrote the day list to ${result.data.days.length}, losing ${result.data.clearedAvailability} availability answers.`
+        : `Rewrote the day list to ${result.data.days.length}.`,
+    detail: {
+      days: result.data.days.length,
+      clearedAvailability: result.data.clearedAvailability,
+    },
+  });
 
   refresh(eventId);
   return {
@@ -272,7 +336,7 @@ export async function saveEventQuestionsAction(
   eventId: string,
   questions: QuestionFields[]
 ): Promise<EventResult<{ clearedAnswers: number; questions: QuestionFields[] }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
 
   const cleaned: EventQuestionInput[] = [];
   for (const [index, question] of questions.entries()) {
@@ -295,6 +359,20 @@ export async function saveEventQuestionsAction(
 
   const result = await setEventQuestions(eventId, cleaned);
   if (!result.ok) return result;
+
+  await recordAudit({
+    action: "event.questions",
+    actor: admin,
+    eventId,
+    summary:
+      result.data.clearedAnswers > 0
+        ? `Rewrote the application form to ${result.data.questions.length} questions, losing ${result.data.clearedAnswers} answers.`
+        : `Rewrote the application form to ${result.data.questions.length} questions.`,
+    detail: {
+      questions: result.data.questions.length,
+      clearedAnswers: result.data.clearedAnswers,
+    },
+  });
 
   refresh(eventId);
   // With their ids, for the same reason the days come back with theirs: a
@@ -348,6 +426,14 @@ export async function saveEntryRulesAction(
 /* Applicants                                                         */
 /* ------------------------------------------------------------------ */
 
+/** The word each decision reads as in the log. */
+const DECISION_VERB: Record<ApplicationStatus, string> = {
+  accepted: "Accepted",
+  waitlisted: "Waitlisted",
+  declined: "Declined",
+  withdrawn: "Withdrew",
+};
+
 export type DecisionResult = {
   status: ApplicationStatus;
   /** Seats free once this decision landed. Null when the event is uncapped. */
@@ -381,6 +467,40 @@ export async function decideApplicationAction(
     promote: options.promote,
   });
   if (!result.ok) return result;
+
+  // Read back rather than describe the payload: the decision may have promoted
+  // somebody, and the waitlist has been renumbered underneath either way, so
+  // the position on the row that came out of the write is already the truth.
+  const named = await describeApplication(applicationId);
+  const who = named?.member ?? "somebody";
+  const where = named?.eventTitle ?? "an event";
+  const queue =
+    named?.status === "waitlisted" && named.waitlistPosition
+      ? ` at number ${named.waitlistPosition} in the queue`
+      : "";
+
+  await recordAudit({
+    action: "application.decided",
+    actor: admin,
+    eventId: options.eventId,
+    subject: applicationId,
+    summary: `${DECISION_VERB[result.data.application.status]} ${who} for "${where}"${queue}.`,
+    detail: {
+      status: result.data.application.status,
+      promoted: result.data.promoted.length,
+      overCapacity: result.data.overCapacity,
+    },
+  });
+
+  // Only the two kinds §14 names. `announceApplicationDecision` re-reads the row
+  // and returns without posting for anything else, so a decline is silent by
+  // construction rather than by this call site remembering to be.
+  announceApplicationDecision(applicationId);
+
+  // Everybody a promotion let in is a decision too, and one nobody clicked.
+  for (const promoted of result.data.promoted) {
+    announceApplicationDecision(promoted.id);
+  }
 
   refresh(options.eventId);
   return {

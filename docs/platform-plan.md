@@ -4,8 +4,9 @@ Turning the single-purpose Marvel Rivals draft board into a community event plat
 Discord login, customisable events with applications, player profiles, and a much more
 configurable tournament engine.
 
-**Status: in build.** The open questions in §13 are answered; §15 tracks progress and what
-is still needed from outside the repo.
+**Status: built.** Phases 0 to 5 are complete; the open questions in §13 are answered.
+§15 tracks what landed and what is still needed from outside the repo — which is now only
+credentials, not code.
 
 The product is **Job Centre Events**. The repo is `BekoLolek/job-centre`.
 
@@ -156,6 +157,8 @@ ADMIN
 /admin/events             list + create
 /admin/events/new         pick a template, then basics
 /admin/events/[id]        tabbed editor (see §6.3)
+/admin/audit              who did what, and when; filterable by event
+/admin/settings           server-wide switches — which Discord announcements fire
 /admin/templates          reusable event templates and their form + format defaults
 /admin/users              members, admin flags, notes
 ```
@@ -487,7 +490,8 @@ Bracket generation for 2–8 teams, configurable stages and series, port the res
 the scheduler onto it. Multi-day.
 
 **Phase 5 — polish**
-Discord webhook announcements, public player profiles, admin dashboard, an audit log.
+Discord webhook announcements, public player profiles, admin dashboard, an audit log, and
+the standing rule enforced: a finished event is read-only.
 
 Phases 1 and 2 are the ones that change how the community actually uses the thing. Phase 4
 is the largest chunk of code but the least risky, because the logic it generalises is
@@ -558,9 +562,58 @@ chips, one submit — three taps for a returning member, and the rank gate is sh
 form rather than after it. Waitlisting, automatic promotion on withdrawal, availability and
 attendance confirmation are all live.
 
-**Still needed from outside the repo** — only the live sign-in flow depends on these:
+**Phase 3 — done.** Teams (2–8), captains chosen from the accepted applicants and occupying
+a roster slot (§14), the draft configuration of §9, and the live room ported onto Postgres.
+The draft is `draft_lots` and `draft_bids` — rows, never a blob — which is what makes an
+undo a status change rather than a reconstruction, and what makes a price permanent. Its
+checklist entry sat at `[~]` until Phase 5 noticed; that was stale bookkeeping, not
+unfinished work.
+
+**Phase 4 — done.** The format engine: generated brackets for 2–8 teams in four shapes,
+series lengths and map/mode rules as data, resolve-on-read generalised, multi-day
+scheduling with the live re-flow. The legacy JSON board, its storage and its env-var
+accounts were deleted in the same phase — Discord is now the only way in.
+
+**Phase 5 — done.** The polish, and one rule that turned out to be more than polish.
+
+- **Discord announcements.** `src/lib/announce.ts` builds five messages as pure
+  functions; `src/lib/discord.ts` is the only thing that makes a request. Which of the
+  five fire is an admin setting edited at `/admin/settings`. The non-negotiable is that
+  none of it can fail the action that triggered it: the announcers return `void`, the
+  work runs in Next's `after()` so the response is already sent, and every path is
+  wrapped. A failed post writes `announcement.failed` to the audit log rather than
+  disappearing. With `DISCORD_WEBHOOK_URL` unset the feature is inert, exactly as blank
+  Discord credentials are on `/signin`.
+- **Public player profiles** at `/players/[handle]` (§4). Events played, teams, prices
+  paid and honours, no login. The handle is derived from the Discord name once and never
+  recomputed, because a handle that followed a rename would break every link ever posted.
+  Linked from every roster and from the draft's lot history. Application *answers* never
+  reach the module, and neither do declined applications or draft events.
+- **Admin dashboard** at `/admin` (§4) — the page you have open on the night. Applicants
+  waiting, teams without a captain, a lot on the block, a series that needs a winner,
+  matches with no time, an event ready to publish. Every line links to the exact tab that
+  fixes it. Every count is derived, so a line disappears the moment the thing is done;
+  there is no `needs_attention` column and there must never be one, for the same reason
+  §14 keeps seat counts derived.
+- **Audit log** — an `audit_log` table plus `recordAudit`, called from the action layer
+  and nowhere else. The actions are the trust boundary and the only layer that knows who
+  is acting; the rules modules take a `Database` and are called by tests and seeds, so an
+  insert down there would log phantoms and miss the person who clicked. Readable at
+  `/admin/audit`, newest first, filterable by event, append-only.
+- **Nothing destructive, ever.** The standing rule is now enforced. A `complete` event is
+  read-only: `src/lib/archive-policy.ts` holds the single decision and every write that
+  could erase a result, a roster or a price asks it. The lock is not a trap —
+  `complete → live` stays legal and is itself audited. Two real holes were found and
+  closed doing it: `clearMatchAction` composed the site's most destructive operation out
+  of two library calls and so bypassed every rule about it, and a team's starting balance
+  could be moved after lots were awarded, silently rewriting what every past lot appeared
+  to have cost.
+
+**Still needed from outside the repo** — none of it is code:
 1. A **Discord application**: client id, client secret, and the guild id to gate against.
    Register the redirect URI for `http://localhost:3400`, and for the Vercel URL once it
    exists. No custom domain for now.
 2. A **Neon connection string** as `DATABASE_URL`. Absent it, everything falls back to
    PGlite on disk, which is fine for development but not for a deployment.
+3. A **Discord webhook URL** as `DISCORD_WEBHOOK_URL`, if you want the announcements.
+   Optional in the strongest sense: without it nothing breaks and nothing warns.

@@ -23,6 +23,7 @@ describe("migrations", () => {
     expect(await tableNames(ctx.client)).toEqual([
       "accounts",
       "applications",
+      "audit_log",
       "availability",
       "confirmations",
       "draft_bids",
@@ -89,7 +90,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(24);
+    expect(await tableNames(ctx.client)).toHaveLength(25);
   });
 
   it("mints uuid primary keys database-side", async () => {
@@ -146,5 +147,59 @@ describe("the file-backed local database", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  }, 30_000);
+});
+
+describe("the Phase 5 migration", () => {
+  it("gives every member a handle, unique and derived from their name", async () => {
+    // A fresh database has no users, so the backfill in 0004 is only ever
+    // exercised against rows that existed *before* it — which is the one case
+    // that matters and the one a schema-shaped test would miss entirely.
+    const client = new PGlite();
+    const db = createPgliteDatabase(client);
+
+    const { MIGRATIONS_FOLDER } = await import("@/db/migrate");
+    const { readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+
+    const run = async (tag: string) => {
+      const sql = readFileSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`), "utf8");
+      for (const statement of sql.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.exec(statement);
+      }
+    };
+
+    for (const tag of ["0000_init", "0001_marvelous_scrambler", "0002_draft", "0003_format"]) {
+      await run(tag);
+    }
+
+    await client.exec(`insert into users (display_name, name, created_at) values
+      ('Beko Lolek', 'bekolek', now() - interval '3 day'),
+      ('beko lolek', 'other',   now() - interval '2 day'),
+      ('Admin',      'admin',   now() - interval '1 day'),
+      (null,         null,      now())`);
+
+    await run("0004_phase5");
+
+    const rows = await client.query<{ display_name: string | null; handle: string }>(
+      `select display_name, handle from users order by created_at`
+    );
+    expect(rows.rows.map((row) => row.handle)).toEqual([
+      "beko-lolek",
+      // The same name, disambiguated in join order: the member who has been
+      // here longest keeps the bare handle.
+      "beko-lolek-2",
+      // `admin` is reserved, so it is pushed out of the way.
+      "admin-player",
+      // No name at all still gets something readable.
+      "player",
+    ]);
+
+    // And the constraint is on, so nothing can collide from here.
+    await expect(
+      client.query(`update users set handle = 'beko-lolek' where handle = 'player'`)
+    ).rejects.toThrow();
+
+    await client.close();
   }, 30_000);
 });

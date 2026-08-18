@@ -14,8 +14,11 @@ You sign in with Discord. There are no passwords to hand out.
 | `/events`, `/events/[slug]` | Public | Every event; teams, schedule, bracket and results as tabs |
 | `/events/[slug]/apply` | Members | The application form |
 | `/events/[slug]/draft` | Public to watch, captains bid | The live auction draft room |
+| `/players/[handle]` | Public | A player: events, teams, what they went for, what they won |
 | `/me`, `/me/profile`, `/me/events` | Members | Your profile, applications, availability |
+| `/admin` | Admin | What needs attention tonight; every line links to the fix |
 | `/admin/events`, `/admin/games` | Admin | Everything that creates or records |
+| `/admin/audit`, `/admin/settings` | Admin | Who did what; which announcements fire |
 | `/signin` | — | Discord sign-in |
 
 ## How an event works
@@ -38,6 +41,10 @@ You sign in with Discord. There are no passwords to hand out.
    running order; record a result and the rest of that day re-flows from when the match
    actually finished.
 7. **Record results** — maps, referees, scores, times. Nothing is ever deleted.
+8. **Finish it**, and it becomes read-only. A `complete` event refuses every write that
+   could erase a result, a roster or a price — no regenerating its bracket, no clearing
+   its results, no re-seeding its draft pool. The way back is one status change, and it
+   is in the audit log. See `src/lib/archive-policy.ts`.
 
 ## Times
 
@@ -53,7 +60,7 @@ re-key on mount.
 ```bash
 npm install
 npm run dev          # http://localhost:3400
-npm test             # 1448 tests
+npm test             # 1549 tests
 npm run typecheck
 ```
 
@@ -84,3 +91,16 @@ docs/             platform-plan.md (what and why) · checklist.md (what is done)
 Business rules live in `src/lib` as pure functions with the data layer beside them.
 Components display; they never decide. If a page computes what a captain may bid, that is
 a bug.
+
+Two things belong in the action layer and nowhere else, because it is the only layer that
+knows *who is acting*: the audit log's inserts (`recordAudit`) and the Discord
+announcements (`announce*`). Both run only after the library has said `ok`, and neither
+can fail the thing it describes — the announcers return `void` and do their work after the
+response has gone out.
+
+## Announcements
+
+Optional. Set `DISCORD_WEBHOOK_URL` and pick which of the five kinds fire at
+`/admin/settings`. Unset, the whole feature is an inert no-op that never even reads a
+setting. A post that fails is written to `/admin/audit` rather than swallowed, and can
+never affect the action that triggered it.

@@ -44,6 +44,7 @@ import {
   type Database,
   type DraftBid,
   type DraftLot,
+  type DraftLotStatus,
   type DraftPoolEntry,
   type DraftPoolKind,
   type DraftSpin,
@@ -89,6 +90,7 @@ import {
   resolveLot,
   rosterState,
 } from "./draft-policy";
+import { LOCKED, lockRefusal } from "./archive-policy";
 import type { EventResult } from "./events";
 
 /* ------------------------------------------------------------------ */
@@ -281,6 +283,9 @@ export async function setTeams(
 
     const config = await readConfig(tx, eventId);
     const existing = await readTeams(tx, eventId);
+
+    const locked = lockRefusal(event, LOCKED.teams);
+    if (locked) return fail(locked);
     const existingIds = new Set(existing.map((team) => team.id));
 
     const errors: Record<string, string> = {};
@@ -365,6 +370,31 @@ export async function setTeams(
       );
     }
 
+    // A starting balance is not a label. Every remaining balance on the site is
+    // derived — `balanceFor` is `balanceStart` minus the awarded lots, which is
+    // exactly why there is no `balance_left` column — so moving a team's
+    // starting figure after they have bought somebody silently rewrites what
+    // every past lot appears to have cost them. That is the standing rule's
+    // "erase a draft's prices" by another route, and it is refused for the same
+    // reason removing the team is.
+    const started = await tx
+      .select({ id: draftLots.id })
+      .from(draftLots)
+      .where(and(eq(draftLots.eventId, eventId), eq(draftLots.status, "awarded")))
+      .limit(1);
+
+    if (started.length > 0) {
+      const byId = new Map(existing.map((team) => [team.id, team]));
+      const moved = cleaned.filter(
+        (team) => team.id && byId.get(team.id)?.balanceStart !== team.balanceStart
+      );
+      if (moved.length > 0) {
+        return fail(
+          `${moved.map((team) => team.name).join(", ")} has already bid in this draft, so the starting balance cannot change now — every price paid would be measured against a different number.`
+        );
+      }
+    }
+
     // Names are unique per event, so swapping two of them in place trips the
     // constraint halfway through a perfectly legal rewrite. Parking every
     // survivor on a name nobody can type sidesteps it without dropping rows —
@@ -433,6 +463,9 @@ export async function setCaptains(
     if (!event) return fail("That event no longer exists.");
 
     const eventTeams = await readTeams(tx, eventId);
+
+    const locked = lockRefusal(event, LOCKED.captains);
+    if (locked) return fail(locked);
     const byId = new Map(eventTeams.map((team) => [team.id, team]));
 
     const errors: Record<string, string> = {};
@@ -589,6 +622,9 @@ export async function setDraftConfig(
     if (!event) return fail("That event no longer exists.");
 
     const current = await readConfig(tx, eventId);
+
+    const locked = lockRefusal(event, LOCKED.draftConfig);
+    if (locked) return fail(locked);
     const next = draftConfigFrom({ ...current, ...patch });
 
     const awarded = await tx
@@ -679,6 +715,9 @@ export async function setDraftPool(
     if (!event) return fail("That event no longer exists.");
 
     const members = await readMembers(tx, eventId);
+
+    const locked = lockRefusal(event, LOCKED.pool);
+    if (locked) return fail(locked);
     const drafted = new Set(members.map((member) => member.userId));
 
     let candidates: string[];
@@ -802,6 +841,9 @@ export async function setPoolKind(
     if (!event) return fail("That event no longer exists.");
 
     const entries = await readPool(tx, eventId);
+
+    const locked = lockRefusal(event, LOCKED.pool);
+    if (locked) return fail(locked);
     const entry = entries.find((row) => row.userId === userId);
     if (!entry) {
       const [member] = await tx
@@ -879,6 +921,9 @@ export async function openLot(
     if (!event) return fail("That event no longer exists.");
 
     const already = await readOpenLot(tx, eventId);
+
+    const locked = lockRefusal(event, LOCKED.runDraft);
+    if (locked) return fail(locked);
     if (already) return fail("Somebody is already on the block. Settle that lot first.");
 
     const config = await readConfig(tx, eventId);
@@ -981,6 +1026,8 @@ export async function placeBid(
     // transaction may have awarded it.
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
+    const locked = lockRefusal(event, LOCKED.bid);
+    if (locked) return fail(locked);
 
     const [team] = await tx
       .select()
@@ -1037,6 +1084,15 @@ export async function clearBid(
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
 
+    // The one lot operation that used not to read the event at all. It deletes
+    // a row, so it needs the same refusal as the rest: an open lot can outlive
+    // the moment an admin marked the event finished, and a bid is somebody's
+    // word.
+    const event = await readEvent(tx, lot.eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event, LOCKED.bid);
+    if (locked) return fail(locked);
+
     const removed = await tx
       .delete(draftBids)
       .where(and(eq(draftBids.lotId, lotId), eq(draftBids.teamId, teamId)))
@@ -1085,6 +1141,8 @@ export async function awardLot(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
+    const locked = lockRefusal(event, LOCKED.runDraft);
+    if (locked) return fail(locked);
 
     const [team] = await tx
       .select()
@@ -1175,6 +1233,8 @@ export async function discardLot(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
+    const locked = lockRefusal(event, LOCKED.runDraft);
+    if (locked) return fail(locked);
 
     const [closed] = await tx
       .update(draftLots)
@@ -1219,6 +1279,8 @@ export async function moveToReserve(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
+    const locked = lockRefusal(event, LOCKED.runDraft);
+    if (locked) return fail(locked);
 
     const config = await readConfig(tx, lot.eventId);
     if (!config.reserveEnabled) return fail("The reserve pool is switched off for this event.");
@@ -1291,6 +1353,8 @@ export async function voidLot(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status === "voided") return fail("That lot has already been voided.");
+    const locked = lockRefusal(event, LOCKED.voidLot);
+    if (locked) return fail(locked);
 
     const refunded = lot.status === "awarded" ? (lot.price ?? 0) : null;
 
@@ -1387,6 +1451,64 @@ export async function getDraftHistory(
   database: Database = defaultDb
 ): Promise<DraftLot[]> {
   return readLots(database, eventId);
+}
+
+/** Enough of a lot to write a sentence about it. */
+export type LotLabel = {
+  lotId: string;
+  eventId: string;
+  eventTitle: string;
+  player: string;
+  playerUserId: string;
+  /** Null for a lot nobody won — discarded, reserved, or still open. */
+  team: string | null;
+  price: number | null;
+  status: DraftLotStatus;
+};
+
+/**
+ * One lot, named — the player, the team and the price, in one read.
+ *
+ * The audit log's reason for existing, in this corner of the site: a price
+ * written as a sentence at the moment it was paid survives a team being
+ * renamed and a member leaving the server, which two ids and a join do not.
+ * Left-joined on the team, because a discarded lot has no winner and is still
+ * worth a line.
+ */
+export async function describeLot(
+  lotId: string,
+  database: Database = defaultDb
+): Promise<LotLabel | null> {
+  const [row] = await database
+    .select({
+      lotId: draftLots.id,
+      eventId: draftLots.eventId,
+      eventTitle: events.title,
+      displayName: users.displayName,
+      name: users.name,
+      playerUserId: draftLots.playerUserId,
+      team: teams.name,
+      price: draftLots.price,
+      status: draftLots.status,
+    })
+    .from(draftLots)
+    .innerJoin(events, eq(draftLots.eventId, events.id))
+    .innerJoin(users, eq(draftLots.playerUserId, users.id))
+    .leftJoin(teams, eq(draftLots.winnerTeamId, teams.id))
+    .where(eq(draftLots.id, lotId))
+    .limit(1);
+
+  if (!row) return null;
+  return {
+    lotId: row.lotId,
+    eventId: row.eventId,
+    eventTitle: row.eventTitle,
+    player: row.displayName ?? row.name ?? "A player",
+    playerUserId: row.playerUserId,
+    team: row.team,
+    price: row.price,
+    status: row.status,
+  };
 }
 
 /** Who won the open lot, or that it is tied. Admin-facing; never redacted. */
@@ -1515,6 +1637,12 @@ export type PlayerCard = {
   id: string;
   displayName: string;
   avatarUrl: string | null;
+  /**
+   * Their `/players/[handle]` segment, or null when they have not been given
+   * one yet. Read, never assigned: this view is what the room polls once a
+   * second, and `ensureHandles` writes.
+   */
+  handle: string | null;
 };
 
 /** A draft room, redacted for one viewer, with the names to render the ids. */
@@ -1603,6 +1731,7 @@ export async function getDraftView(
         displayName: users.displayName,
         name: users.name,
         avatarUrl: users.avatarUrl,
+        handle: users.handle,
       })
       .from(users)
       .where(inArray(users.id, [...mentioned]));
@@ -1611,6 +1740,7 @@ export async function getDraftView(
         id: row.id,
         displayName: row.displayName ?? row.name ?? "Unknown player",
         avatarUrl: row.avatarUrl,
+        handle: row.handle,
       };
     }
   }

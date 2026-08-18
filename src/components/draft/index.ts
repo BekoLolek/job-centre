@@ -55,5 +55,5 @@ export {
 } from "./story";
 export type { LotContext, LotLine, LotTone, NamedTeam, UndoPlan } from "./story";
 
-export { playerName } from "./types";
+export { playerHref, playerName } from "./types";
 export type { MemberLike, PlayerBook, PlayerLike, TeamLike } from "./types";

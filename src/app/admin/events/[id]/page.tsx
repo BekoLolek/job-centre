@@ -18,6 +18,7 @@ import { notFound } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import EventEditor from "@/components/admin/events/EventEditor";
+import { tabFrom } from "@/components/admin/events/tabs";
 import type { DraftTabData, FormatTabData } from "@/components/admin/events/types";
 import { loadAdminGames } from "@/lib/admin-games";
 import {
@@ -47,11 +48,15 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
 
 export default async function AdminEventPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  /** `?tab=` — where `/admin`'s "what needs attention" lines land. */
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   await requireAdmin();
   const { id } = await params;
+  const { tab } = await searchParams;
 
   const event = await getEventById(id);
   if (!event) notFound();
@@ -176,6 +181,7 @@ export default async function AdminEventPage({
       <main className="mx-auto max-w-[1200px] space-y-6 px-4 py-8 sm:px-6">
         <EventEditor
           event={event}
+          initialTab={tabFrom(tab)}
           applicants={applicants}
           games={adminGames.games.map((game) => ({
             id: game.id,

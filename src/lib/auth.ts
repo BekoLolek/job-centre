@@ -39,6 +39,7 @@ import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { eq, inArray } from "drizzle-orm";
 import NextAuth, { type DefaultSession, type NextAuthConfig } from "next-auth";
 import Discord from "next-auth/providers/discord";
+import { ensureHandles } from "./players";
 import {
   SETTING_KEYS,
   accounts,
@@ -201,6 +202,10 @@ async function syncUserFromDiscord(
 
   try {
     await db.update(users).set(patch).where(eq(users.id, userId));
+    // And a `/players/[handle]` segment, if they have not got one. Assigned
+    // once and never recomputed, so a Discord rename above does not move
+    // somebody's public profile out from under every link to it.
+    await ensureHandles([userId]);
   } catch (error) {
     // A failed profile refresh must not fail an otherwise valid sign-in.
     console.error("[auth] could not sync the Discord profile onto the user row", error);

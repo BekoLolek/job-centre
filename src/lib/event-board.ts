@@ -41,6 +41,7 @@ import { inArray } from "drizzle-orm";
 import { type Database, db as defaultDb, users } from "@/db";
 import type { PlayerBook } from "@/components/draft";
 import { type TeamWithRoster, getTeams } from "./draft";
+import { ensureHandles } from "./players";
 import { type FormatView, formatFor } from "./format";
 import type { ResolvedMatch } from "./format-resolve";
 
@@ -67,6 +68,16 @@ export async function playerBookFor(
   }
   if (ids.size === 0) return {};
 
+  // Assigning here is what guarantees a roster row can link to §4's public
+  // profile. It is a write on a read path, which is unusual enough to justify:
+  // `ensureHandles` is idempotent and costs one `select` once everybody has
+  // one, and the alternative — assigning only at sign-in — leaves every member
+  // who existed before this feature unlinkable until they next sign in.
+  //
+  // Deliberately *not* done in `getDraftView`: the draft room polls this data
+  // once a second, and a write on that path would be a write once a second.
+  const handles = await ensureHandles([...ids], database);
+
   const rows = await database
     .select({
       id: users.id,
@@ -77,11 +88,15 @@ export async function playerBookFor(
     .from(users)
     .where(inArray(users.id, [...ids]));
 
-  const book: Record<string, { displayName: string; avatarUrl: string | null }> = {};
+  const book: Record<
+    string,
+    { displayName: string; avatarUrl: string | null; handle: string | null }
+  > = {};
   for (const row of rows) {
     book[row.id] = {
       displayName: row.displayName ?? row.name ?? "Unknown player",
       avatarUrl: row.avatarUrl,
+      handle: handles.get(row.id) ?? null,
     };
   }
   return book;
@@ -174,17 +189,27 @@ export type BoardPlacement = {
  * a group stage settles a table, not a tournament, so a two-stage event takes
  * its podium from the playoffs. An event still being played gets an empty list,
  * which is the honest answer — half a podium is worse than none.
+ *
+ * Takes the format rather than the board because `src/lib/players.ts` asks the
+ * same question about twenty events at once and has no reason to build twenty
+ * boards to do it. `podiumFor` below is the same rule for callers that already
+ * hold one, and there is only ever one copy of "which stage decides it".
  */
-export function podiumFor(board: EventBoard): BoardPlacement[] {
-  if (!board.format) return [];
+export function placementsOf(format: FormatView | null): BoardPlacement[] {
+  if (!format) return [];
 
-  const deciding = [...board.format.stages].reverse().find((stage) => stage.champion !== null);
+  const deciding = [...format.stages].reverse().find((stage) => stage.champion !== null);
   if (!deciding) return [];
 
-  const named = new Map(board.format.teams.map((team) => [team.id, team.name]));
+  const named = new Map(format.teams.map((team) => [team.id, team.name]));
   return deciding.placements
     .filter((placement) => named.has(placement.teamId))
     .map((placement) => ({ ...placement, name: named.get(placement.teamId) as string }));
+}
+
+/** {@link placementsOf}, for a caller that already has the whole board. */
+export function podiumFor(board: EventBoard): BoardPlacement[] {
+  return placementsOf(board.format);
 }
 
 /** Team names by id, for anything that has a team id and needs a word. */

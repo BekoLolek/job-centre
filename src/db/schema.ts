@@ -98,6 +98,18 @@ export const users = pgTable(
     avatarUrl: text("avatar_url"),
     /** Seeded from the ADMIN_DISCORD_IDS allowlist; grantable in admin later. */
     isAdmin: boolean("is_admin").notNull().default(false),
+    /**
+     * The public profile's URL segment — `/players/[handle]` (§4).
+     *
+     * Derived from the Discord username once and then **never recomputed**: a
+     * handle that followed a rename would break every link that has ever been
+     * posted, which is precisely the property a permanent record must not have.
+     * Nullable because the Auth.js adapter inserts a `users` row itself and
+     * knows nothing about this column, so `ensureHandles` fills it in the first
+     * time anything needs one. Unique, which is what "stable and unique" costs:
+     * two members called `beko` cannot both hold `/players/beko`.
+     */
+    handle: text("handle").unique(),
     createdAt: instant("created_at").notNull().defaultNow(),
     lastSeenAt: instant("last_seen_at"),
   },
@@ -293,6 +305,17 @@ export const SETTING_KEYS = {
   guildGateEnabled: "auth.guild_gate_enabled",
   /** string — the Discord guild id sign-in is gated against. */
   guildId: "auth.guild_id",
+  /**
+   * object — which Discord announcements are switched on (Phase 5, §14).
+   *
+   * One row holding a flag per announcement kind rather than a row per kind:
+   * the screen writes all five together and every reader wants all five, so a
+   * single key is one read and one write instead of five of each.
+   * `announcementSettingsFrom` in src/lib/announce.ts supplies the defaults for
+   * anything the stored object does not mention, which is what lets a new kind
+   * ship without a migration.
+   */
+  announcements: "discord.announcements",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -1244,6 +1267,57 @@ export const matchGames = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Audit log (Phase 5)                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Who did what, and when.
+ *
+ * Append-only by construction: there is no update path and no delete path
+ * anywhere in the codebase, which is the whole point of a log. It is written by
+ * `recordAudit` in src/lib/audit.ts, and **only ever from the action layer** —
+ * the actions are the trust boundary and the only place that knows who is
+ * acting, whereas `src/lib/events.ts` and friends take a `Database` and are
+ * called by tests, seeds and each other.
+ *
+ * ## Why the actor's name is copied onto the row
+ *
+ * `actor_user_id` is a real foreign key so the log can link to a profile, but
+ * it is `set null` on delete and the *name* is a snapshot. A log that reads
+ * "somebody accepted 14 applications" the day an account is removed is not a
+ * log. The same argument makes `summary` a stored sentence rather than
+ * something rebuilt on read from ids that may since have changed meaning.
+ */
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    at: instant("at").notNull().defaultNow(),
+    /** Null for anything the system did to itself — a failed announcement. */
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** What the actor was called at the time. Never rewritten. */
+    actorName: text("actor_name"),
+    /** One of `AUDIT_ACTIONS` in src/lib/audit.ts. Text, so a new one is not a migration. */
+    action: text("action").notNull(),
+    /** The event this happened inside, when there is one. `/admin/audit` filters on it. */
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "cascade" }),
+    /** What was acted on — an application id, a lot id, a match slot. Free-form. */
+    subject: text("subject"),
+    /** The line the log shows, written when it happened. */
+    summary: text("summary").notNull(),
+    /** Anything worth keeping that is not in the sentence — before and after values. */
+    detail: json<Record<string, SettingValue>>("detail")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+  },
+  (table) => [
+    // The log is read newest-first, and newest-first filtered to one event.
+    index("audit_log_at_idx").on(table.at),
+    index("audit_log_event_at_idx").on(table.eventId, table.at),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
 /* Relations — for db.query.* joins                                   */
 /* ------------------------------------------------------------------ */
 
@@ -1418,3 +1492,5 @@ export type MatchRow = typeof matches.$inferSelect;
 export type NewMatchRow = typeof matches.$inferInsert;
 export type MatchGameRow = typeof matchGames.$inferSelect;
 export type NewMatchGameRow = typeof matchGames.$inferInsert;
+export type AuditRow = typeof auditLog.$inferSelect;
+export type NewAuditRow = typeof auditLog.$inferInsert;

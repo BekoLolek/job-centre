@@ -50,6 +50,15 @@ export type TeamLike = {
 export type PlayerLike = {
   displayName: string;
   avatarUrl?: string | null;
+  /**
+   * Their `/players/[handle]` segment, when they have one.
+   *
+   * Optional, and every renderer must cope without it: `users.handle` is filled
+   * in lazily (see `ensureHandles`), so a member the live draft room names one
+   * second after they were created genuinely has no profile URL yet. A name
+   * with no link is a fine thing to draw; a link to `/players/undefined` is not.
+   */
+  handle?: string | null;
 };
 
 /** Everyone a screen might name, keyed by user id. */
@@ -71,4 +80,19 @@ export function playerName(
 ): string {
   if (!userId) return fallback;
   return players[userId]?.displayName ?? fallback;
+}
+
+/**
+ * The public profile link for a user id, or `null`.
+ *
+ * `null` rather than a `#` or a link to nowhere: a roster row for somebody
+ * without a handle should read as plain text, not as a link that goes to a 404.
+ */
+export function playerHref(
+  players: PlayerBook,
+  userId: string | null | undefined
+): string | null {
+  if (!userId) return null;
+  const handle = players[userId]?.handle;
+  return handle ? `/players/${handle}` : null;
 }

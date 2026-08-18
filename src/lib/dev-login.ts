@@ -43,6 +43,7 @@
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { type Database, type User, db as defaultDb, sessions, users } from "@/db";
+import { ensureHandles } from "./players";
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                      */
@@ -201,11 +202,17 @@ export async function establishDevSession(
     user = created;
   }
 
+  // A handle, so the member has a public profile from their first session —
+  // the same thing `events.signIn` does for a real Discord sign-in. Idempotent,
+  // so signing in twice does not renumber anybody.
+  const handles = await ensureHandles([user.id], database);
+  const handle = handles.get(user.id) ?? user.handle ?? null;
+
   const sessionToken = randomBytes(32).toString("base64url");
   const expires = new Date(now.getTime() + SESSION_MAX_AGE_MS);
   await database.insert(sessions).values({ sessionToken, userId: user.id, expires });
 
-  return { sessionToken, expires, user };
+  return { sessionToken, expires, user: { ...user, handle } };
 }
 
 /**

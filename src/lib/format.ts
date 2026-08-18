@@ -53,6 +53,7 @@ import {
   type MatchBracket,
   generateStage,
 } from "./bracket";
+import { LOCKED, lockRefusal } from "./archive-policy";
 import type { EventResult } from "./events";
 import {
   type FormatTiming,
@@ -459,6 +460,9 @@ export async function setStages(
     const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
+    const locked = lockRefusal(event, LOCKED.stages);
+    if (locked) return fail(locked);
+
     const existing = await readStageRows(tx, eventId);
     const keep = new Set(input.map((s) => s.id).filter((id): id is string => Boolean(id)));
     const removed = existing.filter((row) => !keep.has(row.id));
@@ -562,6 +566,13 @@ export async function generateMatches(
 
     const event = await lockEvent(tx, stage.eventId);
     if (!event) return fail("That event no longer exists.");
+
+    // Two gates, and both are needed. `stageHasResults` protects a stage
+    // mid-tournament; the lock protects an event whose bracket was generated,
+    // never played and then marked finished — nothing to erase in this stage,
+    // but regenerating it would still rewrite a closed record's shape.
+    const locked = lockRefusal(event, LOCKED.generate);
+    if (locked) return fail(locked);
 
     if (await stageHasResults(tx, stageId)) {
       return fail("This stage already has results, so it cannot be regenerated.");
@@ -674,6 +685,11 @@ export async function recordGames(
     const event = await lockEvent(tx, match.eventId);
     if (!event) return fail("That event no longer exists.");
 
+    // This is the write that can untick a played game and zero its score, so
+    // it is the single most important one to refuse on a finished event.
+    const locked = lockRefusal(event, LOCKED.recordResult);
+    if (locked) return fail(locked);
+
     const current = await tx
       .select()
       .from(matchGames)
@@ -742,6 +758,9 @@ export async function setWinnerOverride(
     const event = await lockEvent(tx, match.eventId);
     if (!event) return fail("That event no longer exists.");
 
+    const locked = lockRefusal(event, LOCKED.overrideWinner);
+    if (locked) return fail(locked);
+
     if (teamId) {
       const view = await formatFor(match.eventId, tx);
       const resolved = view?.stages
@@ -757,6 +776,61 @@ export async function setWinnerOverride(
     await reflow(tx, match.eventId);
     return withData(null);
   });
+}
+
+/**
+ * Wipe one series back to an unplayed card.
+ *
+ * The old board's "Clear", carried over: it is the only way back from a score
+ * typed against the wrong match. Doing it as a patch — every game unticked and
+ * zeroed, the override dropped, the duration cleared — means it goes through
+ * exactly the same validation and the same re-flow as recording one.
+ *
+ * It lives here rather than being composed in the action file, which is where
+ * it used to be. Composing it there put the single most destructive operation
+ * on the site outside every rule this module enforces: it reached the same two
+ * writes without ever asking whether the event was finished, so a fully played
+ * Bo5 on a completed tournament could be erased by an admin who meant to clear
+ * the card below it. The refusal has to be attached to the *operation*, and the
+ * operation therefore has to be a function.
+ */
+export async function clearMatch(
+  matchId: string,
+  gameCount: number,
+  database: Database = defaultDb
+): Promise<FormatResult> {
+  const [match] = await database
+    .select({ id: matches.id, eventId: matches.eventId })
+    .from(matches)
+    .where(eq(matches.id, matchId))
+    .limit(1);
+  if (!match) return fail("That match no longer exists.");
+
+  const event = await readEvent(database, match.eventId);
+  if (!event) return fail("That event no longer exists.");
+
+  const locked = lockRefusal(event, LOCKED.clearResult);
+  if (locked) return fail(locked);
+
+  const cleared = await setWinnerOverride(matchId, null, database);
+  if (!cleared.ok) return cleared;
+
+  const result = await recordGames(
+    matchId,
+    Array.from({ length: Math.max(0, gameCount) }, (_, index) => ({
+      index,
+      map: "",
+      referee: "",
+      scoreA: 0,
+      scoreB: 0,
+      played: false,
+    })),
+    { durationMin: null },
+    database
+  );
+  if (!result.ok) return fail(result.error);
+
+  return withData(null);
 }
 
 /**
@@ -786,6 +860,9 @@ export async function setMatchSchedule(
 
     const event = await lockEvent(tx, match.eventId);
     if (!event) return fail("That event no longer exists.");
+
+    const locked = lockRefusal(event, LOCKED.moveMatch);
+    if (locked) return fail(locked);
 
     let at: Date | null = null;
     if (scheduledAt) {
@@ -821,6 +898,9 @@ export async function applySchedule(
   return database.transaction(async (tx) => {
     const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
+
+    const locked = lockRefusal(event, LOCKED.reschedule);
+    if (locked) return fail(locked);
 
     const plan = await schedulablePlan(tx, event);
     if (!plan) return fail("Generate the matches before scheduling them.");
