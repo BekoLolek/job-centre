@@ -71,6 +71,7 @@ export const AUDIT_ACTIONS = {
   "result.recorded": "Result recorded",
   "result.cleared": "Result cleared",
   "result.override": "Winner overturned",
+  "match.reflip": "Coin re-flipped",
   "schedule.applied": "Schedule rebuilt",
   "format.stages": "Format changed",
   "format.generated": "Bracket generated",

@@ -17,7 +17,9 @@ import {
 import {
   BracketCanvas,
   MatchCard,
+  PLAY_SIDE_CHOICES,
   StandingsTable,
+  choiceLine,
   dayBySlot,
   hhmm,
   modeLabel,
@@ -27,12 +29,14 @@ import {
   type ScheduleShift,
 } from "@/components/format";
 import type { FormatView } from "@/lib/format";
+import { type MatchSlot, otherSlot } from "@/lib/format-policy";
 import type { ResolvedMatch } from "@/lib/format-resolve";
 import { formatClock, toInstant, toLocalInput } from "@/lib/time";
 import {
   type RecordFields,
   clearMatchAction,
   recordGamesAction,
+  reflipMatchAction,
   setWinnerOverrideAction,
 } from "@/app/admin/events/format-actions";
 
@@ -57,6 +61,16 @@ import {
  * schedule that quietly rearranges itself while you are typing is a schedule
  * nobody trusts, and "nine matches moved" is exactly the sort of thing an admin
  * needs to see before they tell nine teams a time.
+ *
+ * ## The coin is here too, because this is where it goes wrong
+ *
+ * §8.4 gives one team the side choice and the other the map, swapping every
+ * game, and a coin decides who starts. Coins get called in front of a room and
+ * rooms get them wrong, so the card carries a re-flip and a "give it to the
+ * other team" next to the result it belongs with. Both are refused by
+ * `reflipMatch` once a game of that series has been ticked off — the whole
+ * series was played under that coin, and moving it afterwards would silently
+ * re-attribute every map in it.
  *
  * ## A drawn series is not a finished one
  *
@@ -201,6 +215,25 @@ export default function ResultsTab({
     }
   };
 
+  const reflip = async (match: ResolvedMatch, slot: MatchSlot | null) => {
+    const id = idBySlot.get(match.slot);
+    if (!id) return;
+    setBusySlot(match.slot);
+    setError(null);
+    try {
+      const result = await reflipMatchAction(eventId, id, slot);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      adopt(result.data.view, match.slot);
+    } catch {
+      setError("Could not reach the server. Nothing was saved.");
+    } finally {
+      setBusySlot(null);
+    }
+  };
+
   const clear = async (match: ResolvedMatch) => {
     const id = idBySlot.get(match.slot);
     if (!id) return;
@@ -230,6 +263,7 @@ export default function ResultsTab({
       onSave={(fields, override) => void record(match, fields, override)}
       onDecide={(teamId) => void decide(match, teamId)}
       onClear={() => void clear(match)}
+      onReflip={(slot) => void reflip(match, slot)}
     />
   );
 
@@ -462,7 +496,15 @@ type Draft = {
   scheduledAt: string;
   durationMin: string;
   winnerOverride: string;
-  games: Array<{ map: string; referee: string; scoreA: string; scoreB: string; played: boolean }>;
+  games: Array<{
+    map: string;
+    referee: string;
+    scoreA: string;
+    scoreB: string;
+    played: boolean;
+    /** `attack`, `defence`, or "" for not recorded. A note, never the rule. */
+    sideChosen: string;
+  }>;
 };
 
 function draftFrom(match: ResolvedMatch): Draft {
@@ -477,6 +519,7 @@ function draftFrom(match: ResolvedMatch): Draft {
       scoreA: String(game.scoreA),
       scoreB: String(game.scoreB),
       played: game.played,
+      sideChosen: game.sideChosen ?? "",
     })),
   };
 }
@@ -489,6 +532,7 @@ function MatchEditor({
   onSave,
   onDecide,
   onClear,
+  onReflip,
 }: {
   match: ResolvedMatch;
   open: boolean;
@@ -497,6 +541,8 @@ function MatchEditor({
   onSave: (fields: RecordFields, override: string) => void;
   onDecide: (teamId: string | null) => void;
   onClear: () => void;
+  /** A slot sets the coin outright; null tosses it again. */
+  onReflip: (slot: MatchSlot | null) => void;
 }) {
   const [form, setForm] = useState<Draft>(() => draftFrom(match));
 
@@ -562,6 +608,12 @@ function MatchEditor({
     }));
   };
 
+  // The coin is fixed once anything has been played: the whole series was
+  // played under it, so moving it afterwards would silently re-attribute every
+  // map in it. `reflipMatch` refuses it too — this only stops the click.
+  const started = match.games.some((game) => game.played);
+  const first = match.choices[0];
+
   const save = () => {
     onSave(
       {
@@ -574,6 +626,7 @@ function MatchEditor({
           scoreA: Number(game.scoreA || 0),
           scoreB: Number(game.scoreB || 0),
           played: game.played,
+          sideChosen: game.sideChosen || null,
         })),
       },
       form.winnerOverride
@@ -605,6 +658,41 @@ function MatchEditor({
         </label>
       </div>
 
+      {/* --- The coin (§8.4) ----------------------------------- */}
+      <div className="border border-hair p-2">
+        <div className="mb-1 flex items-baseline justify-between gap-2">
+          <Eyebrow as="span">Coin</Eyebrow>
+          {started && <span className="text-[11px] text-muted/70">fixed</span>}
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted">
+          {first ? choiceLine(first) : "—"} in game 1. The two swap every game after it.
+        </p>
+        <div className="mt-1.5 flex gap-2">
+          <Button
+            size="sm"
+            className="flex-1"
+            disabled={busy || started}
+            onClick={() => onReflip(null)}
+          >
+            Re-flip
+          </Button>
+          <Button
+            size="sm"
+            className="min-w-0 flex-1 truncate"
+            disabled={busy || started}
+            onClick={() => onReflip(otherSlot(match.firstSideChoice))}
+          >
+            Give it to {first?.mapName ?? "the other team"}
+          </Button>
+        </div>
+        {started && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted/70">
+            A game has been played under this coin. Clear the series first if it really was
+            called wrongly.
+          </p>
+        )}
+      </div>
+
       {form.games.map((game, index) => (
         <div key={index} className="border border-hair p-2">
           <div className="mb-1.5 flex items-center justify-between">
@@ -621,6 +709,12 @@ function MatchEditor({
             </label>
           </div>
 
+          {match.choices[index] && (
+            <p className="mb-1.5 text-[11px] leading-relaxed text-muted/80">
+              {choiceLine(match.choices[index])}
+            </p>
+          )}
+
           <Field
             className="mb-1.5 py-1.5 text-[11px]"
             placeholder="Map"
@@ -633,6 +727,25 @@ function MatchEditor({
             value={game.referee}
             onChange={(input) => patchGame(index, { referee: input.target.value })}
           />
+          {/*
+            What was taken, not who was entitled to take it — the second is
+            derived and never typed. Leaving it blank changes nothing about the
+            rule; it is a note on a card, and plenty of games are played without
+            anybody writing it down.
+          */}
+          <Select
+            className="mb-1.5 py-1.5 text-[11px]"
+            aria-label={`Side taken by ${match.choices[index]?.sideName ?? "the choosing team"}, game ${index + 1}`}
+            value={game.sideChosen}
+            onChange={(input) => patchGame(index, { sideChosen: input.target.value })}
+          >
+            <option value="">Side not recorded</option>
+            {PLAY_SIDE_CHOICES.map((choice) => (
+              <option key={choice.value} value={choice.value}>
+                {match.choices[index]?.sideName ?? "Chose"} took {choice.label.toLowerCase()}
+              </option>
+            ))}
+          </Select>
           <div className="flex items-center gap-2">
             <Field
               inputMode="numeric"

@@ -375,6 +375,7 @@ export function syncFinish(
     mode: "",
     map: "",
     referee: "",
+    sideChosen: null,
     ...g,
   }));
 

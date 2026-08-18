@@ -69,10 +69,14 @@ const EXPLANATIONS: Record<string, Explanation> = {
   },
   Configuration: {
     tone: "gold",
-    title: "Sign-in is misconfigured",
+    title: "Sign-in could not complete",
     body:
-      "Auth.js rejected its own configuration. Check the Discord client id, secret and " +
-      "AUTH_SECRET, and that the redirect URI is registered for this host.",
+      "Auth.js reports a configuration error. It means one of two things, and the second " +
+      "is the likelier one after a deploy: either the Discord client id, secret, " +
+      "AUTH_SECRET or redirect URI is wrong for this host — or the database schema is " +
+      "behind the code and something the sign-in writes does not exist yet. Auth.js " +
+      "cannot tell those apart, so it reports both as this. Run npm run db:migrate " +
+      "against the deployed database before touching the credentials.",
   },
   OAuthAccountNotLinked: {
     tone: "gold",

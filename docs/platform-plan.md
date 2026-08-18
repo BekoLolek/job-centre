@@ -389,22 +389,67 @@ Two things to get right when it is built:
 - An admin override must exist. Gates are guidance, not a wall — sometimes you want the
   Gold player who is filling in for a mate.
 
-### 8.4 Map selection — proposed, not decided
+### 8.4 Side and map choice — built
 
-**Held pending feedback from the group. Not in any phase.**
+**Built. This replaces the map veto this section used to propose.**
 
-The idea: teams alternate bans from the mode's map pool, and whichever team did *not* ban
-first picks the map from what remains. It trades away pure randomness for agency, and it
-gives the second banner something back for going second.
+The rule, as settled: **for every game of a match, one team chooses which side to play
+first — attack or defence — and the other team chooses the map.** Who gets the side choice
+in game 1 is decided by a coin, and the two roles **swap every game** through the series.
+So in a Bo3, if the coin gives A the side choice in game 1, B chooses the side in game 2
+and A again in game 3 — and in each game the other team chooses the map. A Bo1 is the same
+rule with one flip and one game.
 
-If it goes ahead, the shape is roughly: a map pool per mode attached to the game, a veto
-sequence per series length (`ban, ban, pick` for a Bo3 decider; longer for a Bo5), a rule
-for who bans first (higher seed, or a coin flip), and the recorded map per game becoming
-the output of the veto rather than something the admin types in afterwards.
+#### What is stored, and what is not
 
-Worth deciding before building: does the veto happen live in the app — which means another
-real-time surface, like the draft room — or offline in Discord with the admin recording the
-result? The offline version is a fraction of the work and probably where to start.
+One column: `matches.first_side_choice`, either `a` or `b`, written by a coin toss when the
+stage's matches are generated. Everything after game 1 is a parity check on the game index,
+so `sideChooserFor(firstSideChoice, gameIndex)` in `src/lib/format-policy.ts` derives it —
+next to `modesFor`, with the other per-game derivations — and `mapChooserFor` is the other
+slot, always.
+
+There is deliberately **no per-game copy**. That is the same argument as §1.1's: a stored
+copy of something derivable is a copy that can disagree, and here the disagreement is a
+Bo3 whose game 3 says one thing and whose game 1 says another after a series was
+re-generated at a different length or a coin was corrected. Nobody could then say which of
+the two was the record.
+
+It is a **slot** rather than a team id for the same reason `source_a` exists: a bracket
+slot has no teams when its matches are generated, so a team id would be a value nobody
+could write yet. It resolves into a team on read, exactly as the pairing does — which is
+also why the card can say "Upper final winner picks the side" before that final is played.
+
+#### Correcting it
+
+Coins are called in front of a room, and rooms get them wrong. `reflipMatch` either tosses
+again or hands the side choice to a named slot — the second being the honest tool for a
+toss somebody watched land the other way. It is refused on a finished event
+(`src/lib/archive-policy.ts`, as every such refusal is) and refused once **any game of that
+series has been played**: the whole series was played under that coin, and moving it
+afterwards would silently re-attribute every map in it. The way out is the way out of every
+other recorded mistake — clear the series, then flip.
+
+#### The recorded side
+
+`match_games.side_chosen` (`attack` / `defence`, nullable) notes which side the team holding
+the choice actually took. It is a note and not a rule: who *holds* the choice is derived and
+never missing, whereas whether anybody wrote down which way it went is up to whoever filled
+the card in. Leaving it blank changes nothing.
+
+#### Where it shows
+
+Per game on the match card (public bracket and admin alike), per game on the public Results
+tab, and in the admin's Results editor next to the map and the referee — with the re-flip
+control on the same card.
+
+#### Why not the veto
+
+What this section used to propose was: a map pool per mode, teams alternating bans, and
+whoever did not ban first picking from what remains. It was held pending feedback, and the
+feedback was that it is a lot of machinery — a pool per mode, a ban sequence per series
+length, and probably a live veto surface like the draft room — for an agency the swap rule
+already gives both teams, every game, with one column and no new screen. The map stays
+something the admin types in, because now there is a stated answer to who chose it.
 
 ### 8.5 What carries over
 

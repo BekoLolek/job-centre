@@ -391,6 +391,94 @@ export function modesFor(config: StageConfig, bestOf: number): string[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* Who picks the side, and who picks the map (§8.4)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The two halves of a match, as the row names them: `team_a_id` / `source_a`
+ * is slot `a`, and `team_b_id` / `source_b` is slot `b`.
+ *
+ * The coin is stored as a slot rather than as a team id because a bracket slot
+ * has no teams when its matches are generated — that is the whole point of
+ * `source_a` — so a team id would be a value nobody could write yet. A slot is
+ * knowable at generation time and resolves into a team on every read, exactly
+ * as the pairing itself does.
+ */
+export const MATCH_SLOTS = ["a", "b"] as const;
+
+export type MatchSlot = (typeof MATCH_SLOTS)[number];
+
+export function isMatchSlot(value: unknown): value is MatchSlot {
+  return value === "a" || value === "b";
+}
+
+/** Anything unrecognised is `a`, so no reader ever has a hole to branch on. */
+export function normaliseMatchSlot(value: unknown): MatchSlot {
+  return isMatchSlot(value) ? value : "a";
+}
+
+export function otherSlot(slot: MatchSlot): MatchSlot {
+  return slot === "a" ? "b" : "a";
+}
+
+/**
+ * Which side of the map a team plays first. What was *chosen*, not who chose —
+ * recorded per game on `match_games.side_chosen`, and optional: the rule is
+ * about who holds the choice, and a match played without anybody writing down
+ * which way it went is still a match played under the rule.
+ */
+export const PLAY_SIDES = ["attack", "defence"] as const;
+
+export type PlaySide = (typeof PLAY_SIDES)[number];
+
+export function isPlaySide(value: unknown): value is PlaySide {
+  return value === "attack" || value === "defence";
+}
+
+/** Null for anything unrecognised — an unrecorded choice, not a wrong one. */
+export function normalisePlaySide(value: unknown): PlaySide | null {
+  return isPlaySide(value) ? value : null;
+}
+
+/**
+ * **Which slot chooses the side for one game.**
+ *
+ * One team picks attack or defence, the other picks the map, and the two roles
+ * swap every game of the series. A coin decides who starts with the side, and
+ * that single answer — `matches.first_side_choice` — is all that is stored: a
+ * Bo3 whose game 1 went to `a` has `b` choosing in game 2 and `a` again in
+ * game 3, which is a parity check on the game index and not a column.
+ *
+ * That is deliberate, and it is the same argument that keeps a bracket slot's
+ * teams out of its row (§1.1, §8.5) and a team's balance out of `teams`: a
+ * per-game copy is a copy that can disagree with itself the moment somebody
+ * inserts, removes or re-orders a game.
+ *
+ * `gameIndex` is 0-based, like `match_games.index`.
+ */
+export function sideChooserFor(firstSideChoice: unknown, gameIndex: number): MatchSlot {
+  const first = normaliseMatchSlot(firstSideChoice);
+  const index = Number.isFinite(gameIndex) ? Math.abs(Math.trunc(gameIndex)) : 0;
+  return index % 2 === 0 ? first : otherSlot(first);
+}
+
+/** The other one, always. Whoever does not choose the side chooses the map. */
+export function mapChooserFor(firstSideChoice: unknown, gameIndex: number): MatchSlot {
+  return otherSlot(sideChooserFor(firstSideChoice, gameIndex));
+}
+
+/**
+ * The coin itself.
+ *
+ * Injectable rather than reaching for `Math.random` inside a write, so a test
+ * can pin it — the one thing about this rule that is genuinely random is also
+ * the one thing a test cannot assert about.
+ */
+export function tossForFirstSideChoice(random: () => number = Math.random): MatchSlot {
+  return random() < 0.5 ? "a" : "b";
+}
+
+/* ------------------------------------------------------------------ */
 /* Source references                                                  */
 /* ------------------------------------------------------------------ */
 

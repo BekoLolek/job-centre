@@ -26,12 +26,17 @@
 
 import type { GeneratedMatch, GeneratedStage, MatchBracket, PlacementRule } from "./bracket";
 import {
+  type MatchSlot,
+  type PlaySide,
   type PointsRule,
   type StageConfig,
   type Tiebreaker,
+  mapChooserFor,
   modesFor,
+  normaliseMatchSlot,
   parseSource,
   seriesTarget,
+  sideChooserFor,
 } from "./format-policy";
 
 /* ------------------------------------------------------------------ */
@@ -47,6 +52,8 @@ export type MatchGameRecord = {
   scoreA: number;
   scoreB: number;
   played: boolean;
+  /** Which side the team holding the choice took. Null until anybody says. */
+  sideChosen: PlaySide | null;
 };
 
 /** A `matches` row, without its ids, plus its games. */
@@ -62,6 +69,8 @@ export type MatchRecord = {
   finishedAt: string | null;
   durationMin: number | null;
   winnerOverrideId: string | null;
+  /** Which slot chooses the side in game 1. The coin, and the only copy of it. */
+  firstSideChoice: MatchSlot;
   games: MatchGameRecord[];
 };
 
@@ -102,7 +111,38 @@ export type ResolvedMatch = MatchRecord &
     needsDecision: boolean;
     /** True for a bracket reset that the grand final made unnecessary. */
     skipped: boolean;
+    /** Who picks the side and who picks the map, per game, with real names. */
+    choices: GameChoice[];
   };
+
+/**
+ * One game's two roles, resolved.
+ *
+ * Derived from `firstSideChoice` and the game's index every time it is asked
+ * for — there is no stored copy, and a re-flip therefore rewrites the whole
+ * series at once rather than leaving game 3 disagreeing with game 1.
+ *
+ * The names follow the same rule as `nameA` and `nameB`: a real team once the
+ * slot has resolved, and the source's placeholder — "Upper semi 1 winner" —
+ * while it has not, so a card drawn before the bracket has been played still
+ * says what the rule *will* be rather than "TBD picks the side".
+ */
+export type GameChoice = {
+  /** 0-based, like `match_games.index`. */
+  index: number;
+  /** The slot choosing attack or defence for this game. */
+  sideSlot: MatchSlot;
+  /** The other slot, always. Whoever does not choose the side chooses the map. */
+  mapSlot: MatchSlot;
+  sideTeamId: string | null;
+  mapTeamId: string | null;
+  sideName: string;
+  mapName: string;
+  /** What was actually taken, when somebody wrote it down. */
+  sideChosen: PlaySide | null;
+  /** The map that was played, when there is one. */
+  map: string;
+};
 
 /* ------------------------------------------------------------------ */
 /* Series arithmetic                                                  */
@@ -118,6 +158,7 @@ export function blankGamesFor(match: { modes: string[] }): MatchGameRecord[] {
     scoreA: 0,
     scoreB: 0,
     played: false,
+    sideChosen: null,
   }));
 }
 
@@ -584,6 +625,8 @@ export class StageResolution {
     const sourceB = record?.sourceB ?? spec?.sourceB ?? null;
     const bestOf = record?.bestOf ?? spec?.bestOf ?? 1;
     const elimination = spec?.elimination ?? true;
+    const firstSideChoice = normaliseMatchSlot(record?.firstSideChoice);
+    const games = record?.games ?? (spec ? blankGamesFor(spec) : []);
 
     // A drawn table game is a finished match. A drawn elimination series is not
     // — somebody has to advance, so it waits on the admin's override.
@@ -605,7 +648,8 @@ export class StageResolution {
       finishedAt: record?.finishedAt ?? null,
       durationMin: record?.durationMin ?? null,
       winnerOverrideId: record?.winnerOverrideId ?? null,
-      games: record?.games ?? (spec ? blankGamesFor(spec) : []),
+      firstSideChoice,
+      games,
       round: spec?.round ?? 0,
       phase: spec?.phase ?? 0,
       bracket: (spec?.bracket ?? "rr") as MatchBracket,
@@ -627,7 +671,50 @@ export class StageResolution {
       status,
       needsDecision: elimination && outcome.decided && !outcome.winner && !!a && !!b,
       skipped: outcome.skipped,
+      choices: this.choicesFor({ firstSideChoice, bestOf, games, a, b, sourceA, sourceB }),
     };
+  }
+
+  /**
+   * Who picks what, game by game.
+   *
+   * Always the full series rather than only the games that exist as rows: the
+   * choice is a rule about a game that is *about to be played*, so a card whose
+   * series has not started yet is exactly the card that needs it printed.
+   */
+  private choicesFor(input: {
+    firstSideChoice: MatchSlot;
+    bestOf: number;
+    games: MatchGameRecord[];
+    a: string | null;
+    b: string | null;
+    sourceA: string | null;
+    sourceB: string | null;
+  }): GameChoice[] {
+    const { firstSideChoice, a, b, sourceA, sourceB } = input;
+    const count = Math.max(1, Math.trunc(input.bestOf) || 1, input.games.length);
+    const teamOf = (slot: MatchSlot) => (slot === "a" ? a : b);
+    const nameOf = (slot: MatchSlot) => {
+      const id = teamOf(slot);
+      return (id && this.names.get(id)) || this.placeholder(slot === "a" ? sourceA : sourceB);
+    };
+
+    return Array.from({ length: count }, (_, index) => {
+      const sideSlot = sideChooserFor(firstSideChoice, index);
+      const mapSlot = mapChooserFor(firstSideChoice, index);
+      const game = input.games.find((g) => g.index === index);
+      return {
+        index,
+        sideSlot,
+        mapSlot,
+        sideTeamId: teamOf(sideSlot),
+        mapTeamId: teamOf(mapSlot),
+        sideName: nameOf(sideSlot),
+        mapName: nameOf(mapSlot),
+        sideChosen: game?.sideChosen ?? null,
+        map: game?.map ?? "",
+      };
+    });
   }
 
   /** Who has finished where, as far as the results allow. */

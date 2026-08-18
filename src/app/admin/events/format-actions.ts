@@ -47,12 +47,13 @@ import {
   generateMatches,
   matchIdsFor,
   recordGames,
+  reflipMatch,
   scheduleSettingsFrom,
   setMatchSchedule,
   setStages,
   setWinnerOverride,
 } from "@/lib/format";
-import type { FormatTiming, StageConfig } from "@/lib/format-policy";
+import type { FormatTiming, MatchSlot, StageConfig } from "@/lib/format-policy";
 import { updateEvent } from "@/lib/events";
 import { recordAudit } from "@/lib/audit";
 import { announceMatchResult } from "@/lib/discord";
@@ -479,6 +480,50 @@ export async function setWinnerOverrideAction(
   announceMatchResult(matchId);
 
   return { ok: true, data: { view } };
+}
+
+/**
+ * Re-flip a match's coin, or hand the side choice to a named slot.
+ *
+ * §8.4's rule is that one team chooses attack or defence and the other chooses
+ * the map, swapping every game, with a coin deciding who starts. `reflipMatch`
+ * owns both refusals — a finished event, and a series that has already started
+ * — for the same reason `clearMatch` owns its own: a rule enforced by the
+ * action rather than by the library is a rule the next caller skips.
+ *
+ * The log line names the team rather than the slot, because "Rivals Blue now
+ * picks the side in game 1" is a sentence somebody can check against what
+ * happened in the room, and "first_side_choice is now b" is not.
+ */
+export async function reflipMatchAction(
+  eventId: string,
+  matchId: string,
+  slot: MatchSlot | null = null
+): Promise<FormatResult<{ firstSideChoice: MatchSlot; view: FormatView | null }>> {
+  const admin = await requireAdmin();
+
+  const result = await reflipMatch(matchId, slot);
+  if (!result.ok) return result;
+
+  refresh(eventId);
+  const view = await formatFor(eventId);
+  const ids = await matchIdsFor(eventId);
+  const resolvedSlot = Object.entries(ids).find(([, id]) => id === matchId)?.[0];
+  const match = resolvedSlot
+    ? view?.stages.flatMap((stage) => stage.matches).find((row) => row.slot === resolvedSlot)
+    : undefined;
+  const chooser = match?.choices[0]?.sideName ?? (result.data.firstSideChoice === "a" ? "Side A" : "Side B");
+
+  await recordAudit({
+    action: "match.reflip",
+    actor: admin,
+    eventId,
+    subject: matchId,
+    summary: `${slot ? "Set" : "Re-flipped"} the coin on ${match?.displayLabel ?? "a match"} — ${chooser} picks the side in game 1.`,
+    detail: { firstSideChoice: result.data.firstSideChoice, tossed: slot === null },
+  });
+
+  return { ok: true, data: { firstSideChoice: result.data.firstSideChoice, view } };
 }
 
 /**

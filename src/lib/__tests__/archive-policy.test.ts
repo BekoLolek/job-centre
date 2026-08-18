@@ -74,6 +74,7 @@ describe("the catalogue of refusals", () => {
         "pool",
         "questions",
         "recordResult",
+        "reflip",
         "reschedule",
         "runDraft",
         "stages",

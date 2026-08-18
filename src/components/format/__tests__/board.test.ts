@@ -70,7 +70,9 @@ function fakeMatch(over: Partial<ResolvedMatch> = {}): ResolvedMatch {
     finishedAt: null,
     durationMin: null,
     winnerOverrideId: null,
+    firstSideChoice: "a",
     games: [],
+    choices: [],
     round: 1,
     phase: 1,
     bracket: "upper",
@@ -103,6 +105,7 @@ function game(over: Partial<ResolvedMatch["games"][number]> = {}) {
     scoreA: 0,
     scoreB: 0,
     played: false,
+    sideChosen: null,
     ...over,
   };
 }

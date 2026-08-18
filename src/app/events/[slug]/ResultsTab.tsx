@@ -4,6 +4,7 @@ import LocalTime from "@/components/format/LocalTime";
 import ZoneNote from "@/components/format/ZoneNote";
 import { matchStatusLabel, seriesLabel } from "@/components/format/labels";
 import {
+  choiceRecap,
   gameLine,
   gamesPlayed,
   groupByDay,
@@ -108,6 +109,11 @@ export default function ResultsTab({ matches, dayBySlot }: ResultsTabProps) {
  * map score, anything longer prints maps won. The per-game rows below it always
  * print the map score, which is why a Bo3 can read "2–1" over three rows of
  * "3–1", "2–3", "3–0" without contradicting itself.
+ *
+ * Each game also carries who was entitled to pick its side and who its map
+ * (§8.4). Which map got played is already on the row; *who chose it* is the
+ * separate fact, and it is the one an argument three weeks later is about —
+ * which is the whole reason this tab exists.
  */
 function ResultRow({ match }: { match: ResolvedMatch }) {
   const score = seriesScore(match);
@@ -180,6 +186,11 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
                 <span className="num shrink-0 text-chalk/80">
                   {game.scoreA}–{game.scoreB}
                 </span>
+                {match.choices[index] && (
+                  <span className="w-full pl-9 text-muted/70">
+                    {choiceRecap(match.choices[index])}
+                  </span>
+                )}
               </li>
             ) : null
           )}

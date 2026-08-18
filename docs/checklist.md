@@ -320,12 +320,58 @@ been running since. Corrected rather than done.
 
 ---
 
+## Side and map choice `[x]` complete
+
+The rule that came back from the group, and the one that replaced the map veto that used
+to sit under **Held**. See plan §8.4.
+
+- [x] **One team picks the side, the other picks the map — and they swap every
+      game.** For every game of a match one team chooses attack or defence and
+      the other chooses the map. A coin decides who starts with the side choice;
+      in a Bo3 that is A, then B, then A, with the map going the other way each
+      time. A Bo1 is one flip and one game
+- [x] **One value stored, everything else derived.** `matches.first_side_choice`
+      is `a` or `b` and is written once, by a coin toss, when the stage's matches
+      are generated. `sideChooserFor(firstSideChoice, gameIndex)` in
+      `src/lib/format-policy.ts` — beside `modesFor`, with the other per-game
+      derivations — is the whole of the rest, and `mapChooserFor` is the other
+      slot. A per-game copy would be a second copy that can disagree with itself
+      after an edit, which is the same argument that keeps a slot's teams in
+      `source_a` and a team's balance off `teams`
+- [x] **A slot, not a team id.** A bracket slot has no teams when its matches are
+      generated, so a team id is a value nobody could write yet. It resolves into
+      a team on read, which is why a card can say "Upper final winner picks the
+      side" before that final has been played
+- [x] **The coin can be corrected.** `reflipMatch` tosses again, or hands the
+      side choice to a named slot for the toss somebody watched land the other
+      way. Refused on a finished event through `src/lib/archive-policy.ts`, and
+      refused once any game of that series has been played — the whole series was
+      played under that coin, and moving it would silently re-attribute every map
+      in it. Clear the series first, as with any other recorded mistake
+- [x] **What was actually chosen is a note, not the rule.**
+      `match_games.side_chosen` (`attack` / `defence`, nullable) is editable next
+      to the map in the admin's Results editor. Leaving it blank changes nothing
+      about who chose what
+- [x] **Shown per game** on the match card (public bracket and admin alike), on
+      the public Results tab, and in the admin's Results editor — with the
+      re-flip control on the same card
+
+**1582 tests** — 33 new ones in `src/lib/__tests__/side-choice.test.ts`: the swap across
+Bo1, Bo3, Bo5 and Bo7, that the map chooser is always the other team, that the assignment
+is stable across reads and does not move when the results around it do, and both re-flip
+refusals with the coin checked to be untouched afterwards.
+
+---
+
 ## Held — decided against building for now
 
 These are recorded so they are not lost, but are deliberately not in any phase yet.
 
-- [ ] **Map ban / pick** — the team that does not ban first picks the map from what remains.
-      Wants feedback from the group before it is designed properly. See plan §8.4.
+The **map ban / pick** idea that used to sit here has left: it was settled rather than
+built. See *Side and map choice* above and plan §8.4 — the group landed on the side/map
+swap instead, which gives both teams agency every game without a map pool, a ban sequence
+or a live veto surface.
+
 - [ ] **Rank thresholds are provisional** — Platinum 3 to enter, Diamond 2 to captain, both
       still up for discussion. The *mechanism* is in Phase 2; the *numbers* are settings, so
       changing your mind later costs nothing.

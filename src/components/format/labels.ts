@@ -9,7 +9,7 @@
  */
 
 import type { GeneratedStage, MatchBracket } from "@/lib/bracket";
-import type { BronzeMode, StageKind, Tiebreaker } from "@/lib/format-policy";
+import type { BronzeMode, PlaySide, StageKind, Tiebreaker } from "@/lib/format-policy";
 import type { MatchStatus, ResolvedMatch } from "@/lib/format-resolve";
 
 /* ------------------------------------------------------------------ */
@@ -140,6 +140,20 @@ export function seriesSentence(spec: GeneratedStage): string {
     ),
   ];
   return [seriesLabel(base), ...named].join(", ");
+}
+
+/* ------------------------------------------------------------------ */
+/* Sides (§8.4)                                                       */
+/* ------------------------------------------------------------------ */
+
+/** The two sides of a map, spelled the way the rule is said out loud. */
+export const PLAY_SIDE_CHOICES: ReadonlyArray<{ value: PlaySide; label: string }> = [
+  { value: "attack", label: "Attack" },
+  { value: "defence", label: "Defence" },
+];
+
+export function playSideLabel(side: PlaySide | string | null | undefined): string {
+  return PLAY_SIDE_CHOICES.find((choice) => choice.value === side)?.label ?? "";
 }
 
 /* ------------------------------------------------------------------ */

@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Eyebrow, Panel, cx } from "@/components/ui";
 import type { ResolvedMatch } from "@/lib/format-resolve";
 import LocalTime from "./LocalTime";
+import { choiceLine, choiceRecap } from "./board";
 import { modeLabel, seriesLabel } from "./labels";
 
 /**
@@ -13,6 +14,14 @@ import { modeLabel, seriesLabel } from "./labels";
  * on an admin. It re-derives none of that. The one thing it chooses for itself
  * is which number to print beside a team, and even that is a display rule —
  * a Bo1's "score" is the map score, a longer series' is maps won.
+ *
+ * ## The side and map choice is printed per game, not per match, in both modes
+ *
+ * §8.4's rule swaps the two roles every game, so "who picks the map" has a
+ * different answer in game 2 than in game 1 and a single line under the card
+ * could only ever be right about a third of a Bo3. The card prints one row per
+ * game of the series — including games that have not been played, which are
+ * precisely the ones the answer is still needed for.
  *
  * ## Why there is a `children` slot
  *
@@ -117,6 +126,35 @@ export default function MatchCard({
         <p className="mt-3 border-t border-hair pt-3 text-[11px] text-muted">
           Not needed — the grand final settled it.
         </p>
+      )}
+
+      {/*
+        Who picks what, per game. Drawn from `match.choices`, which the resolver
+        derives from one stored coin — nothing here works it out, and a re-flip
+        therefore rewrites the whole list at once rather than leaving game 3
+        disagreeing with game 1.
+      */}
+      {match.choices.length > 0 && (
+        <div className="mt-3 border-t border-hair pt-3">
+          {/*
+            Shown in a compact bracket column too, unlike the played-games list:
+            a card nobody has played yet is exactly the one whose next game
+            still needs somebody told who picks what. Only the heading goes.
+          */}
+          {!compact && <Eyebrow className="mb-1.5 text-muted/70">Side and map</Eyebrow>}
+          <ul className="space-y-1">
+            {match.choices.map((choice) => (
+              <li key={choice.index} className="flex items-baseline gap-2 text-[11px]">
+                <Eyebrow as="span" className="shrink-0">
+                  G{choice.index + 1}
+                </Eyebrow>
+                <span className="min-w-0 flex-1 truncate text-muted">
+                  {match.games[choice.index]?.played ? choiceRecap(choice) : choiceLine(choice)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
 
       {!compact && played.length > 0 && match.bestOf > 1 && (

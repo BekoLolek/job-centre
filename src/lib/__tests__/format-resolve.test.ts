@@ -70,6 +70,7 @@ describe("isMatchDecided", () => {
     finishedAt: null,
     durationMin: null,
     winnerOverrideId: override,
+    firstSideChoice: "a",
     games: blankGamesFor({ modes: ["a", "b", "c"] }).map((game, i) => ({
       ...game,
       scoreA: games[i]?.[0] ?? 0,

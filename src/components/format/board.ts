@@ -22,8 +22,8 @@
  */
 
 import { ordinal } from "@/lib/format-policy";
-import type { ResolvedMatch, Standing } from "@/lib/format-resolve";
-import { matchStatusLabel, modeLabel } from "./labels";
+import type { GameChoice, ResolvedMatch, Standing } from "@/lib/format-resolve";
+import { matchStatusLabel, modeLabel, playSideLabel } from "./labels";
 
 /* ------------------------------------------------------------------ */
 /* Series arithmetic, for display                                     */
@@ -72,6 +72,40 @@ export function gameLine(game: { mode: string; map: string }): string {
   const mode = game.mode.trim() ? modeLabel(game.mode) : "";
   if (map && mode) return `${mode} · ${map}`;
   return map || mode || "";
+}
+
+/* ------------------------------------------------------------------ */
+/* Who picks what (§8.4)                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * "Rivals Red picks the side · Rivals Blue picks the map" — one game, before it
+ * is played.
+ *
+ * Both names come straight off the resolved choice, which means a slot that has
+ * not resolved prints its placeholder ("Upper semi 1 winner picks the side")
+ * rather than a blank. That is the honest reading: the *rule* is settled from
+ * the moment the coin is tossed, and only the two names are still pending.
+ */
+export function choiceLine(choice: Pick<GameChoice, "sideName" | "mapName">): string {
+  return `${choice.sideName} picks the side · ${choice.mapName} picks the map`;
+}
+
+/**
+ * The same, in the past tense, for a game that has been played — and naming the
+ * side actually taken when somebody wrote it down.
+ *
+ * The map chooser is still named even though the map itself is printed beside
+ * it: which map was played and *who was entitled to pick it* are two different
+ * facts, and the second is the one an argument three weeks later is about.
+ */
+export function choiceRecap(
+  choice: Pick<GameChoice, "sideName" | "mapName" | "sideChosen">
+): string {
+  const took = playSideLabel(choice.sideChosen);
+  return took
+    ? `${choice.sideName} took ${took.toLowerCase()} · ${choice.mapName} picked the map`
+    : `${choice.sideName} picked the side · ${choice.mapName} picked the map`;
 }
 
 /* ------------------------------------------------------------------ */

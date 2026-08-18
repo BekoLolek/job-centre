@@ -1182,6 +1182,31 @@ export const matches = pgTable(
     /** Set by the admin when the games alone do not settle it (a drawn decider). */
     winnerOverrideId: uuid("winner_override_id"),
 
+    /**
+     * The coin toss: which slot chooses the **side** — attack or defence — in
+     * game 1. The other slot chooses the map, and the two roles swap every game
+     * (§8.4). `sideChooserFor` in src/lib/format-policy.ts is the derivation.
+     *
+     * ## Why one column and not one per game
+     *
+     * Everything after game 1 is a parity check on the game index, so a column
+     * on `match_games` would be a second copy that can disagree with itself the
+     * moment a series is re-generated at a different length. This is the same
+     * argument that keeps a slot's teams in `source_a` rather than `team_a_id`,
+     * and a team's remaining balance out of `teams` altogether.
+     *
+     * ## Why a slot and not a team id
+     *
+     * A bracket slot has no teams when its matches are generated — that is what
+     * `source_a` is for — so a team id is a value nobody could write yet. A
+     * slot is knowable at generation time and resolves into a team on read.
+     *
+     * `generateMatches` always writes a real toss. The default is what a row
+     * written by anything else falls back to, so the derivation never has a
+     * hole to branch on; an admin who needs it changed re-flips it.
+     */
+    firstSideChoice: text("first_side_choice").notNull().default("a"),
+
     createdAt: instant("created_at").notNull().defaultNow(),
   },
   (table) => [
@@ -1222,6 +1247,10 @@ export const matches = pgTable(
       "matches_distinct_teams",
       sql`${table.teamAId} is null or ${table.teamBId} is null or ${table.teamAId} <> ${table.teamBId}`
     ),
+    // Text with a check rather than an enum: the domain really is closed at two
+    // and always will be, so the argument that keeps `mode` free-form does not
+    // apply — but a check is still one migration cheaper to read than a type.
+    check("matches_first_side_choice", sql`${table.firstSideChoice} in ('a', 'b')`),
   ]
 );
 
@@ -1254,6 +1283,14 @@ export const matchGames = pgTable(
      * nothing anywhere — which is what lets an admin fill a card in advance.
      */
     played: boolean("played").notNull().default(false),
+    /**
+     * Which side the team holding the choice actually took — `attack` or
+     * `defence` (§8.4). Nullable because it is a note, not a rule: who *holds*
+     * the choice is derived from `matches.first_side_choice` and is never
+     * missing, whereas whether anybody wrote down which way it went is up to
+     * whoever filled the card in.
+     */
+    sideChosen: text("side_chosen"),
   },
   (table) => [
     unique("match_games_match_index_uniq").on(table.matchId, table.index),
@@ -1262,6 +1299,10 @@ export const matchGames = pgTable(
     check(
       "match_games_scores_positive",
       sql`${table.scoreA} >= 0 and ${table.scoreB} >= 0`
+    ),
+    check(
+      "match_games_side_chosen",
+      sql`${table.sideChosen} is null or ${table.sideChosen} in ('attack', 'defence')`
     ),
   ]
 );

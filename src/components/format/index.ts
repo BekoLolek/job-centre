@@ -42,6 +42,8 @@ export type { ScheduleShift } from "./shifts";
 
 export {
   championOf,
+  choiceLine,
+  choiceRecap,
   gameLine,
   gamesPlayed,
   groupByDay,
@@ -63,6 +65,7 @@ export type { MatchTone, Placement, PodiumEntry, ScheduleDay } from "./board";
 export {
   BRACKET_HALVES,
   BRONZE_CHOICES,
+  PLAY_SIDE_CHOICES,
   STAGE_KIND_CHOICES,
   TIEBREAKER_LABELS,
   advancePerGroup,
@@ -75,6 +78,7 @@ export {
   matchStatusTone,
   modeLabel,
   modesInUse,
+  playSideLabel,
   seriesLabel,
   seriesLengthsInUse,
   seriesSentence,

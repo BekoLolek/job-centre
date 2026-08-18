@@ -91,6 +91,7 @@ export const LOCKED = {
   overrideWinner: "its winners cannot be overturned",
   reschedule: "its running order cannot be rebuilt",
   moveMatch: "its matches cannot be moved",
+  reflip: "its coin tosses cannot be re-flipped",
   /* --- the bracket ------------------------------------------------ */
   generate: "its bracket cannot be regenerated",
   stages: "its format cannot be changed",

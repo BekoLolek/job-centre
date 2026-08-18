@@ -30,6 +30,7 @@ export function blankRecords(stage: GeneratedStage): MatchRecord[] {
     finishedAt: null,
     durationMin: null,
     winnerOverrideId: null,
+    firstSideChoice: "a",
     games: blankGamesFor(match),
   }));
 }

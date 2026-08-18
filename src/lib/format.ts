@@ -57,15 +57,22 @@ import { LOCKED, lockRefusal } from "./archive-policy";
 import type { EventResult } from "./events";
 import {
   type FormatTiming,
+  type MatchSlot,
+  type PlaySide,
   type StageConfig,
   type StageKind,
   MAX_DAYS,
   MAX_TEAMS,
+  isMatchSlot,
   isStageKind,
   normaliseFormatTiming,
+  normaliseMatchSlot,
+  normalisePlaySide,
   normaliseStageConfig,
+  tossForFirstSideChoice,
 } from "./format-policy";
 import {
+  type GameChoice,
   type MatchGameRecord,
   type MatchRecord,
   type ResolvedMatch,
@@ -228,6 +235,7 @@ function recordFrom(row: MatchRow, games: MatchGameRow[]): MatchRecord {
     finishedAt: iso(row.finishedAt),
     durationMin: row.durationMin,
     winnerOverrideId: row.winnerOverrideId,
+    firstSideChoice: normaliseMatchSlot(row.firstSideChoice),
     games: games
       .filter((g) => g.matchId === row.id)
       .sort((x, y) => x.index - y.index)
@@ -239,6 +247,7 @@ function recordFrom(row: MatchRow, games: MatchGameRow[]): MatchRecord {
         scoreA: g.scoreA,
         scoreB: g.scoreB,
         played: g.played,
+        sideChosen: normalisePlaySide(g.sideChosen),
       })),
   };
 }
@@ -605,6 +614,10 @@ export async function generateMatches(
           teamBId: direct ? teamFromSource(match.sourceB, seeded) : null,
           sourceA: match.sourceA,
           sourceB: match.sourceB,
+          // The coin, tossed once per match and never again unless an admin
+          // asks. Everything after game 1 is a parity check on the game index
+          // (§8.4), so this one value is the whole of the assignment.
+          firstSideChoice: tossForFirstSideChoice(),
         })
         .returning({ id: matches.id });
 
@@ -620,6 +633,7 @@ export async function generateMatches(
             scoreA: game.scoreA,
             scoreB: game.scoreB,
             played: game.played,
+            sideChosen: game.sideChosen,
           }))
         );
       }
@@ -655,6 +669,12 @@ export type GamePatch = {
   scoreA?: number;
   scoreB?: number;
   played?: boolean;
+  /**
+   * Which side the team holding the choice took. `null` clears it, and absent
+   * leaves it alone — a note about the game, not part of the rule, so an admin
+   * who never fills it in changes nothing about who chose what.
+   */
+  sideChosen?: PlaySide | string | null;
 };
 
 function score(value: unknown, current: number): number {
@@ -707,6 +727,8 @@ export async function recordGames(
         scoreA: score(patch.scoreA, row.scoreA),
         scoreB: score(patch.scoreB, row.scoreB),
         played: patch.played === undefined ? row.played : patch.played === true,
+        sideChosen:
+          patch.sideChosen === undefined ? row.sideChosen : normalisePlaySide(patch.sideChosen),
       };
       await tx.update(matchGames).set(next).where(eq(matchGames.id, row.id));
       byIndex.set(patch.index, { ...row, ...next });
@@ -775,6 +797,69 @@ export async function setWinnerOverride(
     await tx.update(matches).set({ winnerOverrideId: teamId }).where(eq(matches.id, matchId));
     await reflow(tx, match.eventId);
     return withData(null);
+  });
+}
+
+/**
+ * Re-flip a match's coin — or set it outright.
+ *
+ * §8.4's rule is that one team chooses the side and the other chooses the map,
+ * swapping every game, and a coin decides who starts with the side. Coins get
+ * tossed in front of a room, and rooms get it wrong: the toss is called before
+ * the caller is ready, or the result is read out backwards and six people write
+ * down the opposite of what happened. So the assignment has to be correctable.
+ *
+ * Passing a slot **sets** it, which is the honest tool for that case — an admin
+ * who watched the coin land knows the answer and does not want another 50/50.
+ * Passing nothing tosses again, which is what a toss nobody witnessed needs.
+ *
+ * ## Two refusals
+ *
+ *  - **A finished event.** Not because a coin is a result, but because a coin
+ *    is what a result was played *under*: changing it rewrites the record of
+ *    which team was entitled to pick the map of a game that has been played.
+ *    `./archive-policy` is how that refusal is expressed everywhere else.
+ *  - **A series that has started.** The same argument at match scale, and the
+ *    stricter of the two: once a single game is ticked off, the whole series
+ *    was played under this coin, and re-flipping it would silently re-attribute
+ *    every game of it. The way out is the way out of every other recorded
+ *    mistake — clear the series, then flip.
+ *
+ * There is no re-flow afterwards. A coin moves nobody's start time.
+ */
+export async function reflipMatch(
+  matchId: string,
+  slot: MatchSlot | null = null,
+  database: Database = defaultDb
+): Promise<FormatResult<{ firstSideChoice: MatchSlot }>> {
+  if (slot !== null && !isMatchSlot(slot)) {
+    return fail("The side choice belongs to one of the two teams, or to neither.");
+  }
+
+  return database.transaction(async (tx) => {
+    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
+    if (!match) return fail("That match no longer exists.");
+
+    const event = await lockEvent(tx, match.eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    const locked = lockRefusal(event, LOCKED.reflip);
+    if (locked) return fail(locked);
+
+    const played = await tx
+      .select({ id: matchGames.id })
+      .from(matchGames)
+      .where(and(eq(matchGames.matchId, matchId), eq(matchGames.played, true)))
+      .limit(1);
+    if (played.length > 0) {
+      return fail(
+        "A game of this series has already been played, so its coin cannot be re-flipped — that would change who was entitled to pick a map that is already on the board. Clear the series first if it really was recorded wrongly."
+      );
+    }
+
+    const next = slot ?? tossForFirstSideChoice();
+    await tx.update(matches).set({ firstSideChoice: next }).where(eq(matches.id, matchId));
+    return withData({ firstSideChoice: next });
   });
 }
 
@@ -985,4 +1070,13 @@ async function writeSchedule(
 /* Re-exports the pages will want                                     */
 /* ------------------------------------------------------------------ */
 
-export type { MatchBracket, MatchGameRecord, PlannedBlock, ResolvedMatch, Standing, TeamRef };
+export type {
+  GameChoice,
+  MatchBracket,
+  MatchGameRecord,
+  PlannedBlock,
+  ResolvedMatch,
+  Standing,
+  TeamRef,
+};
+export type { MatchSlot, PlaySide };
