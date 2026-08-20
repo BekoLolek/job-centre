@@ -129,10 +129,10 @@ export default async function SignInPage({
         <Eyebrow className="rise">Members · Discord sign-in</Eyebrow>
 
         <div className="relative">
-          <h1 className="font-display leading-[0.82] tracking-tight">
-            <span className="block text-[clamp(3rem,8vw,7.5rem)] rise">JOB CENTRE</span>
+          <h1 className="wordmark leading-[1.02] tracking-tight">
+            <span className="block text-[clamp(2rem,5.2vw,4.6rem)] rise">JOB CENTRE</span>
             <span
-              className="block text-[clamp(3rem,8vw,7.5rem)] text-gold rise"
+              className="block text-[clamp(2rem,5.2vw,4.6rem)] text-union rise"
               style={{ animationDelay: "90ms" }}
             >
               EVENTS
