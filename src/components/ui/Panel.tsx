@@ -6,11 +6,15 @@ import { cx } from "./cx";
 /** `none` for tables/lists that manage their own padding, otherwise `sm`/`md`/`lg`. */
 export type PanelPadding = "none" | "sm" | "md" | "lg";
 
+/*
+ * Bigger than it looks like it needs to be, on purpose. With the border gone,
+ * the padding is the only thing holding a panel apart from what is next to it.
+ */
 const PADDING: Record<PanelPadding, string> = {
   none: "",
-  sm: "p-4",
-  md: "p-5",
-  lg: "p-6",
+  sm: "p-5",
+  md: "p-6",
+  lg: "p-7 sm:p-8",
 };
 
 type PanelProps<T extends ElementType> = {

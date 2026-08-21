@@ -85,7 +85,7 @@ export default async function EventsPage({
 
           {/* The past/upcoming toggle. Two links, styled as the segmented
               control the rest of the site uses. */}
-          <div className="ml-auto flex border border-hair">
+          <div className="ml-auto flex rounded-xl border border-hair">
             <ToggleLink href={href({ when: "upcoming" })} on={when === "upcoming"}>
               Upcoming ({upcoming.length})
             </ToggleLink>
@@ -195,10 +195,10 @@ function FilterLink({
       href={href}
       aria-current={on ? "true" : undefined}
       className={cx(
-        "border px-3 py-2 text-sm transition-colors",
+        "rounded-full px-3.5 py-2 text-sm transition-colors",
         on
-          ? "border-gold bg-gold/15 text-gold"
-          : "border-hair bg-raised text-chalk/75 hover:border-gold/50 hover:text-gold"
+          ? "bg-union/20 text-hot"
+          : "bg-white/[0.05] text-chalk/70 hover:bg-white/[0.09] hover:text-hot"
       )}
     >
       {children}

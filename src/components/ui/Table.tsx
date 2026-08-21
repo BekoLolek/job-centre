@@ -19,7 +19,7 @@ export function Table({ className, children }: { className?: string; children?: 
 export function TableHead({ children }: { children?: ReactNode }) {
   return (
     <thead>
-      <tr className="border-b border-hair">{children}</tr>
+      <tr className="border-b border-hair/70">{children}</tr>
     </thead>
   );
 }
@@ -30,7 +30,7 @@ export function TableBody({ children }: { children?: ReactNode }) {
 
 /** A body row, hairline-ruled except for the last one. */
 export function TableRow({ className, children }: { className?: string; children?: ReactNode }) {
-  return <tr className={cx("border-b border-hair/60 last:border-0", className)}>{children}</tr>;
+  return <tr className={cx("border-b border-hair/40 last:border-0", className)}>{children}</tr>;
 }
 
 export type TableHeadCellProps = {

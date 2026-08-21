@@ -1071,7 +1071,7 @@ function TiebreakerEditor({
     <div className="space-y-2">
       <Eyebrow className="text-muted/80">Tiebreakers, in order</Eyebrow>
 
-      <ol className="divide-y divide-hair/60 border border-hair">
+      <ol className="divide-y divide-hair/60 rounded-xl border border-hair">
         {chosen.map((rule, index) => (
           <li key={rule} className="flex items-center gap-2 px-3 py-2">
             <span className="num w-5 shrink-0 text-xs text-muted">{index + 1}</span>

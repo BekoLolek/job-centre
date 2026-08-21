@@ -120,7 +120,7 @@ export default function LadderEditor({
           ladder simply cannot be asked a rank question.
         </EmptyState>
       ) : (
-        <ol className="divide-y divide-hair/60 border border-hair">
+        <ol className="divide-y divide-hair/60 rounded-xl border border-hair">
           {draft.map((name, index) => (
             <li key={`${name}-${index}`} className="flex items-center gap-3 px-3 py-2">
               <span className="num w-8 shrink-0 text-xs text-muted">{index + 1}</span>

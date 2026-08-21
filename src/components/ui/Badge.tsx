@@ -5,11 +5,12 @@ import { cx } from "./cx";
 
 export type BadgeTone = "default" | "gold" | "ember" | "signal";
 
+/* Tint only. An outline around something this small is all edge and no chip. */
 const TONE: Record<BadgeTone, string> = {
-  default: "border-hair bg-ink/60 text-chalk/80",
-  gold: "border-gold/50 bg-gold/10 text-gold",
-  ember: "border-ember/50 bg-ember/10 text-ember",
-  signal: "border-signal/50 bg-signal/10 text-signal",
+  default: "bg-white/[0.06] text-chalk/80",
+  gold: "bg-gold/15 text-gold",
+  ember: "bg-ember/15 text-ember",
+  signal: "bg-signal/15 text-signal",
 };
 
 export type BadgeProps = {
@@ -21,7 +22,7 @@ export type BadgeProps = {
 export default function Badge({ tone = "default", className, children, ...rest }: BadgeProps) {
   return (
     <span
-      className={cx("inline-block border px-1.5 py-0.5 text-[11px]", TONE[tone], className)}
+      className={cx("inline-block rounded-full px-2.5 py-0.5 text-[11px]", TONE[tone], className)}
       {...rest}
     >
       {children}

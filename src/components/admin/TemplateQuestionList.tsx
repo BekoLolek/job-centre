@@ -94,7 +94,7 @@ export default function TemplateQuestionList({
           application form.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-hair/60 border border-hair">
+        <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
           {questions.map((question, index) => {
             const link = question.profileFieldKey
               ? profileFields.find(

@@ -370,7 +370,7 @@ export default function CaptainsTab({
 
             <ul className="space-y-2">
               {override.map((row) => (
-                <li key={row.id} className="border border-hair p-3">
+                <li key={row.id} className="rounded-xl border border-hair p-3">
                   <div className="flex flex-wrap items-baseline gap-2">
                     <span className="text-sm text-chalk">{nameOf(row)}</span>
                     <Badge>{row.rank ?? "No rank recorded"}</Badge>

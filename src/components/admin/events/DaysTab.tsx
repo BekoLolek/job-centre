@@ -206,7 +206,7 @@ export default function DaysTab({
             add one if you want to ask people which nights they can make.
           </EmptyState>
         ) : (
-          <ul className="divide-y divide-hair/60 border border-hair">
+          <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
             {days.map((day, index) => (
               <li key={day.key} className="flex flex-wrap items-end gap-3 p-3">
                 <span className="num w-10 shrink-0 self-center text-xs text-muted">

@@ -36,14 +36,16 @@ export default function ChoiceChip({
       type="button"
       aria-pressed={selected}
       className={cx(
-        "border px-3 py-2 text-sm transition-colors",
+        // A pill that fills when chosen. The outlined version read as a form
+        // control; this reads as a choice, which is what it is.
+        "rounded-full px-3.5 py-2 text-sm transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-35",
         block && "flex-1",
         selected
           ? tone === "gold"
-            ? "border-gold bg-gold/15 text-gold"
-            : "border-chalk/60 bg-chalk/10 text-chalk"
-          : "border-hair bg-raised text-chalk/75 hover:border-gold/50 hover:text-gold",
+            ? "bg-union/20 text-hot"
+            : "bg-chalk/15 text-hot"
+          : "bg-white/[0.05] text-chalk/70 hover:bg-white/[0.09] hover:text-hot",
         className
       )}
       {...rest}

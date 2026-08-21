@@ -11,6 +11,12 @@
  * is left is a deep blue ground, a single tricolour hairline under the top bar,
  * and restraint everywhere else.
  *
+ * Almost nothing here is a box. Surfaces are soft washes with rounded corners
+ * and generous padding, separated by space rather than by outlines; a hairline
+ * appears only where two things genuinely need dividing. Boxes stacked inside
+ * boxes are what make an interface read as a command centre, and this is a
+ * place people come to sign up for a Jackbox night.
+ *
  * Red and blue are two opposing energies — the two sides of a fixture, the two
  * halves of a bracket. White is the light itself: confirmed, settled, done.
  * There is deliberately no green, no amber, no fourth hue. Three colours
@@ -23,7 +29,13 @@
   --ink: #04060f;
   --panel: #090e1d;
   --raised: #0f1830;
-  --hair: #1e2b52;
+  /*
+   * Hairlines are for dividing, not for drawing boxes. This sits close enough
+   * to the ground that a border reads as a change of surface rather than an
+   * edge, which is what lets 120-odd of them stay in the markup without the
+   * page looking like a form from 1998.
+   */
+  --hair: #16203c;
 
   --chalk: #eaf0ff;
   --muted: #7b89b4;
@@ -50,6 +62,10 @@
   --gold: var(--union-blue);
   --ember: var(--union-red);
   --signal: #cfe0ff;
+
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 20px;
 
   --glow-blue: 0 0 24px -6px rgba(77, 127, 255, 0.75);
   --glow-red: 0 0 24px -6px rgba(255, 45, 79, 0.7);
@@ -90,20 +106,6 @@ body {
     linear-gradient(180deg, #060a17 0%, #04060f 60%, #03050c 100%);
 }
 
-.stage::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  opacity: 0.5;
-  background-image:
-    linear-gradient(to right, rgba(77, 127, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(77, 127, 255, 0.035) 1px, transparent 1px);
-  background-size: 80px 80px;
-  mask-image: radial-gradient(80% 55% at 50% 12%, #000 0%, transparent 100%);
-}
-
 /* Grain only. The scanlines that used to sit here made every page feel like a
    prop rather than a tool. */
 .grain::before {
@@ -122,36 +124,17 @@ body {
 /* ------------------------------------------------------------------ */
 
 /*
- * A panel is a lit pane rather than a card: a hairline box with a seam of light
- * along its top edge, brightest in the middle where a beam would strike it.
+ * A panel is a wash of light on the ground, not a card sitting on it. No
+ * border, no seam, no corner cut — a soft fill and a big radius, and the
+ * padding does the separating. Where two panels sit side by side the gap
+ * between them is what tells them apart.
  */
 .panel {
   position: relative;
+  border-radius: var(--r-lg);
   background:
-    linear-gradient(180deg, rgba(77, 127, 255, 0.035), transparent 38%),
-    var(--panel);
-  border: 1px solid var(--hair);
-}
-
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: -1px -1px auto -1px;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(77, 127, 255, 0.1) 18%,
-    rgba(234, 240, 255, 0.26) 50%,
-    rgba(77, 127, 255, 0.1) 82%,
-    transparent
-  );
-  pointer-events: none;
-}
-
-/* A HUD plate: the top-right corner cut away, as on a readout. */
-.notch {
-  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+    linear-gradient(180deg, rgba(122, 156, 255, 0.05), rgba(122, 156, 255, 0.018) 40%),
+    rgba(9, 14, 29, 0.72);
 }
 
 .hatch {
@@ -179,10 +162,17 @@ body {
 /* Type                                                               */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Section labels. These were 10px mono at 0.26em — machine stencilling, and
+ * there are hundreds of them, so they set the tone of the whole site more than
+ * any heading did. Now body type, a little larger, a fraction of the tracking:
+ * still quiet and still a label, but it reads as typography.
+ */
 .eyebrow {
-  font-family: var(--font-mono), monospace;
-  font-size: 10px;
-  letter-spacing: 0.26em;
+  font-family: var(--font-body), sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--muted);
 }
@@ -203,28 +193,36 @@ body {
 /* Controls                                                           */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Buttons are pills in body type, sentence case. The old ones were 11px mono,
+ * uppercase, letter-spaced and outlined — five separate signals that this is
+ * equipment. A button only has to look pressable.
+ *
+ * The default is borderless: a faint fill that lifts on hover. Only the
+ * destructive one keeps an outline, because it is the one that should make you
+ * pause.
+ */
 .btn {
   position: relative;
-  font-family: var(--font-mono), monospace;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  border: 1px solid var(--hair);
-  background: var(--raised);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-family: var(--font-body), sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgba(122, 156, 255, 0.07);
   color: var(--chalk);
-  padding: 0.65rem 1rem;
-  transition: transform 120ms ease, background 160ms ease, border-color 160ms ease,
-    color 160ms ease, box-shadow 160ms ease;
+  padding: 0.55rem 1.1rem;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
 }
 
 .btn:hover:not(:disabled) {
-  border-color: rgba(77, 127, 255, 0.55);
-  background: #131e3c;
+  background: rgba(122, 156, 255, 0.14);
   color: var(--hot);
-}
-
-.btn:active:not(:disabled) {
-  transform: translateY(0);
 }
 
 .btn:disabled {
@@ -232,51 +230,54 @@ body {
   cursor: not-allowed;
 }
 
-/* Primary: a lit tile. White on union blue, blooming at the edges. */
+/* Primary: one solid, quiet fill. No gradient, no bloom. */
 .btn-gold {
-  background: linear-gradient(180deg, #2f62ee, var(--union-deep));
-  border-color: #3f6ff0;
+  background: var(--union-deep);
   color: var(--hot);
   font-weight: 600;
 }
 
 .btn-gold:hover:not(:disabled) {
-  background: linear-gradient(180deg, #3569f2, #2456e6);
-  border-color: #5b86f5;
+  background: #2456e6;
   color: var(--hot);
 }
 
 .btn-ember {
   background: transparent;
-  border-color: rgba(255, 45, 79, 0.55);
-  color: var(--union-red);
+  border-color: rgba(255, 45, 79, 0.35);
+  color: #ff7b8f;
 }
 
 .btn-ember:hover:not(:disabled) {
   background: rgba(255, 45, 79, 0.1);
-  border-color: rgba(255, 45, 79, 0.85);
-  color: #ff6d85;
+  border-color: rgba(255, 45, 79, 0.6);
+  color: #ff9aa9;
 }
 
+/*
+ * A field is a well in the surface rather than a box drawn on it: a soft fill,
+ * a rounded corner, and no border until it is focused.
+ */
 .field {
-  background: #050a18;
-  border: 1px solid var(--hair);
+  background: rgba(122, 156, 255, 0.055);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
   color: var(--chalk);
-  font-family: var(--font-mono), monospace;
-  padding: 0.7rem 0.85rem;
+  font-family: var(--font-body), sans-serif;
+  font-size: 14px;
+  padding: 0.7rem 0.9rem;
   width: 100%;
   outline: none;
-  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  transition: border-color 160ms ease, background 160ms ease;
 }
 
 .field:focus {
-  border-color: rgba(77, 127, 255, 0.7);
-  background: #071026;
-  box-shadow: 0 0 0 3px rgba(77, 127, 255, 0.12);
+  border-color: rgba(77, 127, 255, 0.55);
+  background: rgba(122, 156, 255, 0.09);
 }
 
 .field::placeholder {
-  color: #4c5a80;
+  color: #5a6690;
 }
 
 /* ------------------------------------------------------------------ */

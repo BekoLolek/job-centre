@@ -128,7 +128,7 @@ export default function NavMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-64 border border-hair bg-panel py-1.5 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.9)]"
+          className="absolute right-0 z-50 mt-2 w-64 rounded-xl border border-hair bg-panel py-1.5 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.9)]"
         >
           <div className="border-b border-hair px-4 pb-3 pt-2">
             <p className="text-sm leading-tight text-chalk">{name}</p>

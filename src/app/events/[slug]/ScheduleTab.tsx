@@ -216,7 +216,7 @@ function PlannedDays({ days }: { days: ScheduleDayRow[] }) {
           {days.map((day) => (
             <li
               key={day.id}
-              className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border border-hair bg-raised px-4 py-3"
+              className="flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-xl border border-hair bg-raised px-4 py-3"
             >
               <span className="eyebrow">Day {day.dayIndex + 1}</span>
               <span className="text-sm">{day.label ?? `Day ${day.dayIndex + 1}`}</span>

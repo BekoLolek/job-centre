@@ -679,7 +679,7 @@ export default function DraftTab({
               Everybody accepted into this event is in the pool.
             </EmptyState>
           ) : (
-            <ul className="divide-y divide-hair/50 border border-hair">
+            <ul className="divide-y divide-hair/50 rounded-xl border border-hair">
               {excluded.map((entry) => (
                 <li key={`${entry.reason}-${entry.userId}`} className="px-3">
                   <PlayerChip
@@ -754,7 +754,7 @@ function PoolList({
       {userIds.length === 0 ? (
         <EmptyState size="sm">{empty}</EmptyState>
       ) : (
-        <ul className="divide-y divide-hair/50 border border-hair">
+        <ul className="divide-y divide-hair/50 rounded-xl border border-hair">
           {userIds.map((userId, index) => (
             <li key={userId} className="px-3">
               <PlayerChip

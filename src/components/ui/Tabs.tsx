@@ -31,7 +31,7 @@ export default function Tabs<T extends string>({
   className,
 }: TabsProps<T>) {
   return (
-    <div className={cx("flex border border-hair", className)}>
+    <div className={cx("flex rounded-xl border border-hair", className)}>
       {items.map((item) => (
         <button
           key={item.value}

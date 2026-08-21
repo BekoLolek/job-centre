@@ -324,7 +324,7 @@ export default function ResultsTab({
             {undecided.map((match) => (
               <li
                 key={match.slot}
-                className="flex flex-wrap items-center gap-2 border border-hair p-2"
+                className="flex flex-wrap items-center gap-2 rounded-xl border border-hair p-2"
               >
                 <Eyebrow as="span" className="w-40 shrink-0 truncate">
                   {match.displayLabel}
@@ -659,7 +659,7 @@ function MatchEditor({
       </div>
 
       {/* --- The coin (§8.4) ----------------------------------- */}
-      <div className="border border-hair p-2">
+      <div className="rounded-xl border border-hair p-2">
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <Eyebrow as="span">Coin</Eyebrow>
           {started && <span className="text-[11px] text-muted/70">fixed</span>}
@@ -694,7 +694,7 @@ function MatchEditor({
       </div>
 
       {form.games.map((game, index) => (
-        <div key={index} className="border border-hair p-2">
+        <div key={index} className="rounded-xl border border-hair p-2">
           <div className="mb-1.5 flex items-center justify-between">
             <Eyebrow as="span">
               G{index + 1} · {modeLabel(match.games[index]?.mode ?? match.modes[index] ?? "")}

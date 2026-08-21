@@ -271,7 +271,7 @@ export default async function EventPage({
 
         {/* --- Tabs, only when there is more than one --------------- */}
         {tabs.length > 1 && (
-          <div className="flex flex-wrap border border-hair">
+          <div className="flex flex-wrap rounded-xl border border-hair">
             {tabs.map((entry) => (
               <Link
                 key={entry.value}
@@ -311,7 +311,7 @@ export default async function EventPage({
                 {accepted.map((row) => (
                   <li
                     key={row.id}
-                    className="flex items-center gap-3 border border-hair bg-raised px-3 py-2"
+                    className="flex items-center gap-3 rounded-xl border border-hair bg-raised px-3 py-2"
                   >
                     <Avatar name={row.member.displayName ?? "Member"} size="sm" />
                     <span className="min-w-0 truncate text-sm">

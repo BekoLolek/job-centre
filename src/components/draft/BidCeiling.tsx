@@ -50,7 +50,7 @@ export default function BidCeiling({ teams, config, bare, className }: BidCeilin
           Add some teams and this fills in with what each of them could bid.
         </p>
       ) : (
-        <ul className="divide-y divide-hair/50 border border-hair">
+        <ul className="divide-y divide-hair/50 rounded-xl border border-hair">
           {rows.map((row) => (
             <li
               key={row.team.id}

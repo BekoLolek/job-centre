@@ -83,7 +83,7 @@ export default function QuestionList({
           No questions yet — {gameName} asks members for nothing.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-hair/60 border border-hair">
+        <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
           {fields.map((field, index) => (
             <li key={field.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
               <span className="num w-6 shrink-0 text-xs text-muted">{index + 1}</span>

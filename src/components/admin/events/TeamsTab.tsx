@@ -239,7 +239,7 @@ export default function TeamsTab({
             bracket and the schedule all count from here.
           </EmptyState>
         ) : (
-          <ul className="divide-y divide-hair/60 border border-hair">
+          <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
             {teams.map((team, index) => {
               const existing = team.id ? existingById.get(team.id) : undefined;
               const problem = errors[team.id ?? `new-${index}`];
@@ -457,7 +457,7 @@ export default function TeamsTab({
 
             <ul className="space-y-3">
               {impact.removed.map((team) => (
-                <li key={team.id} className="border border-hair p-3">
+                <li key={team.id} className="rounded-xl border border-hair p-3">
                   <div className="mb-1 flex flex-wrap items-baseline gap-2">
                     <span className="font-display text-base tracking-wide">{team.name}</span>
                     {team.blocked && <Badge tone="ember">Refused</Badge>}

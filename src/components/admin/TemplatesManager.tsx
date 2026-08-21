@@ -555,7 +555,7 @@ function TemplateCard({
               </div>
 
               {config.format !== undefined && (
-                <p className="border border-hair bg-raised/40 p-3 text-xs leading-relaxed text-muted">
+                <p className="rounded-xl border border-hair bg-raised/40 p-3 text-xs leading-relaxed text-muted">
                   This template also carries the event&apos;s <strong>format settings</strong>{" "}
                   — the schedule and stage configuration from §10 — which came across whole
                   when it was made from an event. They are not editable here; edit them on an

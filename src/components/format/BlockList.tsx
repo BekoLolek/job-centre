@@ -51,7 +51,7 @@ export default function BlockList({
   const days = [...new Set(blocks.map((block) => block.day))].sort((x, y) => x - y);
 
   return (
-    <div className={cx("border border-hair", className)}>
+    <div className={cx("rounded-xl border border-hair", className)}>
       {days.map((day) => {
         const inDay = blocks.filter((block) => block.day === day);
         const opens = inDay[0]?.startsAt ?? null;

@@ -251,7 +251,7 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
               )}
             </div>
 
-            <div className="divide-y divide-hair/60 border border-hair">
+            <div className="divide-y divide-hair/60 rounded-xl border border-hair">
               {row.days.map((day) => (
                 <div
                   key={day.id}

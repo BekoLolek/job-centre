@@ -101,7 +101,7 @@ export default function AdminConsole({
       </div>
 
       {/* Undo, with the consequence spelled out. */}
-      <div className="mb-5 border border-hair px-3 py-2">
+      <div className="mb-5 rounded-xl border border-hair px-3 py-2">
         <div className="flex flex-wrap items-center gap-2">
           {confirmUndo ? (
             <>

@@ -412,7 +412,7 @@ function NotesDialog({
             </EmptyState>
           )}
           {notes?.map((note) => (
-            <article key={note.id} className="border border-hair bg-raised/40 p-3">
+            <article key={note.id} className="rounded-xl border border-hair bg-raised/40 p-3">
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{note.body}</p>
               <p className="mt-2 text-xs text-muted">
                 {note.authorName ?? "Somebody"}

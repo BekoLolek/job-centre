@@ -12,12 +12,12 @@ export type Status =
   | "cancelled";
 
 const TONE: Record<Status, string> = {
-  draft: "border-hair bg-transparent text-muted",
-  open: "border-gold/40 bg-gold/10 text-gold",
-  closed: "border-hair bg-raised text-muted",
-  live: "border-ember/50 bg-ember/10 text-ember",
-  complete: "border-signal/40 bg-signal/10 text-signal",
-  cancelled: "border-ember/30 bg-transparent text-ember/70",
+  draft: "bg-white/[0.05] text-muted",
+  open: "bg-gold/15 text-gold",
+  closed: "bg-white/[0.05] text-muted",
+  live: "bg-ember/15 text-ember",
+  complete: "bg-signal/15 text-signal",
+  cancelled: "bg-white/[0.04] text-ember/70",
 };
 
 const FALLBACK = TONE.draft;
@@ -36,7 +36,7 @@ export default function StatusPill({ status, label, className }: StatusPillProps
   return (
     <span
       className={cx(
-        "eyebrow inline-flex items-center gap-1.5 border px-2 py-1",
+        "eyebrow inline-flex items-center gap-1.5 rounded-full px-2.5 py-1",
         tone,
         className
       )}
