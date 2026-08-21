@@ -14,7 +14,7 @@ import {
   Tabs,
   plural,
 } from "@/components/ui";
-import { EventCard } from "@/components/events";
+import { EventRow, EventRows } from "@/components/events";
 import type { ApplicationStatus, EventStatus } from "@/db/schema";
 import type { EventSummary } from "@/lib/events";
 import { createEventAction } from "@/app/admin/events/actions";
@@ -172,29 +172,24 @@ export default function EventsManager({
 
       {/* --- The list ----------------------------------------------- */}
       {shown.length === 0 ? (
-        <Panel>
+        <div className="py-10">
           <EmptyState>
             {rows.length === 0
               ? "No events yet. Make one above — it starts as a draft, so nothing goes public by accident."
               : `Nothing with that status. ${plural(rows.length, "event")} in total.`}
           </EmptyState>
-        </Panel>
+        </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <EventRows>
           {shown.map((row) => (
-            <EventCard
+            <EventRow
               key={row.event.id}
               event={row.event}
               href={`/admin/events/${row.event.id}`}
               meta={<ApplicationTotals counts={row.applications} />}
-              footer={
-                <Button href={`/admin/events/${row.event.id}`} size="sm">
-                  Edit
-                </Button>
-              }
             />
           ))}
-        </div>
+        </EventRows>
       )}
     </div>
   );

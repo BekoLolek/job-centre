@@ -14,7 +14,7 @@
 
 import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
-import { EventCard, eventTypeLabel } from "@/components/events";
+import { EventRow, EventRows, eventTypeLabel } from "@/components/events";
 import { Button, Eyebrow, Panel, cx, plural } from "@/components/ui";
 import type { EventStatus } from "@/db/schema";
 import { type EventSummary, listEvents } from "@/lib/events";
@@ -143,11 +143,11 @@ export default async function EventsPage({
               {when === "upcoming" ? "soonest first" : "most recent first"}
             </p>
 
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <EventRows>
               {shown.map((event) => (
-                <EventCard key={event.id} event={event} href={`/events/${event.slug}`} />
+                <EventRow key={event.id} event={event} href={`/events/${event.slug}`} />
               ))}
-            </div>
+            </EventRows>
           </>
         )}
       </main>

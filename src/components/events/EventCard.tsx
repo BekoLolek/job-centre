@@ -9,8 +9,10 @@ import { ApplicationsPill, EventStatusPill } from "./EventStatusPill";
 import { eventTypeLabel } from "./labels";
 
 /**
- * One event, as a card — plan §5's "banner strip, title, type badge, date
- * range, status pill, signup counter".
+ * One event, as a block on the page — plan §5's "title, type badge, date range,
+ * status pill, signup counter", minus the card it used to sit in. Lists use
+ * `EventRow`; this is for the handful on the hub, where a few side by side
+ * still want their own shape.
  *
  * Built against `EventSummary` rather than against any one page's view model,
  * because §5 says the same card carries the hub, the public events list and the
@@ -48,12 +50,12 @@ export default function EventCard({
       {event.bannerUrl && (
         <div
           aria-hidden
-          className="h-16 w-full border-b border-hair bg-raised bg-cover bg-center"
+          className="mb-4 h-20 w-full rounded-xl bg-raised bg-cover bg-center"
           style={{ backgroundImage: `url(${JSON.stringify(event.bannerUrl)})` }}
         />
       )}
 
-      <div className="space-y-3 p-5">
+      <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <EventStatusPill status={event.status} />
           <ApplicationsPill state={event.applicationsState} />
@@ -62,7 +64,9 @@ export default function EventCard({
         </div>
 
         <div>
-          <h3 className="font-display text-xl leading-tight tracking-wide">{event.title}</h3>
+          <h3 className="font-display text-xl leading-tight tracking-wide transition-colors group-hover:text-hot">
+            {event.title}
+          </h3>
           <Eyebrow className="mt-1">{event.slug}</Eyebrow>
         </div>
 
@@ -81,11 +85,7 @@ export default function EventCard({
   );
 
   return (
-    <Panel
-      as="article"
-      padding="none"
-      className={cx("overflow-hidden transition-colors", href && "hover:border-gold/40", className)}
-    >
+    <Panel as="article" padding="none" className={cx("group", className)}>
       {href ? (
         <Link href={href} className="block">
           {body}
@@ -95,7 +95,7 @@ export default function EventCard({
       )}
 
       {footer && (
-        <div className="flex flex-wrap gap-2 border-t border-hair px-5 py-3">{footer}</div>
+        <div className="mt-4 flex flex-wrap gap-2">{footer}</div>
       )}
     </Panel>
   );
