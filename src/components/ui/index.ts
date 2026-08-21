@@ -64,3 +64,6 @@ export type { TextareaProps } from "./Textarea";
 
 export { default as Toggle } from "./Toggle";
 export type { ToggleProps } from "./Toggle";
+export { default as Icon } from "./Icon";
+export type { IconName } from "./Icon";
+export { default as Section, SectionList } from "./Section";

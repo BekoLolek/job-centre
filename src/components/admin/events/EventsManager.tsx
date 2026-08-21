@@ -9,6 +9,7 @@ import {
   EmptyState,
   Eyebrow,
   Field,
+  Section,
   Panel,
   Select,
   Tabs,
@@ -100,13 +101,17 @@ export default function EventsManager({
   };
 
   return (
-    <div className="space-y-6">
-      {error && <Alert>{error}</Alert>}
+    <div>
+      {error && <Alert className="mb-6">{error}</Alert>}
 
       {/* --- Create ------------------------------------------------- */}
-      <Panel as="section" className="rise">
-        <Eyebrow className="mb-3">New event</Eyebrow>
-
+      <Section
+        first
+        icon="spark"
+        title="New event"
+        description="Starts as a draft nobody can see. You land in the editor with Basics open."
+        className="rise"
+      >
         <div className="flex flex-wrap items-end gap-3">
           <Field
             label="Title"
@@ -148,15 +153,15 @@ export default function EventsManager({
           </Button>
         </div>
 
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          A new event is a <span className="text-chalk/80">draft</span>: invisible to members
-          and impossible to apply to until you publish it. You land in the editor with the
-          Basics tab open.
-        </p>
-      </Panel>
+      </Section>
 
-      {/* --- Filter ------------------------------------------------- */}
-      <div className="flex flex-wrap items-center gap-3">
+      {/* --- The list ----------------------------------------------- */}
+      <Section
+        icon="calendar"
+        title="All events"
+        description="Newest first. Drafts included — they are only visible here."
+        aside={
+          <div className="flex flex-wrap items-center gap-3">
         <Tabs
           items={FILTERS.map((entry) => ({
             value: entry.value,
@@ -165,13 +170,10 @@ export default function EventsManager({
           value={filter}
           onChange={setFilter}
         />
-        <Eyebrow as="span" className="text-muted/70">
-          Newest first
-        </Eyebrow>
-      </div>
-
-      {/* --- The list ----------------------------------------------- */}
-      {shown.length === 0 ? (
+          </div>
+        }
+      >
+        {shown.length === 0 ? (
         <div className="py-10">
           <EmptyState>
             {rows.length === 0
@@ -190,7 +192,8 @@ export default function EventsManager({
             />
           ))}
         </EventRows>
-      )}
+        )}
+      </Section>
     </div>
   );
 }
