@@ -339,7 +339,7 @@ export default function FormatTab({
       {error && <Alert>{error}</Alert>}
 
       {/* --- Where the team count comes from ------------------------ */}
-      <Panel as="section" className="flex flex-wrap items-baseline gap-x-4 gap-y-2">
+      <Panel as="section" padding="none" className="flex flex-wrap items-baseline gap-x-4 gap-y-2 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>Teams</Eyebrow>
         <Badge tone={tooFew ? "ember" : "gold"}>
           {teamCount}/{MAX_TEAMS}
@@ -352,7 +352,7 @@ export default function FormatTab({
       </Panel>
 
       {stages.length === 0 ? (
-        <Panel as="section" className="space-y-4">
+        <Panel as="section" padding="none" className="space-y-4 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
           <Eyebrow>Stages</Eyebrow>
           <EmptyState>
             No stages yet. One is the usual answer — a round robin, or a bracket. Two makes
@@ -385,7 +385,7 @@ export default function FormatTab({
             />
           ))}
 
-          <Panel as="section">
+          <Panel as="section" padding="none" className="border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
             <AddStageRow disabled={stages.length >= maxStages} onAdd={add} />
           </Panel>
         </div>
@@ -403,7 +403,7 @@ export default function FormatTab({
         </Alert>
       )}
 
-      <Panel as="section">
+      <Panel as="section" padding="none" className="border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <SaveRow
           state={state}
           note={note}
@@ -586,7 +586,7 @@ function StagePanel({
   const dirtyShape = live ? live.kind !== stage.kind : false;
 
   return (
-    <Panel as="section" className="space-y-5">
+    <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-end gap-3">
         <span className="num w-12 shrink-0 self-center text-xs text-muted">
           Stage {index + 1}

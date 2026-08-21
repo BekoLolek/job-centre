@@ -141,7 +141,7 @@ export default function ResultsTab({
 
   if (matches.length === 0) {
     return (
-      <Panel as="section" className="space-y-3">
+      <Panel as="section" padding="none" className="space-y-3 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>Results</Eyebrow>
         <EmptyState>
           No matches yet. Choose a format and generate them on the Format tab — the cards
@@ -310,7 +310,7 @@ export default function ResultsTab({
 
       {/* --- Drawn series waiting on a decision --------------------- */}
       {undecided.length > 0 && (
-        <Panel as="section" className="space-y-3 border-ember/40">
+        <Panel as="section" padding="none" className="space-y-3 border-ember/40 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
           <div className="flex flex-wrap items-baseline gap-3">
             <Eyebrow className="text-ember">Needs a winner</Eyebrow>
             <Badge tone="ember">{undecided.length}</Badge>
@@ -353,7 +353,7 @@ export default function ResultsTab({
       )}
 
       {/* --- The board --------------------------------------------- */}
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-center gap-3">
           <Eyebrow>Results</Eyebrow>
           <Badge>
@@ -457,7 +457,7 @@ export default function ResultsTab({
 
       {/* --- The tables -------------------------------------------- */}
       {board.stages.some((stage) => stage.matches.some((match) => match.bracket === "rr")) && (
-        <Panel as="section" className="space-y-5">
+        <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
           <Eyebrow>Tables</Eyebrow>
           {board.stages
             .filter((stage) => stage.matches.some((match) => match.bracket === "rr"))

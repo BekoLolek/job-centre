@@ -31,6 +31,7 @@ import {
   EmptyState,
   Eyebrow,
   Panel,
+  Section,
   StatTile,
   StatusPill,
   plural,
@@ -167,12 +168,15 @@ export default async function MePage() {
           </div>
         </Panel>
 
-        {/* --- My next event ----------------------------------------- */}
-        <section className="space-y-3">
-          <Eyebrow>Your next event</Eyebrow>
-
-          {next && nextEvent ? (
-            <Panel as="article">
+        <div>
+          {/* --- My next event --------------------------------------- */}
+          <Section
+            first
+            icon="calendar"
+            title="Your next event"
+            description="The soonest thing you hold a seat or a queue place for."
+          >
+            {next && nextEvent ? (
               <div className="flex flex-wrap items-start gap-6">
                 <div className="min-w-0">
                   <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -187,17 +191,14 @@ export default async function MePage() {
                     <EventStatusPill status={nextEvent.status} />
                   </div>
 
-                  <h2 className="font-display text-3xl leading-none tracking-wide">
+                  <h3 className="font-display text-3xl leading-none tracking-wide">
                     <Link href={`/events/${nextEvent.slug}`} className="hover:text-gold">
                       {nextEvent.title}
                     </Link>
-                  </h2>
+                  </h3>
 
                   <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
-                    <EventDateRange
-                      startsAt={nextEvent.startsAt}
-                      endsAt={nextEvent.endsAt}
-                    />
+                    <EventDateRange startsAt={nextEvent.startsAt} endsAt={nextEvent.endsAt} />
                     <EventSeats seats={nextEvent.seats} />
                   </div>
                 </div>
@@ -214,37 +215,40 @@ export default async function MePage() {
                   </Button>
                 </div>
               </div>
-            </Panel>
-          ) : (
-            <Panel as="article">
-              <EmptyState>
-                You have no live applications. Everything currently taking them is below.
-              </EmptyState>
-              <div className="mt-4">
-                <Button href="/events" size="sm">
-                  What&apos;s on
-                </Button>
+            ) : (
+              <div className="py-4">
+                <EmptyState>
+                  You have no live applications. Everything currently taking them is below.
+                </EmptyState>
+                <div className="mt-4">
+                  <Button href="/events" size="sm">
+                    What&apos;s on
+                  </Button>
+                </div>
               </div>
-            </Panel>
-          )}
-        </section>
+            )}
+          </Section>
 
-        {/* --- Awaiting my attention --------------------------------- */}
-        <section className="space-y-3">
-          <Eyebrow>Awaiting your attention</Eyebrow>
-
-          {todos.length === 0 ? (
-            <Panel as="article">
-              <EmptyState>
-                Nothing needs you right now. Your profile is filled in and every application
-                is answered.
-              </EmptyState>
-            </Panel>
-          ) : (
-            <ul className="space-y-2">
-              {todos.map((todo) => (
-                <li key={`${todo.href}-${todo.label}`}>
-                  <Panel padding="sm" className="flex flex-wrap items-center gap-4">
+          {/* --- Awaiting my attention ------------------------------- */}
+          <Section
+            icon="flag"
+            title="Awaiting your attention"
+            description="Things only you can resolve. Each one is worked out as the page loads, so it goes the moment you deal with it."
+          >
+            {todos.length === 0 ? (
+              <div className="py-4">
+                <EmptyState>
+                  Nothing needs you right now. Your profile is filled in and every
+                  application is answered.
+                </EmptyState>
+              </div>
+            ) : (
+              <ul className="divide-y divide-hair/60">
+                {todos.map((todo) => (
+                  <li
+                    key={`${todo.href}-${todo.label}`}
+                    className="flex flex-wrap items-center gap-4 py-5"
+                  >
                     <div className="min-w-0">
                       <div className="text-sm text-chalk">{todo.label}</div>
                       <p className="mt-1 text-xs leading-relaxed text-muted">{todo.detail}</p>
@@ -252,69 +256,76 @@ export default async function MePage() {
                     <Button href={todo.href} size="sm" className="ml-auto">
                       {todo.action}
                     </Button>
-                  </Panel>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
 
-        {/* --- Open to apply ----------------------------------------- */}
-        {open.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-baseline gap-3">
-              <Eyebrow>Taking applications</Eyebrow>
-              <Link href="/events" className="text-xs text-muted hover:text-gold">
-                All events →
-              </Link>
+          {/* --- Open to apply --------------------------------------- */}
+          {open.length > 0 && (
+            <Section
+              icon="spark"
+              title="Taking applications"
+              description="Open right now, and you have not applied to any of these yet."
+              aside={
+                <Link href="/events" className="text-xs text-muted hover:text-gold">
+                  All events →
+                </Link>
+              }
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                {open.slice(0, 4).map((event) => (
+                  <EventCard
+                    key={event.id}
+                    event={event}
+                    href={`/events/${event.slug}`}
+                    footer={
+                      <EventAction
+                        size="sm"
+                        action={viewerAction({
+                          slug: event.slug,
+                          signedIn: true,
+                          state: event.applicationsState,
+                          application: null,
+                        })}
+                      />
+                    }
+                  />
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* --- Onward ---------------------------------------------- */}
+          <Section
+            icon="grid"
+            title="Elsewhere"
+            description="The rest of your side of the site."
+          >
+            <div className="flex flex-wrap items-center gap-3">
+              <Button href="/me/events" size="sm">
+                My events
+              </Button>
+              <Button href="/me/profile" size="sm">
+                My profile
+              </Button>
+              {handle && (
+                <Button href={`/players/${handle}`} size="sm">
+                  Public profile
+                </Button>
+              )}
+              <Button href="/events" size="sm">
+                All events
+              </Button>
+              {user.isAdmin && (
+                <Button href="/admin" size="sm" className="ml-auto">
+                  Admin
+                </Button>
+              )}
             </div>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              {open.slice(0, 4).map((event) => (
-                <EventCard
-                  key={event.id}
-                  event={event}
-                  href={`/events/${event.slug}`}
-                  footer={
-                    <EventAction
-                      size="sm"
-                      action={viewerAction({
-                        slug: event.slug,
-                        signedIn: true,
-                        state: event.applicationsState,
-                        application: null,
-                      })}
-                    />
-                  }
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* --- Onward ------------------------------------------------ */}
-        <Panel as="section" className="flex flex-wrap items-center gap-3">
-          <Eyebrow className="mr-2">Elsewhere</Eyebrow>
-          <Button href="/me/events" size="sm">
-            My events
-          </Button>
-          <Button href="/me/profile" size="sm">
-            My profile
-          </Button>
-          {handle && (
-            <Button href={`/players/${handle}`} size="sm">
-              Public profile
-            </Button>
-          )}
-          <Button href="/events" size="sm">
-            All events
-          </Button>
-          {user.isAdmin && (
-            <Button href="/admin" size="sm" className="ml-auto">
-              Admin
-            </Button>
-          )}
-        </Panel>
+          </Section>
+        </div>
       </main>
     </div>
   );

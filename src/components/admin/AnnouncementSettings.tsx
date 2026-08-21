@@ -17,7 +17,7 @@
 
 import { useState, useTransition } from "react";
 import type { AnnouncementSettings as Settings, AnnouncementSpec } from "@/lib/announce";
-import { Alert, Button, Eyebrow, Panel, Toggle, cx } from "@/components/ui";
+import { Alert, Button, Eyebrow, Section, Toggle, cx } from "@/components/ui";
 import { saveAnnouncementSettingsAction } from "@/app/admin/settings/actions";
 
 export type AnnouncementSettingsProps = {
@@ -57,14 +57,18 @@ export default function AnnouncementSettings({
   };
 
   return (
-    <Panel as="section" className="space-y-5">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <Eyebrow>Discord announcements</Eyebrow>
+    <Section
+      first
+      icon="settings"
+      title="Discord announcements"
+      description="Which moments get posted into the channel. All five save together, because the setting is one row."
+      aside={
         <Eyebrow as="span" className={configured ? "text-signal" : "text-muted"}>
           {configured ? "Webhook configured" : "No webhook — nothing will post"}
         </Eyebrow>
-      </div>
-
+      }
+      className="space-y-5"
+    >
       {!configured && (
         <Alert tone="gold">
           <code>DISCORD_WEBHOOK_URL</code> is not set, so every switch below is inert. Get
@@ -119,6 +123,6 @@ export default function AnnouncementSettings({
         {note && !dirty && <Eyebrow as="span" className="text-signal">{note}</Eyebrow>}
         {dirty && <Eyebrow as="span">Unsaved</Eyebrow>}
       </div>
-    </Panel>
+    </Section>
   );
 }

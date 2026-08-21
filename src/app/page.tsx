@@ -33,7 +33,8 @@ import {
   formatSummary,
   viewerAction,
 } from "@/components/events";
-import { Badge, Button, Eyebrow, Panel, StatTile } from "@/components/ui";
+import { Badge, Button, Eyebrow, Panel,
+  Section, StatTile } from "@/components/ui";
 import { type EventSummary, listEvents, loadApplicationForm } from "@/lib/events";
 import { getCurrentUser } from "@/lib/session-guards";
 
@@ -192,36 +193,42 @@ export default async function HubPage() {
 
         {/* --- 3. Upcoming ------------------------------------------ */}
         {rest.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-baseline gap-3">
-              <Eyebrow>Also coming up</Eyebrow>
-              <Link href="/events" className="text-xs text-muted hover:text-gold">
+          <Section
+            icon="calendar"
+            title="Also coming up"
+            description="Everything with a date on it, soonest first."
+            aside={
+              <Link href="/events" className="text-[13px] text-muted transition-colors hover:text-union">
                 See all events →
               </Link>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            }
+          >
+            <div className="grid gap-8 sm:grid-cols-2">
               {rest.map((event) => (
                 <EventCard key={event.id} event={event} href={`/events/${event.slug}`} />
               ))}
             </div>
-          </section>
+          </Section>
         )}
 
         {/* --- 4. Recently finished --------------------------------- */}
         {finished.length > 0 && (
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-baseline gap-3">
-              <Eyebrow>Recently finished</Eyebrow>
-              <Link href="/events?when=past" className="text-xs text-muted hover:text-gold">
+          <Section
+            icon="trophy"
+            title="Recently finished"
+            description="How the last few turned out, and who won them."
+            aside={
+              <Link href="/events?when=past" className="text-[13px] text-muted transition-colors hover:text-union">
                 Archive →
               </Link>
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            }
+          >
+            <div className="grid gap-8 sm:grid-cols-2">
               {finished.slice(0, RECENT_LIMIT).map((event) => (
                 <EventCard key={event.id} event={event} href={`/events/${event.slug}`} />
               ))}
             </div>
-          </section>
+          </Section>
         )}
 
       </main>

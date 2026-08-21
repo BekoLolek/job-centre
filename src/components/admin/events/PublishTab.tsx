@@ -71,7 +71,7 @@ export default function PublishTab({
       {error && <Alert>{error}</Alert>}
 
       {/* --- Where it stands ---------------------------------------- */}
-      <Panel as="section" className="space-y-4">
+      <Panel as="section" padding="none" className="space-y-4 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-center gap-3">
           <Eyebrow>Right now</Eyebrow>
           <EventStatusPill status={event.status} />
@@ -133,7 +133,7 @@ export default function PublishTab({
       </Panel>
 
       {/* --- The button --------------------------------------------- */}
-      <Panel as="section" className="space-y-4">
+      <Panel as="section" padding="none" className="space-y-4 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>Publishing</Eyebrow>
 
         <p className="text-sm leading-relaxed text-muted">

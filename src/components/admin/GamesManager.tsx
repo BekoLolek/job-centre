@@ -10,7 +10,7 @@ import {
   Button,
   Eyebrow,
   Field,
-  Panel,
+  Section,
   StatusPill,
   Tabs,
   plural,
@@ -80,12 +80,17 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
   };
 
   return (
-    <div className="space-y-6">
-      {error && <Alert>{error}</Alert>}
+    <div>
+      {error && <Alert className="mb-6">{error}</Alert>}
 
       {/* --- Add a game ------------------------------------------- */}
-      <Panel as="section" className="rise">
-        <Eyebrow className="mb-3">Add a game</Eyebrow>
+      <Section
+        first
+        icon="spark"
+        title="Add a game"
+        description="Starts active, with no rank ladder and no questions. Give it questions below and they appear on every member’s profile immediately — no deploy, no migration."
+        className="rise"
+      >
         <div className="flex flex-wrap items-end gap-3">
           <Field
             label="Name"
@@ -105,75 +110,64 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
             Add game
           </Button>
         </div>
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          A new game starts active, with no rank ladder and no questions. Give it questions
-          below and they appear on every member&apos;s profile immediately — no deploy, no
-          migration.
-        </p>
-      </Panel>
+      </Section>
 
       {/* --- Global questions -------------------------------------- */}
-      <Panel as="section" padding="none">
-        <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-          <h2 className="font-display text-xl leading-none tracking-wide">Everyone</h2>
-          <Badge>{plural(view.globalFields.length, "question")}</Badge>
-          <Badge tone={view.globalAnswers > 0 ? "signal" : "default"}>
-            {plural(view.globalAnswers, "answer")}
-          </Badge>
-          <Eyebrow as="span" className="ml-auto">
-            No game
-          </Eyebrow>
-        </div>
-        <div className="space-y-3 p-5">
-          <p className="text-xs leading-relaxed text-muted">
-            Asked of every member regardless of what they play — “happy to use voice chat”
-            and the like. These are the rows with no game attached.
-          </p>
-          <QuestionList
-            gameId={null}
-            gameName="Everyone"
-            rankLadder={[]}
-            fields={view.globalFields}
-            busy={pending}
-            onChanged={refresh}
-          />
-        </div>
-      </Panel>
+      <Section
+        icon="clipboard"
+        title="Everyone"
+        description="Asked of every member regardless of what they play — “happy to use voice chat” and the like. These are the rows with no game attached."
+        aside={
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge>{plural(view.globalFields.length, "question")}</Badge>
+            <Badge tone={view.globalAnswers > 0 ? "signal" : "default"}>
+              {plural(view.globalAnswers, "answer")}
+            </Badge>
+          </div>
+        }
+      >
+        <QuestionList
+          gameId={null}
+          gameName="Everyone"
+          rankLadder={[]}
+          fields={view.globalFields}
+          busy={pending}
+          onChanged={refresh}
+        />
+      </Section>
 
       {/* --- The games --------------------------------------------- */}
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <Eyebrow as="h2">Games · {view.games.length}</Eyebrow>
-          <span className="eyebrow text-muted/70">
-            Order here is the order sections appear on a member&apos;s profile
-          </span>
-        </div>
-
+      <Section
+        icon="grid"
+        title="Games"
+        description="Order here is the order sections appear on a member’s profile. Deactivating hides one without losing a single answer."
+        aside={<Badge>{plural(view.games.length, "game")}</Badge>}
+      >
         {view.games.length === 0 ? (
-          <Panel>
-            <p className="text-sm text-muted">
-              No games yet. Add one above — that is all it takes for it to start appearing
-              on profiles.
-            </p>
-          </Panel>
+          <p className="py-6 text-sm text-muted">
+            No games yet. Add one above — that is all it takes for it to start appearing on
+            profiles.
+          </p>
         ) : (
-          view.games.map((game, index) => (
-            <GameCard
-              key={game.id}
-              game={game}
-              first={index === 0}
-              last={index === view.games.length - 1}
-              open={openGameId === game.id}
-              busy={pending}
-              onToggleOpen={() => setOpenGameId(openGameId === game.id ? null : game.id)}
-              onMove={(direction) => run(() => moveGameAction(game.id, direction))}
-              onRename={(name) => run(() => renameGameAction(game.id, name))}
-              onSetActive={(active) => run(() => setGameActiveAction(game.id, active))}
-              onChanged={refresh}
-            />
-          ))
+          <div className="divide-y divide-hair/60">
+            {view.games.map((game, index) => (
+              <GameCard
+                key={game.id}
+                game={game}
+                first={index === 0}
+                last={index === view.games.length - 1}
+                open={openGameId === game.id}
+                busy={pending}
+                onToggleOpen={() => setOpenGameId(openGameId === game.id ? null : game.id)}
+                onMove={(direction) => run(() => moveGameAction(game.id, direction))}
+                onRename={(name) => run(() => renameGameAction(game.id, name))}
+                onSetActive={(active) => run(() => setGameActiveAction(game.id, active))}
+                onChanged={refresh}
+              />
+            ))}
+          </div>
         )}
-      </section>
+      </Section>
     </div>
   );
 }
@@ -208,8 +202,8 @@ function GameCard({
   const [tab, setTab] = useState<"questions" | "ranks" | "settings">("questions");
 
   return (
-    <Panel as="article" padding="none">
-      <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
+    <article className="py-5">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={onToggleOpen}
@@ -259,7 +253,7 @@ function GameCard({
       </div>
 
       {open && (
-        <div className="space-y-5 p-5">
+        <div className="mt-5 space-y-5">
           <Tabs
             items={[
               { value: "questions", label: `Questions (${game.fields.length})` },
@@ -300,7 +294,7 @@ function GameCard({
           )}
         </div>
       )}
-    </Panel>
+    </article>
   );
 }
 

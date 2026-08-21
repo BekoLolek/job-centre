@@ -12,7 +12,7 @@ import {
   EmptyState,
   Eyebrow,
   Field,
-  Panel,
+  Section,
   Select,
   StatusPill,
   Stepper,
@@ -87,8 +87,8 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
   };
 
   return (
-    <div className="space-y-6">
-      {error && <Alert>{error}</Alert>}
+    <div>
+      {error && <Alert className="mb-6">{error}</Alert>}
 
       <FromEventPanel
         sources={view.sources}
@@ -101,8 +101,11 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
       />
 
       {/* --- From nothing -------------------------------------------- */}
-      <Panel as="section">
-        <Eyebrow className="mb-3">Or start from nothing</Eyebrow>
+      <Section
+        icon="spark"
+        title="Or start from nothing"
+        description="An empty template with no game, no format settings and no questions. Everything about it is editable once it exists."
+      >
         <div className="flex flex-wrap items-end gap-3">
           <Field
             label="Name"
@@ -122,49 +125,51 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
             Add template
           </Button>
         </div>
-      </Panel>
+      </Section>
 
       {/* --- The templates ------------------------------------------- */}
-      <section className="space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <Eyebrow as="h2">Templates · {view.templates.length}</Eyebrow>
-          <span className="eyebrow text-muted/70">
-            Active ones appear in the create-event picker
-          </span>
-        </div>
-
+      <Section
+        icon="list"
+        title="Templates"
+        description="Active ones appear in the create-event picker. Editing one never touches an event already made from it."
+        aside={<Badge>{plural(view.templates.length, "template")}</Badge>}
+      >
         {view.templates.length === 0 ? (
-          <Panel>
+          <div className="py-6">
             <EmptyState>
               No templates yet. Make one from an event above, or start from nothing — either
               way it shows up in the picker on <span className="font-mono">/admin/events</span>{" "}
               straight away.
             </EmptyState>
-          </Panel>
+          </div>
         ) : (
-          view.templates.map((template) => (
-            <TemplateCard
-              key={template.id}
-              template={template}
-              games={view.games}
-              profileFields={view.profileFields}
-              open={openId === template.id}
-              busy={pending}
-              onToggleOpen={() => setOpenId(openId === template.id ? null : template.id)}
-              onSetActive={(active) => run(() => setTemplateActiveAction(template.id, active))}
-              onDuplicate={() =>
-                startTransition(async () => {
-                  const result = await duplicateTemplateAction(template.id);
-                  if (!result.ok) return setError(result.error);
-                  setOpenId(result.data.id);
-                  router.refresh();
-                })
-              }
-              onSave={(patch) => run(() => updateTemplateAction(template.id, patch))}
-            />
-          ))
+          <div className="divide-y divide-hair/60">
+            {view.templates.map((template) => (
+              <TemplateCard
+                key={template.id}
+                template={template}
+                games={view.games}
+                profileFields={view.profileFields}
+                open={openId === template.id}
+                busy={pending}
+                onToggleOpen={() => setOpenId(openId === template.id ? null : template.id)}
+                onSetActive={(active) =>
+                  run(() => setTemplateActiveAction(template.id, active))
+                }
+                onDuplicate={() =>
+                  startTransition(async () => {
+                    const result = await duplicateTemplateAction(template.id);
+                    if (!result.ok) return setError(result.error);
+                    setOpenId(result.data.id);
+                    router.refresh();
+                  })
+                }
+                onSave={(patch) => run(() => updateTemplateAction(template.id, patch))}
+              />
+            ))}
+          </div>
         )}
-      </section>
+      </Section>
     </div>
   );
 }
@@ -216,9 +221,13 @@ function FromEventPanel({
   };
 
   return (
-    <Panel as="section" className="rise">
-      <Eyebrow className="mb-3">Make one from an event</Eyebrow>
-
+    <Section
+      first
+      icon="calendar"
+      title="Make one from an event"
+      description="Turns something you have already run into the starting point for the next one."
+      className="rise"
+    >
       {sources.length === 0 ? (
         <EmptyState>
           There are no events yet. Once you have run one, this is where you turn it into a
@@ -285,7 +294,7 @@ function FromEventPanel({
           </p>
         </>
       )}
-    </Panel>
+    </Section>
   );
 }
 
@@ -368,8 +377,8 @@ function TemplateCard({
   );
 
   return (
-    <Panel as="article" padding="none">
-      <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
+    <article className="py-5">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={onToggleOpen}
@@ -415,7 +424,7 @@ function TemplateCard({
       </div>
 
       {open && (
-        <div className="space-y-5 p-5">
+        <div className="mt-5 space-y-5">
           <Tabs
             items={[
               { value: "basics", label: "Basics" },
@@ -586,6 +595,6 @@ function TemplateCard({
           </div>
         </div>
       )}
-    </Panel>
+    </article>
   );
 }

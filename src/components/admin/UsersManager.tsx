@@ -15,7 +15,7 @@ import {
   Eyebrow,
   Field,
   Modal,
-  Panel,
+  Section,
   Textarea,
   cx,
   plural,
@@ -93,12 +93,17 @@ export default function UsersManager({
   const allowlisted = view.users.filter((row) => row.fromAllowlist);
 
   return (
-    <div className="space-y-6">
-      {error && <Alert>{error}</Alert>}
+    <div>
+      {error && <Alert className="mb-6">{error}</Alert>}
 
       {/* --- What the environment variable still does ---------------- */}
-      <Panel as="section" className="rise">
-        <Eyebrow className="mb-2">Before you revoke anybody</Eyebrow>
+      <Section
+        first
+        icon="shield"
+        title="Before you revoke anybody"
+        description="What the environment variable still does, and who it currently names."
+        className="rise"
+      >
         <p className="text-sm leading-relaxed text-muted">
           <code className="font-mono text-chalk">ADMIN_DISCORD_IDS</code> grants the admin
           flag on <strong className="text-chalk">every sign-in</strong>, and only ever
@@ -127,11 +132,15 @@ export default function UsersManager({
             </>
           )}
         </div>
-      </Panel>
+      </Section>
 
       {/* --- Search and filter -------------------------------------- */}
-      <Panel as="section" padding="none">
-        <div className="flex flex-wrap items-end gap-4 border-b border-hair px-5 py-4">
+      <Section
+        icon="people"
+        title="Members"
+        description="Everybody who has ever signed in with Discord. Grant or revoke admin here, and keep notes only admins ever see."
+      >
+        <div className="flex flex-wrap items-end gap-4 pb-5">
           <Field
             label="Search"
             hint="Name or handle."
@@ -151,9 +160,9 @@ export default function UsersManager({
           </ChoiceRow>
         </div>
 
-        <div className="divide-y divide-hair">
+        <div className="divide-y divide-hair/60">
           {shown.length === 0 ? (
-            <div className="p-5">
+            <div className="py-6">
               <EmptyState>
                 {view.total === 0
                   ? "Nobody has signed in yet. The first person to sign in with Discord appears here."
@@ -183,7 +192,7 @@ export default function UsersManager({
             ))
           )}
         </div>
-      </Panel>
+      </Section>
 
       <NotesDialog
         member={notesFor}
@@ -219,7 +228,7 @@ function MemberRow({
   onNotes: () => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-3 py-5">
       {member.avatarUrl ? (
         // A plain <img>, as on /me/profile: next/image would want the Discord
         // CDN in a remotePatterns allowlist for a 128px avatar already shown at

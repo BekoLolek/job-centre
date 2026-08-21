@@ -23,7 +23,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import ProfileSection from "@/components/profile/ProfileSection";
-import { Alert, Avatar, Badge, Eyebrow, Panel, StatTile } from "@/components/ui";
+import { Alert, Avatar, Badge, Eyebrow, Panel, Section, StatTile } from "@/components/ui";
 import { loadProfile } from "@/lib/profile";
 import { requireUser } from "@/lib/session-guards";
 
@@ -59,7 +59,7 @@ export default async function ProfilePage() {
 
       <main className="mx-auto max-w-[900px] space-y-6 px-4 py-8 sm:px-6">
         {/* --- Identity, read-only ---------------------------------- */}
-        <Panel as="section" className="rise">
+        <Panel as="header" className="rise">
           <div className="flex flex-wrap items-center gap-5">
             {user.avatarUrl ? (
               // A plain <img>: next/image would want the Discord CDN in a
@@ -111,13 +111,14 @@ export default async function ProfilePage() {
 
         {/* --- The questions ---------------------------------------- */}
         {profile.empty ? (
-          <Panel as="section">
-            <Eyebrow className="mb-3">Nothing to fill in yet</Eyebrow>
+          <Section
+            icon="clipboard"
+            title="Nothing to fill in yet"
+            description="No games have any questions attached yet, so there is nothing to answer."
+          >
             <p className="text-sm leading-relaxed text-muted">
-              No games have any questions attached yet, so there is nothing to answer.
               {user.isAdmin ? (
                 <>
-                  {" "}
                   You are an admin — add a game and its questions under{" "}
                   <a href="/admin/games" className="text-gold underline underline-offset-4">
                     Admin → Games
@@ -125,14 +126,14 @@ export default async function ProfilePage() {
                   , and they will appear here straight away.
                 </>
               ) : (
-                " An admin sets these up; check back once they have."
+                "An admin sets these up; check back once they have."
               )}
             </p>
-          </Panel>
+          </Section>
         ) : (
-          <>
+          <div>
             {profile.untouched && (
-              <Alert tone="gold">
+              <Alert tone="gold" className="mb-2">
                 <span className="block font-medium">You haven&apos;t answered anything yet</span>
                 <span className="mt-1 block opacity-90">
                   Tap your way through the sections below — every answer saves on its own,
@@ -145,7 +146,7 @@ export default async function ProfilePage() {
             {profile.sections.map((section) => (
               <ProfileSection key={section.key} section={section} />
             ))}
-          </>
+          </div>
         )}
 
         <p className="pb-4 text-center text-xs text-muted">

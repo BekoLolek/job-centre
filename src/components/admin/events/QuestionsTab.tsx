@@ -220,7 +220,7 @@ export default function QuestionsTab({
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
 
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Application form</Eyebrow>
           <Badge>

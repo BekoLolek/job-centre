@@ -24,7 +24,7 @@ import {
   Button,
   EmptyState,
   Eyebrow,
-  Panel,
+  Section,
   StatTile,
   cx,
   plural,
@@ -85,36 +85,33 @@ export default async function AdminDashboardPage() {
           </div>
         </header>
 
-        {/* --- The list ---------------------------------------------- */}
-        <section className="space-y-3">
-          <Eyebrow>Awaiting you</Eyebrow>
-
-          {view.items.length === 0 ? (
-            <Panel as="article">
-              <EmptyState>
-                Nothing is waiting on you. Every applicant has a seat or a place in a queue,
-                every series has a winner, and every match has a time.
-              </EmptyState>
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button href="/admin/events" size="sm">
-                  All events
-                </Button>
-                <Button href="/admin/events" size="sm" variant="gold">
-                  Create one
-                </Button>
+        <div>
+          {/* --- The list -------------------------------------------- */}
+          <Section
+            first
+            icon="flag"
+            title="Awaiting you"
+            description="Every line ends in the screen that resolves it. A finished event never appears — nothing about it can need doing."
+          >
+            {view.items.length === 0 ? (
+              <div className="py-4">
+                <EmptyState>
+                  Nothing is waiting on you. Every applicant has a seat or a place in a
+                  queue, every series has a winner, and every match has a time.
+                </EmptyState>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button href="/admin/events" size="sm">
+                    All events
+                  </Button>
+                  <Button href="/admin/events" size="sm" variant="gold">
+                    Create one
+                  </Button>
+                </div>
               </div>
-            </Panel>
-          ) : (
-            <ul className="space-y-2">
-              {view.items.map((item) => (
-                <li key={item.key}>
-                  <Panel
-                    padding="sm"
-                    className={cx(
-                      "flex flex-wrap items-center gap-4 border-l-2",
-                      item.tone === "ember" ? "border-l-ember" : "border-l-gold"
-                    )}
-                  >
+            ) : (
+              <ul className="divide-y divide-hair/60">
+                {view.items.map((item) => (
+                  <li key={item.key} className="flex flex-wrap items-center gap-4 py-5">
                     <div className="min-w-0 flex-1">
                       <div className="mb-1 flex flex-wrap items-center gap-2">
                         <Link
@@ -143,88 +140,93 @@ export default async function AdminDashboardPage() {
                     >
                       {item.action}
                     </Button>
-                  </Panel>
-                </li>
-              ))}
-            </ul>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Section>
+
+          {/* --- Running now, and next ------------------------------- */}
+          {(view.live.length > 0 || view.upcoming.length > 0) && (
+            <Section
+              icon="clock"
+              title={view.live.length > 0 ? "Running now" : "Coming up"}
+              description="What is on, admin side. Each one links to the member's view of it as well."
+              aside={
+                <Link href="/admin/events" className="text-xs text-muted hover:text-gold">
+                  All events →
+                </Link>
+              }
+            >
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {[...view.live, ...view.upcoming].slice(0, 6).map((event) => (
+                  <EventCard
+                    key={event.id}
+                    event={event}
+                    href={`/admin/events/${event.id}`}
+                    footer={
+                      <Button href={`/events/${event.slug}`} size="sm">
+                        See it as a member
+                      </Button>
+                    }
+                  />
+                ))}
+              </div>
+            </Section>
           )}
-        </section>
 
-        {/* --- Running now, and next --------------------------------- */}
-        {(view.live.length > 0 || view.upcoming.length > 0) && (
-          <section className="space-y-3">
-            <div className="flex flex-wrap items-baseline gap-3">
-              <Eyebrow>{view.live.length > 0 ? "Running now" : "Coming up"}</Eyebrow>
-              <Link href="/admin/events" className="text-xs text-muted hover:text-gold">
-                All events →
+          {/* --- Drafts nobody can see ------------------------------- */}
+          {view.drafts.length > 0 && (
+            <Section
+              icon="calendar"
+              title="Drafts"
+              description={`${plural(view.drafts.length, "draft")} nobody else can see. They stay invisible until you publish them.`}
+            >
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                {view.drafts.map((event) => (
+                  <Link
+                    key={event.id}
+                    href={`/admin/events/${event.id}`}
+                    className="text-sm text-chalk hover:text-gold"
+                  >
+                    {event.title}
+                  </Link>
+                ))}
+              </div>
+            </Section>
+          )}
+
+          {/* --- The last few things that happened ------------------- */}
+          <Section
+            icon="history"
+            title="Last few changes"
+            description="The tail of the audit log. Nothing here is ever edited or deleted."
+            aside={
+              <Link href="/admin/audit" className="text-xs text-muted hover:text-gold">
+                Full log →
               </Link>
-            </div>
-
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[...view.live, ...view.upcoming].slice(0, 6).map((event) => (
-                <EventCard
-                  key={event.id}
-                  event={event}
-                  href={`/admin/events/${event.id}`}
-                  footer={
-                    <Button href={`/events/${event.slug}`} size="sm">
-                      See it as a member
-                    </Button>
-                  }
-                />
-              ))}
-            </div>
-          </section>
-        )}
-
-        {/* --- Drafts nobody can see --------------------------------- */}
-        {view.drafts.length > 0 && (
-          <Panel as="section" className="flex flex-wrap items-center gap-3">
-            <Eyebrow className="mr-1">
-              {plural(view.drafts.length, "draft")} nobody else can see
-            </Eyebrow>
-            {view.drafts.map((event) => (
-              <Link
-                key={event.id}
-                href={`/admin/events/${event.id}`}
-                className="text-sm text-chalk hover:text-gold"
-              >
-                {event.title}
-              </Link>
-            ))}
-          </Panel>
-        )}
-
-        {/* --- The last few things that happened --------------------- */}
-        <section className="space-y-3">
-          <div className="flex flex-wrap items-baseline gap-3">
-            <Eyebrow>Last few changes</Eyebrow>
-            <Link href="/admin/audit" className="text-xs text-muted hover:text-gold">
-              Full log →
-            </Link>
-          </div>
-
-          {recent.length === 0 ? (
-            <Panel as="article">
-              <EmptyState size="sm">
-                Nothing has been recorded yet. Every status change, decision, award and
-                result lands here from the moment somebody makes one.
-              </EmptyState>
-            </Panel>
-          ) : (
-            <Panel padding="sm">
+            }
+          >
+            {recent.length === 0 ? (
+              <div className="py-4">
+                <EmptyState size="sm">
+                  Nothing has been recorded yet. Every status change, decision, award and
+                  result lands here from the moment somebody makes one.
+                </EmptyState>
+              </div>
+            ) : (
               <ul className="divide-y divide-hair/60">
                 {recent.map((row) => (
-                  <li key={row.id} className="flex flex-wrap items-baseline gap-x-3 py-2">
+                  <li key={row.id} className="flex flex-wrap items-baseline gap-x-3 py-3">
                     <Badge tone={row.tone === "ember" ? "ember" : "default"}>{row.label}</Badge>
                     <span className="min-w-0 flex-1 text-sm text-chalk">{row.summary}</span>
                     <span className="eyebrow shrink-0">{row.actor.name}</span>
                   </li>
                 ))}
               </ul>
-            </Panel>
-          )}
-        </section>
+            )}
+          </Section>
+        </div>
 
         <p className="pb-4 text-center text-xs text-muted">
           Signed in as {admin.displayName ?? admin.name ?? "an admin"}. A finished event

@@ -16,7 +16,7 @@ import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
 import MyEventCard, { type MyEventRow } from "@/components/me/MyEventCard";
 import { viewerAction } from "@/components/events";
-import { Alert, Button, Eyebrow, Panel, StatTile, plural } from "@/components/ui";
+import { Alert, Button, Eyebrow, Section, StatTile, plural } from "@/components/ui";
 import { getEventById, getMyApplications } from "@/lib/events";
 import { requireUser } from "@/lib/session-guards";
 
@@ -156,32 +156,6 @@ export default async function MyEventsPage({
           )}
         </header>
 
-        {/* --- Just applied: the news, from the stored application ---- */}
-        {landed && (
-          <Panel
-            as="section"
-            className={landed.status === "waitlisted" ? "border-gold/50" : "border-signal/40"}
-          >
-            <Eyebrow
-              className={landed.status === "waitlisted" ? "mb-3 text-gold" : "mb-3 text-signal"}
-            >
-              Application submitted · {landed.title}
-            </Eyebrow>
-            <h2 className="font-display text-4xl leading-none tracking-wide">
-              {landed.status === "waitlisted"
-                ? landed.waitlistPosition === null
-                  ? "YOU'RE IN THE QUEUE"
-                  : `YOU'RE #${landed.waitlistPosition} IN THE QUEUE`
-                : "YOU'RE IN"}
-            </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
-              {landed.status === "waitlisted"
-                ? "The seats were gone, so you joined the waitlist. If somebody withdraws you move up automatically — nobody has to approve it, and you do not have to apply again."
-                : "You have a seat. Closer to the day you will be asked to confirm you are still coming; until then you can change your availability or withdraw whenever you like."}
-            </p>
-          </Panel>
-        )}
-
         {/* --- Just withdrew: what it cost, if anything ---------------- */}
         {gone && (
           <Alert tone="signal">
@@ -196,52 +170,92 @@ export default async function MyEventsPage({
           </Alert>
         )}
 
-        {rows.length === 0 ? (
-          <Panel as="section">
-            <Eyebrow className="mb-3">Nothing yet</Eyebrow>
-            <h2 className="font-display text-3xl leading-none tracking-wide">
-              YOU HAVEN&apos;T APPLIED TO ANYTHING
-            </h2>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
-              When you apply to an event it appears here with its status, your place in the
-              queue if there is one, and the days you said you could make. Fill in your
-              profile first and the application itself is three taps.
-            </p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Button href="/events" variant="gold">
-                What&apos;s on
-              </Button>
-              <Button href="/me/profile">My profile</Button>
-            </div>
-          </Panel>
-        ) : (
-          <>
-            {unanswered > 0 && (
-              <p className="text-xs text-gold">
-                {plural(unanswered, "event")} still waiting on your availability — the day
-                chips below are one tap each.
+        <div>
+          {/* --- Just applied: the news, from the stored application -- */}
+          {landed && (
+            <Section
+              first
+              tone="band"
+              icon="spark"
+              title="Application submitted"
+              description={`Where you stand on ${landed.title} right now.`}
+            >
+              <h2 className="font-display text-4xl leading-none tracking-wide">
+                {landed.status === "waitlisted"
+                  ? landed.waitlistPosition === null
+                    ? "YOU'RE IN THE QUEUE"
+                    : `YOU'RE #${landed.waitlistPosition} IN THE QUEUE`
+                  : "YOU'RE IN"}
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+                {landed.status === "waitlisted"
+                  ? "The seats were gone, so you joined the waitlist. If somebody withdraws you move up automatically — nobody has to approve it, and you do not have to apply again."
+                  : "You have a seat. Closer to the day you will be asked to confirm you are still coming; until then you can change your availability or withdraw whenever you like."}
               </p>
-            )}
+            </Section>
+          )}
 
-            {current.length > 0 && (
-              <section className="space-y-4">
-                <Eyebrow>Coming up</Eyebrow>
-                {current.map((row) => (
-                  <MyEventCard key={row.applicationId} row={row} />
-                ))}
-              </section>
-            )}
+          {rows.length === 0 ? (
+            <Section
+              first={!landed}
+              icon="calendar"
+              title="Nothing yet"
+              description="Apply to an event and it lands here with its status, your place in any queue, and the days you said you could make."
+            >
+              <h2 className="font-display text-3xl leading-none tracking-wide">
+                YOU HAVEN&apos;T APPLIED TO ANYTHING
+              </h2>
+              <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+                Fill in your profile first and the application itself is three taps.
+              </p>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Button href="/events" variant="gold">
+                  What&apos;s on
+                </Button>
+                <Button href="/me/profile">My profile</Button>
+              </div>
+            </Section>
+          ) : (
+            <>
+              {current.length > 0 && (
+                <Section
+                  first={!landed}
+                  icon="calendar"
+                  title="Coming up"
+                  description="Seats and queue places you still hold. Availability and the “still coming?” answer save the moment you tap them."
+                >
+                  {unanswered > 0 && (
+                    <p className="pb-4 text-xs text-gold">
+                      {plural(unanswered, "event")} still waiting on your availability — the
+                      day chips below are one tap each.
+                    </p>
+                  )}
 
-            {rest.length > 0 && (
-              <section className="space-y-4">
-                <Eyebrow>Finished, declined and withdrawn</Eyebrow>
-                {rest.map((row) => (
-                  <MyEventCard key={row.applicationId} row={row} />
-                ))}
-              </section>
-            )}
-          </>
-        )}
+                  <div className="divide-y divide-hair/60">
+                    {current.map((row) => (
+                      <MyEventCard key={row.applicationId} row={row} />
+                    ))}
+                  </div>
+                </Section>
+              )}
+
+              {rest.length > 0 && (
+                <Section
+                  first={!landed && current.length === 0}
+                  icon="history"
+                  title="Finished, declined and withdrawn"
+                  description="Nothing here is ever deleted, so the ones that came to nothing stay on the list too."
+                >
+                  <div className="divide-y divide-hair/60">
+                    {rest.map((row) => (
+                      <MyEventCard key={row.applicationId} row={row} />
+                    ))}
+                  </div>
+                </Section>
+              )}
+            </>
+          )}
+        </div>
 
         <p className="pb-4 text-center text-xs text-muted">
           Nothing here is ever deleted. A withdrawn application keeps its answers, so

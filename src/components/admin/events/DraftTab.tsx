@@ -383,7 +383,7 @@ export default function DraftTab({
       )}
 
       {/* --- Money --------------------------------------------------- */}
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow as="h2">Money</Eyebrow>
 
         <div className="grid gap-6 md:grid-cols-2">
@@ -412,7 +412,7 @@ export default function DraftTab({
       </Panel>
 
       {/* --- Bidding ------------------------------------------------- */}
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow as="h2">Bidding</Eyebrow>
 
         <div className="grid gap-6 md:grid-cols-2">
@@ -477,7 +477,7 @@ export default function DraftTab({
       </Panel>
 
       {/* --- Rosters, and what the rule costs ------------------------ */}
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow as="h2">Rosters</Eyebrow>
 
         <div className="grid gap-6 md:grid-cols-2">
@@ -506,7 +506,7 @@ export default function DraftTab({
       </Panel>
 
       {/* --- Selection and the reserve pool -------------------------- */}
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow as="h2">Selection</Eyebrow>
 
         <div className="grid gap-6 md:grid-cols-2">
@@ -549,7 +549,7 @@ export default function DraftTab({
       </Panel>
 
       {/* --- The pool ------------------------------------------------ */}
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow as="h2">The pool</Eyebrow>
           <span className="eyebrow text-muted/70">Seeded from accepted applicants</span>

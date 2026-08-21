@@ -254,7 +254,7 @@ export default function ScheduleTab({
 
   if (generated === 0) {
     return (
-      <Panel as="section" className="space-y-3">
+      <Panel as="section" padding="none" className="space-y-3 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>Schedule</Eyebrow>
         <EmptyState>
           There is nothing to lay out yet. Choose a format and generate the matches on the
@@ -272,7 +272,7 @@ export default function ScheduleTab({
       {error && <Alert>{error}</Alert>}
 
       {/* --- The shape of a day ------------------------------------ */}
-      <Panel as="section" className="space-y-5">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Days and lobbies</Eyebrow>
           <span className="eyebrow text-muted/70">Times in {zoneLabel()}</span>
@@ -336,7 +336,7 @@ export default function ScheduleTab({
       </Panel>
 
       {/* --- Timing ------------------------------------------------ */}
-      <Panel as="section" className="space-y-4">
+      <Panel as="section" padding="none" className="space-y-4 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>How long things take</Eyebrow>
           <span className="eyebrow text-muted/70">Minutes · the longest case</span>
@@ -413,7 +413,7 @@ export default function ScheduleTab({
       </Panel>
 
       {/* --- The preview ------------------------------------------- */}
-      <Panel as="section" className="space-y-4">
+      <Panel as="section" padding="none" className="space-y-4 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
           <Eyebrow>Running order · longest case</Eyebrow>
           <Eyebrow as="span">{dayTotalsText(totals)}</Eyebrow>
@@ -479,7 +479,7 @@ export default function ScheduleTab({
         </p>
       </Panel>
 
-      <Panel as="section">
+      <Panel as="section" padding="none" className="border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <SaveRow
           state={state}
           note={note}

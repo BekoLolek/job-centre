@@ -15,7 +15,7 @@
 import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
 import { EventRow, EventRows, eventTypeLabel } from "@/components/events";
-import { Button, Eyebrow, Panel, cx, plural } from "@/components/ui";
+import { Button, Eyebrow, Panel, Section, cx, plural } from "@/components/ui";
 import type { EventStatus } from "@/db/schema";
 import { type EventSummary, listEvents } from "@/lib/events";
 
@@ -136,19 +136,27 @@ export default async function EventsPage({
             </div>
           </Panel>
         ) : (
-          <>
-            <p className="text-xs text-muted">
-              {plural(shown.length, "event")}
-              {type ? ` · ${eventTypeLabel(type)}` : ""} ·{" "}
-              {when === "upcoming" ? "soonest first" : "most recent first"}
-            </p>
-
+          <Section
+            icon={when === "upcoming" ? "calendar" : "history"}
+            title={when === "upcoming" ? "Coming up" : "Archive"}
+            description={
+              when === "upcoming"
+                ? "Everything published and still to run, soonest first."
+                : "Everything that has already run, most recent first."
+            }
+            aside={
+              <p className="text-[13px] text-muted">
+                {plural(shown.length, "event")}
+                {type ? ` · ${eventTypeLabel(type)}` : ""}
+              </p>
+            }
+          >
             <EventRows>
               {shown.map((event) => (
                 <EventRow key={event.id} event={event} href={`/events/${event.slug}`} />
               ))}
             </EventRows>
-          </>
+          </Section>
         )}
       </main>
     </div>

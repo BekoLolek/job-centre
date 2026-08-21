@@ -146,7 +146,7 @@ export default function CaptainsTab({
       {error && <Alert>{error}</Alert>}
 
       {/* --- The rule that changes every other number --------------- */}
-      <Panel as="section" className="space-y-3">
+      <Panel as="section" padding="none" className="space-y-3 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>A captain fills a roster slot</Eyebrow>
         <p className="text-sm leading-relaxed">
           A captain is on their team from the moment you choose them — a roster row costing{" "}
@@ -206,7 +206,7 @@ export default function CaptainsTab({
           </EmptyState>
         </Panel>
       ) : (
-        <Panel as="section" className="space-y-5">
+        <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
           <div className="flex flex-wrap items-baseline gap-3">
             <Eyebrow>One captain per team</Eyebrow>
             <span className="eyebrow text-muted/70">
@@ -321,7 +321,7 @@ export default function CaptainsTab({
 
       {/* --- Who is not on offer, and why -------------------------- */}
       {applicants.length > accepted.length && (
-        <Panel as="section" className="space-y-2">
+        <Panel as="section" padding="none" className="space-y-2 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
           <Eyebrow>Not on the list</Eyebrow>
           <p className="text-sm text-muted">
             {plural(applicants.length - accepted.length, "applicant")} cannot be picked here

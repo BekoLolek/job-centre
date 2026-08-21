@@ -198,7 +198,7 @@ export default function ApplicantsTab({
       )}
 
       {/* --- The three numbers, always on screen -------------------- */}
-      <Panel as="section">
+      <Panel as="section" padding="none" className="border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap gap-8">
           <StatTile
             label="Seats left"

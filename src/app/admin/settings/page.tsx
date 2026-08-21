@@ -16,7 +16,7 @@
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import AnnouncementSettings from "@/components/admin/AnnouncementSettings";
-import { Eyebrow, Panel, StatTile } from "@/components/ui";
+import { Eyebrow, Section, StatTile } from "@/components/ui";
 import { ANNOUNCEMENTS, webhookUrl } from "@/lib/announce";
 import { getAnnouncementSettings } from "@/lib/discord";
 import { requireAdmin } from "@/lib/session-guards";
@@ -65,24 +65,29 @@ export default async function AdminSettingsPage() {
           </div>
         </header>
 
-        <AnnouncementSettings
-          specs={ANNOUNCEMENTS}
-          saved={saved}
-          configured={configured}
-        />
+        <div>
+          <AnnouncementSettings
+            specs={ANNOUNCEMENTS}
+            saved={saved}
+            configured={configured}
+          />
 
-        <Panel as="section">
-          <Eyebrow className="mb-3">What an announcement cannot do</Eyebrow>
-          <p className="text-sm leading-relaxed text-muted">
-            It cannot fail anything. A message is built and posted <em>after</em> the
-            response has gone out, so a webhook that is slow, deleted or rate-limited
-            never delays or reverses the thing that triggered it — the member&rsquo;s
-            application succeeded whether or not Discord heard about it. When a post does
-            fail it is written to the audit log as{" "}
-            <span className="text-chalk">Announcement failed</span>, with the reason,
-            rather than disappearing.
-          </p>
-        </Panel>
+          <Section
+            icon="shield"
+            title="What an announcement cannot do"
+            description="Why a webhook that is slow, deleted or rate-limited can never break the thing that triggered it."
+          >
+            <p className="text-sm leading-relaxed text-muted">
+              It cannot fail anything. A message is built and posted <em>after</em> the
+              response has gone out, so a webhook that is slow, deleted or rate-limited
+              never delays or reverses the thing that triggered it — the member&rsquo;s
+              application succeeded whether or not Discord heard about it. When a post
+              does fail it is written to the audit log as{" "}
+              <span className="text-chalk">Announcement failed</span>, with the reason,
+              rather than disappearing.
+            </p>
+          </Section>
+        </div>
 
         <p className="pb-4 text-center text-xs text-muted">
           The guild gate&rsquo;s own settings live in the database too, but have no screen

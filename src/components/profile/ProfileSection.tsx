@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import FieldControl from "./FieldControl";
-import { Alert, Badge, EmptyState, Eyebrow, Panel } from "@/components/ui";
+import { Alert, Badge, EmptyState, Eyebrow, Section } from "@/components/ui";
 import type { ProfileValue } from "@/db/schema";
 import type { ProfileSectionView } from "@/lib/profile";
 import { hasAnswer, sectionCompleteness } from "@/lib/profile-fields";
@@ -150,15 +150,19 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
   );
 
   return (
-    <Panel as="section" padding="none" className="overflow-hidden">
-      <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-        <h2 className="font-display text-xl leading-none tracking-wide">{section.name}</h2>
-
-        {section.rankLadder.length > 0 && (
-          <Badge>{section.rankLadder.length}-rank ladder</Badge>
-        )}
-
-        <span className="ml-auto flex items-center gap-3">
+    <Section
+      icon="clipboard"
+      title={section.name}
+      description={
+        section.gameId === null
+          ? "Asked of everybody, whatever they play. Answered once, kept for good."
+          : `Answered once here, then pre-filled into every ${section.name} application.`
+      }
+      aside={
+        <div className="flex flex-wrap items-center gap-3">
+          {section.rankLadder.length > 0 && (
+            <Badge>{section.rankLadder.length}-rank ladder</Badge>
+          )}
           {completeness.required > 0 && (
             <Eyebrow
               as="span"
@@ -168,17 +172,17 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
             </Eyebrow>
           )}
           <SaveIndicator status={status} />
-        </span>
-      </div>
-
+        </div>
+      }
+    >
       {problem && (
-        <div className="px-5 pt-4">
+        <div className="pb-4">
           <Alert>{problem}</Alert>
         </div>
       )}
 
       {section.fields.length === 0 ? (
-        <div className="p-5">
+        <div className="py-4">
           <EmptyState>
             No questions for {section.name} yet. Nothing to fill in until an admin adds
             some.
@@ -187,7 +191,7 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
       ) : (
         <div className="divide-y divide-hair/60">
           {section.fields.map((field) => (
-            <div key={field.id} className="p-5">
+            <div key={field.id} className="py-5 first:pt-0">
               <div className="mb-3 flex flex-wrap items-baseline gap-2">
                 <span className="eyebrow text-chalk/70">{field.label}</span>
                 {field.required && !hasAnswer(values[field.id] ?? null) && (
@@ -209,7 +213,7 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
           ))}
         </div>
       )}
-    </Panel>
+    </Section>
   );
 }
 

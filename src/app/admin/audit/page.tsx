@@ -23,7 +23,7 @@ import {
   Button,
   EmptyState,
   Eyebrow,
-  Panel,
+  Section,
   StatTile,
   cx,
   plural,
@@ -91,9 +91,14 @@ export default async function AdminAuditPage({
           </div>
         </header>
 
-        {/* --- Filter ------------------------------------------------- */}
-        <Panel as="section" padding="sm">
-          <div className="flex flex-wrap items-center gap-2">
+        <Section
+          first
+          icon="history"
+          title="The log"
+          description="Newest first. Every line says what was true when it was written, so a rename never changes what happened."
+        >
+          {/* --- Filter ----------------------------------------------- */}
+          <div className="flex flex-wrap items-center gap-2 pb-5">
             <Eyebrow className="mr-1">Filter</Eyebrow>
             <Link
               href="/admin/audit"
@@ -119,19 +124,17 @@ export default async function AdminAuditPage({
               </Link>
             ))}
           </div>
-        </Panel>
 
-        {/* --- The log ------------------------------------------------ */}
-        {rows.length === 0 ? (
-          <Panel as="section">
-            <EmptyState>
-              {named
-                ? `Nothing has been recorded against “${named.title}” yet.`
-                : "Nothing has been recorded yet. The log fills up from the first status change."}
-            </EmptyState>
-          </Panel>
-        ) : (
-          <Panel as="section" padding="sm">
+          {/* --- The log ---------------------------------------------- */}
+          {rows.length === 0 ? (
+            <div className="py-6">
+              <EmptyState>
+                {named
+                  ? `Nothing has been recorded against “${named.title}” yet.`
+                  : "Nothing has been recorded yet. The log fills up from the first status change."}
+              </EmptyState>
+            </div>
+          ) : (
             <ul className="divide-y divide-hair/60">
               {rows.map((row) => (
                 <li key={row.id} className="py-3">
@@ -176,19 +179,19 @@ export default async function AdminAuditPage({
                 </li>
               ))}
             </ul>
-          </Panel>
-        )}
+          )}
 
-        {more && (
-          <div className="text-center">
-            <Button
-              href={`/admin/audit?${filter ? `event=${filter}&` : ""}show=${limit + PAGE}`}
-              size="sm"
-            >
-              Show {plural(PAGE, "more line")}
-            </Button>
-          </div>
-        )}
+          {more && (
+            <div className="pt-6 text-center">
+              <Button
+                href={`/admin/audit?${filter ? `event=${filter}&` : ""}show=${limit + PAGE}`}
+                size="sm"
+              >
+                Show {plural(PAGE, "more line")}
+              </Button>
+            </div>
+          )}
+        </Section>
 
         <p className="pb-4 text-center text-xs text-muted">
           <ZoneNote /> The log is append-only: there is no code anywhere that updates or

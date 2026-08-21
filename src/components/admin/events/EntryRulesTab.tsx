@@ -69,7 +69,7 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
 
   if (!event.game) {
     return (
-      <Panel as="section" className="space-y-3">
+      <Panel as="section" padding="none" className="space-y-3 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>Entry rules</Eyebrow>
         <Alert tone="gold">This event has no game, so there is no rank ladder to gate on.</Alert>
         <p className="text-sm leading-relaxed text-muted">
@@ -82,7 +82,7 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
 
   if (ladder.length === 0) {
     return (
-      <Panel as="section" className="space-y-3">
+      <Panel as="section" padding="none" className="space-y-3 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>Entry rules</Eyebrow>
         <Alert tone="gold">{event.game.name} has no rank ladder, so there is nothing to compare.</Alert>
         <p className="text-sm leading-relaxed text-muted">
@@ -105,7 +105,7 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
 
-      <Panel as="section" className="space-y-6">
+      <Panel as="section" padding="none" className="space-y-6 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <div>
           <Eyebrow className="mb-2">Entry rules</Eyebrow>
           <p className="text-sm leading-relaxed text-muted">
@@ -145,7 +145,7 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
         <SaveRow state={state} onSave={() => void save()} label="Save entry rules" />
       </Panel>
 
-      <Panel as="section" className="space-y-2">
+      <Panel as="section" padding="none" className="space-y-2 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
         <Eyebrow>How a member&apos;s rank is read</Eyebrow>
         <p className="text-sm leading-relaxed text-muted">
           From their profile — the `rank` question on {event.game.name}, which is a picker
