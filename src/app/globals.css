@@ -5,11 +5,11 @@
 /*
  * Job Centre Events — "Union grid".
  *
- * The Union Jack is a geometry before it is a flag: two saltires crossing an
- * upright cross, everything radiating from one point. That geometry is the
- * background here, drawn as light beams on a blue-black ground rather than
- * painted as a flag, so the room reads as a system with a nationality instead
- * of a novelty.
+ * The flag is present as colour and as one line, not as drawn geometry. An
+ * earlier pass put the saltire's diagonals across the background; they read as
+ * decoration the moment a page had real content on it, so they are gone. What
+ * is left is a deep blue ground, a single tricolour hairline under the top bar,
+ * and restraint everywhere else.
  *
  * Red and blue are two opposing energies — the two sides of a fixture, the two
  * halves of a bracket. White is the light itself: confirmed, settled, done.
@@ -86,57 +86,26 @@ body {
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(58% 42% at 50% 8%, rgba(77, 127, 255, 0.22), transparent 70%),
-    radial-gradient(45% 40% at 88% 96%, rgba(255, 45, 79, 0.16), transparent 70%),
-    linear-gradient(
-      66deg,
-      transparent calc(50% - 1px),
-      rgba(77, 127, 255, 0.16) 50%,
-      transparent calc(50% + 1px)
-    ),
-    linear-gradient(
-      -66deg,
-      transparent calc(50% - 1px),
-      rgba(77, 127, 255, 0.16) 50%,
-      transparent calc(50% + 1px)
-    ),
-    linear-gradient(
-      66deg,
-      transparent calc(50% - 3px),
-      rgba(255, 45, 79, 0.07) 50%,
-      transparent calc(50% + 3px)
-    ),
-    linear-gradient(
-      -66deg,
-      transparent calc(50% - 3px),
-      rgba(255, 45, 79, 0.07) 50%,
-      transparent calc(50% + 3px)
-    ),
-    linear-gradient(
-      90deg,
-      transparent calc(50% - 1px),
-      rgba(234, 240, 255, 0.13) 50%,
-      transparent calc(50% + 1px)
-    ),
-    linear-gradient(180deg, #060b1a 0%, #04060f 55%, #03050c 100%);
+    radial-gradient(70% 45% at 50% -5%, rgba(77, 127, 255, 0.13), transparent 72%),
+    linear-gradient(180deg, #060a17 0%, #04060f 60%, #03050c 100%);
 }
 
-/* Layer two: the fine engineering grid, faded away from the crossing. */
 .stage::after {
   content: "";
   position: fixed;
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: 0.45;
+  opacity: 0.5;
   background-image:
-    linear-gradient(to right, rgba(77, 127, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(77, 127, 255, 0.07) 1px, transparent 1px);
-  background-size: 56px 56px;
-  mask-image: radial-gradient(90% 65% at 50% 20%, #000 0%, transparent 100%);
+    linear-gradient(to right, rgba(77, 127, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(77, 127, 255, 0.035) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: radial-gradient(80% 55% at 50% 12%, #000 0%, transparent 100%);
 }
 
-/* Grain and scanlines together — the screen this is being watched on. */
+/* Grain only. The scanlines that used to sit here made every page feel like a
+   prop rather than a tool. */
 .grain::before {
   content: "";
   position: fixed;
@@ -146,21 +115,6 @@ body {
   opacity: 0.05;
   mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-
-.grain::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 39;
-  pointer-events: none;
-  opacity: 0.26;
-  background-image: repeating-linear-gradient(
-    180deg,
-    rgba(4, 6, 15, 0) 0px,
-    rgba(4, 6, 15, 0) 2px,
-    rgba(4, 6, 15, 0.5) 3px
-  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,7 +128,7 @@ body {
 .panel {
   position: relative;
   background:
-    linear-gradient(180deg, rgba(77, 127, 255, 0.07), transparent 42%),
+    linear-gradient(180deg, rgba(77, 127, 255, 0.035), transparent 38%),
     var(--panel);
   border: 1px solid var(--hair);
 }
@@ -187,9 +141,9 @@ body {
   background: linear-gradient(
     90deg,
     transparent,
-    rgba(77, 127, 255, 0.15) 15%,
-    rgba(234, 240, 255, 0.55) 50%,
-    rgba(77, 127, 255, 0.15) 85%,
+    rgba(77, 127, 255, 0.1) 18%,
+    rgba(234, 240, 255, 0.26) 50%,
+    rgba(77, 127, 255, 0.1) 82%,
     transparent
   );
   pointer-events: none;
@@ -264,10 +218,9 @@ body {
 }
 
 .btn:hover:not(:disabled) {
-  border-color: rgba(77, 127, 255, 0.7);
+  border-color: rgba(77, 127, 255, 0.55);
+  background: #131e3c;
   color: var(--hot);
-  box-shadow: var(--glow-blue);
-  transform: translateY(-1px);
 }
 
 .btn:active:not(:disabled) {
@@ -282,19 +235,15 @@ body {
 /* Primary: a lit tile. White on union blue, blooming at the edges. */
 .btn-gold {
   background: linear-gradient(180deg, #2f62ee, var(--union-deep));
-  border-color: #7ba0ff;
+  border-color: #3f6ff0;
   color: var(--hot);
   font-weight: 600;
-  box-shadow: 0 0 18px -6px rgba(77, 127, 255, 0.9),
-    inset 0 1px 0 rgba(255, 255, 255, 0.35);
 }
 
 .btn-gold:hover:not(:disabled) {
   background: linear-gradient(180deg, #3569f2, #2456e6);
-  border-color: #a6c1ff;
+  border-color: #5b86f5;
   color: var(--hot);
-  box-shadow: 0 0 30px -4px rgba(77, 127, 255, 0.95),
-    inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 
 .btn-ember {
@@ -304,10 +253,9 @@ body {
 }
 
 .btn-ember:hover:not(:disabled) {
-  background: rgba(255, 45, 79, 0.14);
-  border-color: var(--union-red);
+  background: rgba(255, 45, 79, 0.1);
+  border-color: rgba(255, 45, 79, 0.85);
   color: #ff6d85;
-  box-shadow: var(--glow-red);
 }
 
 .field {
@@ -322,9 +270,9 @@ body {
 }
 
 .field:focus {
-  border-color: rgba(77, 127, 255, 0.85);
+  border-color: rgba(77, 127, 255, 0.7);
   background: #071026;
-  box-shadow: 0 0 0 3px rgba(77, 127, 255, 0.18), var(--glow-blue);
+  box-shadow: 0 0 0 3px rgba(77, 127, 255, 0.12);
 }
 
 .field::placeholder {
@@ -348,33 +296,6 @@ body {
 
 .rise {
   animation: rise 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-/* A light running the length of an edge — the one unmistakably Tron gesture. */
-@keyframes sweep {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(320%);
-  }
-}
-
-.beam {
-  position: relative;
-  overflow: hidden;
-}
-
-.beam::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 32%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, var(--hot), transparent);
-  animation: sweep 3.6s linear infinite;
-  pointer-events: none;
 }
 
 @keyframes pulse-ring {
@@ -415,8 +336,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .stamp,
-  .live-dot,
-  .beam::after {
+  .live-dot {
     animation: none;
   }
 }

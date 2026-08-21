@@ -1,20 +1,20 @@
 /**
  * The session-aware half of the top bar (docs/platform-plan.md §4).
  *
- * "Signed-in members get **My events** and **Profile**, admins get an extra
- * **Admin** link."
- * That is the whole remit, and this stays that small on purpose — the boards
- * each have their own header full of board-specific controls, and the point of
- * §4 is that the *identity* links look the same wherever they appear rather
- * than that every header gets rebuilt.
+ * Signed out, this is a single quiet link. Signed in, it is the account menu —
+ * one control that opens everything §4 lists, rather than a row of buttons per
+ * destination. The links themselves moved into `NavMenu`, which needs to be a
+ * client component to open and close; this stays a server component because it
+ * reads the session, and hands the menu a sign-out action to submit.
  *
- * A server component, because it reads the session. Client headers take it as a
- * prop (`<TournamentBoard nav={<SessionNav />} />`), which works because a
- * server component passed through a client boundary is rendered before it gets
- * there.
+ * Client headers take it as a prop (`<TournamentBoard nav={<SessionNav />} />`),
+ * which works because a server component passed through a client boundary is
+ * rendered before it gets there.
  */
 
-import { Button } from "@/components/ui";
+import Link from "next/link";
+import NavMenu from "./NavMenu";
+import { signOut } from "@/lib/auth";
 import { getCurrentUser } from "@/lib/session-guards";
 
 export default async function SessionNav() {
@@ -22,28 +22,30 @@ export default async function SessionNav() {
 
   if (!user) {
     return (
-      <Button href="/signin" size="sm">
+      <Link
+        href="/signin"
+        className="text-sm text-chalk/80 transition-colors hover:text-hot"
+      >
         Sign in
-      </Button>
+      </Link>
     );
   }
 
+  async function endSession() {
+    "use server";
+    await signOut({ redirectTo: "/" });
+  }
+
   return (
-    <>
-      <Button href="/me/events" size="sm">
-        My events
-      </Button>
-      <Button href="/me/profile" size="sm">
-        Profile
-      </Button>
-      {user.isAdmin && (
-        // Lands on the dashboard now that one exists: §4 makes `/admin` the page
-        // that says what needs attention, which is the honest answer to "what am
-        // I here for" — and `AdminNav` carries the rest from there.
-        <Button href="/admin" size="sm">
-          Admin
-        </Button>
-      )}
-    </>
+    <NavMenu
+      user={{
+        displayName: user.displayName,
+        name: user.name,
+        handle: user.handle,
+        avatarUrl: user.avatarUrl,
+        isAdmin: user.isAdmin,
+      }}
+      signOut={endSession}
+    />
   );
 }
