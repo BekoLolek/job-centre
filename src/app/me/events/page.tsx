@@ -124,7 +124,7 @@ export default async function MyEventsPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="MY EVENTS" />
+      <AppHeader section="My events" />
 
       <main className="mx-auto max-w-[1000px] space-y-6 px-4 py-8 sm:px-6">
         <header className="flex flex-wrap items-end gap-6">
@@ -132,7 +132,7 @@ export default async function MyEventsPage({
             <Eyebrow className="mb-2">
               {user.displayName ?? user.name ?? "Member"} · Applications
             </Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">MY EVENTS</h1>
+            <h1 className="font-display text-4xl leading-none">My events</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               Everything you have applied to. Availability and the &quot;still coming?&quot;
               answer save the moment you tap them — there is no submit button on this page.
@@ -180,12 +180,12 @@ export default async function MyEventsPage({
               title="Application submitted"
               description={`Where you stand on ${landed.title} right now.`}
             >
-              <h2 className="font-display text-4xl leading-none tracking-wide">
+              <h2 className="font-display text-4xl leading-none">
                 {landed.status === "waitlisted"
                   ? landed.waitlistPosition === null
-                    ? "YOU'RE IN THE QUEUE"
-                    : `YOU'RE #${landed.waitlistPosition} IN THE QUEUE`
-                  : "YOU'RE IN"}
+                    ? "You're in the queue"
+                    : `You're #${landed.waitlistPosition} in the queue`
+                  : "You're in"}
               </h2>
               <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
                 {landed.status === "waitlisted"
@@ -202,7 +202,7 @@ export default async function MyEventsPage({
               title="Nothing yet"
               description="Apply to an event and it lands here with its status, your place in any queue, and the days you said you could make."
             >
-              <h2 className="font-display text-3xl leading-none tracking-wide">
+              <h2 className="font-display text-3xl leading-none">
                 YOU HAVEN&apos;T APPLIED TO ANYTHING
               </h2>
               <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">

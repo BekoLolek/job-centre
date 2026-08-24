@@ -31,7 +31,7 @@ export default function Avatar({ name, size = "md", className }: AvatarProps) {
     <span
       title={name}
       className={cx(
-        "inline-flex shrink-0 items-center justify-center rounded-full border border-hair bg-raised font-mono uppercase tracking-wider text-muted",
+        "inline-flex shrink-0 items-center justify-center rounded-full border border-hair bg-raised font-mono uppercase text-muted",
         SIZE[size],
         className
       )}

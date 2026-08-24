@@ -130,7 +130,7 @@ export default async function SignInPage({
 
         <div className="relative">
           <h1 className="wordmark leading-[1.02] tracking-tight">
-            <span className="block text-[clamp(2rem,5.2vw,4.6rem)] rise">JOB CENTRE</span>
+            <span className="block text-[clamp(2rem,5.2vw,4.6rem)] rise">Job Centre</span>
             <span
               className="block text-[clamp(2rem,5.2vw,4.6rem)] text-union rise"
               style={{ animationDelay: "90ms" }}
@@ -161,7 +161,7 @@ export default async function SignInPage({
           <div className="lg:hidden mb-10">
             <h1 className="font-display text-6xl leading-[0.85]">
               JOB CENTRE
-              <span className="block text-gold">EVENTS</span>
+              <span className="block text-gold">Events</span>
             </h1>
           </div>
 

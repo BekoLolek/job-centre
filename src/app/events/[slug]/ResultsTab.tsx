@@ -126,7 +126,7 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
   return (
     <li className="px-5 py-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <Eyebrow as="span" className="text-muted/80">
+        <Eyebrow as="span" className="text-dim">
           {match.displayLabel} · {seriesLabel(match.bestOf)}
         </Eyebrow>
         <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-muted">
@@ -179,7 +179,7 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
                   {gameLine(game) || "Map not recorded"}
                 </span>
                 {game.referee && (
-                  <span className="shrink-0 text-muted/70">
+                  <span className="shrink-0 text-dim">
                     ref <span className="text-chalk/70">{game.referee}</span>
                   </span>
                 )}
@@ -187,7 +187,7 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
                   {game.scoreA}–{game.scoreB}
                 </span>
                 {match.choices[index] && (
-                  <span className="w-full pl-9 text-muted/70">
+                  <span className="w-full pl-9 text-dim">
                     {choiceRecap(match.choices[index])}
                   </span>
                 )}

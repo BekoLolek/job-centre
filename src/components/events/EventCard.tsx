@@ -64,7 +64,7 @@ export default function EventCard({
         </div>
 
         <div>
-          <h3 className="font-display text-xl leading-tight tracking-wide transition-colors group-hover:text-hot">
+          <h3 className="font-display text-xl leading-tight transition-colors group-hover:text-hot">
             {event.title}
           </h3>
           <Eyebrow className="mt-1">{event.slug}</Eyebrow>

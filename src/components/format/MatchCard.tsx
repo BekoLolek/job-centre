@@ -71,7 +71,7 @@ export default function MatchCard({
           <Eyebrow className="truncate">
             {match.displayLabel} · {seriesLabel(match.bestOf)}
           </Eyebrow>
-          {match.note && <Eyebrow className="mt-1 text-muted/70">{match.note}</Eyebrow>}
+          {match.note && <Eyebrow className="mt-1 text-dim">{match.note}</Eyebrow>}
         </div>
 
         <div className="shrink-0 text-right">
@@ -95,7 +95,7 @@ export default function MatchCard({
             )
           )}
           {referees.length > 0 && (
-            <div className="max-w-[160px] truncate text-[11px] text-muted/80">
+            <div className="max-w-[160px] truncate text-[11px] text-dim">
               Referee: <span className="text-chalk/70">{referees.join(" · ")}</span>
             </div>
           )}
@@ -141,7 +141,7 @@ export default function MatchCard({
             a card nobody has played yet is exactly the one whose next game
             still needs somebody told who picks what. Only the heading goes.
           */}
-          {!compact && <Eyebrow className="mb-1.5 text-muted/70">Side and map</Eyebrow>}
+          {!compact && <Eyebrow className="mb-1.5 text-dim">Side and map</Eyebrow>}
           <ul className="space-y-1">
             {match.choices.map((choice) => (
               <li key={choice.index} className="flex items-baseline gap-2 text-[11px]">
@@ -176,7 +176,7 @@ export default function MatchCard({
                 </div>
                 {/* Only worth repeating per game when the series had more than one. */}
                 {referees.length > 1 && game.referee && (
-                  <div className="pl-7 text-muted/70">Referee: {game.referee}</div>
+                  <div className="pl-7 text-dim">Referee: {game.referee}</div>
                 )}
               </li>
             ) : null

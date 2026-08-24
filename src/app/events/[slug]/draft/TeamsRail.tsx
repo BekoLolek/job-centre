@@ -72,7 +72,7 @@ export default function TeamsRail({ view }: TeamsRailProps) {
                       value={team.maxBid}
                       tone="muted"
                       size="sm"
-                      prefix={<span className="mr-1 text-[10px] uppercase">Max </span>}
+                      prefix={<span className="mr-1 text-[11px]">Max </span>}
                     />
                   )}
                 </div>
@@ -122,7 +122,7 @@ export default function TeamsRail({ view }: TeamsRailProps) {
                   ) : (
                     name
                   )}{" "}
-                  <span className={line.tone === "ember" ? "text-ember/80" : "text-muted"}>
+                  <span className={line.tone === "ember" ? "text-ember" : "text-muted"}>
                     {line.outcome}
                   </span>
                   {line.price !== null && (

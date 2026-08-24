@@ -48,8 +48,8 @@ export default async function DevLoginPage({
     <main className="mx-auto flex min-h-screen max-w-lg items-center px-4 py-16">
       <div className="w-full space-y-5 rise">
         <Eyebrow>Development only</Eyebrow>
-        <h1 className="font-display text-4xl leading-none tracking-wide">
-          DEVELOPMENT SIGN-IN
+        <h1 className="font-display text-4xl leading-none">
+          Development sign-in
         </h1>
 
         <Alert tone="ember">

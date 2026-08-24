@@ -141,7 +141,7 @@ export default function ResultsTab({
 
   if (matches.length === 0) {
     return (
-      <Panel as="section" padding="none" className="space-y-3 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Results</Eyebrow>
         <EmptyState>
           No matches yet. Choose a format and generate them on the Format tab — the cards
@@ -310,7 +310,7 @@ export default function ResultsTab({
 
       {/* --- Drawn series waiting on a decision --------------------- */}
       {undecided.length > 0 && (
-        <Panel as="section" padding="none" className="space-y-3 border-ember/40 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+        <Panel as="section" padding="none" className="space-y-3 border-ember/40 border-t border-hair pt-12 first:border-t-0 first:pt-0">
           <div className="flex flex-wrap items-baseline gap-3">
             <Eyebrow className="text-ember">Needs a winner</Eyebrow>
             <Badge tone="ember">{undecided.length}</Badge>
@@ -353,7 +353,7 @@ export default function ResultsTab({
       )}
 
       {/* --- The board --------------------------------------------- */}
-      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-center gap-3">
           <Eyebrow>Results</Eyebrow>
           <Badge>
@@ -404,7 +404,7 @@ export default function ResultsTab({
                   return (
                     <div key={block.index}>
                       <div className="mb-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair pb-2">
-                        <Eyebrow as="span" className="text-muted/70">
+                        <Eyebrow as="span" className="text-dim">
                           Day {block.day}
                         </Eyebrow>
                         <span className="min-w-0 flex-1 truncate text-sm text-chalk/80">
@@ -434,7 +434,7 @@ export default function ResultsTab({
               .map((stage) => (
               <div key={stage.id} className="space-y-4">
                 <div className="flex flex-wrap items-baseline gap-3">
-                  <h3 className="font-display text-2xl leading-none tracking-wide">
+                  <h3 className="font-display text-2xl leading-none">
                     {stage.name}
                   </h3>
                   {stage.champion && (
@@ -457,7 +457,7 @@ export default function ResultsTab({
 
       {/* --- The tables -------------------------------------------- */}
       {board.stages.some((stage) => stage.matches.some((match) => match.bracket === "rr")) && (
-        <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+        <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
           <Eyebrow>Tables</Eyebrow>
           {board.stages
             .filter((stage) => stage.matches.some((match) => match.bracket === "rr"))
@@ -662,7 +662,7 @@ function MatchEditor({
       <div className="rounded-xl border border-hair p-2">
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <Eyebrow as="span">Coin</Eyebrow>
-          {started && <span className="text-[11px] text-muted/70">fixed</span>}
+          {started && <span className="text-[11px] text-dim">fixed</span>}
         </div>
         <p className="text-[11px] leading-relaxed text-muted">
           {first ? choiceLine(first) : "—"} in game 1. The two swap every game after it.
@@ -686,7 +686,7 @@ function MatchEditor({
           </Button>
         </div>
         {started && (
-          <p className="mt-1.5 text-[11px] leading-relaxed text-muted/70">
+          <p className="mt-1.5 text-[11px] leading-relaxed text-dim">
             A game has been played under this coin. Clear the series first if it really was
             called wrongly.
           </p>
@@ -710,7 +710,7 @@ function MatchEditor({
           </div>
 
           {match.choices[index] && (
-            <p className="mb-1.5 text-[11px] leading-relaxed text-muted/80">
+            <p className="mb-1.5 text-[11px] leading-relaxed text-dim">
               {choiceLine(match.choices[index])}
             </p>
           )}

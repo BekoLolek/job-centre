@@ -70,13 +70,13 @@ export default async function EventsPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="EVENTS" />
+      <AppHeader section="Events" />
 
       <main className="mx-auto max-w-[1400px] space-y-6 px-4 py-8 sm:px-6">
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Job Centre · Events</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">EVENTS</h1>
+            <h1 className="font-display text-4xl leading-none">Events</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               Everything the community has coming up, and everything it has run. Nothing is
               ever deleted — a finished event keeps its page for the record.

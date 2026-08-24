@@ -100,7 +100,7 @@ export default async function PlayerPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="PLAYER" />
+      <AppHeader section="Player" />
 
       <main className="mx-auto max-w-[1000px] space-y-6 px-4 py-8 sm:px-6">
         {/* --- Who --------------------------------------------------- */}
@@ -109,7 +109,7 @@ export default async function PlayerPage({
             <Avatar name={profile.displayName} size="lg" />
             <div className="min-w-0">
               <Eyebrow className="mb-1">/players/{profile.handle}</Eyebrow>
-              <h1 className="font-display text-4xl leading-none tracking-wide">
+              <h1 className="font-display text-4xl leading-none">
                 {profile.displayName}
               </h1>
               {totals.won > 0 && (
@@ -182,7 +182,7 @@ export default async function PlayerPage({
                         {entry.isCaptain && <Badge tone="gold">Captain</Badge>}
                       </div>
 
-                      <h2 className="font-display text-2xl leading-none tracking-wide">
+                      <h2 className="font-display text-2xl leading-none">
                         <Link
                           href={`/events/${entry.event.slug}`}
                           className="hover:text-gold"

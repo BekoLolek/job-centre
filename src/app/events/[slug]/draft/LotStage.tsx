@@ -69,7 +69,7 @@ export default function LotStage({
     <>
       <Eyebrow className="flex flex-wrap items-center gap-2">
         {poolLabel(poolKind)}
-        <span className="text-hair">/</span>
+        <span className="text-dim/60">/</span>
         {spinning ? (
           <span className="text-ember">{stageLabel(view.phase, Boolean(view.lot))}</span>
         ) : view.lot ? (
@@ -79,7 +79,7 @@ export default function LotStage({
         )}
         {secondsLeft !== null && (
           <>
-            <span className="text-hair">/</span>
+            <span className="text-dim/60">/</span>
             <span className={secondsLeft === 0 ? "text-ember" : "text-chalk"}>
               {secondsLeft === 0 ? "Bidding closed" : `${secondsLeft}s left`}
             </span>
@@ -99,7 +99,7 @@ export default function LotStage({
         <div
           key={onBlock ?? "none"}
           className={`font-display text-[clamp(2rem,6vw,4rem)] leading-none ${
-            onBlock ? "stamp text-chalk" : "text-hair"
+            onBlock ? "stamp text-chalk" : "text-dim/60"
           }`}
         >
           {spinning ? "…" : (onBlock ?? "—")}

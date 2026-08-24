@@ -73,7 +73,7 @@ export default function RosterList({
       {Array.from({ length: blanks }, (_, index) => (
         <li
           key={`blank-${index}`}
-          className="flex items-center gap-2 py-1.5 text-sm text-muted/60"
+          className="flex items-center gap-2 py-1.5 text-sm text-dim"
         >
           <span className="inline-block h-6 w-6 shrink-0 rounded-full border border-dashed border-hair" />
           <span className="eyebrow">Empty slot</span>

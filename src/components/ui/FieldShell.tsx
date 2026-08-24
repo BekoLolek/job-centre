@@ -30,7 +30,7 @@ export default function FieldShell({
         <span className="eyebrow block mb-2 text-chalk/70">{label}</span>
       )}
       {children}
-      {hint !== undefined && <span className="eyebrow block mt-1 text-muted/70">{hint}</span>}
+      {hint !== undefined && <span className="eyebrow block mt-1 text-dim">{hint}</span>}
       {error !== undefined && <span className="block mt-1 text-xs text-ember">{error}</span>}
     </label>
   );

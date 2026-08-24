@@ -44,8 +44,8 @@ export default async function AdminTemplatesPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Templates</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">
-              EVENT TEMPLATES
+            <h1 className="font-display text-4xl leading-none">
+              Event templates
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               A starting point for an event: its type, its game, its format settings and

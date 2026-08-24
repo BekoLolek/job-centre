@@ -146,7 +146,7 @@ export default function BasicsTab({
       {error && <Alert>{error}</Alert>}
 
       {/* --- Identity ----------------------------------------------- */}
-      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>What it is</Eyebrow>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -244,7 +244,7 @@ export default function BasicsTab({
       </Panel>
 
       {/* --- Game and capacity -------------------------------------- */}
-      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Who it is for</Eyebrow>
 
         <Select
@@ -289,10 +289,10 @@ export default function BasicsTab({
       </Panel>
 
       {/* --- Dates -------------------------------------------------- */}
-      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>When</Eyebrow>
-          <span className="eyebrow text-muted/70">
+          <span className="eyebrow text-dim">
             You are entering times in {zoneLabel()}
           </span>
         </div>
@@ -350,7 +350,7 @@ export default function BasicsTab({
       </Panel>
 
       {/* --- Status ------------------------------------------------- */}
-      <Panel as="section" padding="none" className="space-y-4 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="space-y-4 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Status</Eyebrow>
 
         <p className="text-sm">

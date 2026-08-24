@@ -133,7 +133,7 @@ export default async function MePage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="DASHBOARD" />
+      <AppHeader section="Dashboard" />
 
       <main className="mx-auto max-w-[1000px] space-y-6 px-4 py-8 sm:px-6">
         {/* --- Who --------------------------------------------------- */}
@@ -142,7 +142,7 @@ export default async function MePage() {
             <Avatar name={name} size="lg" />
             <div className="min-w-0">
               <Eyebrow className="mb-1">Signed in</Eyebrow>
-              <h1 className="font-display text-4xl leading-none tracking-wide">{name}</h1>
+              <h1 className="font-display text-4xl leading-none">{name}</h1>
               <p className="mt-2 flex flex-wrap items-center gap-2">
                 {user.isAdmin && <Badge tone="gold">Admin</Badge>}
                 {handle && (
@@ -191,7 +191,7 @@ export default async function MePage() {
                     <EventStatusPill status={nextEvent.status} />
                   </div>
 
-                  <h3 className="font-display text-3xl leading-none tracking-wide">
+                  <h3 className="font-display text-3xl leading-none">
                     <Link href={`/events/${nextEvent.slug}`} className="hover:text-gold">
                       {nextEvent.title}
                     </Link>

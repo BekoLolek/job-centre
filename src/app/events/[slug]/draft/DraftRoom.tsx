@@ -205,7 +205,7 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1500px] items-center gap-4 px-4 sm:px-6">
-          <Link href="/" className="wordmark text-base tracking-wide hover:text-hot">
+          <Link href="/" className="wordmark text-base hover:text-hot">
             JOB CENTRE<span className="text-union"> DRAFT</span>
           </Link>
 
@@ -236,7 +236,7 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
 
       <div className="mx-auto max-w-[1500px] space-y-2 px-4 pt-4 sm:px-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="font-display text-2xl leading-none tracking-wide">
+          <h1 className="font-display text-2xl leading-none">
             {event.title}
           </h1>
           <Eyebrow as="span">

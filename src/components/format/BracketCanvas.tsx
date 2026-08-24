@@ -97,7 +97,7 @@ function Section({
     <section>
       <div className="mb-3 flex flex-wrap items-baseline gap-3">
         <Eyebrow as="h3">{section.label}</Eyebrow>
-        <span className="eyebrow text-muted/70">
+        <span className="eyebrow text-dim">
           {section.columns.length === 1
             ? "1 round"
             : `${section.columns.length} rounds`}
@@ -118,7 +118,7 @@ function Section({
             )}
           >
             {showColumnLabels && (
-              <Eyebrow className="mb-2 truncate text-muted/80">{column.label}</Eyebrow>
+              <Eyebrow className="mb-2 truncate text-dim">{column.label}</Eyebrow>
             )}
 
             <ul

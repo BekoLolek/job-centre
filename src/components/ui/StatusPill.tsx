@@ -17,7 +17,7 @@ const TONE: Record<Status, string> = {
   closed: "bg-white/[0.05] text-muted",
   live: "bg-ember/15 text-ember",
   complete: "bg-signal/15 text-signal",
-  cancelled: "bg-white/[0.04] text-ember/70",
+  cancelled: "bg-white/[0.04] text-ember",
 };
 
 const FALLBACK = TONE.draft;

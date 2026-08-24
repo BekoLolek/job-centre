@@ -80,7 +80,7 @@ export default async function HubPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="EVENTS" />
+      <AppHeader section="Events" />
 
       <main className="mx-auto max-w-[1400px] space-y-10 px-4 py-10 sm:px-6">
         {/* --- 1. Live now, and only when it is ---------------------- */}
@@ -121,7 +121,7 @@ export default async function HubPage() {
                     ))}
                   </div>
 
-                  <h1 className="font-display text-5xl leading-[0.9] tracking-wide">
+                  <h1 className="font-display text-5xl leading-[0.9]">
                     <Link href={`/events/${hero.slug}`} className="hover:text-gold">
                       {hero.title}
                     </Link>
@@ -176,8 +176,8 @@ export default async function HubPage() {
         ) : (
           <Panel as="section" className="rise">
             <Eyebrow className="mb-3">Nothing on right now</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">
-              NOTHING SCHEDULED
+            <h1 className="font-display text-4xl leading-none">
+              Nothing scheduled
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               There is no upcoming event taking applications at the moment. Everything the
@@ -250,7 +250,7 @@ function LivePanel({ event }: { event: EventSummary }) {
             <EventStatusPill status={event.status} />
             <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
           </div>
-          <h2 className="font-display text-3xl leading-none tracking-wide">
+          <h2 className="font-display text-3xl leading-none">
             <Link href={`/events/${event.slug}`} className="hover:text-gold">
               {event.title}
             </Link>

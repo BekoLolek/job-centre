@@ -44,7 +44,7 @@ export default async function AdminSettingsPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Settings</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">SETTINGS</h1>
+            <h1 className="font-display text-4xl leading-none">Settings</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               Switches that apply to the whole server rather than to one event. Every
               change is written to the audit log.

@@ -73,7 +73,7 @@ export default async function AdminAuditPage({
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Audit</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">AUDIT LOG</h1>
+            <h1 className="font-display text-4xl leading-none">Audit log</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               Every status change, application decision, captain and team change, draft
               award and void, result edit and settings change — with the name of whoever

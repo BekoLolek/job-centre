@@ -186,7 +186,7 @@ export default function ApplyForm({
       {known.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-            <h2 className="font-display text-xl leading-none tracking-wide">
+            <h2 className="font-display text-xl leading-none">
               Already answered
             </h2>
             <Badge tone={confirmed ? "signal" : "gold"}>
@@ -283,7 +283,7 @@ export default function ApplyForm({
       {blank.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-            <h2 className="font-display text-xl leading-none tracking-wide">
+            <h2 className="font-display text-xl leading-none">
               {known.length > 0 ? "Just these" : "The questions"}
             </h2>
             <span className="ml-auto text-xs text-muted">
@@ -340,7 +340,7 @@ export default function ApplyForm({
       {days.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-            <h2 className="font-display text-xl leading-none tracking-wide">
+            <h2 className="font-display text-xl leading-none">
               Which days can you make?
             </h2>
             <Button

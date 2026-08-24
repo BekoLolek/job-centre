@@ -51,7 +51,7 @@ export default async function AdminUsersPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Members</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">MEMBERS</h1>
+            <h1 className="font-display text-4xl leading-none">Members</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               Everyone who has ever signed in. Grant and revoke the admin flag here rather
               than by editing an environment variable and redeploying, and keep private

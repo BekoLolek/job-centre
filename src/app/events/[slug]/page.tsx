@@ -162,7 +162,7 @@ export default async function EventPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="EVENTS" />
+      <AppHeader section="Events" />
 
       <main className="mx-auto max-w-[1100px] space-y-6 px-4 py-8 sm:px-6">
         <nav className="text-xs text-muted">
@@ -206,7 +206,7 @@ export default async function EventPage({
                 {event.game && <Badge tone="gold">{event.game.name}</Badge>}
               </div>
 
-              <h1 className="font-display text-5xl leading-[0.9] tracking-wide">{event.title}</h1>
+              <h1 className="font-display text-5xl leading-[0.9]">{event.title}</h1>
 
               <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
                 <EventDateRange

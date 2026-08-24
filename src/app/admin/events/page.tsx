@@ -66,7 +66,7 @@ export default async function AdminEventsPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Events</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">EVENTS</h1>
+            <h1 className="font-display text-4xl leading-none">Events</h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               Everything the community runs, drafts included. An event starts as a draft
               nobody can see; give it days, an application form and a capacity, then publish

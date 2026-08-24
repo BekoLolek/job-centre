@@ -41,7 +41,7 @@ export default function EventAction({ action, size = "md", className }: EventAct
       ) : (
         <p
           className={cx(
-            "font-display tracking-wide",
+            "font-display",
             size === "sm" ? "text-lg" : "text-2xl",
             TONE[action.tone]
           )}

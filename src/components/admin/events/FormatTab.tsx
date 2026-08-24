@@ -339,7 +339,7 @@ export default function FormatTab({
       {error && <Alert>{error}</Alert>}
 
       {/* --- Where the team count comes from ------------------------ */}
-      <Panel as="section" padding="none" className="flex flex-wrap items-baseline gap-x-4 gap-y-2 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="flex flex-wrap items-baseline gap-x-4 gap-y-2 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Teams</Eyebrow>
         <Badge tone={tooFew ? "ember" : "gold"}>
           {teamCount}/{MAX_TEAMS}
@@ -352,7 +352,7 @@ export default function FormatTab({
       </Panel>
 
       {stages.length === 0 ? (
-        <Panel as="section" padding="none" className="space-y-4 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+        <Panel as="section" padding="none" className="space-y-4 border-t border-hair pt-12 first:border-t-0 first:pt-0">
           <Eyebrow>Stages</Eyebrow>
           <EmptyState>
             No stages yet. One is the usual answer — a round robin, or a bracket. Two makes
@@ -385,7 +385,7 @@ export default function FormatTab({
             />
           ))}
 
-          <Panel as="section" padding="none" className="border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+          <Panel as="section" padding="none" className="border-t border-hair pt-12 first:border-t-0 first:pt-0">
             <AddStageRow disabled={stages.length >= maxStages} onAdd={add} />
           </Panel>
         </div>
@@ -403,7 +403,7 @@ export default function FormatTab({
         </Alert>
       )}
 
-      <Panel as="section" padding="none" className="border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <SaveRow
           state={state}
           note={note}
@@ -586,7 +586,7 @@ function StagePanel({
   const dirtyShape = live ? live.kind !== stage.kind : false;
 
   return (
-    <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+    <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
       <div className="flex flex-wrap items-end gap-3">
         <span className="num w-12 shrink-0 self-center text-xs text-muted">
           Stage {index + 1}
@@ -683,7 +683,7 @@ function StagePanel({
       <div className="space-y-4 border-t border-hair pt-5">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Preview</Eyebrow>
-          <span className="eyebrow text-muted/70">
+          <span className="eyebrow text-dim">
             {plural(spec.matches.length, "match", "matches")} ·{" "}
             {plural([...new Set(spec.matches.map((match) => match.phase))].length, "phase")}
           </span>
@@ -962,7 +962,7 @@ function StageSettings({
 
           {kind !== "swiss" && (
             <div className="space-y-2">
-              <Eyebrow className="text-muted/80">Play every pair twice</Eyebrow>
+              <Eyebrow className="text-dim">Play every pair twice</Eyebrow>
               <Toggle
                 value={config.doubleRound}
                 yesLabel="Home and away"
@@ -1069,7 +1069,7 @@ function TiebreakerEditor({
 
   return (
     <div className="space-y-2">
-      <Eyebrow className="text-muted/80">Tiebreakers, in order</Eyebrow>
+      <Eyebrow className="text-dim">Tiebreakers, in order</Eyebrow>
 
       <ol className="divide-y divide-hair/60 rounded-xl border border-hair">
         {chosen.map((rule, index) => (

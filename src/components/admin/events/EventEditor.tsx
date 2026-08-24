@@ -112,7 +112,7 @@ export default function EventEditor({
               )}
             </div>
 
-            <h1 className="font-display text-3xl leading-none tracking-wide">{event.title}</h1>
+            <h1 className="font-display text-3xl leading-none">{event.title}</h1>
             <Eyebrow className="mt-2">/events/{event.slug}</Eyebrow>
 
             <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
@@ -129,7 +129,7 @@ export default function EventEditor({
               ← All events
             </Button>
             {event.status !== "draft" && (
-              <Eyebrow as="span" className="text-muted/70">
+              <Eyebrow as="span" className="text-dim">
                 Visible to members
               </Eyebrow>
             )}

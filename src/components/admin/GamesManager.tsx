@@ -212,7 +212,7 @@ function GameCard({
         >
           <span className="font-mono text-xs text-muted">{open ? "▾" : "▸"}</span>
           <span className="min-w-0">
-            <span className="block truncate font-display text-xl leading-none tracking-wide">
+            <span className="block truncate font-display text-xl leading-none">
               {game.name}
             </span>
             <span className="eyebrow mt-1 block">{game.key}</span>

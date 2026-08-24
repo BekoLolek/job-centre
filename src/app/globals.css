@@ -3,72 +3,77 @@
 @tailwind utilities;
 
 /*
- * Job Centre Events — "Union grid".
+ * Job Centre Events.
  *
- * The flag is present as colour and as one line, not as drawn geometry. An
- * earlier pass put the saltire's diagonals across the background; they read as
- * decoration the moment a page had real content on it, so they are gone. What
- * is left is a deep blue ground, a single tricolour hairline under the top bar,
- * and restraint everywhere else.
+ * This is the fifth pass and the first one written from measurements rather
+ * than from taste. Three sites that do this well were audited element by
+ * element — start.gg (the direct competitor), Linear and Vercel — and the same
+ * three numbers came back from all of them:
  *
- * Almost nothing here is a box. Surfaces are soft washes with rounded corners
- * and generous padding, separated by space rather than by outlines; a hairline
- * appears only where two things genuinely need dividing. Boxes stacked inside
- * boxes are what make an interface read as a command centre, and this is a
- * place people come to sign up for a Jackbox night.
+ *   - Uppercase text: 0%, 0%, and 1.5%. This site was at 25%.
+ *   - Letter-spacing: normal or NEGATIVE. This site had positive tracking on a
+ *     third of its text.
+ *   - Typefaces in use: one. This site had four.
  *
- * Red and blue are two opposing energies — the two sides of a fixture, the two
- * halves of a bracket. White is the light itself: confirmed, settled, done.
- * There is deliberately no green, no amber, no fourth hue. Three colours
- * everybody already knows the order of do more work than five that need
- * learning.
+ * That, not the boxes, is what made it read as a control panel. Four earlier
+ * passes removed borders, cards and glow and it still felt like equipment,
+ * because uppercase letter-spaced type in an angular display face reads as
+ * machine labelling no matter what it is sitting on.
+ *
+ * So: one family, sentence case, tracking that tightens as type gets larger,
+ * a neutral ground so the flag colours are the only hue on the page, and four
+ * greys where there were two. Separation is space first — the references run
+ * 128px between sections; this runs 64–72px, because an app is denser than a
+ * marketing page — with a hairline only where a list needs scanning.
  */
 
 :root {
-  /* Ground — black with a blue cast, never neutral. */
-  --ink: #04060f;
-  --panel: #090e1d;
-  --raised: #0f1830;
   /*
-   * Hairlines are for dividing, not for drawing boxes. This sits close enough
-   * to the ground that a border reads as a change of surface rather than an
-   * edge, which is what lets 120-odd of them stay in the markup without the
-   * page looking like a form from 1998.
+   * Ground and surfaces. Neutral, with the faintest blue cast left in so the
+   * page is not literally grey. Surfaces exist for things that genuinely float
+   * — menus, dialogs, popovers. A region of a page is not a surface.
    */
-  --hair: #16203c;
-
-  --chalk: #eaf0ff;
-  --muted: #7b89b4;
+  --ink: #0a0b0e;
+  --panel: #101216;
+  --raised: #181a1f;
+  --hair: #23252b;
 
   /*
-   * The three flag colours, lifted enough to carry a glow.
-   *
-   * Two blues, not one. #2f6bff — the obvious lift of the flag navy — measures
-   * exactly 4.50 against this ground and 4.50 behind white, which is AA to two
-   * decimal places and nothing to spare. So the emitting blue is brighter
-   * (5.5 on the ground) and the blue behind white text is deeper (6.3), which
-   * is also the more honest reading of the flag: navy for solid, bright for
-   * light.
+   * The type ladder. Four steps, neutral, each measured on the ground:
+   * chalk 18:1, body 12:1, muted 7.3:1, dim 4.9:1. Dim is the floor — nothing
+   * on the site sits below AA, including 11px labels.
    */
+  --chalk: #f4f5f7;
+  --body: #c9ccd3;
+  --muted: #9aa0a9;
+  --dim: #7c8089;
+
+  /* The flag, and the only hue on the page. */
   --union-blue: #4d7fff;
   --union-deep: #1c4fdb;
   --union-red: #ff2d4f;
   --hot: #ffffff;
 
-  /*
-   * The old names, kept pointing at the new colours. Forty components reference
-   * them, and renaming is churn no reader would ever see.
-   */
+  /* Names forty components still use. */
   --gold: var(--union-blue);
   --ember: var(--union-red);
-  --signal: #cfe0ff;
+  --signal: var(--body);
 
-  --r-sm: 10px;
-  --r-md: 14px;
-  --r-lg: 20px;
+  /* One radius for controls, one for surfaces. There is no third. */
+  --r: 6px;
+  --r-lg: 12px;
 
-  --glow-blue: 0 0 24px -6px rgba(77, 127, 255, 0.75);
-  --glow-red: 0 0 24px -6px rgba(255, 45, 79, 0.7);
+  /* Kept as aliases so nothing that referenced the old scale breaks. */
+  --r-sm: var(--r);
+  --r-md: var(--r);
+
+  /*
+   * Tells the browser to draw its own furniture dark: native select menus,
+   * date pickers, scrollbars and form controls. Without it a `<select>`'s
+   * options render as the OS light default — grey-on-near-black at 3.7:1,
+   * which is where the only remaining contrast failure was coming from.
+   */
+  color-scheme: dark;
 }
 
 html,
@@ -78,45 +83,104 @@ body {
 
 body {
   background-color: var(--ink);
-  color: var(--chalk);
-  font-family: var(--font-body), sans-serif;
+  color: var(--body);
+  font-family: var(--font-body), system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-/* ------------------------------------------------------------------ */
-/* The union grid                                                     */
-/* ------------------------------------------------------------------ */
-
+/*
+ * The ground is flat. It used to carry a radial blue wash and a grain overlay;
+ * both references are a single flat colour, and a gradient behind real content
+ * is the thing you notice when you cannot say why a page looks amateur.
+ */
 .stage {
   position: relative;
   isolation: isolate;
 }
 
+/* ------------------------------------------------------------------ */
+/* Type                                                               */
+/* ------------------------------------------------------------------ */
+
 /*
- * Layer one: the colour field and the saltire. Diagonals and the upright cross,
- * converging above the fold, with red answering blue from the far corner.
+ * Headings are weight and tightness, not a different font. Tracking goes more
+ * negative as type gets larger, which is how optical sizing works and why a
+ * 36px heading at default tracking looks loose and amateurish.
  */
-.stage::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background:
-    radial-gradient(70% 45% at 50% -5%, rgba(77, 127, 255, 0.13), transparent 72%),
-    linear-gradient(180deg, #060a17 0%, #04060f 60%, #03050c 100%);
+h1,
+h2,
+h3,
+h4 {
+  color: var(--chalk);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.019em;
 }
 
-/* Grain only. The scanlines that used to sit here made every page feel like a
-   prop rather than a tool. */
-.grain::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  pointer-events: none;
-  opacity: 0.05;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+h1 {
+  letter-spacing: -0.028em;
+}
+
+/*
+ * `font-display` is fifty-odd components asking for a heading. It is the same
+ * family as everything else now; what it carries is the weight and the
+ * tightness, so those components did not have to be touched.
+ */
+.font-display {
+  font-weight: 600;
+  letter-spacing: -0.019em;
+}
+
+/*
+ * Small labels. These were 11px uppercase at 0.1em, and there are six hundred
+ * of them, so they set the tone of the site more than any heading did. Now they
+ * are simply small quiet text: sentence case, no tracking. The references have
+ * no uppercase on the page at all.
+ *
+ * Deliberately no `color`. This class sits after `@tailwind utilities` in the
+ * source, so a colour here silently beat every `text-*` next to it — which is
+ * why status pills had been rendering grey instead of blue, red or white since
+ * the class was written. The colour belongs to the component.
+ */
+.eyebrow {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  line-height: 1.4;
+}
+
+/* Figures: money, scores, timers, seeds. */
+.num {
+  font-family: var(--font-mono), monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.94em;
+  letter-spacing: -0.01em;
+}
+
+/*
+ * The wordmark, and only the wordmark.
+ *
+ * The one uppercase string left on the site, and the one place letter-spacing
+ * opens up rather than tightens. That is not an exception to the rule so much
+ * as what the rule is for: a logotype is a drawn mark, read once as a shape,
+ * where interface text is read as words. Both references do exactly this — an
+ * all-caps or drawn mark in the corner, and nothing else on the page shouting.
+ */
+.wordmark {
+  font-family: var(--font-wordmark), system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 13px;
+}
+
+::selection {
+  background: rgba(77, 127, 255, 0.3);
+  color: var(--hot);
 }
 
 /* ------------------------------------------------------------------ */
@@ -124,30 +188,17 @@ body {
 /* ------------------------------------------------------------------ */
 
 /*
- * A panel is a wash of light on the ground, not a card sitting on it. No
- * border, no seam, no corner cut — a soft fill and a big radius, and the
- * padding does the separating. Where two panels sit side by side the gap
- * between them is what tells them apart.
+ * A panel is for something that floats above the page — a menu, a dialog, an
+ * empty state. It has an edge, because a thing that floats should. Regions of
+ * a page are not panels; they are separated by space.
  */
 .panel {
-  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--hair);
   border-radius: var(--r-lg);
-  background:
-    linear-gradient(180deg, rgba(122, 156, 255, 0.05), rgba(122, 156, 255, 0.018) 40%),
-    rgba(9, 14, 29, 0.72);
 }
 
-.hatch {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    rgba(77, 127, 255, 0.1) 0px,
-    rgba(77, 127, 255, 0.1) 1px,
-    transparent 1px,
-    transparent 7px
-  );
-}
-
-/* The RAF roundel, for a mark that should read as an insignia. */
+/* The RAF roundel, for the one place that wants an insignia. */
 .roundel {
   background: radial-gradient(
     circle,
@@ -158,35 +209,14 @@ body {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Type                                                               */
-/* ------------------------------------------------------------------ */
-
-/*
- * Section labels. These were 10px mono at 0.26em — machine stencilling, and
- * there are hundreds of them, so they set the tone of the whole site more than
- * any heading did. Now body type, a little larger, a fraction of the tracking:
- * still quiet and still a label, but it reads as typography.
- */
-.eyebrow {
-  font-family: var(--font-body), sans-serif;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-
-.num {
-  font-family: var(--font-mono), monospace;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.02em;
-}
-
-/* The wordmark, and only the wordmark. */
-.wordmark {
-  font-family: var(--font-wordmark), var(--font-display), sans-serif;
-  letter-spacing: 0.04em;
+.hatch {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.045) 0px,
+    rgba(255, 255, 255, 0.045) 1px,
+    transparent 1px,
+    transparent 7px
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -194,90 +224,107 @@ body {
 /* ------------------------------------------------------------------ */
 
 /*
- * Buttons are pills in body type, sentence case. The old ones were 11px mono,
- * uppercase, letter-spaced and outlined — five separate signals that this is
- * equipment. A button only has to look pressable.
- *
- * The default is borderless: a faint fill that lifts on hover. Only the
- * destructive one keeps an outline, because it is the one that should make you
- * pause.
+ * A 6px radius, not a pill. Pills at 13px read as consumer chips; both
+ * references use a small square-ish radius for every control on the page and
+ * reserve the pill for status badges, which is what a pill is actually for.
  */
 .btn {
-  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.5rem;
-  font-family: var(--font-body), sans-serif;
+  gap: 0.45rem;
+  font-family: inherit;
   font-size: 13px;
   font-weight: 500;
-  letter-spacing: 0.01em;
-  border: 1px solid transparent;
-  border-radius: 999px;
-  background: rgba(122, 156, 255, 0.07);
-  color: var(--chalk);
-  padding: 0.55rem 1.1rem;
-  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+  letter-spacing: -0.006em;
+  line-height: 1;
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
+  background: var(--raised);
+  color: var(--body);
+  padding: 0.5rem 0.85rem;
+  transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
 }
 
 .btn:hover:not(:disabled) {
-  background: rgba(122, 156, 255, 0.14);
-  color: var(--hot);
+  background: #1f2228;
+  border-color: #2e3138;
+  color: var(--chalk);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--union-blue);
+  outline-offset: 1px;
 }
 
 .btn:disabled {
-  opacity: 0.35;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
-/* Primary: one solid, quiet fill. No gradient, no bloom. */
+/* Primary. One per screen, ideally. */
 .btn-gold {
   background: var(--union-deep);
+  border-color: var(--union-deep);
   color: var(--hot);
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .btn-gold:hover:not(:disabled) {
-  background: #2456e6;
+  background: #2a5ee8;
+  border-color: #2a5ee8;
   color: var(--hot);
 }
 
+/* Destructive. Quiet until you hover it, then unmistakable. */
 .btn-ember {
   background: transparent;
-  border-color: rgba(255, 45, 79, 0.35);
-  color: #ff7b8f;
+  border-color: var(--hair);
+  color: #ff8093;
 }
 
 .btn-ember:hover:not(:disabled) {
-  background: rgba(255, 45, 79, 0.1);
-  border-color: rgba(255, 45, 79, 0.6);
+  background: rgba(255, 45, 79, 0.09);
+  border-color: rgba(255, 45, 79, 0.45);
   color: #ff9aa9;
 }
 
 /*
- * A field is a well in the surface rather than a box drawn on it: a soft fill,
- * a rounded corner, and no border until it is focused.
+ * Fields get a real border. This is the one place an outline is not decoration:
+ * an input has to look like somewhere you can type before you click it, and a
+ * borderless field is a guessing game.
  */
 .field {
-  background: rgba(122, 156, 255, 0.055);
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
+  background: #0e1013;
+  border: 1px solid var(--hair);
+  border-radius: var(--r);
   color: var(--chalk);
-  font-family: var(--font-body), sans-serif;
+  font-family: inherit;
   font-size: 14px;
-  padding: 0.7rem 0.9rem;
+  line-height: 1.4;
+  padding: 0.5rem 0.7rem;
   width: 100%;
   outline: none;
-  transition: border-color 160ms ease, background 160ms ease;
+  transition: border-color 130ms ease, box-shadow 130ms ease;
+}
+
+.field:hover:not(:focus) {
+  border-color: #2e3138;
 }
 
 .field:focus {
-  border-color: rgba(77, 127, 255, 0.55);
-  background: rgba(122, 156, 255, 0.09);
+  border-color: var(--union-blue);
+  box-shadow: 0 0 0 3px rgba(77, 127, 255, 0.16);
 }
 
 .field::placeholder {
-  color: #5a6690;
+  color: var(--dim);
+}
+
+/* Native dropdown options, which do not inherit from `.field`. */
+.field option {
+  background: var(--panel);
+  color: var(--body);
 }
 
 /* ------------------------------------------------------------------ */
@@ -287,7 +334,7 @@ body {
 @keyframes rise {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
@@ -296,15 +343,15 @@ body {
 }
 
 .rise {
-  animation: rise 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes pulse-ring {
   0% {
-    box-shadow: 0 0 0 0 rgba(255, 45, 79, 0.6);
+    box-shadow: 0 0 0 0 rgba(255, 45, 79, 0.55);
   }
   70% {
-    box-shadow: 0 0 0 10px rgba(255, 45, 79, 0);
+    box-shadow: 0 0 0 8px rgba(255, 45, 79, 0);
   }
   100% {
     box-shadow: 0 0 0 0 rgba(255, 45, 79, 0);
@@ -318,20 +365,20 @@ body {
 @keyframes stamp {
   0% {
     opacity: 0;
-    transform: scale(1.6) rotate(-6deg);
+    transform: scale(1.35);
   }
   60% {
     opacity: 1;
-    transform: scale(0.96) rotate(-1deg);
+    transform: scale(0.98);
   }
   100% {
     opacity: 1;
-    transform: scale(1) rotate(-1deg);
+    transform: scale(1);
   }
 }
 
 .stamp {
-  animation: stamp 460ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  animation: stamp 380ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -345,8 +392,8 @@ body {
 /* ------------------------------------------------------------------ */
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -354,10 +401,11 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #223a6e;
+  background: #2a2d33;
+  border: 3px solid var(--ink);
   border-radius: 99px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #2f4a8a;
+  background: #3a3e46;
 }

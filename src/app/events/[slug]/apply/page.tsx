@@ -89,7 +89,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="EVENTS" />
+      <AppHeader section="Events" />
 
       <main className="mx-auto max-w-[900px] space-y-5 px-4 py-8 sm:px-6">
         <nav className="text-xs text-muted">
@@ -110,7 +110,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
               </div>
 
               <Eyebrow className="mb-2">Applying to</Eyebrow>
-              <h1 className="font-display text-4xl leading-none tracking-wide">
+              <h1 className="font-display text-4xl leading-none">
                 {event.title}
               </h1>
 
@@ -160,8 +160,8 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
             <Eyebrow className="mb-3 text-ember">
               {applicationStatusLabel("declined")}
             </Eyebrow>
-            <h2 className="font-display text-3xl leading-none tracking-wide">
-              THIS ONE WAS DECLINED
+            <h2 className="font-display text-3xl leading-none">
+              This one was declined
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               An admin decided against this application, so it cannot be re-submitted here.
@@ -176,7 +176,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
         ) : closedBecause ? (
           <Panel as="section">
             <Eyebrow className="mb-3">Not taking applications</Eyebrow>
-            <h2 className="font-display text-3xl leading-none tracking-wide">
+            <h2 className="font-display text-3xl leading-none">
               {closedBecause.toUpperCase()}
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
@@ -193,10 +193,10 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
         ) : blocked ? (
           <Panel as="section">
             <Eyebrow className="mb-3 text-ember">You cannot apply to this one yet</Eyebrow>
-            <h2 className="font-display text-3xl leading-none tracking-wide">
+            <h2 className="font-display text-3xl leading-none">
               {form.eligibility.enterCheck.reason === "no_rank"
-                ? "YOUR RANK ISN'T SET"
-                : "BELOW THE ENTRY RANK"}
+                ? "Your rank isn't set"
+                : "Below the entry rank"}
             </h2>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
               {form.eligibility.enterReason} Rank is a two-tap picker on your profile and it

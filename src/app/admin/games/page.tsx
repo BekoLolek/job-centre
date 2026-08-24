@@ -47,7 +47,7 @@ export default async function AdminGamesPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Profiles</Eyebrow>
-            <h1 className="font-display text-4xl leading-none tracking-wide">
+            <h1 className="font-display text-4xl leading-none">
               GAMES &amp; QUESTIONS
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">

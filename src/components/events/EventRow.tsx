@@ -42,18 +42,18 @@ export default function EventRow({ event, href, meta, trailing, className }: Eve
     >
       <div className="min-w-0 flex-1">
         <Link href={href} className="block">
-          <h3 className="truncate font-display text-[19px] leading-tight tracking-wide text-chalk transition-colors group-hover:text-hot">
+          <h3 className="truncate font-display text-[19px] leading-tight text-chalk transition-colors group-hover:text-hot">
             {event.title}
           </h3>
         </Link>
 
         <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px] text-muted">
           <span>{eventTypeLabel(event.type)}</span>
-          <span aria-hidden className="text-hair">·</span>
+          <span aria-hidden className="text-dim/60">·</span>
           <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
           {live > 0 && (
             <>
-              <span aria-hidden className="text-hair">·</span>
+              <span aria-hidden className="text-dim/60">·</span>
               <span className="num">{plural(live, "application")}</span>
             </>
           )}

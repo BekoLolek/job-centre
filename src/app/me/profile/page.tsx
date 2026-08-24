@@ -55,7 +55,7 @@ export default async function ProfilePage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="PROFILE" />
+      <AppHeader section="Profile" />
 
       <main className="mx-auto max-w-[900px] space-y-6 px-4 py-8 sm:px-6">
         {/* --- Identity, read-only ---------------------------------- */}
@@ -79,7 +79,7 @@ export default async function ProfilePage() {
 
             <div className="min-w-0">
               <Eyebrow className="mb-1">Your Discord identity</Eyebrow>
-              <h1 className="font-display text-4xl leading-none tracking-wide">{name}</h1>
+              <h1 className="font-display text-4xl leading-none">{name}</h1>
               <p className="mt-2 text-xs text-muted">
                 Member since {memberSince}
                 {user.isAdmin && (

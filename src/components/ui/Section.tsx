@@ -5,34 +5,32 @@ import { cx } from "./cx";
 /**
  * A region of a page, and the thing that separates one region from the next.
  *
- * Three passes got here. Boxes read as a command centre; removing them entirely
- * left pages as one undifferentiated column. What separates regions now is
- * three quiet signals at once, none of which is an outline:
+ * The previous version stacked three separators on top of each other — a rule,
+ * a 210px heading gutter, and a blue icon — on the theory that with the boxes
+ * gone the eye needed help. Measuring the sites that do this well says the
+ * opposite: separation is **space**, with everything else a whisper. Linear
+ * runs 128px between sections and no rule at all; Vercel's headings are 24px
+ * semibold sentence case with nothing drawn around them.
  *
- *  1. **A rule.** One hairline spanning the full content width, above the
- *     heading. A line across the page is a paragraph break; a line around
- *     something is a box.
- *  2. **A gutter.** From `md` up the heading sits in its own left column and
- *     the content sits to the right, so a new section announces itself by
- *     starting a new column rather than by being wrapped in anything.
- *  3. **An icon.** With no edges to catch, the icon is the handle the eye finds
- *     when scrolling. It sits in the gutter at the type's own weight.
- *
- * `tone="band"` adds a faint full-width wash for the few sections that should
- * feel set apart — a summary at the top of a page, something live. It is a
- * change of ground, not a card: no border, and it bleeds past the text.
+ * So this is space first: 56px of padding either side of a hairline, which puts
+ * 112px between one region's content and the next. The heading sits above its
+ * content in the normal reading order rather than off in a column, because a
+ * gutter is a documentation layout and this is an app. The icon stays — it is
+ * the handle the eye finds when scrolling a long page — but at the type's own
+ * colour, not the accent's. Blue means *interactive* now, and spending it on
+ * decoration is what made the accent stop meaning anything.
  */
 
 export type SectionProps = {
   title?: ReactNode;
-  /** One line under the title, in the gutter. Keep it to a sentence. */
+  /** One line under the title. Keep it to a sentence. */
   description?: ReactNode;
   icon?: IconName;
-  /** Sits with the title — a count, a status, a small action. */
+  /** Sits opposite the title — a count, a filter, a small action. */
   aside?: ReactNode;
-  /** `band` washes the section's ground; `plain` drops the rule as well. */
+  /** `band` lifts the region onto a surface; `plain` drops the rule. */
   tone?: "default" | "band" | "plain";
-  /** Drops the rule above, for the first section on a page. */
+  /** Drops the rule and the top padding, for the first section on a page. */
   first?: boolean;
   className?: string;
   children?: ReactNode;
@@ -48,55 +46,44 @@ export default function Section({
   className,
   children,
 }: SectionProps) {
-  const heading = Boolean(title || description || icon);
+  const heading = Boolean(title || icon || aside);
 
   return (
     <section
       className={cx(
         "relative",
-        !first && tone !== "plain" && "border-t border-hair/70",
-        tone === "band" && "bg-white/[0.015]",
-        first ? "pt-2" : "pt-10",
-        "pb-10",
+        !first && tone !== "plain" && "border-t border-hair",
+        first ? "pt-0" : "pt-14",
+        "pb-14",
+        tone === "band" && "px-6 -mx-6 rounded bg-panel",
         className
       )}
     >
-      {tone === "band" && (
-        // Bleeds the wash past the content column so it reads as ground rather
-        // than as a panel that happens to be wide.
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-y-0 left-1/2 -z-10 w-screen -translate-x-1/2 bg-white/[0.015]"
-        />
-      )}
-
-      <div className={cx(heading && "md:grid md:grid-cols-[210px_minmax(0,1fr)] md:gap-10")}>
-        {heading && (
-          <div className="mb-5 md:mb-0">
+      {heading && (
+        <div className="mb-6 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
+          <div className="min-w-0">
             <div className="flex items-baseline gap-2.5">
-              {icon && <Icon name={icon} className="relative top-[3px] text-union" />}
-              <h2 className="font-display text-[15px] uppercase leading-tight tracking-[0.12em] text-chalk">
-                {title}
-              </h2>
+              {icon && <Icon name={icon} className="relative top-[3px] text-muted" />}
+              {title && <h2 className="text-[20px] text-chalk">{title}</h2>}
             </div>
             {description && (
-              <p className="mt-2 text-[13px] leading-relaxed text-muted md:pr-4">
+              <p className="mt-1.5 max-w-[62ch] text-[14px] leading-relaxed text-muted">
                 {description}
               </p>
             )}
-            {aside && <div className="mt-3">{aside}</div>}
           </div>
-        )}
+          {aside && <div className="shrink-0">{aside}</div>}
+        </div>
+      )}
 
-        <div className="min-w-0">{children}</div>
-      </div>
+      <div className="min-w-0">{children}</div>
     </section>
   );
 }
 
 /**
- * The column a page's sections live in. Sections handle their own vertical
- * rhythm, so this only sets the measure.
+ * The column a page's sections live in. Sections carry their own rhythm, so
+ * this only sets the measure.
  */
 export function SectionList({
   children,

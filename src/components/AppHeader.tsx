@@ -16,7 +16,7 @@ import HeaderLink from "./HeaderLink";
 import SessionNav from "./SessionNav";
 
 export default function AppHeader({
-  /** The word after "JOB CENTRE", picked out in union blue. */
+  /** The word after "Job Centre", picked out in union blue. */
   section,
   /** Extra controls, left of the account menu. */
   children,
@@ -29,7 +29,7 @@ export default function AppHeader({
       <div className="mx-auto flex h-[72px] max-w-[1400px] items-center gap-8 px-5 sm:px-8">
         <Link
           href="/"
-          className="wordmark shrink-0 text-[15px] tracking-wide transition-colors hover:text-hot"
+          className="wordmark shrink-0 text-chalk transition-colors hover:text-hot"
         >
           JOB CENTRE<span className="text-union"> {section}</span>
         </Link>
@@ -51,7 +51,7 @@ export default function AppHeader({
       */}
       <div
         aria-hidden
-        className="h-px bg-[linear-gradient(90deg,transparent,rgba(77,127,255,0.5)_18%,rgba(234,240,255,0.55)_50%,rgba(255,45,79,0.5)_82%,transparent)]"
+        className="h-px bg-[linear-gradient(90deg,transparent,rgba(77,127,255,0.5)_18%,rgba(244,245,247,0.55)_50%,rgba(255,45,79,0.5)_82%,transparent)]"
       />
     </header>
   );

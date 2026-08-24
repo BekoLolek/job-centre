@@ -78,7 +78,7 @@ function Stage({
     <section className="space-y-6">
       <Panel padding="md">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
-          <h2 className="font-display text-2xl tracking-wide">
+          <h2 className="font-display text-2xl">
             {numbered ? `${numbered}. ` : ""}
             {stage.name}
           </h2>
@@ -107,7 +107,7 @@ function Stage({
                 {table.key ? `Group ${table.key.toUpperCase()} table` : "Standings"}
               </Eyebrow>
               {!tableStarted(table.standings) && (
-                <Eyebrow as="span" className="text-muted/70">
+                <Eyebrow as="span" className="text-dim">
                   Nothing played yet
                 </Eyebrow>
               )}

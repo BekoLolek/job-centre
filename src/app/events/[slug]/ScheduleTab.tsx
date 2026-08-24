@@ -94,7 +94,7 @@ export default function ScheduleTab({ matches, dayBySlot, days }: ScheduleTabPro
             <p className="mt-2 text-lg">
               {next.nameA} <span className="text-muted">vs</span> {next.nameB}
             </p>
-            <Eyebrow className="mt-1 text-muted/80">
+            <Eyebrow className="mt-1 text-dim">
               {next.displayLabel} · {seriesLabel(next.bestOf)}
             </Eyebrow>
           </div>
@@ -189,7 +189,7 @@ function MatchRow({ match, highlighted }: { match: ResolvedMatch; highlighted?: 
         <span className={match.teamBId ? undefined : "italic text-muted"}>{match.nameB}</span>
       </span>
 
-      <Eyebrow as="span" className="shrink-0 text-muted/80">
+      <Eyebrow as="span" className="shrink-0 text-dim">
         {match.displayLabel} · {seriesLabel(match.bestOf)}
       </Eyebrow>
 

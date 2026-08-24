@@ -247,7 +247,7 @@ function MemberRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-display text-lg leading-none tracking-wide">
+          <span className="truncate font-display text-lg leading-none">
             {member.displayName}
           </span>
           {member.isAdmin && <Badge tone="gold">Admin</Badge>}
@@ -267,7 +267,7 @@ function MemberRow({
               @{member.handle}
             </Link>
           ) : (
-            <span className="font-mono text-muted/60">no handle yet</span>
+            <span className="font-mono text-dim">no handle yet</span>
           )}
           <span>
             Joined <LocalTime at={member.createdAt.toISOString()} format="day" />
@@ -311,7 +311,7 @@ function MemberRow({
       </div>
 
       {member.isAdmin && refusal && (
-        <p className={cx("w-full text-xs leading-relaxed text-ember/80")}>{refusal}</p>
+        <p className={cx("w-full text-xs leading-relaxed text-ember")}>{refusal}</p>
       )}
       {member.isAdmin && !refusal && member.fromAllowlist && (
         <p className="w-full text-xs leading-relaxed text-muted">

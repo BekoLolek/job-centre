@@ -186,7 +186,7 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
         <EventStatusPill status={row.eventStatus} />
         <Badge>{eventTypeLabel(row.type)}</Badge>
 
-        <h2 className="font-display text-xl leading-none tracking-wide">
+        <h2 className="font-display text-xl leading-none">
           <Link href={`/events/${row.slug}`} className="hover:text-gold">
             {row.title}
           </Link>

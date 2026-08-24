@@ -217,16 +217,16 @@ export default function TeamsTab({
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
 
-      <Panel as="section" padding="none" className="space-y-5 border-t border-hair/70 pt-8 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Teams</Eyebrow>
           <Badge tone={teams.length > MAX_TEAMS ? "ember" : "default"}>
             {teams.length}/{MAX_TEAMS}
           </Badge>
           {perTeam ? (
-            <span className="eyebrow text-muted/70">Per-team balances</span>
+            <span className="eyebrow text-dim">Per-team balances</span>
           ) : (
-            <span className="eyebrow text-muted/70">
+            <span className="eyebrow text-dim">
               Uniform balances · everyone starts on{" "}
               <Money value={config.defaultBalance} size="sm" />
             </span>
@@ -459,7 +459,7 @@ export default function TeamsTab({
               {impact.removed.map((team) => (
                 <li key={team.id} className="rounded-xl border border-hair p-3">
                   <div className="mb-1 flex flex-wrap items-baseline gap-2">
-                    <span className="font-display text-base tracking-wide">{team.name}</span>
+                    <span className="font-display text-base">{team.name}</span>
                     {team.blocked && <Badge tone="ember">Refused</Badge>}
                     {team.spent > 0 && (
                       <span className="flex items-baseline gap-1 text-xs text-muted">

@@ -57,7 +57,7 @@ export default function TeamCard({
     >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate font-display text-lg leading-tight tracking-wide">
+          <h3 className="truncate font-display text-lg leading-tight">
             {team.name}
           </h3>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
