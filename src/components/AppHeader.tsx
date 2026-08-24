@@ -31,7 +31,7 @@ export default function AppHeader({
           href="/"
           className="wordmark shrink-0 text-chalk transition-colors hover:text-hot"
         >
-          JOB CENTRE<span className="text-union"> {section}</span>
+          JOB CENTRE <span className="wordmark-accent">{section}</span>
         </Link>
 
         <nav className="hidden items-center gap-7 md:flex" aria-label="Main">
@@ -46,13 +46,19 @@ export default function AppHeader({
       </div>
 
       {/*
-        The one place the flag is drawn. A hairline, fading out at both ends so
-        it reads as a seam of light rather than a stripe pinned across the page.
+        The one place the flag is drawn. A hairline that fades out at both ends
+        so it reads as a seam of light rather than a stripe pinned across the
+        page, with the colour drifting slowly along it and a highlight crossing
+        every nine seconds.
+
+        Two elements, not one: the blurred copy underneath is what makes the
+        line look lit instead of drawn, and it has to sit outside the 1px box
+        to spill below it. See `.seam` in `globals.css`.
       */}
-      <div
-        aria-hidden
-        className="h-px bg-[linear-gradient(90deg,transparent,rgba(77,127,255,0.5)_18%,rgba(244,245,247,0.55)_50%,rgba(255,45,79,0.5)_82%,transparent)]"
-      />
+      <div aria-hidden className="relative h-px">
+        <div className="seam-bloom" />
+        <div className="seam" />
+      </div>
     </header>
   );
 }

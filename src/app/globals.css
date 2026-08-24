@@ -328,6 +328,157 @@ h1 {
 }
 
 /* ------------------------------------------------------------------ */
+/* The seam                                                           */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The hairline under the top bar, and the accent word in the wordmark. Both
+ * are the same trick: a gradient drawn twice as wide as its box, drifting
+ * sideways forever.
+ *
+ * The loop is seamless because the gradient starts and ends on the same
+ * colour and the travel is exactly one tile. At `background-size: 200%` the
+ * image is twice the box, so a percentage position of 200% resolves to
+ * `2 x (box - image)` — two box widths, which is one whole image. Land on any
+ * other number and the seam visibly jumps once a cycle.
+ *
+ * The colour order never runs blue straight into red. Interpolating between
+ * them crosses purple, which on a 1px line reads as a smear; going through
+ * white keeps both ends of the flag clean and gives the drift somewhere
+ * bright to pass through.
+ */
+
+@keyframes seam-drift {
+  from {
+    background-position: 0% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+/*
+ * A highlight that crosses the bar and then waits. It travels in the first
+ * half of the cycle and sits offscreen for the rest, so the seam is mostly
+ * still and the sweep is an event rather than a loop you start watching.
+ */
+@keyframes seam-sweep {
+  0% {
+    transform: translateX(-160%);
+    opacity: 0;
+  }
+  6% {
+    opacity: 1;
+  }
+  44% {
+    opacity: 1;
+  }
+  52% {
+    transform: translateX(560%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(560%);
+    opacity: 0;
+  }
+}
+
+.seam,
+.seam-bloom {
+  background-image: linear-gradient(
+    90deg,
+    #1c4fdb 0%,
+    #4d7fff 12%,
+    #f4f5f7 25%,
+    #ff2d4f 38%,
+    #c2102f 50%,
+    #ff2d4f 62%,
+    #f4f5f7 75%,
+    #4d7fff 88%,
+    #1c4fdb 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: repeat-x;
+  animation: seam-drift 22s linear infinite;
+}
+
+.seam {
+  position: relative;
+  height: 1px;
+  opacity: 0.8;
+  /*
+   * The fade at both ends is a mask, not part of the gradient. Fading inside
+   * the gradient would send the transparent stops travelling along with
+   * everything else, so a gap would slide across the page once a cycle.
+   */
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+}
+
+.seam::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 18%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
+  animation: seam-sweep 9s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+}
+
+/*
+ * The glow. The same line again, blurred and dropped underneath at low
+ * opacity — which is what makes the bar read as lit rather than drawn. It
+ * carries its own copy of the animation at the same duration so the two stay
+ * in step; inheriting an animated background-position across elements is not
+ * something to rely on.
+ */
+.seam-bloom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 7px;
+  opacity: 0.3;
+  filter: blur(5px);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+}
+
+/*
+ * The section word in the wordmark — ADMIN, EVENTS, PROFILE. Same drift,
+ * poured into the letterforms instead of a line, and faster, because it is
+ * crossing five characters rather than the whole page.
+ *
+ * Every stop clears AA on the ground on its own: the darkest is union blue at
+ * 5.3:1. A gradient that dips below contrast somewhere in the middle is a
+ * word that becomes unreadable for two seconds a cycle.
+ */
+.wordmark-accent {
+  background-image: linear-gradient(
+    90deg,
+    #4d7fff 0%,
+    #a9c4ff 18%,
+    #f4f5f7 34%,
+    #ff6b80 52%,
+    #f4f5f7 70%,
+    #a9c4ff 86%,
+    #4d7fff 100%
+  );
+  background-size: 200% 100%;
+  background-repeat: repeat-x;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: seam-drift 11s linear infinite;
+}
+
+@supports not ((background-clip: text) or (-webkit-background-clip: text)) {
+  .wordmark-accent {
+    background-image: none;
+    color: var(--union-blue);
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Motion                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -384,8 +535,16 @@ h1 {
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .stamp,
-  .live-dot {
+  .live-dot,
+  .seam,
+  .seam-bloom,
+  .wordmark-accent {
     animation: none;
+  }
+
+  /* The sweep has nowhere to rest, so it is removed rather than frozen. */
+  .seam::after {
+    display: none;
   }
 }
 
