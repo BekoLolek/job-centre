@@ -32,6 +32,7 @@ import {
   boolean,
   check,
   customType,
+  date,
   foreignKey,
   index,
   integer,
@@ -110,6 +111,16 @@ export const users = pgTable(
      * two members called `beko` cannot both hold `/players/beko`.
      */
     handle: text("handle").unique(),
+    /**
+     * The IANA zone this member writes times in, captured from the browser
+     * when they save their availability.
+     *
+     * Only general availability needs it, and only because a weekly pattern
+     * has no instant to store: "Tuesdays after eight" is a wall-clock claim
+     * that has to be resolved against a real date before it means a moment.
+     * Null until they have said anything, and read as the reader's own zone.
+     */
+    timezone: text("timezone"),
     createdAt: instant("created_at").notNull().defaultNow(),
     lastSeenAt: instant("last_seen_at"),
   },
@@ -683,6 +694,104 @@ export const availability = pgTable(
     unique("availability_application_day_uniq").on(table.applicationId, table.eventDayId),
     index("availability_application_id_idx").on(table.applicationId),
     index("availability_event_day_id_idx").on(table.eventDayId),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
+/* General availability                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * When somebody is generally free, independent of any event.
+ *
+ * The per-event `availability` above answers "can you make these three dates".
+ * This answers the question that comes *before* it — "when could we run
+ * anything at all" — which is the one an organiser actually has to solve, and
+ * which nobody can answer from a Discord thread of forty messages.
+ *
+ * Two tables, because it is two different kinds of statement:
+ *
+ *  - **Rules** are the weekly pattern. "Tuesdays after eight." They repeat
+ *    forever and change rarely.
+ *  - **Exceptions** are a named date. "Not the 14th." "Free all day on the
+ *    Saturday of the 22nd." They are the odd ones out, and there are few.
+ *
+ * A date carrying any exception is described *entirely* by its exceptions —
+ * the weekly pattern does not apply to it at all. That is the only rule here
+ * that has to be learned, and it is worth the one sentence: it makes "I am
+ * out that day" expressible without a subtraction operator, and it means an
+ * exception can never combine with a rule into something nobody predicted.
+ *
+ * ## Minutes, and why not instants
+ *
+ * Everything else in this database is an absolute instant, because a match at
+ * 18:00 CEST has to read as 17:00 BST. A *weekly* pattern has no instant to
+ * store: "every Tuesday at eight" is a wall-clock claim, and pinning it to UTC
+ * would shift it by an hour twice a year.
+ *
+ * So the wall clock is stored — minutes from midnight — together with the zone
+ * it was written in, on `users.timezone`. Resolving a rule against a real
+ * week converts it then, when there is a date to convert against and the
+ * daylight-saving question has an answer. See `src/lib/zoned-time.ts`.
+ *
+ * `endMinute` may run past 1440. A Friday night that ends at 2am is
+ * 1200 to 1560, and belongs to Friday, because that is how everybody talks
+ * about it and because the alternative is two rows for one evening.
+ */
+export const availabilityRules = pgTable(
+  "availability_rules",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** 0 = Monday. The week starts where the calendar above it starts. */
+    weekday: integer("weekday").notNull(),
+    startMinute: integer("start_minute").notNull(),
+    endMinute: integer("end_minute").notNull(),
+    /** `no` is meaningless in a weekly pattern: absence already says it. */
+    state: availabilityState("state").notNull().default("yes"),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("availability_rules_user_id_idx").on(table.userId),
+    check("availability_rules_weekday", sql`${table.weekday} between 0 and 6`),
+    check(
+      "availability_rules_window",
+      sql`${table.startMinute} >= 0 and ${table.endMinute} > ${table.startMinute} and ${table.endMinute} <= 1740`
+    ),
+    check("availability_rules_state", sql`${table.state} <> 'no'`),
+  ]
+);
+
+/** One named date, and what it says instead of the weekly pattern. */
+export const availabilityExceptions = pgTable(
+  "availability_exceptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * A calendar date, not an instant — "the 14th" means the 14th wherever the
+     * person writing it is, and turning it into midnight-somewhere would make
+     * it the 13th for half the readers.
+     */
+    onDate: date("on_date").notNull(),
+    startMinute: integer("start_minute").notNull(),
+    endMinute: integer("end_minute").notNull(),
+    /** Here `no` is the point: an explicit "not this day", not silence. */
+    state: availabilityState("state").notNull(),
+    note: text("note"),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("availability_exceptions_user_id_idx").on(table.userId),
+    index("availability_exceptions_date_idx").on(table.onDate),
+    check(
+      "availability_exceptions_window",
+      sql`${table.startMinute} >= 0 and ${table.endMinute} > ${table.startMinute} and ${table.endMinute} <= 1740`
+    ),
   ]
 );
 
@@ -1584,6 +1693,8 @@ export type NewEventQuestion = typeof eventQuestions.$inferInsert;
 export type Application = typeof applications.$inferSelect;
 export type NewApplication = typeof applications.$inferInsert;
 export type AvailabilityRow = typeof availability.$inferSelect;
+export type AvailabilityRuleRow = typeof availabilityRules.$inferSelect;
+export type AvailabilityExceptionRow = typeof availabilityExceptions.$inferSelect;
 export type Confirmation = typeof confirmations.$inferSelect;
 export type Team = typeof teams.$inferSelect;
 export type NewTeam = typeof teams.$inferInsert;

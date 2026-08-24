@@ -25,6 +25,8 @@ describe("migrations", () => {
       "applications",
       "audit_log",
       "availability",
+      "availability_exceptions",
+      "availability_rules",
       "confirmations",
       "draft_bids",
       "draft_configs",
@@ -91,7 +93,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(26);
+    expect(await tableNames(ctx.client)).toHaveLength(28);
   });
 
   it("mints uuid primary keys database-side", async () => {

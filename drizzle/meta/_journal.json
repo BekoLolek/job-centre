@@ -50,6 +50,13 @@
       "when": 1787069190314,
       "tag": "0006_puzzling_shockwave",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787590568512,
+      "tag": "0007_last_johnny_storm",
+      "breakpoints": true
     }
   ]
 }

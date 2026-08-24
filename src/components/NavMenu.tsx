@@ -37,6 +37,7 @@ const MEMBER: Item[] = [
 const ADMIN: Item[] = [
   { href: "/admin", label: "Tonight", hint: "What needs attention" },
   { href: "/admin/events", label: "Events" },
+  { href: "/admin/availability", label: "Availability", hint: "When everyone is free" },
   { href: "/admin/templates", label: "Templates" },
   { href: "/admin/games", label: "Games and questions" },
   { href: "/admin/users", label: "Members" },

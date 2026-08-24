@@ -22,8 +22,10 @@
  */
 
 import AppHeader from "@/components/AppHeader";
+import AvailabilityPanel from "@/components/profile/AvailabilityPanel";
 import ProfileSection from "@/components/profile/ProfileSection";
 import { Alert, Avatar, Badge, Eyebrow, Panel, Section, StatTile } from "@/components/ui";
+import { getAvailability } from "@/lib/availability";
 import { loadProfile } from "@/lib/profile";
 import { requireUser } from "@/lib/session-guards";
 
@@ -36,6 +38,7 @@ export const metadata = {
 export default async function ProfilePage() {
   const user = await requireUser();
   const profile = await loadProfile(user.id);
+  const availability = await getAvailability(user.id);
 
   const name = user.displayName ?? user.name ?? "Member";
   const memberSince = user.createdAt.toLocaleDateString("en-GB", {
@@ -108,6 +111,15 @@ export default async function ProfilePage() {
             to type your rank into a Google Form again.
           </p>
         </Panel>
+
+        {/* --- When you are free ------------------------------------ */}
+        <Section
+          icon="clock"
+          title="When are you generally free?"
+          description="Your usual week, so an admin can pick a date most people can make without asking in Discord first. It is a pattern, not a promise — you still answer per event."
+        >
+          <AvailabilityPanel initial={availability} />
+        </Section>
 
         {/* --- The questions ---------------------------------------- */}
         {profile.empty ? (
