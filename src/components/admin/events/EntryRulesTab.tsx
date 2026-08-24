@@ -73,7 +73,7 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
         <Eyebrow>Entry rules</Eyebrow>
         <Alert tone="gold">This event has no game, so there is no rank ladder to gate on.</Alert>
         <p className="text-sm leading-relaxed text-muted">
-          Pick a game on the Basics tab and its ladder appears here. An event without one —
+          Pick a game under Setup → Basics and its ladder appears here. An event without one —
           a movie night, a Jackbox evening — takes everybody, which is usually the point.
         </p>
       </Panel>

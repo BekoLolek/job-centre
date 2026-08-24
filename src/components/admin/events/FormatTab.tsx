@@ -6,6 +6,7 @@ import {
   Alert,
   Badge,
   Button,
+  cx,
   Disclosure,
   DisclosureGroup,
   ChoiceChip,
@@ -491,7 +492,7 @@ export default function FormatTab({
       <Panel
         as="section"
         padding="none"
-        className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair pt-12 first:border-t-0 first:pt-0"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2"
       >
         <Eyebrow>Teams</Eyebrow>
         <Badge tone={usingPlaceholders ? "ember" : "gold"}>
@@ -530,7 +531,7 @@ export default function FormatTab({
       </Panel>
 
       {stages.length === 0 ? (
-        <Panel as="section" padding="none" className="space-y-4 border-t border-hair pt-12 first:border-t-0 first:pt-0">
+        <Panel as="section" padding="none" className="space-y-4">
           <Eyebrow>Stages</Eyebrow>
           <EmptyState>
             No stages yet. One is the usual answer — a round robin, or a bracket. Two makes
@@ -540,7 +541,7 @@ export default function FormatTab({
           <AddStageRow disabled={stages.length >= maxStages} onAdd={add} />
         </Panel>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-3">
           {stages.map((stage, index) => (
             <StagePanel
               key={stage.key}
@@ -566,7 +567,7 @@ export default function FormatTab({
             />
           ))}
 
-          <Panel as="section" padding="none" className="border-t border-hair pt-12 first:border-t-0 first:pt-0">
+          <Panel as="section" padding="none">
             <AddStageRow disabled={stages.length >= maxStages} onAdd={add} />
           </Panel>
         </div>
@@ -584,7 +585,7 @@ export default function FormatTab({
         </Alert>
       )}
 
-      <Panel as="section" padding="none" className="border-t border-hair pt-12 first:border-t-0 first:pt-0">
+      <Panel as="section" padding="none">
         <SaveRow
           state={state}
           note={note}
@@ -754,6 +755,8 @@ function StagePanel({
   // Shut by default. The settings are the part you set once and then stop
   // looking at, and eight open settings blocks is what made this screen long.
   const [open, setOpen] = useState(false);
+  /** The whole stage folded away, for comparing one against another. */
+  const [shut, setShut] = useState(false);
 
   // The whole point of the tab: the generator itself, called on what is typed.
   const spec = useMemo(
@@ -779,11 +782,58 @@ function StagePanel({
   const dirtyShape = live ? live.kind !== stage.kind : false;
 
   return (
-    <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
+    /*
+     * A stage is a box on a lifted ground, not a band between two rules.
+     *
+     * Six stacked hairlines is what this screen had, and a hairline is a weak
+     * separator: it says "something changed here" without saying what belongs
+     * to which side. A filled box says both at once — everything inside this
+     * shade is one stage — and it costs no more ink, because the fill is two
+     * percent of white rather than a drawn edge.
+     */
+    <Panel
+      as="section"
+      padding="none"
+      className="overflow-hidden rounded-xl bg-panel px-5 py-4"
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          onClick={() => setShut((was) => !was)}
+          aria-expanded={!shut}
+          className="group -ml-1 flex shrink-0 items-center gap-2 rounded py-1 pl-1 pr-2 text-left transition-colors hover:bg-white/[0.04]"
+        >
+          <svg
+            viewBox="0 0 10 10"
+            aria-hidden
+            className={cx(
+              "h-2.5 w-2.5 shrink-0 text-dim transition-transform duration-150",
+              shut ? "rotate-0" : "rotate-90"
+            )}
+          >
+            <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          </svg>
+          <span className="num text-xs text-muted">Stage {index + 1}</span>
+        </button>
+
+        {/*
+          Shut, the header still has to say what the stage *is* — a row reading
+          only "Stage 2" is one you have to open to learn anything from.
+        */}
+        {shut && (
+          <>
+            <span className="min-w-0 truncate text-[14px] font-medium text-chalk">
+              {stage.name.trim() || "Untitled stage"}
+            </span>
+            <span className="min-w-0 truncate text-[12.5px] text-dim">
+              {formatSentence(spec).join(" · ")}
+            </span>
+          </>
+        )}
+      </div>
+
+      <div className={cx("space-y-5", shut ? "hidden" : "mt-4")}>
       <div className="flex flex-wrap items-end gap-3">
-        <span className="num w-12 shrink-0 self-center text-xs text-muted">
-          Stage {index + 1}
-        </span>
 
         <Field
           label="Name"
@@ -852,7 +902,7 @@ function StagePanel({
         auto-generate effect. The only button here is for the one case the
         automation deliberately will not touch: a stage carrying results.
       */}
-      <div className="flex flex-wrap items-center gap-3 border-t border-hair pt-4">
+      <div className="flex flex-wrap items-center gap-3 pt-2">
         <MatchesState
           saved={Boolean(stage.id)}
           rows={generated}
@@ -930,6 +980,7 @@ function StagePanel({
           <BracketCanvas matches={preview} featuredSlot={spec.championSlot} compact />
         </Disclosure>
       </DisclosureGroup>
+      </div>
     </Panel>
   );
 }

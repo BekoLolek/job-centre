@@ -39,7 +39,7 @@ export default function StandingsTable({
   }
 
   return (
-    <Panel padding="none" className={cx("overflow-x-auto", className)}>
+    <Panel padding="none" className={cx("overflow-x-auto overflow-y-hidden", className)}>
       <Table className="min-w-[520px]">
         <TableHead>
           <TableHeadCell />

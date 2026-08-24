@@ -90,7 +90,7 @@ export default async function EventsPage({
           which slice of that set — and putting them on one edge says so
           without a word of explanation or a box around either.
         */}
-        <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2 border-b border-hair">
+        <div className="flex flex-wrap items-stretch justify-between gap-x-8 gap-y-2 shadow-rail">
           <TabLinks
             aria-label="When"
             rule={false}

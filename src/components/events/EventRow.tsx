@@ -18,6 +18,10 @@ import { eventTypeLabel } from "./labels";
  * rows is larger than the gaps *inside* one, so the grouping reads without a
  * line being drawn at all. The hairline is there for scanning long lists, at
  * an opacity where it registers as rhythm rather than as an edge.
+ *
+ * Hovering shades the whole row rather than lighting the title, and the shade
+ * bleeds into the page margin — a highlight that stops at the text looks like
+ * a mistake, where one that runs the full measure looks like a row.
  */
 
 export type EventRowProps = {
@@ -36,7 +40,11 @@ export default function EventRow({ event, href, meta, trailing, className }: Eve
   return (
     <div
       className={cx(
-        "group flex flex-wrap items-baseline gap-x-6 gap-y-2 py-6 sm:flex-nowrap",
+        // The whole row lights up, not just the title. A list where only the
+        // words react tells you the words are the target; a row that shades
+        // tells you the row is, which is true — the title link covers it.
+        "group flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-lg px-4 py-6",
+        "-mx-4 transition-colors hover:bg-white/[0.055] sm:flex-nowrap",
         className
       )}
     >

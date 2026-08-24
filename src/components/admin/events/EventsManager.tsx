@@ -19,6 +19,7 @@ import { EventRow, EventRows } from "@/components/events";
 import type { ApplicationStatus, EventStatus } from "@/db/schema";
 import type { EventSummary } from "@/lib/events";
 import { createEventAction } from "@/app/admin/events/actions";
+import EventStatusControls from "./EventStatusControls";
 
 /**
  * `/admin/events`, client side.
@@ -193,6 +194,9 @@ export default function EventsManager({
               event={row.event}
               href={`/admin/events/${row.event.id}`}
               meta={<ApplicationTotals counts={row.applications} />}
+              trailing={
+                <EventStatusControls eventId={row.event.id} status={row.event.status} />
+              }
             />
           ))}
         </EventRows>

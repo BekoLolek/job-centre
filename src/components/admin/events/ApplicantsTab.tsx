@@ -236,7 +236,7 @@ export default function ApplicantsTab({
           }))}
           value={filter}
           onChange={setFilter}
-          className="overflow-x-auto"
+          className="overflow-x-auto overflow-y-hidden"
         />
         <Eyebrow as="span" className="text-dim">
           Accepted first, then the queue in order
@@ -249,11 +249,11 @@ export default function ApplicantsTab({
             Nobody has applied yet.{" "}
             {event.status === "draft"
               ? "This event is still a draft, so nobody can."
-              : "Applications follow the signup window on the Basics tab."}
+              : "Applications follow the signup window, set under Setup → Basics."}
           </EmptyState>
         </Panel>
       ) : (
-        <Panel padding="none" className="overflow-x-auto">
+        <Panel padding="none" className="overflow-x-auto overflow-y-hidden">
           <Table className="min-w-[820px]">
             <TableHead>
               <TableHeadCell>Member</TableHeadCell>

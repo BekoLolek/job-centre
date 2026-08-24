@@ -45,8 +45,9 @@ import type { DraftTabData, FormatTabData, GameOption, LinkableField } from "./t
  * Twelve tabs in one row asked the admin to hold the whole event in their head
  * and pick. It is really a short sequence — set up, draft, format, schedule,
  * results, publish — with three reference screens that you open again and again
- * throughout and that belong to no step at all. The rail says that: numbered
- * steps on the left, people on the right, a hairline between them.
+ * throughout and that belong to no step at all. The rail says that: the steps
+ * on the left, with the underline filling in as far as you have got, and the
+ * people screens on the right past a divider, where nothing fills in.
  *
  * ## Leaving
  *
@@ -172,15 +173,16 @@ function EditorBody({
       </Panel>
 
       {/* --- The rail ----------------------------------------------- */}
-      <div className="flex flex-wrap items-end gap-x-8 gap-y-1 border-b border-hair">
+      <div className="flex flex-wrap items-stretch gap-x-8 gap-y-1 overflow-x-auto overflow-y-hidden shadow-rail">
         <StepRail current={tab} onGo={go} />
 
         {/*
-          The people screens. Same rail, same underline, but past a divider and
-          without numbers, because they are not a step you complete — they are
-          three lists you keep coming back to while you work through the steps.
+          The people screens. Same rail, same underline, but past a divider —
+          they are not steps you complete, they are three lists you keep coming
+          back to while you work through the steps, so nothing about them fills
+          in as you go.
         */}
-        <div className="flex items-end gap-6 sm:border-l sm:border-hair sm:pl-8">
+        <div className="flex items-stretch gap-6 sm:border-l sm:border-hair sm:pl-8">
           <RailLink
             label="Applicants"
             count={applicants.length}
@@ -267,7 +269,19 @@ function EditorBody({
     </div>
   );
 
-  /** The numbered sequence, in the order an event actually happens. */
+  /**
+   * The sequence, in the order an event actually happens.
+   *
+   * The underline fills in rather than jumping: on Format, Setup and Draft are
+   * underlined too. That is the one thing a step rail can say that a tab row
+   * cannot — how far along you are — and it says it without a number beside
+   * every word. The steps sit flush against each other so the underlines meet
+   * and read as one bar growing to the right, which is the whole point; a gap
+   * between them would make it six marks instead of one measure.
+   *
+   * Reached-but-not-current is a dimmer blue, so "where am I" and "how far have
+   * I got" are two different readings of the same bar.
+   */
   function StepRail({ current, onGo }: { current: TabKey; onGo: (next: TabKey) => void }) {
     const steps: Array<{ key: TabKey; label: string; count?: number; dot?: boolean }> = [
       { key: "setup", label: "Setup" },
@@ -283,16 +297,21 @@ function EditorBody({
       { key: "publish", label: "Publish" },
     ];
 
+    // -1 when a people screen is showing, which leaves the bar empty — right,
+    // because Applicants is not a point along this sequence.
+    const here = steps.findIndex((step) => step.key === current);
+
     return (
-      <div className="flex items-end gap-6">
+      <div className="flex items-stretch">
         {steps.map((step, index) => (
           <RailLink
             key={step.key}
-            index={index + 1}
             label={step.label}
             count={step.count}
             dot={step.dot}
             current={current === step.key}
+            reached={here >= 0 && index < here}
+            joined
             onClick={() => onGo(step.key)}
           />
         ))}
@@ -310,19 +329,22 @@ function EditorBody({
  * button.
  */
 function RailLink({
-  index,
   label,
   count,
   dot,
   current,
+  reached = false,
+  joined = false,
   onClick,
 }: {
-  /** The step number, when this is a step. */
-  index?: number;
   label: string;
   count?: number;
   dot?: boolean;
   current: boolean;
+  /** A step before the current one — underlined, but not where you are. */
+  reached?: boolean;
+  /** Sits flush against its neighbours so the underlines meet. */
+  joined?: boolean;
   onClick: () => void;
 }) {
   return (
@@ -332,23 +354,18 @@ function RailLink({
       aria-selected={current}
       onClick={onClick}
       className={cx(
-        "relative -mb-px inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2",
-        "pb-3 pt-1 text-[13.5px] font-medium transition-colors",
+        // No negative margin: the rail's rule is an inset shadow, so an
+        // underline covers it from inside. See `TabNav.tsx`.
+        "relative inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2",
+        "pb-2.5 pt-1 text-[13.5px] font-medium transition-colors",
+        joined ? "px-3 first:pl-0" : "",
         current
           ? "border-union text-chalk"
-          : "border-transparent text-muted hover:border-hair hover:text-chalk"
+          : reached
+            ? "border-union/45 text-muted hover:text-chalk"
+            : "border-transparent text-muted hover:border-hair hover:text-chalk"
       )}
     >
-      {index !== undefined && (
-        <span
-          className={cx(
-            "num text-[11px] tabular-nums transition-colors",
-            current ? "text-union" : "text-dim"
-          )}
-        >
-          {index}
-        </span>
-      )}
       <span>{label}</span>
       {count !== undefined && (
         <span
@@ -387,9 +404,10 @@ function Setup({
 }) {
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <Icon name="clipboard" className="text-dim" />
+      <div className="flex min-w-0 items-center gap-3">
+        <Icon name="clipboard" className="shrink-0 text-dim" />
         <Tabs
+          className="min-w-0 flex-1"
           aria-label="Setup"
           size="sm"
           rule={false}

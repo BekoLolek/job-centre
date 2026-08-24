@@ -107,8 +107,13 @@ function Section({
       {/*
         The scroller. `overflow-x-auto` is on this element and not on the page,
         so a wide bracket never drags the rest of the layout sideways with it.
+
+        The explicit `overflow-y-hidden` is not redundant: CSS promotes the
+        other axis to `auto` whenever one is not `visible`, so a box that
+        scrolls sideways grows a vertical scrollbar for exactly the height of
+        its own horizontal one. The `pb-3` is what that clips.
       */}
-      <div className="-mx-1 flex flex-col gap-5 md:mx-0 md:flex-row md:items-stretch md:gap-0 md:overflow-x-auto md:pb-3">
+      <div className="-mx-1 flex flex-col gap-5 md:mx-0 md:flex-row md:items-stretch md:gap-0 md:overflow-x-auto md:overflow-y-hidden md:pb-3">
         {section.columns.map((column, index) => (
           <div
             key={column.key}

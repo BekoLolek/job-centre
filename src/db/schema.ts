@@ -1032,7 +1032,7 @@ export type DraftBidVisibility = (typeof draftBidVisibility.enumValues)[number];
  *
  *  1. **`updateEvent` merges `config` one level deep** (`{...current, ...patch}`).
  *     A nested `draft: {…}` object would be *replaced* by any partial patch, so
- *     an admin saving the Basics tab with a stale form would silently reset the
+ *     an admin saving the event's basics with a stale form would silently reset the
  *     roster size. Losing a bidding rule to a shallow merge is the kind of bug
  *     that is invisible until the money is wrong.
  *  2. **These values are read on the hot path.** `canPlaceBid` consults the

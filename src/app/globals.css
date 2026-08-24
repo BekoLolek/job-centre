@@ -407,6 +407,12 @@ h1 {
   height: 1px;
   opacity: 0.8;
   /*
+   * The sweep travels to `translateX(560%)`, which on an 18%-wide highlight is
+   * a whole page width past the right edge. Without this it widened the
+   * document and put a horizontal scrollbar on every page on the site.
+   */
+  overflow: hidden;
+  /*
    * The fade at both ends is a mask, not part of the gradient. Fading inside
    * the gradient would send the transparent stops travelling along with
    * everything else, so a gap would slide across the page once a cycle.

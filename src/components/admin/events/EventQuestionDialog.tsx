@@ -294,7 +294,7 @@ export default function EventQuestionDialog({
         {type === "rank" && rankLadder.length === 0 && (
           <p className="mt-1 text-xs text-ember">
             This event has no game with a rank ladder, so a rank question would have nothing
-            to offer. Pick a game on the Basics tab first.
+            to offer. Pick a game under Setup → Basics first.
           </p>
         )}
       </div>

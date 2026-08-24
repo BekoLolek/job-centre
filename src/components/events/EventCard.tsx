@@ -85,7 +85,17 @@ export default function EventCard({
   );
 
   return (
-    <Panel as="article" padding="none" className={cx("group", className)}>
+    <Panel
+      as="article"
+      padding="none"
+      className={cx(
+        // Same rule as `EventRow`: the whole box is the target, so the whole
+        // box reacts. Only lit when it goes somewhere.
+        "group rounded-lg transition-colors",
+        href && "-m-3 p-3 hover:bg-white/[0.055]",
+        className
+      )}
+    >
       {href ? (
         <Link href={href} className="block">
           {body}

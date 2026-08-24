@@ -135,7 +135,7 @@ export type BasicsFields = {
 };
 
 /**
- * Save the Basics tab.
+ * Save the Basics panel of the Setup step.
  *
  * Note what is *not* here: status and the two rank thresholds. Each tab saves
  * itself, so Basics must not carry — and therefore cannot silently revert — a

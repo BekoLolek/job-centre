@@ -12,6 +12,7 @@ import {
 } from "@/components/events";
 import type { ApplicantView, EventDetail } from "@/lib/events";
 import { publishEventAction } from "@/app/admin/events/actions";
+import EventStatusControls from "./EventStatusControls";
 import { blockers, gaps as gapsIn, readiness } from "./readiness";
 
 /**
@@ -171,11 +172,20 @@ export default function PublishTab({
           </Alert>
         )}
 
-        {event.status === "published" ? (
-          <p className="text-sm text-signal">
-            Already published. Take it back to draft on the Basics tab if you need to hide it
-            again — the applications stay.
-          </p>
+        {event.status === "published" || event.status === "complete" ? (
+          <div className="space-y-3">
+            <p className="text-sm text-signal">
+              {event.status === "published"
+                ? "Already published. Hide it again or mark it finished below — either way the applications stay."
+                : "Finished. Reopening puts it back on the hub with everything it recorded intact."}
+            </p>
+            {/*
+              The same two controls as the events list. Pointing at another
+              screen for "undo the thing you just did here" is the sort of
+              instruction nobody follows and everybody has to hunt for.
+            */}
+            <EventStatusControls eventId={event.id} status={event.status} />
+          </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3">
             <Button

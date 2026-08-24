@@ -389,7 +389,7 @@ export default function ResultsTab({
                 size="sm"
                 value={day === "all" ? "all" : String(day)}
                 onChange={(value) => setDay(value === "all" ? "all" : Number(value))}
-                className="overflow-x-auto"
+                className="overflow-x-auto overflow-y-hidden"
               />
             )}
 

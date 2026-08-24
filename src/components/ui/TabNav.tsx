@@ -70,15 +70,23 @@ function ItemBody({ label, count, dot, current, size }: ItemVisualProps) {
   );
 }
 
+/*
+ * No negative margin. The rail's rule is an inset shadow (see `boxShadow.rail`
+ * in the Tailwind config), which paints inside the box, so an item's own 2px
+ * underline covers it without being pulled down over a border.
+ *
+ * That is not a detail: `overflow-x: auto` promotes the other axis to `auto`
+ * as well, so the 1px of overhang a negative margin created was enough to put
+ * a vertical scrollbar on every menu on the site.
+ */
 const BASE =
-  "group relative -mb-px inline-flex shrink-0 items-center gap-2 whitespace-nowrap " +
+  "group relative inline-flex shrink-0 items-center gap-2 whitespace-nowrap " +
   "border-b-2 font-medium transition-colors focus-visible:outline-none " +
-  "focus-visible:ring-2 focus-visible:ring-union focus-visible:ring-offset-2 " +
-  "focus-visible:ring-offset-ink";
+  "focus-visible:ring-2 focus-visible:ring-union focus-visible:ring-inset";
 
 const SIZE = {
-  md: "pb-3 pt-1",
-  sm: "pb-2.5 pt-0.5",
+  md: "pb-2.5 pt-1",
+  sm: "pb-2 pt-0.5",
 } as const;
 
 const STATE = {
@@ -108,9 +116,11 @@ export function TabNav({
     <div
       role="tablist"
       className={cx(
-        "flex items-end overflow-x-auto",
+        // `overflow-y-hidden` is explicit rather than left to the promotion
+        // rule, so nothing here can ever grow a scrollbar it did not ask for.
+        "flex items-stretch overflow-x-auto overflow-y-hidden",
         size === "sm" ? "gap-5" : "gap-6",
-        rule && "border-b border-hair",
+        rule && "shadow-rail",
         className
       )}
       {...rest}

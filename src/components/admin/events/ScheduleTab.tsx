@@ -57,7 +57,7 @@ import SaveRow, { type SaveState } from "./SaveRow";
  * ## Day starts are not stored twice
  *
  * There is already a home for "when does day 2 begin": `event_days.starts_at`,
- * owned by the Days tab. So this prefills from there, and where a day has no
+ * owned by Setup → Days. So this prefills from there, and where a day has no
  * row it falls back to the earliest start already on that day's board — which
  * is derived from what was actually scheduled rather than a second copy of it.
  * Filling the times writes `matches.scheduled_at`, and that is the only record

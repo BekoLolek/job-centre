@@ -68,6 +68,17 @@ const config: Config = {
       },
       boxShadow: {
         lift: "0 16px 40px -24px rgba(0, 0, 0, 0.9)",
+        /*
+         * The rule under a menu, drawn as an inset shadow rather than a border.
+         *
+         * A border sits outside the padding box, so an underlined tab has to be
+         * pulled 1px down with a negative margin to cover it — and a negative
+         * margin inside a horizontally scrollable box makes the browser add a
+         * *vertical* scrollbar, because `overflow-x: auto` promotes the other
+         * axis to `auto` too. An inset shadow paints inside the box, so the
+         * tab's own underline covers it with no negative margin anywhere.
+         */
+        rail: "inset 0 -1px 0 #23252b",
       },
     },
   },

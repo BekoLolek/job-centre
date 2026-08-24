@@ -135,14 +135,14 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
       key: "window",
       label: "Signups close before they open",
       level: "stop",
-      detail: "Nobody could ever apply. Fix it on the Basics tab.",
+      detail: "Nobody could ever apply. Fix it under Setup → Basics.",
     });
   } else if (opens && starts && starts.getTime() < opens.getTime()) {
     checks.push({
       key: "window",
       label: "Signups open after the event starts",
       level: "stop",
-      detail: "Nobody could ever apply. Fix it on the Basics tab.",
+      detail: "Nobody could ever apply. Fix it under Setup → Basics.",
     });
   } else if (!starts) {
     checks.push({
@@ -179,7 +179,7 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
       label: "Rank requirements with no ladder to read them against",
       level: "warn",
       detail:
-        "They will not be enforced. Pick a game with a rank ladder, or clear them on the Entry rules tab.",
+        "They will not be enforced. Pick a game with a rank ladder, or clear them under Setup → Entry rules.",
     });
   } else {
     const stale = thresholds.filter(
@@ -202,7 +202,7 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
             key: "rules",
             label: "A rank requirement is not in the ladder any more",
             level: "warn",
-            detail: `${stale.join(", ")} — not enforced, so everybody clears it. Pick a current rank on the Entry rules tab.`,
+            detail: `${stale.join(", ")} — not enforced, so everybody clears it. Pick a current rank under Setup → Entry rules.`,
           }
     );
   }
