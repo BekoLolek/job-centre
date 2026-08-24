@@ -163,9 +163,13 @@ export default function EventsManager({
         aside={
           <div className="flex flex-wrap items-center gap-3">
         <Tabs
+          aria-label="Status"
+          rule={false}
+          size="sm"
           items={FILTERS.map((entry) => ({
             value: entry.value,
-            label: `${entry.label} (${counts.get(entry.value) ?? 0})`,
+            label: entry.label,
+            count: counts.get(entry.value) ?? 0,
           }))}
           value={filter}
           onChange={setFilter}

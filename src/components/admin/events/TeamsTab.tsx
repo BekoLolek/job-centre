@@ -130,7 +130,13 @@ export default function TeamsTab({
       ...current,
       {
         key: nextKey(),
-        name: "",
+        /*
+         * A placeholder, not a blank. `setTeams` refuses an unnamed team, and
+         * this is the name the captain replaces: assign somebody to lead this
+         * team and "Team 3" becomes "Team Bob", because that is what everyone
+         * in the Discord will call them anyway. Type over it and it stays.
+         */
+        name: `Team ${current.length + 1}`,
         seed: current.length + 1,
         balanceStart: config.defaultBalance,
       },

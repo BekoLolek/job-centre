@@ -361,6 +361,9 @@ export default function ResultsTab({
           </Badge>
           <span className="ml-auto flex flex-wrap items-center gap-2">
             <Tabs
+              aria-label="Grouping"
+              rule={false}
+              size="sm"
               items={[
                 { value: "day", label: "By day" },
                 { value: "bracket", label: "By bracket" },
@@ -382,6 +385,8 @@ export default function ResultsTab({
                     label: `Day ${entry}`,
                   })),
                 ]}
+                aria-label="Day"
+                size="sm"
                 value={day === "all" ? "all" : String(day)}
                 onChange={(value) => setDay(value === "all" ? "all" : Number(value))}
                 className="overflow-x-auto"

@@ -19,6 +19,9 @@ export type { ButtonSize, ButtonVariant } from "./Button";
 export { default as ChoiceChip, ChoiceRow } from "./ChoiceChip";
 export type { ChoiceChipProps } from "./ChoiceChip";
 
+export { default as Disclosure, DisclosureGroup } from "./Disclosure";
+export type { DisclosureProps } from "./Disclosure";
+
 export { default as EmptyState } from "./EmptyState";
 export type { EmptyStateProps } from "./EmptyState";
 
@@ -56,8 +59,8 @@ export {
 } from "./Table";
 export type { TableAlign, TableCellProps, TableHeadCellProps } from "./Table";
 
-export { default as Tabs } from "./Tabs";
-export type { TabItem, TabsProps } from "./Tabs";
+export { default as Tabs, TabNav, TabLinks } from "./TabNav";
+export type { TabItem, TabsProps, TabLinkItem, TabNavProps } from "./TabNav";
 
 export { default as Textarea } from "./Textarea";
 export type { TextareaProps } from "./Textarea";

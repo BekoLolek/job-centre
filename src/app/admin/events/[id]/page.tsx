@@ -18,7 +18,7 @@ import { notFound } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import EventEditor from "@/components/admin/events/EventEditor";
-import { tabFrom } from "@/components/admin/events/tabs";
+import { setupFrom, tabFrom } from "@/components/admin/events/tabs";
 import type { DraftTabData, FormatTabData } from "@/components/admin/events/types";
 import { loadAdminGames } from "@/lib/admin-games";
 import {
@@ -182,6 +182,7 @@ export default async function AdminEventPage({
         <EventEditor
           event={event}
           initialTab={tabFrom(tab)}
+          initialSetup={setupFrom(tab)}
           applicants={applicants}
           games={adminGames.games.map((game) => ({
             id: game.id,

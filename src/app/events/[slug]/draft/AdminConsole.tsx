@@ -73,8 +73,8 @@ export default function AdminConsole({
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <Tabs
           items={[
-            { value: "main", label: `Main ${view.mainPoolCount}` },
-            { value: "reserve", label: `Reserve ${view.reservePoolCount}` },
+            { value: "main", label: "Main", count: view.mainPoolCount },
+            { value: "reserve", label: "Reserve", count: view.reservePoolCount },
           ]}
           value={kind}
           onChange={onWheelKind}

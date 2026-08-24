@@ -1,11 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Badge,
   Button,
+  Disclosure,
+  DisclosureGroup,
   ChoiceChip,
   ChoiceRow,
   EmptyState,
@@ -127,7 +129,36 @@ export default function FormatTab({
   maxStages: number;
 }) {
   const router = useRouter();
-  const teams = format.teams;
+  const realTeams = format.teams;
+  const realCount = realTeams.length;
+
+  /*
+   * Placeholder teams.
+   *
+   * The format is the decision an admin wants to make *first* — before the
+   * applications close, before the draft, certainly before anybody knows who
+   * is captaining what. Requiring real teams to see a bracket meant the shape
+   * could not be chosen until the last thing that depends on it was already
+   * settled, which is backwards.
+   *
+   * So until there are enough real teams, the whole screen runs on stand-ins:
+   * Team 1 to Team N, seeded in order. Everything works — the shapes, the
+   * previews, the match counts, the schedule length. They are replaced the
+   * moment real teams exist, and nothing about them is ever written down.
+   */
+  const [previewSize, setPreviewSize] = useState(() => Math.max(realCount, 8));
+  const usingPlaceholders = realCount < MIN_TEAMS;
+  const teams = useMemo(
+    () =>
+      usingPlaceholders
+        ? Array.from({ length: previewSize }, (_unused, index) => ({
+            id: `placeholder-${index + 1}`,
+            name: `Team ${index + 1}`,
+            seed: index + 1,
+          }))
+        : realTeams,
+    [usingPlaceholders, previewSize, realTeams]
+  );
   const teamCount = teams.length;
 
   const [stages, setStages] = useState<DraftStage[]>(() =>
@@ -332,23 +363,170 @@ export default function FormatTab({
     }
   };
 
-  const tooFew = teamCount < MIN_TEAMS;
+  /*
+   * Generating is not a button any more.
+   *
+   * It never should have been. "Generate matches" asked the admin to know that
+   * a stage's shape and the rows in the database are two different things, and
+   * to remember to reconcile them by hand after every change — including after
+   * changing the teams, which is on another screen entirely. Forget once and
+   * the schedule and the results screens are quietly built on a bracket that no
+   * longer matches the format.
+   *
+   * So it happens on its own: a saved stage whose rows do not match the shape
+   * it should have, for the number of teams there are now, is rebuilt. The
+   * count comes from the same pure `generateStage` the preview draws with, so
+   * "what the rows should be" and "what you are looking at" cannot disagree.
+   *
+   * **It never runs over a result.** The preview call is what makes that safe —
+   * anything with a played game, a decided series, an override or even a typed
+   * but unticked score is left exactly as it is, and says so. Automation that
+   * can destroy work is worse than the button was.
+   */
+  const rowsFor = useCallback(
+    (stage: FormatView["stages"][number]) =>
+      stage.matches.filter((match) => matchIds[match.slot]).length,
+    [matchIds]
+  );
+
+  const wantedFor = useCallback(
+    (stage: FormatView["stages"][number]) =>
+      generateStage(stage.kind, teamCount, normaliseStageConfig(stage.kind, stage.config))
+        .matches.length,
+    [teamCount]
+  );
+
+  /** Stages already tried this mount, so a refusal cannot become a loop. */
+  const attempted = useRef(new Set<string>());
+  const [autoNote, setAutoNote] = useState<string | null>(null);
+  /** True only while the rebuild is actually in flight, so the line can say so. */
+  const [rebuilding, setRebuilding] = useState(false);
+  const [held, setHeld] = useState<readonly string[]>([]);
+
+  const heldNames = useMemo(() => new Set(held), [held]);
+
+  useEffect(() => {
+    // Never while the admin is mid-edit: the shapes on screen are not the
+    // shapes in the database yet, and rebuilding to the stored ones would
+    // silently contradict what they are looking at.
+    if (state === "dirty" || state === "saving" || busy || pending) return;
+    if (usingPlaceholders) return;
+
+    const stale = format.stages.filter((stage) => {
+      const want = wantedFor(stage);
+      if (want === 0) return false;
+      if (rowsFor(stage) === want) return false;
+      return !attempted.current.has(`${stage.id}:${teamCount}:${want}`);
+    });
+    if (stale.length === 0) return;
+
+    let cancelled = false;
+    setRebuilding(true);
+    void (async () => {
+      try {
+        const preview = await previewStagesAction(eventId);
+        if (cancelled) return;
+        setImpacts(preview);
+
+        const blocked: string[] = [];
+        let built = 0;
+
+        for (const stage of stale) {
+          attempted.current.add(`${stage.id}:${teamCount}:${wantedFor(stage)}`);
+          const impact = preview.find((row) => row.stageId === stage.id);
+          const carrying =
+            impact !== undefined &&
+            (impact.blocked ||
+              impact.decided > 0 ||
+              impact.playedGames > 0 ||
+              impact.overrides > 0 ||
+              impact.finished > 0 ||
+              impact.draftedScores > 0);
+          if (carrying) {
+            blocked.push(stage.name);
+            continue;
+          }
+          const result = await generateStageAction(eventId, stage.id);
+          if (cancelled) return;
+          if (result.ok) built += result.data.created;
+          else blocked.push(stage.name);
+        }
+
+        if (cancelled) return;
+        setHeld(blocked);
+        if (built > 0) {
+          setAutoNote(`${plural(built, "match", "matches")} built`);
+          router.refresh();
+        }
+      } catch {
+        // Offline, or the action threw. Leave the rows alone and say nothing —
+        // the stage still shows its row count, which is the honest picture.
+      } finally {
+        if (!cancelled) setRebuilding(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      setRebuilding(false);
+    };
+  }, [
+    eventId,
+    format.stages,
+    state,
+    busy,
+    pending,
+    usingPlaceholders,
+    teamCount,
+    rowsFor,
+    wantedFor,
+    router,
+  ]);
 
   return (
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
 
       {/* --- Where the team count comes from ------------------------ */}
-      <Panel as="section" padding="none" className="flex flex-wrap items-baseline gap-x-4 gap-y-2 border-t border-hair pt-12 first:border-t-0 first:pt-0">
+      <Panel
+        as="section"
+        padding="none"
+        className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-hair pt-12 first:border-t-0 first:pt-0"
+      >
         <Eyebrow>Teams</Eyebrow>
-        <Badge tone={tooFew ? "ember" : "gold"}>
+        <Badge tone={usingPlaceholders ? "ember" : "gold"}>
           {teamCount}/{MAX_TEAMS}
         </Badge>
-        <span className="text-xs text-muted">
-          {tooFew
-            ? `A bracket needs at least ${MIN_TEAMS} teams. Add them on the Teams tab — every shape below is built from that number.`
-            : "From the Teams tab. Every bracket below is built for exactly that many, byes included."}
-        </span>
+
+        {usingPlaceholders ? (
+          <>
+            <span className="text-xs text-muted">
+              Placeholders. Build the shape now with{" "}
+              <label className="inline-flex items-center gap-1.5">
+                <select
+                  className="field w-auto py-1 text-xs"
+                  value={previewSize}
+                  onChange={(input) => setPreviewSize(Number(input.target.value))}
+                >
+                  {Array.from({ length: MAX_TEAMS - MIN_TEAMS + 1 }, (_u, i) => MIN_TEAMS + i).map(
+                    (n) => (
+                      <option key={n} value={n}>
+                        {n} teams
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>{" "}
+              and the real ones take their places as they are formed. Nothing here is written
+              down until the teams exist.
+            </span>
+          </>
+        ) : (
+          <span className="text-xs text-muted">
+            From the Teams tab. Every bracket below is built for exactly that many, byes
+            included.
+          </span>
+        )}
       </Panel>
 
       {stages.length === 0 ? (
@@ -382,6 +560,9 @@ export default function FormatTab({
               onMove={(direction) => move(index, direction)}
               onRemove={() => remove(stage.key)}
               onGenerate={() => void attemptGenerate(stage)}
+              held={stage.name.trim().length > 0 && heldNames.has(stage.name.trim())}
+              placeholders={usingPlaceholders}
+              working={rebuilding}
             />
           ))}
 
@@ -411,8 +592,9 @@ export default function FormatTab({
           label="Save format"
         >
           <span className="text-xs text-muted">
-            {stages.length}/{maxStages} stages · saving the format never touches a result.
-            Generating the matches is the separate, destructive step.
+            {stages.length}/{maxStages} stages · the matches are rebuilt to match whenever
+            you save or the teams change, and never over a recorded result.
+            {autoNote && <span className="ml-1 text-signal">{autoNote}</span>}
           </span>
         </SaveRow>
       </Panel>
@@ -543,6 +725,9 @@ function StagePanel({
   onMove,
   onRemove,
   onGenerate,
+  held,
+  placeholders,
+  working,
 }: {
   stage: DraftStage;
   index: number;
@@ -559,8 +744,16 @@ function StagePanel({
   onMove: (direction: "up" | "down") => void;
   onRemove: () => void;
   onGenerate: () => void;
+  /** The automation found results here and left the rows alone. */
+  held: boolean;
+  /** The team list is stand-ins, so nothing is written for this stage yet. */
+  placeholders: boolean;
+  /** A rebuild is in flight right now. */
+  working: boolean;
 }) {
-  const [open, setOpen] = useState(true);
+  // Shut by default. The settings are the part you set once and then stop
+  // looking at, and eight open settings blocks is what made this screen long.
+  const [open, setOpen] = useState(false);
 
   // The whole point of the tab: the generator itself, called on what is typed.
   const spec = useMemo(
@@ -654,73 +847,185 @@ function StagePanel({
         )}
       </p>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-hair pt-4">
-        <Button size="sm" onClick={() => setOpen((value) => !value)}>
-          {open ? "Hide settings" : "Settings"}
-        </Button>
-        <Button
-          size="sm"
-          variant="gold"
-          disabled={busy || !stage.id || teams.length < MIN_TEAMS}
-          onClick={onGenerate}
-        >
-          {generated > 0 ? "Regenerate matches" : "Generate matches"}
-        </Button>
-        <span className="text-xs text-muted">
-          {!stage.id
-            ? "Save the format first — a stage has to exist before its matches can."
-            : generated > 0
-              ? `${plural(generated, "match", "matches")} in the database.` +
-                (impact?.blocked ? " Results recorded — rebuilding is refused." : "")
-              : `${plural(spec.matches.length, "match", "matches")} would be created.`}
-        </span>
+      {/*
+        The matches line. It reports rather than asks — see the note on the
+        auto-generate effect. The only button here is for the one case the
+        automation deliberately will not touch: a stage carrying results.
+      */}
+      <div className="flex flex-wrap items-center gap-3 border-t border-hair pt-4">
+        <MatchesState
+          saved={Boolean(stage.id)}
+          rows={generated}
+          wanted={spec.matches.length}
+          held={held}
+          placeholders={placeholders}
+          working={working}
+        />
+        {held && (
+          <Button size="sm" disabled={busy} onClick={onGenerate}>
+            Rebuild anyway
+          </Button>
+        )}
       </div>
 
-      {open && (
-        <StageSettings stage={stage} spec={spec} onConfig={onConfig} />
-      )}
-
-      <div className="space-y-4 border-t border-hair pt-5">
-        <div className="flex flex-wrap items-baseline gap-3">
-          <Eyebrow>Preview</Eyebrow>
-          <span className="eyebrow text-dim">
-            {plural(spec.matches.length, "match", "matches")} ·{" "}
-            {plural([...new Set(spec.matches.map((match) => match.phase))].length, "phase")}
-          </span>
-        </div>
+      {/*
+        Everything below folds. A stage is four things at once — its shape, its
+        series lengths, its group tables and its bracket — and a screen showing
+        all four for every stage is a screen you scroll rather than read.
+      */}
+      <DisclosureGroup className="border-b-0">
+        <Disclosure
+          title="Settings"
+          icon="settings"
+          summary={settingsSummary(spec)}
+          open={open}
+          onOpenChange={setOpen}
+          size="sm"
+        >
+          <StageSettings stage={stage} spec={spec} onConfig={onConfig} />
+        </Disclosure>
 
         {spec.groups.length > 0 && (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {spec.groups.map((group) => (
-              <div key={group.key} className="space-y-2">
-                <Eyebrow>Group {group.key.toUpperCase()}</Eyebrow>
-                <StandingsTable
-                  rows={group.seeds.map((seed) => ({
-                    id: `seed-${seed}`,
-                    name: teams[seed - 1]?.name ?? `Seed ${seed}`,
-                    group: group.key,
-                    played: 0,
-                    won: 0,
-                    drawn: 0,
-                    lost: 0,
-                    gamesWon: 0,
-                    gamesLost: 0,
-                    scoreFor: 0,
-                    scoreAgainst: 0,
-                    diff: 0,
-                    points: 0,
-                  }))}
-                  qualify={advancePerGroup(spec)}
-                />
-              </div>
-            ))}
-          </div>
+          <Disclosure
+            title="Groups"
+            icon="grid"
+            size="sm"
+            summary={groupsSummary(spec)}
+          >
+            <div className="grid gap-4 lg:grid-cols-2">
+              {spec.groups.map((group) => (
+                <div key={group.key} className="space-y-2">
+                  <Eyebrow>Group {group.key.toUpperCase()}</Eyebrow>
+                  <StandingsTable
+                    rows={group.seeds.map((seed) => ({
+                      id: `seed-${seed}`,
+                      name: teams[seed - 1]?.name ?? `Seed ${seed}`,
+                      group: group.key,
+                      played: 0,
+                      won: 0,
+                      drawn: 0,
+                      lost: 0,
+                      gamesWon: 0,
+                      gamesLost: 0,
+                      scoreFor: 0,
+                      scoreAgainst: 0,
+                      diff: 0,
+                      points: 0,
+                    }))}
+                    qualify={advancePerGroup(spec)}
+                  />
+                </div>
+              ))}
+            </div>
+          </Disclosure>
         )}
 
-        <BracketCanvas matches={preview} featuredSlot={spec.championSlot} compact />
-      </div>
+        <Disclosure
+          title="Bracket"
+          icon="trophy"
+          size="sm"
+          defaultOpen
+          summary={bracketSummary(spec)}
+        >
+          <BracketCanvas matches={preview} featuredSlot={spec.championSlot} compact />
+        </Disclosure>
+      </DisclosureGroup>
     </Panel>
   );
+}
+
+/**
+ * What the database holds for this stage, in one line.
+ *
+ * Four states, and the difference matters: nothing saved yet, built and
+ * current, being rebuilt right now, and held back because there are results in
+ * the way. Only the last is a decision for the admin, and only it has a button.
+ */
+function MatchesState({
+  saved,
+  rows,
+  wanted,
+  held,
+  placeholders,
+  working,
+}: {
+  saved: boolean;
+  rows: number;
+  wanted: number;
+  held: boolean;
+  placeholders: boolean;
+  working: boolean;
+}) {
+  if (!saved) {
+    return (
+      <span className="text-xs text-muted">
+        Save the format and the matches are built for you.
+      </span>
+    );
+  }
+  if (placeholders) {
+    return (
+      <span className="text-xs text-muted">
+        Nothing written yet — these are placeholder teams. The matches are built once the
+        real teams exist.
+      </span>
+    );
+  }
+  if (held) {
+    return (
+      <span className="text-xs text-ember">
+        {plural(rows, "match", "matches")} stored, and this shape wants {wanted}. Results
+        have been recorded, so nothing was touched.
+      </span>
+    );
+  }
+  if (rows === wanted) {
+    return (
+      <span className="text-xs text-muted">
+        {plural(rows, "match", "matches")} in the database, matching this shape.
+      </span>
+    );
+  }
+  if (working) {
+    return (
+      <span className="text-xs text-muted">
+        Building {plural(wanted, "match", "matches")}…
+      </span>
+    );
+  }
+  // Out of step, and not being fixed right now — which happens when a confirm
+  // is open over another stage, or when the rebuild could not reach the
+  // server. Saying "building" here would be a lie the admin waits on.
+  return (
+    <span className="text-xs text-muted">
+      {plural(rows, "match", "matches")} stored, and this shape wants {wanted}. It is
+      rebuilt when you save.
+    </span>
+  );
+}
+
+/** The series settings, for the folded header. */
+function settingsSummary(spec: GeneratedStage): string {
+  const config = spec.config;
+  const overrides =
+    Object.keys(config.bestOfByRound).length +
+    Object.keys(config.bestOfBySlot).length +
+    Object.keys(config.bestOfByBracket).length;
+  const parts = [`Best of ${config.bestOf}`];
+  if (overrides > 0) parts.push(plural(overrides, "override"));
+  return parts.join(" · ");
+}
+
+function groupsSummary(spec: GeneratedStage): string {
+  return `${plural(spec.groups.length, "group")} · ${plural(
+    advancePerGroup(spec),
+    "team"
+  )} advance`;
+}
+
+function bracketSummary(spec: GeneratedStage): string {
+  const phases = new Set(spec.matches.map((match) => match.phase)).size;
+  return `${plural(spec.matches.length, "match", "matches")} · ${plural(phases, "phase")}`;
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,6 +1,12 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Database, draftLots, teamMembers, teams as teamsTable } from "@/db";
+import {
+  type Database,
+  draftLots,
+  teamMembers,
+  teams as teamsTable,
+  users as usersTable,
+} from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
@@ -278,6 +284,101 @@ describe("setCaptains", () => {
     const pool = await getDraftPool(fixture.eventId, db);
     expect(pool.main.map((entry) => entry.userId)).not.toContain(fixture.members[0]);
     expect(pool.main).toHaveLength(3);
+  });
+
+  /* --- Team names from captains -------------------------------- */
+
+  it("names a team after its captain when nobody has named it", async () => {
+    const fixture = await seededEvent(2);
+    // What the Teams tab creates: a placeholder, because a blank is refused.
+    const written = unwrap(await setTeams(fixture.eventId, [{ name: "Team 1" }], db));
+
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [{ teamId: written.teams[0].id, userId: fixture.members[0] }],
+        db
+      )
+    );
+
+    const [team] = await getTeams(fixture.eventId, db);
+    expect(team.name).toMatch(/^Team Player /);
+  });
+
+  it("replaces a seed placeholder, because nobody chose that either", async () => {
+    const fixture = await seededEvent(2);
+    const written = unwrap(await setTeams(fixture.eventId, [{ name: "Team 1" }], db));
+
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [{ teamId: written.teams[0].id, userId: fixture.members[0] }],
+        db
+      )
+    );
+
+    const [team] = await getTeams(fixture.eventId, db);
+    expect(team.name).toMatch(/^Team Player /);
+  });
+
+  it("leaves a name an admin actually typed alone", async () => {
+    const fixture = await seededEvent(2);
+    const written = unwrap(await setTeams(fixture.eventId, [{ name: "The Cavalry" }], db));
+
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [{ teamId: written.teams[0].id, userId: fixture.members[0] }],
+        db
+      )
+    );
+
+    const [team] = await getTeams(fixture.eventId, db);
+    expect(team.name).toBe("The Cavalry");
+  });
+
+  it("follows the captaincy when it moves, because the name was ours", async () => {
+    const fixture = await seededEvent(3);
+    const written = unwrap(await setTeams(fixture.eventId, [{ name: "Team 1" }], db));
+    const teamId = written.teams[0].id;
+
+    unwrap(await setCaptains(fixture.eventId, [{ teamId, userId: fixture.members[0] }], db));
+    const first = (await getTeams(fixture.eventId, db))[0].name;
+
+    unwrap(await setCaptains(fixture.eventId, [{ teamId, userId: fixture.members[1] }], db));
+    const second = (await getTeams(fixture.eventId, db))[0].name;
+
+    expect(second).not.toBe(first);
+    expect(second).toMatch(/^Team Player /);
+  });
+
+  it("does not write two teams the same name", async () => {
+    const fixture = await seededEvent(3);
+    // Two people answering to the same display name is an ordinary Discord
+    // Tuesday, and a duplicate team name is something an admin then has to
+    // untangle by hand.
+    await db
+      .update(usersTable)
+      .set({ displayName: "Sam" })
+      .where(inArray(usersTable.id, [fixture.members[0], fixture.members[1]]));
+
+    const written = unwrap(
+      await setTeams(fixture.eventId, [{ name: "Team 1" }, { name: "Team 2" }], db)
+    );
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [
+          { teamId: written.teams[0].id, userId: fixture.members[0] },
+          { teamId: written.teams[1].id, userId: fixture.members[1] },
+        ],
+        db
+      )
+    );
+
+    const names = (await getTeams(fixture.eventId, db)).map((team) => team.name);
+    expect(names.filter((name) => name.startsWith("Team Sam"))).toHaveLength(2);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   it("refuses somebody who is not an accepted applicant", async () => {

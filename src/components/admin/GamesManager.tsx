@@ -256,8 +256,8 @@ function GameCard({
         <div className="mt-5 space-y-5">
           <Tabs
             items={[
-              { value: "questions", label: `Questions (${game.fields.length})` },
-              { value: "ranks", label: `Rank ladder (${game.rankLadder.length})` },
+              { value: "questions", label: "Questions", count: game.fields.length },
+              { value: "ranks", label: "Rank ladder", count: game.rankLadder.length },
               { value: "settings", label: "Settings" },
             ]}
             value={tab}

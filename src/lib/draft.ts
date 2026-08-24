@@ -548,6 +548,31 @@ export async function setCaptains(
       });
     }
 
+    /*
+     * Names for the auto-title. Both the incoming captains and the outgoing
+     * ones: knowing who *used* to hold a team is what tells us whether its
+     * current name was chosen or generated.
+     */
+    const nameIds = new Set<string>(claimed);
+    for (const team of eventTeams) {
+      if (team.captainUserId) nameIds.add(team.captainUserId);
+    }
+    const nameOf = new Map<string, string>();
+    if (nameIds.size > 0) {
+      const rows = await tx
+        .select({
+          id: users.id,
+          displayName: users.displayName,
+          name: users.name,
+          handle: users.handle,
+        })
+        .from(users)
+        .where(inArray(users.id, [...nameIds]));
+      for (const row of rows) {
+        nameOf.set(row.id, row.displayName ?? row.name ?? row.handle ?? "Captain");
+      }
+    }
+
     // Pass one: clear. Both the column and the roster row, so a captaincy that
     // moves does not leave the old holder occupying a slot on the old team.
     await tx
@@ -558,10 +583,52 @@ export async function setCaptains(
       .delete(teamMembers)
       .where(and(inArray(teamMembers.teamId, touched), eq(teamMembers.isCaptain, true)));
 
+    /*
+     * "Team Bob", unless somebody has said otherwise.
+     *
+     * A team is named before anyone knows who will lead it, so the name it
+     * starts with is a placeholder — blank, or "Team 3" off the seed. Once a
+     * captain is set, that placeholder should become their name, because that
+     * is what everybody in the Discord will call the team anyway.
+     *
+     * A name is only overwritten when we can show it was never chosen: it is
+     * empty, it is "Team <number>", or it is the *previous* captain's auto
+     * name. Anything else an admin typed survives, including a name that
+     * happens to look like one of ours.
+     */
+    const autoName = (person: string) => `Team ${person}`;
+    const taken = new Set(
+      eventTeams
+        .filter((team) => !wanted.has(team.id))
+        .map((team) => team.name.trim().toLowerCase())
+    );
+
     // Pass two: set.
     for (const [teamId, userId] of wanted) {
       if (userId === null) continue;
       await tx.update(teams).set({ captainUserId: userId }).where(eq(teams.id, teamId));
+
+      const team = byId.get(teamId);
+      const current = team?.name.trim() ?? "";
+      const previous = team?.captainUserId ? nameOf.get(team.captainUserId) : undefined;
+      const generated =
+        current === "" ||
+        /^team\s+\d+$/i.test(current) ||
+        (previous !== undefined && current === autoName(previous));
+
+      if (generated) {
+        const person = nameOf.get(userId);
+        let proposed = person ? autoName(person) : current;
+        // Two captains can share a display name. Fall back to the seed rather
+        // than writing a duplicate an admin would then have to untangle.
+        if (proposed && taken.has(proposed.toLowerCase())) {
+          proposed = `${proposed} (${team?.seed ?? teamId.slice(0, 4)})`;
+        }
+        if (proposed && proposed !== current) {
+          await tx.update(teams).set({ name: proposed }).where(eq(teams.id, teamId));
+          taken.add(proposed.toLowerCase());
+        }
+      }
       await tx
         .insert(teamMembers)
         .values({ teamId, eventId, userId, price: 0, isCaptain: true, lotId: null })

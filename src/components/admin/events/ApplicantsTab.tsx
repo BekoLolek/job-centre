@@ -231,7 +231,8 @@ export default function ApplicantsTab({
         <Tabs
           items={FILTERS.map((entry) => ({
             value: entry.value,
-            label: `${entry.label} (${counts.get(entry.value) ?? 0})`,
+            label: entry.label,
+            count: counts.get(entry.value) ?? 0,
           }))}
           value={filter}
           onChange={setFilter}

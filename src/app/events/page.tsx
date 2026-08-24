@@ -12,10 +12,9 @@
  * would be seeing an event that cannot be applied to and may never happen.
  */
 
-import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
 import { EventRow, EventRows, eventTypeLabel } from "@/components/events";
-import { Button, Eyebrow, Panel, Section, cx, plural } from "@/components/ui";
+import { Button, Eyebrow, Panel, Section, TabLinks, plural } from "@/components/ui";
 import type { EventStatus } from "@/db/schema";
 import { type EventSummary, listEvents } from "@/lib/events";
 
@@ -83,34 +82,56 @@ export default async function EventsPage({
             </p>
           </div>
 
-          {/* The past/upcoming toggle. Two links, styled as the segmented
-              control the rest of the site uses. */}
-          <div className="ml-auto flex rounded-xl border border-hair">
-            <ToggleLink href={href({ when: "upcoming" })} on={when === "upcoming"}>
-              Upcoming ({upcoming.length})
-            </ToggleLink>
-            <ToggleLink href={href({ when: "past" })} on={when === "past"}>
-              Past ({past.length})
-            </ToggleLink>
-          </div>
         </header>
 
-        {/* Type filter — only when there is more than one kind to choose. */}
-        {types.length > 1 && (
-          <div className="flex flex-wrap items-center gap-2">
-            <Eyebrow as="span" className="mr-1">
-              Filter
-            </Eyebrow>
-            <FilterLink href={href({ type: null })} on={type === null}>
-              All ({scope.length})
-            </FilterLink>
-            {types.map(([value, total]) => (
-              <FilterLink key={value} href={href({ type: value })} on={type === value}>
-                {eventTypeLabel(value)} ({total})
-              </FilterLink>
-            ))}
-          </div>
-        )}
+        {/*
+          Both menus share one rule: when on the left, kind on the right. They
+          are the same control at different weights — which set of events, then
+          which slice of that set — and putting them on one edge says so
+          without a word of explanation or a box around either.
+        */}
+        <div className="flex flex-wrap items-end justify-between gap-x-8 gap-y-2 border-b border-hair">
+          <TabLinks
+            aria-label="When"
+            rule={false}
+            items={[
+              {
+                href: href({ when: "upcoming" }),
+                label: "Upcoming",
+                count: upcoming.length,
+                current: when === "upcoming",
+              },
+              {
+                href: href({ when: "past" }),
+                label: "Past",
+                count: past.length,
+                current: when === "past",
+              },
+            ]}
+          />
+
+          {types.length > 1 && (
+            <TabLinks
+              aria-label="Kind"
+              rule={false}
+              size="sm"
+              items={[
+                {
+                  href: href({ type: null }),
+                  label: "All kinds",
+                  count: scope.length,
+                  current: type === null,
+                },
+                ...types.map(([value, total]) => ({
+                  href: href({ type: value }),
+                  label: eventTypeLabel(value),
+                  count: total,
+                  current: type === value,
+                })),
+              ]}
+            />
+          )}
+        </div>
 
         {shown.length === 0 ? (
           <Panel as="section">
@@ -136,21 +157,11 @@ export default async function EventsPage({
             </div>
           </Panel>
         ) : (
-          <Section
-            icon={when === "upcoming" ? "calendar" : "history"}
-            title={when === "upcoming" ? "Coming up" : "Archive"}
-            description={
-              when === "upcoming"
-                ? "Everything published and still to run, soonest first."
-                : "Everything that has already run, most recent first."
-            }
-            aside={
-              <p className="text-[13px] text-muted">
-                {plural(shown.length, "event")}
-                {type ? ` · ${eventTypeLabel(type)}` : ""}
-              </p>
-            }
-          >
+          <Section first tone="plain" className="pb-14 pt-2">
+            <p className="mb-1 text-[13px] text-muted">
+              {plural(shown.length, "event")} ·{" "}
+              {when === "upcoming" ? "soonest first" : "most recent first"}
+            </p>
             <EventRows>
               {shown.map((event) => (
                 <EventRow key={event.id} event={event} href={`/events/${event.slug}`} />
@@ -168,48 +179,4 @@ function countTypes(events: readonly EventSummary[]): Array<[string, number]> {
   const totals = new Map<string, number>();
   for (const event of events) totals.set(event.type, (totals.get(event.type) ?? 0) + 1);
   return [...totals.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-}
-
-function ToggleLink({
-  href,
-  on,
-  children,
-}: {
-  href: string;
-  on: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      href={href}
-      className={cx("btn border-0", on ? "bg-gold/10 text-gold" : "bg-transparent text-muted")}
-    >
-      {children}
-    </Link>
-  );
-}
-
-function FilterLink({
-  href,
-  on,
-  children,
-}: {
-  href: string;
-  on: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Link
-      href={href}
-      aria-current={on ? "true" : undefined}
-      className={cx(
-        "rounded-full px-3.5 py-2 text-sm transition-colors",
-        on
-          ? "bg-union/20 text-hot"
-          : "bg-white/[0.05] text-chalk/70 hover:bg-white/[0.09] hover:text-hot"
-      )}
-    >
-      {children}
-    </Link>
-  );
 }
