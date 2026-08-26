@@ -258,6 +258,55 @@ export function shouldBeAdmin(
   return parseAdminIds(adminIdsEnv).some((allowed) => allowed.toLowerCase() === id);
 }
 
+/** One row of the allowlist, as much of it as the decision needs. */
+export type AllowlistEntry = { discordId: string; allowed: boolean };
+
+/**
+ * Whether this Discord id should hold the admin flag after signing in.
+ *
+ * Three answers, and the third is the one that matters:
+ *
+ *  - A row saying `allowed` — yes. This is how somebody who has never signed
+ *    in gets to be an admin the first time they do; there is no account to
+ *    promote yet, so promoting the account cannot be the mechanism.
+ *  - A row saying not allowed — no, and it outranks everything. It beats
+ *    `ADMIN_DISCORD_IDS`, which is the whole point: an id left in the
+ *    environment used to resurrect itself on every sign-in.
+ *  - No row — no opinion, so the environment decides, which is what lets a
+ *    fresh deployment bootstrap its first admin before this table has anything
+ *    in it.
+ *
+ * `undefined` is returned for "no opinion either way", distinct from `false`.
+ * The caller needs the difference: `false` demotes, `undefined` leaves a
+ * promotion made on the members screen exactly where it is.
+ */
+export function resolveAdminFlag(
+  discordId: string | null | undefined,
+  allowlist: readonly AllowlistEntry[] | null,
+  adminIdsEnv: string | undefined | null
+): boolean | undefined {
+  const id = text(discordId).toLowerCase();
+  if (!id) return undefined;
+
+  const row = allowlist?.find((entry) => text(entry.discordId).toLowerCase() === id);
+  if (row) return row.allowed;
+
+  return shouldBeAdmin(discordId, adminIdsEnv) ? true : undefined;
+}
+
+/**
+ * A Discord id, or `null` when it is not one.
+ *
+ * Snowflakes are 17 to 20 digits. Anything else is a username, a mention with
+ * the punctuation left on, or a mis-paste — and storing one would make an
+ * allowlist row that can never match anybody, which looks identical on screen
+ * to one that works.
+ */
+export function normaliseDiscordId(raw: string | null | undefined): string | null {
+  const trimmed = text(raw).replace(/[<@!>\s]/g, "");
+  return /^\d{17,20}$/.test(trimmed) ? trimmed : null;
+}
+
 /* ------------------------------------------------------------------ */
 /* "Is Discord wired up at all?"                                      */
 /* ------------------------------------------------------------------ */

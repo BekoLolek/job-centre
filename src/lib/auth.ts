@@ -39,6 +39,7 @@ import { DrizzleAdapter } from "@auth/drizzle-adapter";
 import { eq, inArray } from "drizzle-orm";
 import NextAuth, { type DefaultSession, type NextAuthConfig } from "next-auth";
 import Discord from "next-auth/providers/discord";
+import { getAllowlistEntries } from "./admin-allowlist";
 import { ensureHandles } from "./players";
 import {
   SETTING_KEYS,
@@ -57,6 +58,8 @@ import {
   evaluateGuildGate,
   hasDiscordCredentials,
   resolveAuthSecret,
+  type AllowlistEntry,
+  resolveAdminFlag,
   resolveGateConfig,
   shouldBeAdmin,
 } from "./auth-policy";
@@ -215,6 +218,23 @@ export async function setGateConfig(
 }
 
 /**
+ * The allowlist, or `null` when it cannot be read.
+ *
+ * `null` is not an empty list: an empty list means nobody has an opinion and
+ * the environment decides, which is right. A failed read must fall through to
+ * the environment too — but it must not be mistaken for "the table says this
+ * person is barred", so the distinction is kept.
+ */
+async function readAllowlist(): Promise<AllowlistEntry[] | null> {
+  try {
+    return await getAllowlistEntries();
+  } catch (error) {
+    console.error("[auth] could not read the admin allowlist; falling back to env", error);
+    return null;
+  }
+}
+
+/**
  * Copy the current Discord identity onto the user row and stamp `last_seen_at`.
  *
  * Runs in the `signIn` *event*, which fires after the adapter has created or
@@ -243,7 +263,24 @@ async function syncUserFromDiscord(
     patch.displayName = identity.displayName;
     patch.avatarUrl = identity.avatarUrl;
     patch.image = identity.avatarUrl;
-    if (shouldBeAdmin(identity.discordId, env.ADMIN_DISCORD_IDS)) patch.isAdmin = true;
+    /*
+     * The allowlist decides, and it can say no.
+     *
+     * This used to be `if (shouldBeAdmin(...)) patch.isAdmin = true` — set
+     * only, never cleared, so an id left in ADMIN_DISCORD_IDS re-promoted
+     * itself on every sign-in and an admin demoted on the members screen came
+     * back the next morning with nothing in the audit log to explain it.
+     *
+     * `undefined` still means "leave it alone", which is what keeps a
+     * promotion made on the members screen from being undone by an allowlist
+     * that has never heard of them.
+     */
+    const flag = resolveAdminFlag(
+      identity.discordId,
+      await readAllowlist(),
+      env.ADMIN_DISCORD_IDS
+    );
+    if (flag !== undefined) patch.isAdmin = flag;
   }
 
   try {
@@ -292,6 +329,12 @@ function discordProvider(env: AuthEnv) {
         discordId,
         displayName,
         avatarUrl,
+        /*
+         * The environment only, because `profile()` is synchronous and cannot
+         * reach the database. This is the row as first created; the `signIn`
+         * event runs immediately afterwards with the allowlist in hand and
+         * corrects it, including clearing the flag for a barred id.
+         */
         isAdmin: shouldBeAdmin(discordId, env.ADMIN_DISCORD_IDS),
         lastSeenAt: new Date(),
       };

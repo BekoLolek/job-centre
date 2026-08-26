@@ -331,6 +331,43 @@ export const profileValues = pgTable(
 export type ProfileValue = string | string[] | number | boolean | null;
 
 /* ------------------------------------------------------------------ */
+/* Who is an admin                                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Discord ids that become admins when they sign in, and ids that never do.
+ *
+ * `ADMIN_DISCORD_IDS` did this before and had two holes. It could only name
+ * people at deploy time, so pre-authorising somebody meant editing Vercel and
+ * waiting for a build. And it was write-only in practice: `syncUserFromDiscord`
+ * re-asserted it on every sign-in, so an admin demoted on `/admin/users` came
+ * straight back the next time they logged in, silently, with nothing in the
+ * audit log to explain it.
+ *
+ * A row here settles both. `allowed: true` is "make them an admin when they
+ * arrive", which works for somebody who has never signed in and therefore has
+ * no account to promote. `allowed: false` is the explicit never — it outranks
+ * the environment variable and outranks a promotion made on the members
+ * screen, which is what "permanently remove" has to mean if it is to mean
+ * anything.
+ *
+ * No row at all is no opinion, and the environment is consulted instead. That
+ * is what keeps a fresh deployment able to bootstrap its first admin, and what
+ * stops this table being something you must populate before the site works.
+ */
+export const adminAllowlist = pgTable("admin_allowlist", {
+  /** Discord's snowflake, as text. It is a 64-bit integer and JavaScript is not. */
+  discordId: text("discord_id").primaryKey(),
+  allowed: boolean("allowed").notNull().default(true),
+  /** Why, for whoever reads this in a year. */
+  note: text("note"),
+  addedByUserId: uuid("added_by_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  updatedAt: instant("updated_at").notNull().defaultNow(),
+});
+
+/* ------------------------------------------------------------------ */
 /* Settings (§14)                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1701,6 +1738,7 @@ export type ProfileField = typeof profileFields.$inferSelect;
 export type NewProfileField = typeof profileFields.$inferInsert;
 export type ProfileValueRow = typeof profileValues.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
+export type AdminAllowlistRow = typeof adminAllowlist.$inferSelect;
 export type EventTemplate = typeof eventTemplates.$inferSelect;
 export type NewEventTemplate = typeof eventTemplates.$inferInsert;
 export type EventRow = typeof events.$inferSelect;

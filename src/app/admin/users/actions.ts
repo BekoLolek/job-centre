@@ -24,6 +24,8 @@
  */
 
 import { revalidatePath } from "next/cache";
+import { eq } from "drizzle-orm";
+import { db, users } from "@/db";
 import {
   type AddNoteInput,
   type AdminUserResult,
@@ -32,6 +34,9 @@ import {
   listUserNotes,
   revokeAdmin,
 } from "@/lib/admin-users";
+import { allowAdmin, barAdmin, countAdmins, forgetAdmin } from "@/lib/admin-allowlist";
+import { revokeRefusal } from "@/lib/admin-users-policy";
+import { normaliseDiscordId } from "@/lib/auth-policy";
 import { recordAudit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -142,4 +147,118 @@ export async function addUserNoteAction(
 
   refresh();
   return { ok: true, data: { id: result.data.id } };
+}
+
+/* ------------------------------------------------------------------ */
+/* The allowlist                                                      */
+/* ------------------------------------------------------------------ */
+
+export type AllowlistActionResult = { ok: true; said: string } | { ok: false; error: string };
+
+/**
+ * Pre-authorise a Discord id.
+ *
+ * No guard beyond the id being an id: going from one admin to two takes
+ * nothing away from anybody, which is the same reason `grantAdmin` has no
+ * refusal either.
+ */
+export async function allowAdminAction(input: {
+  discordId: string;
+  note?: string;
+}): Promise<AllowlistActionResult> {
+  const admin = await requireAdmin();
+
+  const result = await allowAdmin(
+    input.discordId,
+    { note: input.note ?? null, addedByUserId: admin.id },
+    undefined
+  );
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "user.admin.granted",
+    actor: admin,
+    summary: `Added ${result.data.discordId} to the admin allowlist.`,
+    detail: { discordId: result.data.discordId, promotedNow: result.data.promotedNow },
+  });
+
+  revalidatePath("/admin/users");
+  return {
+    ok: true,
+    said: result.data.promotedNow
+      ? "Added, and they are an admin now."
+      : "Added. They become an admin the first time they sign in.",
+  };
+}
+
+/**
+ * Bar a Discord id for good, or hand the decision back to the environment.
+ *
+ * The two refusals are the same ones `revokeAdmin` makes, and for the same
+ * reasons — barring is a demotion with a longer memory, so it cannot be
+ * allowed to do anything a demotion could not.
+ *
+ * They are re-checked here rather than trusted from the browser: a page loaded
+ * when there were three admins is not evidence that there still are.
+ */
+export async function barAdminAction(input: {
+  discordId: string;
+  note?: string;
+  /** Forget the row instead of barring — undo a mistake, not remove somebody. */
+  forget?: boolean;
+}): Promise<AllowlistActionResult> {
+  const admin = await requireAdmin();
+
+  const id = normaliseDiscordId(input.discordId);
+  if (!id) return { ok: false, error: "That is not a Discord id." };
+
+  if (!input.forget) {
+    const [target] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.discordId, id));
+
+    // Only a bar that would actually demote somebody can lock anybody out.
+    if (target) {
+      const refusal = revokeRefusal({
+        actorId: admin.id,
+        targetId: target.id,
+        adminCount: await countAdmins(),
+      });
+      if (refusal) return { ok: false, error: refusal };
+    }
+  }
+
+  if (input.forget) {
+    await forgetAdmin(id);
+    await recordAudit({
+      action: "user.admin.revoked",
+      actor: admin,
+      summary: `Removed ${id} from the admin allowlist.`,
+      detail: { discordId: id, forgotten: true },
+    });
+    revalidatePath("/admin/users");
+    return {
+      ok: true,
+      said: "Removed from the list. ADMIN_DISCORD_IDS decides again for that id.",
+    };
+  }
+
+  const result = await barAdmin(id, { note: input.note ?? null, addedByUserId: admin.id });
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "user.admin.revoked",
+    actor: admin,
+    summary: `Barred ${id} from ever being an admin.`,
+    detail: { discordId: id, demotedNow: result.data.demotedNow, barred: true },
+  });
+
+  revalidatePath("/admin/users");
+  return {
+    ok: true,
+    said: result.data.demotedNow
+      ? "Barred, and their admin flag is off."
+      : "Barred. They cannot become an admin on sign-in.",
+  };
 }
