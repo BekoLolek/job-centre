@@ -168,6 +168,52 @@ async function loadGateConfig(env: AuthEnv = process.env as AuthEnv): Promise<Ga
   }
 }
 
+/** The gate as it currently stands, for the settings screen. */
+export async function getGateConfig(): Promise<GateConfig> {
+  return loadGateConfig();
+}
+
+/**
+ * Write the guild gate.
+ *
+ * A blank guild id clears the override rather than storing an empty string, so
+ * the value falls back to `DISCORD_GUILD_ID`. Storing "" would mean "gated
+ * against no server", which with the gate on is a site nobody can sign in to —
+ * and it would look identical to "not set" on the screen.
+ */
+export async function setGateConfig(
+  next: { enabled: boolean; guildId: string | null },
+  database = db
+): Promise<GateConfig> {
+  const guildId = (next.guildId ?? "").trim();
+
+  await database
+    .insert(settings)
+    .values({
+      key: SETTING_KEYS.guildGateEnabled,
+      value: next.enabled,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: settings.key,
+      set: { value: next.enabled, updatedAt: new Date() },
+    });
+
+  if (guildId) {
+    await database
+      .insert(settings)
+      .values({ key: SETTING_KEYS.guildId, value: guildId, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: settings.key,
+        set: { value: guildId, updatedAt: new Date() },
+      });
+  } else {
+    await database.delete(settings).where(eq(settings.key, SETTING_KEYS.guildId));
+  }
+
+  return loadGateConfig();
+}
+
 /**
  * Copy the current Discord identity onto the user row and stamp `last_seen_at`.
  *

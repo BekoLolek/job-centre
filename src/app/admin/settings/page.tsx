@@ -16,9 +16,12 @@
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import AnnouncementSettings from "@/components/admin/AnnouncementSettings";
+import ServerSettings from "@/components/admin/ServerSettings";
 import { Eyebrow, Section, StatTile } from "@/components/ui";
 import { ANNOUNCEMENTS, webhookUrl } from "@/lib/announce";
-import { getAnnouncementSettings } from "@/lib/discord";
+import { maskWebhook } from "@/lib/announce";
+import { getGateConfig } from "@/lib/auth";
+import { getAnnouncementSettings, getIntegrationConfig } from "@/lib/discord";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +34,8 @@ export default async function AdminSettingsPage() {
   await requireAdmin();
 
   const saved = await getAnnouncementSettings();
+  const gate = await getGateConfig();
+  const integrations = await getIntegrationConfig();
   const configured = Boolean(webhookUrl());
   const on = ANNOUNCEMENTS.filter((spec) => saved[spec.kind]).length;
 
@@ -87,12 +92,30 @@ export default async function AdminSettingsPage() {
               rather than disappearing.
             </p>
           </Section>
+
+          <ServerSettings
+            gate={{ enabled: gate.enabled, guildId: gate.guildId, source: gate.source.guildId }}
+            integrations={{
+              /*
+               * Masked on the server. The real webhook never reaches the
+               * browser — not as a prop, not in the RSC payload, nowhere. A
+               * screen that showed it would be a screen that hands out a
+               * credential to anybody who can open dev tools on an admin's
+               * machine.
+               */
+              webhook: maskWebhook(integrations.webhook),
+              origin: integrations.origin,
+              source: integrations.source,
+            }}
+            deployTime={{
+              clientId: Boolean(process.env.DISCORD_CLIENT_ID),
+              clientSecret: Boolean(process.env.DISCORD_CLIENT_SECRET),
+              authSecret: Boolean(process.env.AUTH_SECRET),
+              database: Boolean(process.env.DATABASE_URL),
+            }}
+          />
         </div>
 
-        <p className="pb-4 text-center text-xs text-muted">
-          The guild gate&rsquo;s own settings live in the database too, but have no screen
-          yet — they are read from <code>DISCORD_GUILD_ID</code> until one exists.
-        </p>
       </main>
     </div>
   );

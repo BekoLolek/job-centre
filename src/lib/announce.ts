@@ -168,13 +168,38 @@ export type AnnounceEnv = {
  * variable into a failed application.
  */
 export function webhookUrl(env: AnnounceEnv = process.env as AnnounceEnv): string | null {
-  const raw = (env.DISCORD_WEBHOOK_URL ?? "").trim();
-  if (!raw) return null;
+  return resolveWebhookUrl(undefined, env);
+}
+
+/**
+ * The webhook an admin set, or the one the deployment was given.
+ *
+ * Settings first, environment second — the same order and for the same reason
+ * as `resolveGateConfig`: a value an admin typed on a screen is a more recent
+ * statement of intent than one somebody typed into Vercel months ago, and a
+ * database that cannot be read must not take the feature down with it.
+ *
+ * A stored value that is not a URL falls through to the environment rather
+ * than switching announcements off. Silence is the worst possible response to
+ * a typo, because nothing is ever going to tell you.
+ */
+export function resolveWebhookUrl(
+  stored: string | null | undefined,
+  env: AnnounceEnv = process.env as AnnounceEnv
+): string | null {
+  return httpUrl(stored) ?? httpUrl(env.DISCORD_WEBHOOK_URL);
+}
+
+/**
+ * http as well as https, because the local listener the feature is driven
+ * against is http — and a webhook that can only be tested against Discord is a
+ * webhook nobody tests.
+ */
+function httpUrl(raw: string | null | undefined): string | null {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return null;
   try {
-    const url = new URL(raw);
-    // http as well as https, because the local listener the feature is driven
-    // against is http — and a webhook that can only be tested against Discord
-    // is a webhook nobody tests.
+    const url = new URL(trimmed);
     return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
   } catch {
     return null;
@@ -189,12 +214,48 @@ export function webhookUrl(env: AnnounceEnv = process.env as AnnounceEnv): strin
  * origin drops the links rather than emitting `undefined/events/rivals`.
  */
 export function siteOrigin(env: AnnounceEnv = process.env as AnnounceEnv): string | null {
-  const raw = (env.NEXT_PUBLIC_SITE_URL ?? env.AUTH_URL ?? "").trim();
-  if (!raw) return null;
+  return resolveSiteOrigin(undefined, env);
+}
+
+/** The address an admin set, or whatever the deployment happens to know. */
+export function resolveSiteOrigin(
+  stored: string | null | undefined,
+  env: AnnounceEnv = process.env as AnnounceEnv
+): string | null {
+  const first = httpUrl(stored);
+  if (first) return new URL(first).origin;
+  const fallback = httpUrl(env.NEXT_PUBLIC_SITE_URL ?? env.AUTH_URL);
+  return fallback ? new URL(fallback).origin : null;
+}
+
+/**
+ * A webhook with its secret half hidden: the id stays, the token goes.
+ *
+ * Discord webhook URLs end `/api/webhooks/<id>/<token>`, and the token is the
+ * whole credential. The screen has to show *something* — "configured" alone
+ * cannot tell you whether it is the right channel — so it shows the part that
+ * identifies without the part that authorises. Anything that is not a Discord
+ * webhook is masked from the last path segment on the same way.
+ */
+export function maskWebhook(url: string | null): string | null {
+  if (!url) return null;
   try {
-    return new URL(raw).origin;
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length === 0) return `${parsed.origin}/…`;
+    const secret = parts[parts.length - 1];
+    /*
+     * Four characters of a 68-character Discord token identify it without
+     * being useful. Four characters of a four-character one *are* it — so
+     * anything short enough for the prefix to be a meaningful fraction of the
+     * whole is hidden completely. The threshold is what makes this a mask
+     * rather than a truncation.
+     */
+    const shown = secret.length > 16 ? secret.slice(0, 4) : "";
+    parts[parts.length - 1] = `${shown}${"•".repeat(12)}`;
+    return `${parsed.origin}/${parts.join("/")}`;
   } catch {
-    return null;
+    return "•••";
   }
 }
 

@@ -76,6 +76,8 @@ export const AUDIT_ACTIONS = {
   "format.stages": "Format changed",
   "format.generated": "Bracket generated",
   "settings.announcements": "Announcements changed",
+  "settings.guild_gate": "Sign-in gate changed",
+  "settings.integrations": "Integrations changed",
   "announcement.failed": "Announcement failed",
   "user.admin.granted": "Admin granted",
   "user.admin.revoked": "Admin revoked",

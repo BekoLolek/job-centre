@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60" width="60" height="60">
+  <!--
+    The Union Flag, fitted to a square.
+
+    The real flag is 1:2. Taking its proportions and applying them to a square
+    doubles the visual weight of the upright cross, because the vertical band
+    is now a fifth of the width rather than a tenth — and the diagonals get
+    longer as well, so they eat more of the field. Measured, the first attempt
+    came out 34% red against the flag's true 18%, and read as a red cross with
+    some blue behind it rather than as the Union Jack.
+
+    So the bands were narrowed until the *areas* matched. These four widths
+    were chosen by rendering the icon to a bitmap and counting pixels, against
+    a target of roughly 48% navy, 33% white and 18% red, which is what the real
+    flag is and what the eye recognises. This lands at 44/31/18.
+
+    Squared rather than letterboxed because a favicon is a square hole, and a
+    1:2 flag inside one is two thirds empty at the size it is really seen.
+  -->
+  <rect width="60" height="60" fill="#012169"/>
+
+  <!-- St Andrew: the white saltire, corner to corner. -->
+  <path d="M0 0 L60 60 M60 0 L0 60" stroke="#fff" stroke-width="6"/>
+
+  <!--
+    St Patrick: the red saltire, counterchanged. Each half-diagonal is clipped
+    to its own quadrant so the red sits off-centre within the white, following
+    it clockwise — the detail everybody drops. At 16px nobody can name what is
+    wrong when it is missing, but it stops looking like the flag.
+  -->
+  <clipPath id="q1"><path d="M30 30 L60 30 L60 0 Z"/></clipPath>
+  <clipPath id="q2"><path d="M30 30 L60 30 L60 60 Z"/></clipPath>
+  <clipPath id="q3"><path d="M30 30 L0 30 L0 60 Z"/></clipPath>
+  <clipPath id="q4"><path d="M30 30 L0 30 L0 0 Z"/></clipPath>
+  <g stroke="#C8102E" stroke-width="3">
+    <path d="M-1.6 1.6 L58.4 61.6" clip-path="url(#q1)"/>
+    <path d="M61.6 1.6 L1.6 61.6" clip-path="url(#q2)"/>
+    <path d="M1.6 -1.6 L61.6 58.4" clip-path="url(#q3)"/>
+    <path d="M58.4 -1.6 L-1.6 58.4" clip-path="url(#q4)"/>
+  </g>
+
+  <!-- St George: white fimbriation, then the red cross on top of it. -->
+  <path d="M30 0 V60 M0 30 H60" stroke="#fff" stroke-width="11"/>
+  <path d="M30 0 V60 M0 30 H60" stroke="#C8102E" stroke-width="6"/>
+</svg>

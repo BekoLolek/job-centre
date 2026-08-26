@@ -37,7 +37,7 @@
  */
 
 import { after } from "next/server";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import {
   type Database,
   SETTING_KEYS,
@@ -60,8 +60,10 @@ import {
   eventPublishedMessage,
   lotSoldMessage,
   matchResultMessage,
+  type AnnounceEnv,
+  resolveSiteOrigin,
+  resolveWebhookUrl,
   siteOrigin,
-  webhookUrl,
 } from "./announce";
 import { recordAudit } from "./audit";
 import { formatFor } from "./format";
@@ -92,6 +94,77 @@ export async function getAnnouncementSettings(
     console.error("[discord] could not read the announcement settings", error);
     return announcementSettingsFrom(undefined);
   }
+}
+
+/**
+ * The webhook and the site address, settings first and environment second.
+ *
+ * Returned resolved rather than raw, so no caller ever has to remember the
+ * precedence — the same bargain `loadGateConfig` makes for the guild gate.
+ * `source` is what lets the settings screen say *where* a value came from,
+ * which is the difference between "configured" and "configured, and here is
+ * the one that is actually in force".
+ */
+export type IntegrationConfig = {
+  webhook: string | null;
+  origin: string | null;
+  source: { webhook: "settings" | "env" | "none"; origin: "settings" | "env" | "none" };
+};
+
+export async function getIntegrationConfig(
+  database: Database = defaultDb,
+  env: AnnounceEnv = process.env as AnnounceEnv
+): Promise<IntegrationConfig> {
+  let storedWebhook: string | null = null;
+  let storedOrigin: string | null = null;
+
+  try {
+    const rows = await database
+      .select({ key: settings.key, value: settings.value })
+      .from(settings)
+      .where(inArray(settings.key, [SETTING_KEYS.webhookUrl, SETTING_KEYS.siteOrigin]));
+    for (const row of rows) {
+      const value = typeof row.value === "string" ? row.value : null;
+      if (row.key === SETTING_KEYS.webhookUrl) storedWebhook = value;
+      if (row.key === SETTING_KEYS.siteOrigin) storedOrigin = value;
+    }
+  } catch (error) {
+    // Same rule as everywhere else here: a database that is down must not take
+    // announcements down with it. The environment still knows what to do.
+    console.error("[discord] could not read the integration settings", error);
+  }
+
+  const webhook = resolveWebhookUrl(storedWebhook, env);
+  const origin = resolveSiteOrigin(storedOrigin, env);
+
+  return {
+    webhook,
+    origin,
+    source: {
+      webhook: !webhook ? "none" : resolveWebhookUrl(storedWebhook, {}) ? "settings" : "env",
+      origin: !origin ? "none" : resolveSiteOrigin(storedOrigin, {}) ? "settings" : "env",
+    },
+  };
+}
+
+/**
+ * Write one integration setting. `null` clears it, which drops the value back
+ * to whatever the environment says rather than switching the feature off — a
+ * cleared override is an absence of opinion, not an instruction.
+ */
+export async function setIntegrationSetting(
+  key: typeof SETTING_KEYS.webhookUrl | typeof SETTING_KEYS.siteOrigin,
+  value: string | null,
+  database: Database = defaultDb
+): Promise<void> {
+  if (value === null) {
+    await database.delete(settings).where(eq(settings.key, key));
+    return;
+  }
+  await database
+    .insert(settings)
+    .values({ key, value, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
 }
 
 /** Write the whole toggle set. The admin screen sends all five together. */
@@ -133,10 +206,17 @@ export function announce(
   message: DiscordMessage,
   context: AnnounceContext = {}
 ): void {
-  // Cheapest possible check first, so an install with no webhook configured
-  // does not even schedule work — let alone read a setting.
-  if (!webhookUrl()) return;
-
+  /*
+   * There used to be a synchronous `if (!webhookUrl()) return` here, to avoid
+   * scheduling work on an install with no webhook. It read the environment
+   * only, so once the webhook could also come from the settings table it
+   * became a guard that silently dropped every announcement on any install
+   * configured through the screen rather than through Vercel.
+   *
+   * `deliver` makes the same check with the full answer. What that costs is a
+   * deferred function that reads one row and returns — after the response has
+   * already gone out.
+   */
   defer(() => deliver(kind, message, context));
 }
 
@@ -159,8 +239,7 @@ function announceGathered(
   build: () => Promise<DiscordMessage | null>,
   context: AnnounceContext = {}
 ): void {
-  if (!webhookUrl()) return;
-
+  // Checked in `deliver`, with the settings included — see `announce` above.
   defer(async () => {
     let message: DiscordMessage | null = null;
     try {
@@ -201,12 +280,24 @@ function defer(work: () => Promise<void>): void {
   }
 }
 
+/**
+ * The origin links in a message point at, resolved the same way the webhook is.
+ *
+ * Called per message rather than threaded through, because every one of these
+ * runs inside `after()` — one extra row read on a job the reader is not
+ * waiting for is not worth the argument it would otherwise have to carry
+ * through four builders.
+ */
+async function announceOrigin(): Promise<string | null> {
+  return (await getIntegrationConfig()).origin;
+}
+
 async function deliver(
   kind: AnnouncementKind,
   message: DiscordMessage,
   context: AnnounceContext
 ): Promise<void> {
-  const url = webhookUrl();
+  const { webhook: url } = await getIntegrationConfig();
   if (!url) return;
 
   const enabled = await getAnnouncementSettings();
@@ -298,7 +389,7 @@ export function announceEventPublished(eventId: string, database: Database = def
         capacity: event.capacity,
         startsAt: event.startsAt,
         signupClosesAt: event.signupClosesAt,
-        origin: siteOrigin(),
+        origin: await announceOrigin(),
       });
     },
     { eventId }
@@ -358,7 +449,7 @@ export function announceApplicationDecision(
         eventTitle: row.eventTitle,
         slug: row.slug,
         waitlistPosition: row.waitlistPosition,
-        origin: siteOrigin(),
+        origin: await announceOrigin(),
       });
     }
   );
@@ -397,7 +488,7 @@ export function announceLotSold(lotId: string, database: Database = defaultDb): 
         price: row.price ?? 0,
         eventTitle: row.eventTitle,
         slug: row.slug,
-        origin: siteOrigin(),
+        origin: await announceOrigin(),
       });
     }
   );
@@ -447,7 +538,7 @@ export function announceMatchResult(matchId: string, database: Database = defaul
         winner: resolved.winner ? (named.get(resolved.winner) ?? null) : null,
         eventTitle: event.title,
         slug: event.slug,
-        origin: siteOrigin(),
+        origin: await announceOrigin(),
       });
     }
     // No `eventId` on the context: the action has a match id and the event is

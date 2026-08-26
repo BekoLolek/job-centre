@@ -365,6 +365,25 @@ export const SETTING_KEYS = {
    * ship without a migration.
    */
   announcements: "discord.announcements",
+  /**
+   * string — the Discord webhook announcements are posted to.
+   *
+   * Stored rather than left to `DISCORD_WEBHOOK_URL` alone because the channel
+   * an organiser wants announcements in changes far more often than a
+   * deployment does, and editing it in Vercel means a redeploy and a wait.
+   *
+   * Semi-secret: anybody holding it can post to that channel as the webhook.
+   * It is never sent to the browser in full — see `maskWebhook`.
+   */
+  webhookUrl: "discord.webhook_url",
+  /**
+   * string — the origin links in announcements point at.
+   *
+   * The one that bites after a domain change: with this wrong, every
+   * announcement links somewhere that is not the site, and nothing errors,
+   * because a link to the wrong place is a perfectly good link.
+   */
+  siteOrigin: "site.origin",
 } as const;
 
 /* ------------------------------------------------------------------ */

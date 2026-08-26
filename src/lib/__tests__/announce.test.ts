@@ -8,8 +8,11 @@ import {
   eventPublishedMessage,
   linkTo,
   lotSoldMessage,
+  maskWebhook,
   matchResultMessage,
   normaliseAnnouncementSettings,
+  resolveSiteOrigin,
+  resolveWebhookUrl,
   siteOrigin,
   stamp,
   webhookUrl,
@@ -117,6 +120,102 @@ describe("the site origin", () => {
     expect(siteOrigin({ AUTH_URL: "nonsense" })).toBeNull();
     expect(linkTo("/events/x", null)).toBeNull();
     expect(linkTo("events/x", "https://a.test")).toBe("https://a.test/events/x");
+  });
+});
+
+describe("settings over environment", () => {
+  const env = {
+    DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/111/env-token",
+    NEXT_PUBLIC_SITE_URL: "https://old.vercel.app",
+  };
+
+  it("prefers what an admin set on the screen", () => {
+    expect(resolveWebhookUrl("https://discord.com/api/webhooks/222/set-token", env)).toBe(
+      "https://discord.com/api/webhooks/222/set-token"
+    );
+    expect(resolveSiteOrigin("https://jobcentre.vercel.app", env)).toBe(
+      "https://jobcentre.vercel.app"
+    );
+  });
+
+  it("falls back to the deployment when nothing is stored", () => {
+    expect(resolveWebhookUrl(null, env)).toBe(env.DISCORD_WEBHOOK_URL);
+    expect(resolveSiteOrigin(undefined, env)).toBe("https://old.vercel.app");
+  });
+
+  it("treats a cleared setting as no opinion, not as off", () => {
+    // Clearing the override drops back to the environment. Reading a blank
+    // string as "switch announcements off" would make Clear a trap.
+    expect(resolveWebhookUrl("", env)).toBe(env.DISCORD_WEBHOOK_URL);
+    expect(resolveSiteOrigin("   ", env)).toBe("https://old.vercel.app");
+  });
+
+  it("falls through a stored value that is not a URL rather than going silent", () => {
+    expect(resolveWebhookUrl("not a url", env)).toBe(env.DISCORD_WEBHOOK_URL);
+    expect(resolveSiteOrigin("jobcentre", env)).toBe("https://old.vercel.app");
+  });
+
+  it("is null when neither says anything", () => {
+    expect(resolveWebhookUrl(null, {})).toBeNull();
+    expect(resolveSiteOrigin(null, {})).toBeNull();
+  });
+
+  it("keeps only the origin, so a pasted link does not prefix every message", () => {
+    expect(resolveSiteOrigin("https://jobcentre.vercel.app/admin/settings?tab=x", {})).toBe(
+      "https://jobcentre.vercel.app"
+    );
+  });
+
+  it("leaves the old single-argument form working", () => {
+    expect(siteOrigin(env)).toBe("https://old.vercel.app");
+  });
+});
+
+describe("masking a webhook", () => {
+  it("keeps the id and hides the token", () => {
+    const masked = maskWebhook("https://discord.com/api/webhooks/1399/AbCdEfGhIjKlMnOp");
+    expect(masked).toContain("1399");
+    expect(masked).not.toContain("EfGhIjKlMnOp");
+  });
+
+  it("shows enough of a real token to tell two apart, and no more", () => {
+    // A Discord webhook token is about 68 characters. At that length four of
+    // them identify which webhook this is without being worth anything.
+    const long = (prefix: string) => `${prefix}${"x".repeat(64)}`;
+    const one = maskWebhook(`https://discord.com/api/webhooks/1399/${long("AAAA")}`);
+    const two = maskWebhook(`https://discord.com/api/webhooks/1399/${long("BBBB")}`);
+    expect(one).not.toBe(two);
+    expect(one).not.toContain(long("AAAA"));
+    expect(two).not.toContain(long("BBBB"));
+  });
+
+  it("never returns the input unchanged", () => {
+    const raw = "https://discord.com/api/webhooks/1399/AbCdEfGhIjKlMnOp";
+    expect(maskWebhook(raw)).not.toBe(raw);
+  });
+
+  it("hides a short token completely, prefix and all", () => {
+    // Four characters of a long token identify it. Four characters of a short
+    // one are the whole thing, which is how a mask becomes a leak.
+    for (const secret of ["abc", "zk4t", "shortish-token"]) {
+      const masked = maskWebhook(`https://example.test/inbound/${secret}`);
+      expect(masked).not.toContain(secret);
+      expect(masked).toContain("•");
+    }
+  });
+
+  it("never lets a token survive masking, at any length", () => {
+    const lengths = [1, 4, 16, 17, 32, 68];
+    for (const length of lengths) {
+      const secret = "S".repeat(length);
+      const masked = maskWebhook(`https://discord.com/api/webhooks/1399/${secret}`) ?? "";
+      expect(masked).not.toContain(secret);
+    }
+  });
+
+  it("gives back nothing for nothing, and does not throw on rubbish", () => {
+    expect(maskWebhook(null)).toBeNull();
+    expect(maskWebhook("not a url")).toBe("•••");
   });
 });
 
