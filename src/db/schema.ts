@@ -368,6 +368,251 @@ export const adminAllowlist = pgTable("admin_allowlist", {
 });
 
 /* ------------------------------------------------------------------ */
+/* Hosting                                                            */
+/* ------------------------------------------------------------------ */
+
+export const hostApplicationStatus = pgEnum("host_application_status", [
+  "pending",
+  "approved",
+  "declined",
+  "withdrawn",
+]);
+
+export type HostApplicationStatus = (typeof hostApplicationStatus.enumValues)[number];
+
+/**
+ * "I would like to run an event."
+ *
+ * The point of the form is that an admin can act on it without a conversation.
+ * Approving one means creating the event, attaching a game, and writing the
+ * questions applicants will answer — so the application has to carry the game
+ * and the questions, not just an intention. A one-line "can I run a Jackbox
+ * night" is a Discord message, and this exists because Discord messages get
+ * lost.
+ *
+ * `eventId` is filled in on approval and is what ties the answer back to the
+ * ask. Null while pending, and null forever on a decline.
+ */
+export const hostApplications = pgTable(
+  "host_applications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+
+    title: text("title").notNull(),
+    /** Free text: the game may not exist here yet, which is half the point. */
+    gameName: text("game_name").notNull(),
+    /** Set when they picked one that already exists, so the admin need not guess. */
+    gameId: uuid("game_id").references(() => games.id, { onDelete: "set null" }),
+    summary: text("summary").notNull(),
+    /** How it runs — bracket, casual, one night, a league. */
+    format: text("format"),
+    expectedPlayers: integer("expected_players"),
+    /** When they want it. Free text, because "some weekend in March" is an answer. */
+    proposedWhen: text("proposed_when"),
+    /**
+     * What the host needs to know about each player: rank, role, which packs
+     * they own. Becomes the event's questions, which is why it is required.
+     */
+    playerInfoNeeded: text("player_info_needed").notNull(),
+
+    status: hostApplicationStatus("status").notNull().default("pending"),
+    decidedByUserId: uuid("decided_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    decidedAt: instant("decided_at"),
+    /** Shown to the applicant. A decline with no reason is worse than none. */
+    decisionNote: text("decision_note"),
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
+
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    index("host_applications_user_id_idx").on(table.userId),
+    index("host_applications_status_idx").on(table.status),
+  ]
+);
+
+/**
+ * Who may run one event, besides the admins.
+ *
+ * A row here is the whole grant: within this event the holder can do what an
+ * admin can, and outside it they are an ordinary member. `isAdmin` stays a
+ * separate, site-wide thing — a host is not a small admin, they are somebody
+ * trusted with one evening.
+ *
+ * A table rather than `events.hostUserId` because co-hosting is the obvious
+ * next ask and a join table costs nothing now.
+ */
+export const eventHosts = pgTable(
+  "event_hosts",
+  {
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    grantedByUserId: uuid("granted_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    grantedAt: instant("granted_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.eventId, table.userId] }),
+    index("event_hosts_user_id_idx").on(table.userId),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
+/* The suggestion box                                                 */
+/* ------------------------------------------------------------------ */
+
+export const suggestionStatus = pgEnum("suggestion_status", [
+  "open",
+  "planned",
+  "done",
+  "declined",
+]);
+
+export type SuggestionStatus = (typeof suggestionStatus.enumValues)[number];
+
+/**
+ * "Somebody should run one of these."
+ *
+ * Public to read, because the count is the entire value: an organiser deciding
+ * what to run next wants to see that eleven people want a REPO night, and the
+ * eleven people want to see that too. Voting needs an account, since an
+ * anonymous count is a number anybody can make say anything.
+ */
+export const eventSuggestions = pgTable(
+  "event_suggestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull(),
+    detail: text("detail"),
+    /** Free text. The game may well not be one this site knows about. */
+    gameName: text("game_name"),
+    /** Null once somebody deletes their account; the suggestion survives them. */
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    status: suggestionStatus("status").notNull().default("open"),
+    /** Set when an admin turns a suggestion into a real event. */
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [index("event_suggestions_status_idx").on(table.status)]
+);
+
+/**
+ * One person's opinion of one suggestion.
+ *
+ * `value` is 1 or -1 rather than a boolean, so the tally is a sum and changing
+ * your mind is an update rather than a delete and an insert. The primary key
+ * is what makes one person one vote — enforced by the database, not by the
+ * action remembering to check.
+ */
+export const suggestionVotes = pgTable(
+  "suggestion_votes",
+  {
+    suggestionId: uuid("suggestion_id")
+      .notNull()
+      .references(() => eventSuggestions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    value: integer("value").notNull(),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.suggestionId, table.userId] }),
+    check("suggestion_votes_value", sql`${table.value} in (-1, 1)`),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
+/* Polls                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * An admin asking the community something.
+ *
+ * Open like Discord's: the counts are public and so is who voted for what.
+ * That is a deliberate choice rather than an oversight — a poll about which
+ * night suits people is more useful when you can see *who* said Thursday, and
+ * a community that wants a secret ballot needs a different feature, not this
+ * one with the names hidden.
+ *
+ * `closesAt` is the line the editing rule turns on: before it, an admin may
+ * still change the question and the options; after it, nothing moves. A poll
+ * whose wording can change after the result is a poll that proves nothing.
+ */
+export const polls = pgTable(
+  "polls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    question: text("question").notNull(),
+    detail: text("detail"),
+    /** Pick several, or pick one. */
+    multiple: boolean("multiple").notNull().default(false),
+    /** Null means it stays open until somebody closes it by setting this. */
+    closesAt: instant("closes_at"),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [index("polls_closes_at_idx").on(table.closesAt)]
+);
+
+export const pollOptions = pgTable(
+  "poll_options",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    pollId: uuid("poll_id")
+      .notNull()
+      .references(() => polls.id, { onDelete: "cascade" }),
+    label: text("label").notNull(),
+    sort: integer("sort").notNull().default(0),
+  },
+  (table) => [index("poll_options_poll_id_idx").on(table.pollId)]
+);
+
+/**
+ * One vote for one option.
+ *
+ * `pollId` is carried here as well as on the option, which is denormalised on
+ * purpose: "how many people voted in this poll" and "clear this person's
+ * answer before recording a new one" are both single-table questions with it
+ * and joins without it, and the second one runs on every single vote.
+ */
+export const pollVotes = pgTable(
+  "poll_votes",
+  {
+    pollId: uuid("poll_id")
+      .notNull()
+      .references(() => polls.id, { onDelete: "cascade" }),
+    optionId: uuid("option_id")
+      .notNull()
+      .references(() => pollOptions.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.optionId, table.userId] }),
+    index("poll_votes_poll_id_idx").on(table.pollId),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
 /* Settings (§14)                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1739,6 +1984,11 @@ export type NewProfileField = typeof profileFields.$inferInsert;
 export type ProfileValueRow = typeof profileValues.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
 export type AdminAllowlistRow = typeof adminAllowlist.$inferSelect;
+export type HostApplicationRow = typeof hostApplications.$inferSelect;
+export type EventHostRow = typeof eventHosts.$inferSelect;
+export type EventSuggestionRow = typeof eventSuggestions.$inferSelect;
+export type PollRow = typeof polls.$inferSelect;
+export type PollOptionRow = typeof pollOptions.$inferSelect;
 export type EventTemplate = typeof eventTemplates.$inferSelect;
 export type NewEventTemplate = typeof eventTemplates.$inferInsert;
 export type EventRow = typeof events.$inferSelect;
