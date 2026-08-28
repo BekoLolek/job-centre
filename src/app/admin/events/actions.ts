@@ -60,7 +60,16 @@ import {
 import { recordAudit } from "@/lib/audit";
 import { announceApplicationDecision, announceEventPublished } from "@/lib/discord";
 import { isFieldType } from "@/lib/profile-fields";
-import { requireAdmin } from "@/lib/session-guards";
+import {
+  eventIdOfApplication,
+  eventIdOfMatch,
+  eventIdOfStage,
+} from "@/lib/event-scope";
+import {
+  requireAdmin,
+  requireEventManager,
+  requireManagerOfChild,
+} from "@/lib/session-guards";
 import { parseStamp } from "@/lib/time";
 
 /* ------------------------------------------------------------------ */
@@ -145,7 +154,7 @@ export async function saveBasicsAction(
   eventId: string,
   fields: BasicsFields
 ): Promise<EventResult<{ slug: string }>> {
-  await requireAdmin();
+  await requireEventManager(eventId);
 
   const result = await updateEvent(eventId, {
     title: fields.title,
@@ -181,7 +190,7 @@ export async function setEventStatusAction(
   eventId: string,
   status: EventStatus
 ): Promise<EventResult<{ status: EventStatus }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const result = await updateEvent(eventId, { status });
   if (!result.ok) return result;
@@ -207,7 +216,7 @@ export async function setEventStatusAction(
 export async function publishEventAction(
   eventId: string
 ): Promise<EventResult<{ status: EventStatus }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const result = await publishEvent(eventId);
   if (!result.ok) return result;
@@ -256,7 +265,7 @@ export async function previewEventDaysAction(
   eventId: string,
   days: DayFields[]
 ): Promise<EventDaysImpact> {
-  await requireAdmin();
+  await requireEventManager(eventId);
   return previewEventDays(eventId, days.map(toDayInput));
 }
 
@@ -274,7 +283,7 @@ export async function saveEventDaysAction(
   eventId: string,
   days: DayFields[]
 ): Promise<EventResult<{ clearedAvailability: number; days: DayFields[] }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const result = await setEventDays(eventId, days.map(toDayInput));
   if (!result.ok) return result;
@@ -336,7 +345,7 @@ export async function saveEventQuestionsAction(
   eventId: string,
   questions: QuestionFields[]
 ): Promise<EventResult<{ clearedAnswers: number; questions: QuestionFields[] }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const cleaned: EventQuestionInput[] = [];
   for (const [index, question] of questions.entries()) {
@@ -410,7 +419,7 @@ export async function saveEntryRulesAction(
   eventId: string,
   rules: { minRankToEnter: string | null; minRankToCaptain: string | null }
 ): Promise<EventResult<null>> {
-  await requireAdmin();
+  await requireEventManager(eventId);
 
   const result = await updateEvent(eventId, {
     minRankToEnter: rules.minRankToEnter,
@@ -459,7 +468,15 @@ export async function decideApplicationAction(
   status: ApplicationStatus,
   options: { eventId: string; note?: string | null; promote?: boolean }
 ): Promise<EventResult<DecisionResult>> {
-  const admin = await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign application id. See `src/lib/event-scope.ts`.
+   */
+  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+    eventIdOfApplication(applicationId)
+  );
 
   const result = await setApplicationStatus(applicationId, status, {
     decidedBy: admin.id,
@@ -502,7 +519,7 @@ export async function decideApplicationAction(
     announceApplicationDecision(promoted.id);
   }
 
-  refresh(options.eventId);
+  refresh(scope);
   return {
     ok: true,
     data: {
@@ -527,12 +544,18 @@ export async function saveApplicationNoteAction(
   note: string | null,
   eventId: string
 ): Promise<EventResult<null>> {
-  await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign application id. See `src/lib/event-scope.ts`.
+   */
+  const { eventId: scope } = await requireManagerOfChild(() => eventIdOfApplication(applicationId));
 
   const result = await setApplicationNote(applicationId, note);
   if (!result.ok) return result;
 
-  refresh(eventId);
+  refresh(scope);
   return { ok: true, data: null };
 }
 
@@ -549,11 +572,17 @@ export async function setApplicantAvailabilityAction(
   byDay: Record<string, AvailabilityState | null>,
   eventId: string
 ): Promise<EventResult<Record<string, AvailabilityState>>> {
-  await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign application id. See `src/lib/event-scope.ts`.
+   */
+  const { eventId: scope } = await requireManagerOfChild(() => eventIdOfApplication(applicationId));
 
   const result = await setAvailability(applicationId, byDay);
   if (!result.ok) return fail(result.error);
 
-  refresh(eventId);
+  refresh(scope);
   return result;
 }

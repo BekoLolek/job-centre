@@ -36,7 +36,7 @@ import {
   getEventById,
 } from "@/lib/events";
 import { MAX_STAGES, formatFor, matchIdsFor, scheduleSettingsFrom } from "@/lib/format";
-import { requireAdmin } from "@/lib/session-guards";
+import { requireEventManager } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -54,8 +54,14 @@ export default async function AdminEventPage({
   /** `?tab=` — where `/admin`'s "what needs attention" lines land. */
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAdmin();
   const { id } = await params;
+  /*
+   * Admins reach every event; a host reaches the one they were given. The
+   * guard needs the id, so it runs after the params rather than before — and
+   * `requireEventManager` redirects a member who wanders here by id, so
+   * nothing below runs for somebody who should not see it.
+   */
+  await requireEventManager(id);
   const { tab } = await searchParams;
 
   const event = await getEventById(id);

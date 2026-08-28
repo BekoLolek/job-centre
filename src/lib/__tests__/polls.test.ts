@@ -318,31 +318,15 @@ describe("closing", () => {
   });
 
   it("sorts open polls above closed ones", async () => {
-    const fresh = await freshDatabase();
-    const scoped = fresh.db;
-    try {
-      const admin = await makeUser(scoped);
-      const shut = unwrap(
-        await createPoll(
-          admin,
-          { question: "Old question", multiple: false, closesAt: null, options: OPTIONS },
-          scoped
-        )
-      );
-      unwrap(
-        await createPoll(
-          admin,
-          { question: "Live question", multiple: false, closesAt: null, options: OPTIONS },
-          scoped
-        )
-      );
-      await closePoll(shut.id, new Date("2020-01-01T00:00:00Z"), scoped);
+    const shut = await aPoll({ question: "Old question" });
+    const live = await aPoll({ question: "Live question" });
+    await closePoll(shut.id, new Date("2020-01-01T00:00:00Z"), db);
 
-      const list = await listPolls(null, scoped);
-      expect(list[0].question).toBe("Live question");
-      expect(list[1].closed).toBe(true);
-    } finally {
-      await fresh.close();
-    }
+    // Relative order against the shared database — a fresh one per test costs
+    // nine migrations, which is what used to time this suite out.
+    const list = await listPolls(null, db);
+    const at = (id: string) => list.findIndex((poll) => poll.id === id);
+    expect(at(live.id)).toBeLessThan(at(shut.id));
+    expect(list.find((poll) => poll.id === shut.id)?.closed).toBe(true);
   });
 });

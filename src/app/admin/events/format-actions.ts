@@ -57,7 +57,16 @@ import type { FormatTiming, MatchSlot, StageConfig } from "@/lib/format-policy";
 import { updateEvent } from "@/lib/events";
 import { recordAudit } from "@/lib/audit";
 import { announceMatchResult } from "@/lib/discord";
-import { requireAdmin } from "@/lib/session-guards";
+import {
+  eventIdOfApplication,
+  eventIdOfMatch,
+  eventIdOfStage,
+} from "@/lib/event-scope";
+import {
+  requireAdmin,
+  requireEventManager,
+  requireManagerOfChild,
+} from "@/lib/session-guards";
 
 /** Both admin screens, plus the public event page once it exists. */
 function refresh(eventId: string): void {
@@ -75,7 +84,7 @@ function fail<T>(error: string): FormatResult<T> {
 
 /** The whole resolved format, exactly as `formatFor` builds it. */
 export async function loadFormatAction(eventId: string): Promise<FormatView | null> {
-  await requireAdmin();
+  await requireEventManager(eventId);
   return formatFor(eventId);
 }
 
@@ -185,7 +194,7 @@ function impactOf(
  * Read-only, and it decides nothing.
  */
 export async function previewStagesAction(eventId: string): Promise<StageImpact[]> {
-  await requireAdmin();
+  await requireEventManager(eventId);
   const [view, ids] = await Promise.all([formatFor(eventId), matchIdsFor(eventId)]);
   return view ? view.stages.map((stage) => impactOf(stage, ids)) : [];
 }
@@ -203,7 +212,7 @@ export async function saveStagesAction(
   eventId: string,
   input: StageFields[]
 ): Promise<FormatResult<{ stages: Array<StageFields & { id: string }> }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const stages: StageInput[] = input.map((stage) => ({
     id: stage.id,
@@ -251,7 +260,15 @@ export async function generateStageAction(
   eventId: string,
   stageId: string
 ): Promise<FormatResult<{ created: number; view: FormatView | null }>> {
-  const admin = await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign stage id. See `src/lib/event-scope.ts`.
+   */
+  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+    eventIdOfStage(stageId)
+  );
 
   const result = await generateMatches(stageId);
   if (!result.ok) return result;
@@ -265,7 +282,7 @@ export async function generateStageAction(
     detail: { created: result.data.created },
   });
 
-  refresh(eventId);
+  refresh(scope);
   return { ok: true, data: { created: result.data.created, view: await formatFor(eventId) } };
 }
 
@@ -295,7 +312,7 @@ export async function saveScheduleSettingsAction(
   eventId: string,
   fields: ScheduleSettingsFields
 ): Promise<FormatResult<{ settings: ScheduleSettingsFields }>> {
-  await requireAdmin();
+  await requireEventManager(eventId);
 
   const result = await updateEvent(eventId, {
     config: {
@@ -337,7 +354,7 @@ export async function applyScheduleAction(
   dayStarts: Array<string | null>,
   settings: ScheduleSettingsFields
 ): Promise<FormatResult<{ scheduled: number; view: FormatView | null }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const saved = await saveScheduleSettingsAction(eventId, settings);
   if (!saved.ok) return saved;
@@ -383,7 +400,15 @@ export async function recordGamesAction(
   matchId: string,
   fields: RecordFields
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-  const admin = await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+   */
+  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+    eventIdOfMatch(matchId)
+  );
 
   if (fields.scheduledAt !== undefined) {
     const moved = await setMatchSchedule(matchId, fields.scheduledAt);
@@ -397,7 +422,7 @@ export async function recordGamesAction(
   );
   if (!result.ok) return result;
 
-  refresh(eventId);
+  refresh(scope);
   const view = await formatFor(eventId);
 
   // The board is re-read anyway, so the line the log stores is the scoreline
@@ -451,12 +476,20 @@ export async function setWinnerOverrideAction(
   matchId: string,
   teamId: string | null
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-  const admin = await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+   */
+  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+    eventIdOfMatch(matchId)
+  );
 
   const result = await setWinnerOverride(matchId, teamId);
   if (!result.ok) return result;
 
-  refresh(eventId);
+  refresh(scope);
   const view = await formatFor(eventId);
   const ids = await matchIdsFor(eventId);
   const line = matchLine(view, matchId, ids);
@@ -500,12 +533,20 @@ export async function reflipMatchAction(
   matchId: string,
   slot: MatchSlot | null = null
 ): Promise<FormatResult<{ firstSideChoice: MatchSlot; view: FormatView | null }>> {
-  const admin = await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+   */
+  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+    eventIdOfMatch(matchId)
+  );
 
   const result = await reflipMatch(matchId, slot);
   if (!result.ok) return result;
 
-  refresh(eventId);
+  refresh(scope);
   const view = await formatFor(eventId);
   const ids = await matchIdsFor(eventId);
   const resolvedSlot = Object.entries(ids).find(([, id]) => id === matchId)?.[0];
@@ -544,7 +585,15 @@ export async function clearMatchAction(
   matchId: string,
   gameCount: number
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-  const admin = await requireAdmin();
+    /*
+   * Authorised on the row about to be written, not on the `eventId` beside it.
+   * That argument comes from the browser and is only used to revalidate a page;
+   * trusting it here would let a host of one event act on another's by passing
+   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+   */
+  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+    eventIdOfMatch(matchId)
+  );
 
   // The line is read *before* the wipe: afterwards there is nothing left to
   // describe, and "cleared a match" is not a log entry anybody can act on.
@@ -562,6 +611,6 @@ export async function clearMatchAction(
     detail: { games: gameCount },
   });
 
-  refresh(eventId);
+  refresh(scope);
   return { ok: true, data: { view: await formatFor(eventId) } };
 }

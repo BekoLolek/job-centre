@@ -45,7 +45,7 @@ import {
 import type { DraftConfig } from "@/lib/draft-policy";
 import { recordAudit } from "@/lib/audit";
 import { displayNamesFor } from "@/lib/players";
-import { requireAdmin } from "@/lib/session-guards";
+import { requireAdmin, requireEventManager } from "@/lib/session-guards";
 
 /** Both admin screens: a team or a pool change alters what the list summarises. */
 function refresh(eventId: string): void {
@@ -105,7 +105,7 @@ export async function previewTeamsAction(
   eventId: string,
   input: TeamFields[]
 ): Promise<TeamsImpact> {
-  await requireAdmin();
+  await requireEventManager(eventId);
 
   const keeping = new Set(input.map((team) => team.id).filter(Boolean) as string[]);
   const [existing, lots] = await Promise.all([
@@ -150,7 +150,7 @@ export async function saveTeamsAction(
   eventId: string,
   input: TeamFields[]
 ): Promise<DraftResult<{ teams: Array<TeamFields & { id: string }>; removed: number }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const result = await setTeams(eventId, input.map(toTeamInput));
   if (!result.ok) return result;
@@ -197,7 +197,7 @@ export async function saveCaptainsAction(
   eventId: string,
   input: CaptainInput[]
 ): Promise<DraftResult<{ captains: Array<{ teamId: string; userId: string | null }> }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const result = await setCaptains(eventId, input);
   if (!result.ok) return result;
@@ -254,7 +254,7 @@ export async function saveDraftConfigAction(
   eventId: string,
   patch: Partial<DraftConfig>
 ): Promise<DraftResult<{ config: DraftConfig; rebalanced: number }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const result = await setDraftConfig(eventId, patch);
   if (!result.ok) return result;
@@ -309,7 +309,7 @@ export async function seedDraftPoolAction(
   eventId: string,
   input: { userIds?: string[]; keepReserve?: boolean } = {}
 ): Promise<DraftResult<{ added: number; removed: number; pool: PoolState }>> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
 
   const result = await setDraftPool(eventId, input);
   if (!result.ok) return result;
@@ -354,7 +354,7 @@ export async function movePoolPlayerAction(
   to: DraftPoolKind,
   options: { by?: string | null } = {}
 ): Promise<DraftResult<{ pool: PoolState }>> {
-  await requireAdmin();
+  await requireEventManager(eventId);
 
   const config = await getDraftConfig(eventId);
   if (!config.reserveEnabled) {

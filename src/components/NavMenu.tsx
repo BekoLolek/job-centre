@@ -32,11 +32,13 @@ const MEMBER: Item[] = [
   { href: "/me", label: "Dashboard", hint: "What needs you next" },
   { href: "/me/events", label: "My events", hint: "Applications and availability" },
   { href: "/me/profile", label: "Profile", hint: "Ranks, roles, in-game names" },
+  { href: "/host", label: "Host an event", hint: "Propose one, or open yours" },
 ];
 
 const ADMIN: Item[] = [
   { href: "/admin", label: "Tonight", hint: "What needs attention" },
   { href: "/admin/events", label: "Events" },
+  { href: "/admin/host", label: "Host applications", hint: "Who wants to run something" },
   { href: "/admin/availability", label: "Availability", hint: "When everyone is free" },
   { href: "/admin/templates", label: "Templates" },
   { href: "/admin/games", label: "Games and questions" },

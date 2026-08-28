@@ -35,6 +35,13 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
   return result.data;
 }
 
+/** Where a row landed in the list, so order can be asserted without a clean slate. */
+function place(list: Array<{ id: string }>, id: string): number {
+  const at = list.findIndex((row) => row.id === id);
+  expect(at).toBeGreaterThanOrEqual(0);
+  return at;
+}
+
 describe("adding", () => {
   it("counts the suggester as wanting it", async () => {
     const userId = await makeUser(db, { displayName: "Ada" });
@@ -120,50 +127,40 @@ describe("voting", () => {
 
 describe("the list", () => {
   it("puts what people want most at the top", async () => {
-    const fresh = await freshDatabase();
-    const scoped = fresh.db;
-    try {
-      const author = await makeUser(scoped);
-      const a = unwrap(await addSuggestion(author, { title: "Wanted" }, scoped));
-      const b = unwrap(await addSuggestion(author, { title: "Less wanted" }, scoped));
+    const author = await makeUser(db);
+    const a = unwrap(await addSuggestion(author, { title: "Wanted" }, db));
+    const b = unwrap(await addSuggestion(author, { title: "Less wanted" }, db));
 
-      for (let i = 0; i < 3; i += 1) {
-        const voter = await makeUser(scoped);
-        await voteSuggestion(a.id, voter, 1, scoped);
-      }
-      const grump = await makeUser(scoped);
-      await voteSuggestion(b.id, grump, -1, scoped);
-
-      const list = await listSuggestions(null, scoped);
-      expect(list[0].title).toBe("Wanted");
-      expect(list[0].score).toBe(4);
-      expect(list[1].score).toBe(0);
-    } finally {
-      await fresh.close();
+    for (let i = 0; i < 3; i += 1) {
+      const voter = await makeUser(db);
+      await voteSuggestion(a.id, voter, 1, db);
     }
+    const grump = await makeUser(db);
+    await voteSuggestion(b.id, grump, -1, db);
+
+    // Relative order, against the shared database. Asserting on absolute
+    // positions would mean a database per test, and building one costs nine
+    // migrations — which is what used to time this suite out.
+    const list = await listSuggestions(null, db);
+    expect(place(list, a.id)).toBeLessThan(place(list, b.id));
+    expect(list.find((row) => row.id === a.id)?.score).toBe(4);
+    expect(list.find((row) => row.id === b.id)?.score).toBe(0);
   });
 
   it("drops the settled ones below the open ones, whatever they scored", async () => {
-    const fresh = await freshDatabase();
-    const scoped = fresh.db;
-    try {
-      const author = await makeUser(scoped);
-      const done = unwrap(await addSuggestion(author, { title: "Already run" }, scoped));
-      const open = unwrap(await addSuggestion(author, { title: "Still wanted" }, scoped));
+    const author = await makeUser(db);
+    const done = unwrap(await addSuggestion(author, { title: "Already run" }, db));
+    const open = unwrap(await addSuggestion(author, { title: "Still wanted" }, db));
 
-      for (let i = 0; i < 5; i += 1) {
-        const voter = await makeUser(scoped);
-        await voteSuggestion(done.id, voter, 1, scoped);
-      }
-      await setSuggestionStatus(done.id, "done", scoped);
-
-      const list = await listSuggestions(null, scoped);
-      // Six votes against one, and it still sits below the open one.
-      expect(list[0].title).toBe("Still wanted");
-      expect(list[1].title).toBe("Already run");
-    } finally {
-      await fresh.close();
+    for (let i = 0; i < 5; i += 1) {
+      const voter = await makeUser(db);
+      await voteSuggestion(done.id, voter, 1, db);
     }
+    await setSuggestionStatus(done.id, "done", db);
+
+    // Six votes against one, and it still sits below the open one.
+    const list = await listSuggestions(null, db);
+    expect(place(list, open.id)).toBeLessThan(place(list, done.id));
   });
 });
 

@@ -48,7 +48,12 @@ import {
 import { recordAudit } from "@/lib/audit";
 import { announceLotSold } from "@/lib/discord";
 import type { BidRefusalReason } from "@/lib/draft-policy";
-import { getCurrentUser, requireAdmin, requireUser } from "@/lib/session-guards";
+import {
+  getCurrentUser,
+  requireAdmin,
+  requireEventManager,
+  requireUser,
+} from "@/lib/session-guards";
 import { type RoomPayload, checkBid, loadRoom } from "./room";
 
 /* ------------------------------------------------------------------ */
@@ -163,7 +168,7 @@ export async function runDraftAction(
   eventId: string,
   command: AdminCommand
 ): Promise<AdminOutcome> {
-  const admin = await requireAdmin();
+  const admin = await requireEventManager(eventId);
   const done = async (
     ok: boolean,
     error: string | null = null,

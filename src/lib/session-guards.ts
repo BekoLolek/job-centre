@@ -32,6 +32,7 @@ import { redirect } from "next/navigation";
 import { type User, db, users } from "@/db";
 import { SIGN_IN_PATH, auth } from "./auth";
 import { SIGN_IN_ERRORS } from "./auth-policy";
+import { canManageEvent } from "./hosting";
 
 export { SIGN_IN_PATH };
 
@@ -77,4 +78,45 @@ export async function requireAdmin(): Promise<User> {
   if (!user) redirect(SIGN_IN_PATH);
   if (!user.isAdmin) redirect(`${SIGN_IN_PATH}?error=${SIGN_IN_ERRORS.adminOnly}`);
   return user;
+}
+
+/**
+ * The signed-in person's row, if they may manage this event — otherwise a
+ * redirect.
+ *
+ * Admins pass for every event; a host passes for the one they were given. This
+ * is the only door into an event's admin screens, so a host who wanders to
+ * somebody else's event id lands on the members' hub rather than on an editor
+ * they can half use.
+ *
+ * The redirect goes to `/me` rather than to the sign-in page when somebody is
+ * signed in but not allowed: sending a logged-in member to a login screen is
+ * the most confusing possible answer to "you cannot see this".
+ */
+export async function requireEventManager(eventId: string): Promise<User> {
+  const user = await requireUser();
+  if (await canManageEvent(user, eventId)) return user;
+  redirect("/me");
+}
+
+/**
+ * As {@link requireEventManager}, but the event is resolved from a child row.
+ *
+ * For an action keyed on an application, a match or a stage. Passing the
+ * child's own event id in from the browser would be authorising on an id
+ * beside the write rather than on the write itself — see `event-scope.ts` for
+ * the hole that opens.
+ *
+ * A child that does not exist redirects rather than 404s: telling somebody
+ * which ids are real is a small leak, and the screen they came from is stale
+ * either way.
+ */
+export async function requireManagerOfChild(
+  resolve: () => Promise<string | null>
+): Promise<{ user: User; eventId: string }> {
+  const user = await requireUser();
+  const eventId = await resolve();
+  if (!eventId) redirect("/me");
+  if (await canManageEvent(user, eventId)) return { user, eventId };
+  redirect("/me");
 }
