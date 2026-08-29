@@ -186,7 +186,7 @@ export default async function HubPage() {
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
               <Button href="/events">All events</Button>
-              <Button href="/events?when=past">Archive</Button>
+              <Button href="/archive">Archive</Button>
             </div>
           </Panel>
         )}
@@ -218,7 +218,7 @@ export default async function HubPage() {
             title="Recently finished"
             description="How the last few turned out, and who won them."
             aside={
-              <Link href="/events?when=past" className="text-[13px] text-muted transition-colors hover:text-union">
+              <Link href="/archive" className="text-[13px] text-muted transition-colors hover:text-union">
                 Archive →
               </Link>
             }

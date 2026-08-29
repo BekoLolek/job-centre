@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { cx } from "@/components/ui";
 
@@ -12,9 +12,14 @@ import { cx } from "@/components/ui";
  * No border, no fill, no box — a row of bordered buttons reads as a single
  * object, and the point of a nav is that each item is its own place.
  *
- * The current item is matched on the path *and* the query, because `/events`
- * and `/events?when=past` are two destinations in this bar and differ only
- * there.
+ * Matched on the path alone.
+ *
+ * It used to compare the query as well, because the archive lived at
+ * `/events?when=past` and the two items differed only there. The archive has
+ * its own address now, so every item in this bar is its own path — and
+ * comparing the query had become actively wrong: `/events?type=tournament` is
+ * still the events page, and matching exactly left nothing lit the moment
+ * somebody used the kind filter.
  */
 export default function HeaderLink({
   href,
@@ -24,13 +29,8 @@ export default function HeaderLink({
   children: ReactNode;
 }) {
   const pathname = usePathname() ?? "";
-  const params = useSearchParams();
-
-  const [path, query] = href.split("?");
-  const current =
-    query === undefined
-      ? pathname === path && !params.toString()
-      : pathname === path && params.toString() === query;
+  const [path] = href.split("?");
+  const current = pathname === path;
 
   return (
     <Link

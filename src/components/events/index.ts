@@ -3,6 +3,9 @@
 // the rules live in `src/lib/events-policy.ts` and these read their answers.
 
 export { default as EventCard } from "./EventCard";
+export { default as EventListing } from "./EventListing";
+export type { EventListingProps, EventListingScope } from "./EventListing";
+
 export { default as EventRow, EventRows, EventRowsHeading } from "./EventRow";
 export type { EventCardProps } from "./EventCard";
 

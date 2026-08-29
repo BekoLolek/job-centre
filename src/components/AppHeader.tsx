@@ -36,7 +36,7 @@ export default function AppHeader({
 
         <nav className="hidden items-center gap-7 md:flex" aria-label="Main">
           <HeaderLink href="/events">Events</HeaderLink>
-          <HeaderLink href="/events?when=past">Archive</HeaderLink>
+          <HeaderLink href="/archive">Archive</HeaderLink>
           <HeaderLink href="/suggestions">Suggestions</HeaderLink>
           <HeaderLink href="/polls">Polls</HeaderLink>
         </nav>
