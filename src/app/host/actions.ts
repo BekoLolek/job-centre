@@ -12,6 +12,7 @@
 
 import { revalidatePath } from "next/cache";
 import { recordAudit } from "@/lib/audit";
+import { notifyHostDecision } from "@/lib/notify-events";
 import { createEvent } from "@/lib/events";
 import {
   type HostApplicationInput,
@@ -117,6 +118,10 @@ export async function approveHostApplicationAction(
     },
   });
 
+  if (application.by?.id) {
+    notifyHostDecision(application.by.id, id, true, application.title, created.data.id);
+  }
+
   refresh();
   revalidatePath("/admin/events");
   return { ok: true, data: { eventId: created.data.id } };
@@ -142,6 +147,10 @@ export async function declineHostApplicationAction(
     summary: `Declined a host application for "${application.title}".`,
     detail: { applicationId: id, note: note ?? null },
   });
+
+  if (application.by?.id) {
+    notifyHostDecision(application.by.id, id, false, application.title, null);
+  }
 
   refresh();
   return { ok: true, data: undefined };

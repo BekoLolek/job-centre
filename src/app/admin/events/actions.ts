@@ -58,6 +58,13 @@ import {
   updateEvent,
 } from "@/lib/events";
 import { recordAudit } from "@/lib/audit";
+import {
+  notifyApplicationDecided,
+  notifyEventCancelled,
+  notifyEventPublished,
+  notifyEventUpdated,
+  notifyQuestionsChanged,
+} from "@/lib/notify-events";
 import { announceApplicationDecision, announceEventPublished } from "@/lib/discord";
 import { isFieldType } from "@/lib/profile-fields";
 import {
@@ -171,6 +178,14 @@ export async function saveBasicsAction(
   });
   if (!result.ok) return result;
 
+  /*
+   * Only for an event people have already applied to — `notifyEventUpdated`
+   * asks for exactly that audience, so an admin still drafting one is not
+   * announcing every keystroke to nobody. Collapsed to one a day, because
+   * saving four times on Tuesday is one change of plan.
+   */
+  notifyEventUpdated(eventId);
+
   refresh(eventId);
   // The slug comes back because `freeSlug` may have disambiguated it, and an
   // admin who typed "rivals" deserves to be told they got "rivals-2".
@@ -206,7 +221,11 @@ export async function setEventStatusAction(
   // Reaching `published` from the status dropdown is the same event as reaching
   // it from the Publish tab, so it announces the same thing. Announcing from
   // one of the two paths is how a feature ends up looking unreliable.
-  if (result.data.status === "published") announceEventPublished(eventId);
+  if (result.data.status === "published") {
+    announceEventPublished(eventId);
+    notifyEventPublished(eventId, admin.id);
+  }
+  if (result.data.status === "cancelled") notifyEventCancelled(eventId, admin.id);
 
   refresh(eventId);
   return { ok: true, data: { status: result.data.status } };
@@ -230,6 +249,7 @@ export async function publishEventAction(
   });
 
   announceEventPublished(eventId);
+  notifyEventPublished(eventId, admin.id);
 
   refresh(eventId);
   return { ok: true, data: { status: result.data.status } };
@@ -383,6 +403,12 @@ export async function saveEventQuestionsAction(
     },
   });
 
+  /*
+   * Told only to people who have already answered. For anybody else there is
+   * nothing to check — they will simply see today's questions when they apply.
+   */
+  notifyQuestionsChanged(eventId, admin.id);
+
   refresh(eventId);
   // With their ids, for the same reason the days come back with theirs: a
   // question is kept rather than replaced only when its id is passed back, and
@@ -517,6 +543,21 @@ export async function decideApplicationAction(
   // Everybody a promotion let in is a decision too, and one nobody clicked.
   for (const promoted of result.data.promoted) {
     announceApplicationDecision(promoted.id);
+  }
+
+  /*
+   * The personal version of the same news. The channel announcement tells the
+   * server; this tells the person, and it is the one kind that cannot be
+   * switched off — it is the reply to something they asked for.
+   */
+  // "withdrawn" is the member's own doing, so there is nobody to tell.
+  if (named?.userId && status !== "withdrawn") {
+    notifyApplicationDecided(scope, named.userId, status);
+  }
+  for (const promoted of result.data.promoted) {
+    if (promoted.userId) {
+      notifyApplicationDecided(scope, promoted.userId, "accepted");
+    }
   }
 
   refresh(scope);

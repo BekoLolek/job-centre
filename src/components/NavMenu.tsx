@@ -30,6 +30,7 @@ type Item = { href: string; label: string; hint?: string };
 
 const MEMBER: Item[] = [
   { href: "/me", label: "Dashboard", hint: "What needs you next" },
+  { href: "/me/notifications", label: "Notifications", hint: "And what you hear about" },
   { href: "/me/events", label: "My events", hint: "Applications and availability" },
   { href: "/me/profile", label: "Profile", hint: "Ranks, roles, in-game names" },
   { href: "/host", label: "Host an event", hint: "Propose one, or open yours" },
@@ -49,9 +50,12 @@ const ADMIN: Item[] = [
 
 export default function NavMenu({
   user,
+  unread = 0,
   signOut,
 }: {
   user: NavMenuUser;
+  /** Unread notifications, for the dot on the avatar. */
+  unread?: number;
   /** The sign-out server action, handed down so this stays a pure client leaf. */
   signOut: () => Promise<void>;
 }) {
@@ -114,7 +118,20 @@ export default function NavMenu({
           open ? "bg-white/[0.06]" : "hover:bg-white/[0.04]"
         )}
       >
-        <Avatar name={name} size="sm" />
+        <span className="relative">
+          <Avatar name={name} size="sm" />
+          {/*
+            A dot, not a number. The count is on the notifications page; what
+            the header has to answer is "is there anything", and a badge that
+            says 14 makes people stop reading it at about four.
+          */}
+          {unread > 0 && (
+            <span
+              aria-label={`${unread} unread`}
+              className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-ink bg-union"
+            />
+          )}
+        </span>
         <span className="hidden text-sm text-chalk/90 sm:block">{name}</span>
         <svg
           viewBox="0 0 10 6"

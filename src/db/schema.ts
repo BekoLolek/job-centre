@@ -613,6 +613,116 @@ export const pollVotes = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Notifications                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The kinds of thing the site will tell you about.
+ *
+ * An enum rather than free text, because every kind is also a preference — a
+ * member can switch any of them off — and a preference for a string nobody
+ * declared is a preference nobody can find the switch for.
+ *
+ * Each kind has an audience, and the audience is the reason the defaults are
+ * sane. `event_published` goes to everybody, because a new event is the point
+ * of the site. `questions_changed` goes only to people who already answered,
+ * because for anybody else it is not news. `event_reminder` goes only to
+ * people holding a seat. Getting the audience right is what stops "turn
+ * everything on by default" being a spam decision.
+ */
+export const notificationKind = pgEnum("notification_kind", [
+  /** A new event is up. Everybody. */
+  "event_published",
+  /** It starts tomorrow. Anybody holding a seat. */
+  "event_reminder",
+  /** The dates or the details moved. Anybody who applied. */
+  "event_updated",
+  /** It is off. Anybody who applied. */
+  "event_cancelled",
+  /** The sign-up questions changed after you answered them. */
+  "questions_changed",
+  /** You are in, or you are in the queue. */
+  "application_decided",
+  /** A new poll to vote in. Everybody. */
+  "poll_posted",
+  /** Your application to host was approved or declined. */
+  "host_decision",
+]);
+
+export type NotificationKind = (typeof notificationKind.enumValues)[number];
+
+/**
+ * One thing the site has told one person.
+ *
+ * Rows, not derived. Almost everything else in this database is resolved on
+ * read — balances, bracket slots, whether applications are open — and that is
+ * the right default. Notifications are the exception for three reasons, and
+ * all three are about state that has nowhere else to live: whether *you* have
+ * read it, what the preferences were at the moment it was sent, and whether the
+ * Discord message got through.
+ *
+ * `dedupeKey` is what makes sending safe to repeat. An admin who edits the
+ * questions five times in a minute has not produced five pieces of news, and a
+ * reminder job that runs twice has not made the event start twice — so the key
+ * carries whatever makes the news distinct (usually the event and the day) and
+ * the insert simply does nothing the second time.
+ */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: notificationKind("kind").notNull(),
+
+    title: text("title").notNull(),
+    body: text("body"),
+    /** Where it takes you. Relative, so it works whatever the domain is today. */
+    href: text("href"),
+    /** Set when the news is about one event, so a cancelled event can tidy up. */
+    eventId: uuid("event_id").references(() => events.id, { onDelete: "cascade" }),
+
+    /** Sending the same news twice is a no-op. See the note above. */
+    dedupeKey: text("dedupe_key").notNull(),
+    readAt: instant("read_at"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("notifications_user_dedupe_uniq").on(table.userId, table.dedupeKey),
+    index("notifications_user_id_idx").on(table.userId),
+    index("notifications_unread_idx").on(table.userId, table.readAt),
+  ]
+);
+
+/**
+ * A member's overrides, and only their overrides.
+ *
+ * No row means the default, which is in code. Writing a row per person per
+ * kind on sign-up would mean a migration every time a kind is added, and would
+ * freeze today's defaults into accounts made today — so the table holds
+ * disagreements with the default and nothing else, exactly as the settings
+ * table holds disagreements with the environment.
+ *
+ * `discord` defaults to false everywhere. A direct message is a more intrusive
+ * thing than a dot on a bell, and it is not the sort of thing to opt somebody
+ * into on their behalf.
+ */
+export const notificationPrefs = pgTable(
+  "notification_prefs",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: notificationKind("kind").notNull(),
+    inApp: boolean("in_app").notNull().default(true),
+    discord: boolean("discord").notNull().default(false),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.kind] })]
+);
+
+/* ------------------------------------------------------------------ */
 /* Settings (§14)                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -1984,6 +2094,8 @@ export type NewProfileField = typeof profileFields.$inferInsert;
 export type ProfileValueRow = typeof profileValues.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
 export type AdminAllowlistRow = typeof adminAllowlist.$inferSelect;
+export type NotificationRow = typeof notifications.$inferSelect;
+export type NotificationPrefRow = typeof notificationPrefs.$inferSelect;
 export type HostApplicationRow = typeof hostApplications.$inferSelect;
 export type EventHostRow = typeof eventHosts.$inferSelect;
 export type EventSuggestionRow = typeof eventSuggestions.$inferSelect;

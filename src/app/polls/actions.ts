@@ -14,6 +14,7 @@
 
 import { revalidatePath } from "next/cache";
 import { recordAudit } from "@/lib/audit";
+import { notifyPollPosted } from "@/lib/notify-events";
 import {
   type PollInput,
   closePoll,
@@ -67,6 +68,8 @@ export async function createPollAction(
     summary: `Posted a poll: "${draft.question.trim()}".`,
     detail: { pollId: result.data.id, options: draft.options.length, multiple: draft.multiple },
   });
+
+  notifyPollPosted(result.data.id, draft.question.trim(), admin.id);
 
   refresh();
   return { ok: true, data: result.data };

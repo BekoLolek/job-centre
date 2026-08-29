@@ -15,6 +15,7 @@
 import Link from "next/link";
 import NavMenu from "./NavMenu";
 import { signOut } from "@/lib/auth";
+import { unreadCount } from "@/lib/notifications";
 import { getCurrentUser } from "@/lib/session-guards";
 
 export default async function SessionNav() {
@@ -36,8 +37,16 @@ export default async function SessionNav() {
     await signOut({ redirectTo: "/" });
   }
 
+  /*
+   * Read here rather than inside `NavMenu`: the menu is a client component and
+   * the count is a query. One read per header render on a site that is already
+   * `force-dynamic` throughout.
+   */
+  const unread = await unreadCount(user.id);
+
   return (
     <NavMenu
+      unread={unread}
       user={{
         displayName: user.displayName,
         name: user.name,
