@@ -351,14 +351,15 @@ export async function setPref(
 /* ------------------------------------------------------------------ */
 
 /**
- * Events starting within the next day, for the reminder job.
+ * Events starting within `within`, for the reminder job.
  *
- * A window rather than a moment: a job that runs hourly must not need to catch
- * an event at exactly the right tick, and the dedupe key means the extra runs
- * cost one insert attempt each and change nothing.
+ * A window rather than a moment: a job that runs once a day, somewhere inside
+ * its hour, must not need to catch an event at exactly the right tick, and the
+ * dedupe key means overlapping runs cost one insert attempt each and change
+ * nothing. See `REMINDER_WINDOW_MS` for why the window is wider than a day.
  */
 export async function eventsStartingSoon(
-  within = 24 * 60 * 60 * 1000,
+  within = REMINDER_WINDOW_MS,
   now: Date = new Date(),
   database: Database = defaultDb
 ): Promise<Array<{ id: string; title: string; slug: string; startsAt: Date }>> {
@@ -388,7 +389,20 @@ export async function eventsStartingSoon(
 }
 
 /**
- * Send tomorrow's reminders. Idempotent, so it may run as often as you like.
+ * How far ahead a reminder run looks.
+ *
+ * The job runs once a day (Vercel Hobby allows nothing more often), and Hobby
+ * only promises the hour, so two runs can be as much as 24h59m apart. A window
+ * of exactly a day therefore has a gap: an event starting between the two runs
+ * is too far out for the first and already started by the second. 36 hours
+ * closes it with room to spare, and from the midday run in `vercel.json` it is
+ * precisely "the rest of today and all of tomorrow" in UTC. The overlap between
+ * runs costs nothing, because the dedupe key makes a second reminder a no-op.
+ */
+export const REMINDER_WINDOW_MS = 36 * 60 * 60 * 1000;
+
+/**
+ * Send the day-before reminders. Idempotent, so it may run as often as you like.
  *
  * The key carries the event and nothing else, so an event is reminded about
  * once however many times the job runs — including across a redeploy, which a
@@ -398,18 +412,19 @@ export async function sendDueReminders(
   now: Date = new Date(),
   database: Database = defaultDb
 ): Promise<{ events: number; delivered: number }> {
-  const soon = await eventsStartingSoon(24 * 60 * 60 * 1000, now, database);
+  const soon = await eventsStartingSoon(REMINDER_WINDOW_MS, now, database);
 
   let delivered = 0;
   for (const event of soon) {
     const seats = await seatHoldersOf(event.id, database);
     if (seats.length === 0) continue;
 
+    const when = dayStamp(event.startsAt) === dayStamp(now) ? "today" : "tomorrow";
     const result = await notify(
       {
         kind: "event_reminder",
         userIds: seats,
-        title: `${event.title} starts tomorrow`,
+        title: `${event.title} starts ${when}`,
         body: "You have a seat. Check the time and let an admin know if you cannot make it.",
         href: `/events/${event.slug}`,
         eventId: event.id,

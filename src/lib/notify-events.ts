@@ -133,23 +133,6 @@ export function notifyQuestionsChanged(eventId: string, exceptUserId?: string): 
   });
 }
 
-/** Starting tomorrow. Used by the reminder job; kept here for symmetry. */
-export function notifyStartingSoon(eventId: string): void {
-  defer(async () => {
-    const event = await eventBrief(eventId);
-    if (!event) return;
-    await notify({
-      kind: "event_reminder",
-      userIds: await seatHoldersOf(event.id),
-      title: `${event.title} starts tomorrow`,
-      body: "You have a seat. Check the time and tell an admin if you cannot make it.",
-      href: `/events/${event.slug}`,
-      eventId: event.id,
-      subject: event.id,
-    });
-  });
-}
-
 /* ------------------------------------------------------------------ */
 /* People                                                             */
 /* ------------------------------------------------------------------ */

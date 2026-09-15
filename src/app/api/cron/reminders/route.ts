@@ -22,8 +22,16 @@ import { sendDueReminders } from "@/lib/notifications";
  *
  * `sendDueReminders` is idempotent: the notification's dedupe key is the event
  * id, so an event is reminded about once however many times this runs, across
- * redeploys and retries. That is what lets the schedule be hourly rather than
- * something clever that has to fire exactly once.
+ * redeploys and retries. That is what lets a daily run use a look-ahead wider
+ * than a day (`REMINDER_WINDOW_MS`) rather than something clever that has to
+ * fire exactly once.
+ *
+ * ## Once a day, and no more
+ *
+ * Vercel Hobby refuses to *deploy* a project whose cron runs more than once a
+ * day — the whole deployment fails, not just the job. An hourly schedule here
+ * held production back for eighteen days before anyone noticed, so
+ * `src/app/api/cron/__tests__/schedule.test.ts` now fails first.
  *
  * ## The secret
  *

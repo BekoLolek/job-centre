@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { Database } from "@/db";
+import { type Database, applications, events } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
+  REMINDER_WINDOW_MS,
   channelsFor,
   dayStamp,
   dedupeKey,
@@ -10,6 +11,7 @@ import {
   markAllRead,
   markRead,
   notify,
+  sendDueReminders,
   setPref,
   unreadCount,
 } from "@/lib/notifications";
@@ -318,6 +320,85 @@ describe("preferences round-trip", () => {
     const rows = prefs.filter((row) => row.kind === "event_published");
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ inApp: true, discord: true });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Reminders                                                          */
+/* ------------------------------------------------------------------ */
+
+describe("sendDueReminders", () => {
+  const HOUR = 60 * 60 * 1000;
+  const MINUTE = 60 * 1000;
+
+  /** A published event starting at `startsAt`, with one accepted seat. */
+  async function eventWithSeat(startsAt: Date, status: "published" | "draft" = "published") {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const [event] = await db
+      .insert(events)
+      .values({ slug: `reminder-${suffix}`, title: `Reminder ${suffix}`, status, startsAt })
+      .returning({ id: events.id });
+    const userId = await makeUser(db);
+    await db.insert(applications).values({ eventId: event.id, userId, status: "accepted" });
+    return userId;
+  }
+
+  it("reminds a seat holder about an event starting within the day", async () => {
+    const now = new Date("2026-10-01T17:00:00.000Z");
+    const seat = await eventWithSeat(new Date(now.getTime() + 20 * HOUR));
+
+    await sendDueReminders(now, db);
+    expect(await unreadCount(seat, db)).toBe(1);
+  });
+
+  it("leaves no gap between two daily runs as far apart as Vercel allows", async () => {
+    // A Hobby cron fires once a day, anywhere inside its hour, so consecutive
+    // runs can be 24h59m apart. An event starting between them must be caught
+    // by the first run, because by the second it has already begun.
+    const firstRun = new Date("2026-10-02T17:00:00.000Z");
+    const secondRun = new Date(firstRun.getTime() + 24 * HOUR + 59 * MINUTE);
+    const seat = await eventWithSeat(new Date(firstRun.getTime() + 24 * HOUR + 30 * MINUTE));
+
+    await sendDueReminders(firstRun, db);
+    await sendDueReminders(secondRun, db);
+    expect(await unreadCount(seat, db)).toBe(1);
+  });
+
+  it("does not remind twice when the window overlaps two runs", async () => {
+    const firstRun = new Date("2026-10-04T17:00:00.000Z");
+    const secondRun = new Date(firstRun.getTime() + 23 * HOUR);
+    const seat = await eventWithSeat(new Date(firstRun.getTime() + 24 * HOUR + 30 * MINUTE));
+
+    await sendDueReminders(firstRun, db);
+    await sendDueReminders(secondRun, db);
+    expect(await unreadCount(seat, db)).toBe(1);
+  });
+
+  it("still says tomorrow: nothing further out than the window", async () => {
+    const now = new Date("2026-10-06T17:00:00.000Z");
+    const seat = await eventWithSeat(new Date(now.getTime() + REMINDER_WINDOW_MS + MINUTE));
+
+    await sendDueReminders(now, db);
+    expect(await unreadCount(seat, db)).toBe(0);
+    expect(REMINDER_WINDOW_MS).toBeLessThanOrEqual(36 * HOUR);
+  });
+
+  it("says today for an event later the same day, tomorrow otherwise", async () => {
+    const now = new Date("2026-10-10T12:00:00.000Z");
+    const later = await eventWithSeat(new Date("2026-10-10T20:00:00.000Z"));
+    const tomorrow = await eventWithSeat(new Date("2026-10-11T19:00:00.000Z"));
+
+    await sendDueReminders(now, db);
+    expect((await listNotifications(later, db))[0].title).toMatch(/starts today$/);
+    expect((await listNotifications(tomorrow, db))[0].title).toMatch(/starts tomorrow$/);
+  });
+
+  it("never reminds anybody about an unpublished event", async () => {
+    const now = new Date("2026-10-08T17:00:00.000Z");
+    const seat = await eventWithSeat(new Date(now.getTime() + 2 * HOUR), "draft");
+
+    await sendDueReminders(now, db);
+    expect(await unreadCount(seat, db)).toBe(0);
   });
 });
 
