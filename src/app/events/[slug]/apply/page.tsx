@@ -38,6 +38,7 @@ import {
 } from "@/components/events";
 import { Alert, Badge, Button, Eyebrow, Panel, StatTile } from "@/components/ui";
 import { getEventBySlug, loadApplicationForm } from "@/lib/events";
+import { canSeeEvent } from "@/lib/hosting";
 import { requireUser } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -59,7 +60,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
   const now = new Date();
   const event = await getEventBySlug(slug, { now });
   if (!event) notFound();
-  if (event.status === "draft" && !user.isAdmin) notFound();
+  if (!(await canSeeEvent(user, event))) notFound();
 
   const form = await loadApplicationForm(event.id, user.id, { now });
   if (!form) notFound();

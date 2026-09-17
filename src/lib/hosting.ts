@@ -85,6 +85,21 @@ export async function canManageEvent(
   return Boolean(row);
 }
 
+/**
+ * May this person see this event at all?
+ *
+ * A published event is public. An unpublished one does not exist for anybody
+ * but its managers, so every page that shows it answers not found rather than
+ * forbidden — nobody learns a half-written event is there by knocking.
+ */
+export async function canSeeEvent(
+  user: { id: string; isAdmin: boolean } | null,
+  event: { id: string; status: string },
+  database: Database = defaultDb
+): Promise<boolean> {
+  return event.status !== "draft" || canManageEvent(user, event.id, database);
+}
+
 /** The events this person hosts, for their own dashboard. */
 export async function eventsHostedBy(
   userId: string,

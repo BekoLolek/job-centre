@@ -8,6 +8,7 @@ import {
   applyToHost,
   approveHostApplication,
   canManageEvent,
+  canSeeEvent,
   declineHostApplication,
   eventsHostedBy,
   getHostApplication,
@@ -117,6 +118,30 @@ describe("canManageEvent", () => {
 /* ------------------------------------------------------------------ */
 /* Applying                                                           */
 /* ------------------------------------------------------------------ */
+
+describe("canSeeEvent", () => {
+  it("shows a published event to anyone, signed out included", async () => {
+    const event = { id: await anEvent(), status: "published" };
+
+    expect(await canSeeEvent({ id: await makeUser(db), isAdmin: false }, event, db)).toBe(true);
+    expect(await canSeeEvent(null, event, db)).toBe(true);
+  });
+
+  it("shows an unpublished event to its host", async () => {
+    const event = { id: await anEvent(), status: "draft" };
+    const host = { id: await makeUser(db), isAdmin: false };
+    await addHost(event.id, host.id, null, db);
+
+    expect(await canSeeEvent(host, event, db)).toBe(true);
+  });
+
+  it("hides an unpublished event from another member and from somebody signed out", async () => {
+    const event = { id: await anEvent(), status: "draft" };
+
+    expect(await canSeeEvent({ id: await makeUser(db), isAdmin: false }, event, db)).toBe(false);
+    expect(await canSeeEvent(null, event, db)).toBe(false);
+  });
+});
 
 describe("applying", () => {
   it("keeps what the admin needs to set the event up", async () => {

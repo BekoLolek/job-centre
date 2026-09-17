@@ -17,9 +17,9 @@
  *
  * No session is required to read any of this — including the whole tournament
  * surface: Teams, Schedule, Bracket and Results are all in §11's public row. A
- * draft event is the one exception: it is invisible to everyone but an admin,
- * and answers 404 rather than 403, because members must not be able to learn
- * that an unpublished event exists.
+ * draft event is the one exception: it is invisible to everyone but its managers
+ * (an admin, or a host of that event), and answers 404 rather than 403, because
+ * members must not be able to learn that an unpublished event exists.
  *
  * **No instant is formatted in this file.** Every time on the page goes through
  * a client component (`EventDateRange`, `LocalTime`, or a whole tab that is
@@ -69,6 +69,7 @@ import {
   loadApplicationForm,
 } from "@/lib/events";
 import { fieldTypeInfo } from "@/lib/profile-fields";
+import { canSeeEvent } from "@/lib/hosting";
 import { getCurrentUser } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -104,8 +105,7 @@ export default async function EventPage({
 
   const [event, user] = await Promise.all([getEventBySlug(slug, { now }), getCurrentUser()]);
   if (!event) notFound();
-  // A draft does not exist as far as anybody but an admin is concerned.
-  if (event.status === "draft" && !user?.isAdmin) notFound();
+  if (!(await canSeeEvent(user, event))) notFound();
 
   // Only signed-in readers need the second read: it is their application and
   // their rank check. A visitor's action is decided by the clock alone.

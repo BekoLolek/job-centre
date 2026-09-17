@@ -9,9 +9,9 @@
  * ## Who may open it
  *
  * Anyone, signed out included (§11's "watch the live draft" row). The only gate
- * is the event itself: a `draft` event does not exist as far as anybody but an
- * admin is concerned, so it answers 404 rather than 403 — exactly as
- * `/events/[slug]` does, and for the same reason. Members must not be able to
+ * is the event itself: a `draft` event does not exist as far as anybody but its
+ * managers (an admin, or a host of that event) are concerned, so it answers 404
+ * rather than 403 — exactly as `/events/[slug]` does, and for the same reason. Members must not be able to
  * learn that an unpublished event exists by knocking on its draft room.
  *
  * ## Why the first paint comes from here
@@ -25,6 +25,7 @@
 import { notFound } from "next/navigation";
 import SessionNav from "@/components/SessionNav";
 import { getEventBySlug } from "@/lib/events";
+import { canSeeEvent } from "@/lib/hosting";
 import { getCurrentUser } from "@/lib/session-guards";
 import DraftRoom from "./DraftRoom";
 import { loadRoom } from "./room";
@@ -48,7 +49,7 @@ export default async function DraftRoomPage({
 
   const [event, user] = await Promise.all([getEventBySlug(slug, { now }), getCurrentUser()]);
   if (!event) notFound();
-  if (event.status === "draft" && !user?.isAdmin) notFound();
+  if (!(await canSeeEvent(user, event))) notFound();
 
   const payload = await loadRoom(event.id, user, now);
   // `loadRoom` only returns null when the event has gone, which cannot happen

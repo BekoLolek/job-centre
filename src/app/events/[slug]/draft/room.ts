@@ -125,7 +125,8 @@ export async function checkBid(
  *
  * `viewerFor` decides the role — admin, captain, player or observer — and the
  * signed-out visitor is an observer, which §11 puts in the same row as everyone
- * else for watching.
+ * else for watching. The "admin" role is the console, and a host of this event
+ * gets it too; `viewerFor` asks `canManageEvent`, not `isAdmin`.
  */
 export async function loadRoom(
   eventId: string,

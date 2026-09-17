@@ -62,6 +62,7 @@ import {
   teams,
   users,
 } from "@/db";
+import { canManageEvent } from "@/lib/hosting";
 import {
   type AwardedLotView,
   type DraftCompletion,
@@ -1722,9 +1723,11 @@ export type DraftRoomView = DraftView & {
 /**
  * Work out what this viewer is to this draft.
  *
- * Admin beats everything; then captaincy, then being in it at all. Somebody
- * signed in who is not part of this event is an observer, and so is somebody
- * signed out — §11 puts the whole room in the same row for watching.
+ * Managing this event beats everything — an admin, or a host of this one event,
+ * gets the console; a host of some other event is nobody special here. Then
+ * captaincy, then being in it at all. Somebody signed in who is not part of this
+ * event is an observer, and so is somebody signed out — §11 puts the whole room
+ * in the same row for watching.
  */
 export async function viewerFor(
   eventId: string,
@@ -1732,8 +1735,10 @@ export async function viewerFor(
   isAdmin: boolean,
   database: Database = defaultDb
 ): Promise<DraftViewer> {
-  if (isAdmin) return { role: "admin", userId, teamId: null };
   if (!userId) return { role: "observer", userId: null, teamId: null };
+  if (await canManageEvent({ id: userId, isAdmin }, eventId, database)) {
+    return { role: "admin", userId, teamId: null };
+  }
 
   const [captained] = await database
     .select({ id: teams.id })

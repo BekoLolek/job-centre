@@ -334,8 +334,9 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
 /** §11's four viewers, in the words the room uses for them. */
 function roleWord(role: string): string {
   switch (role) {
+    // An admin, or a host of this event — both run the room the same way.
     case "admin":
-      return "Admin";
+      return "Manager";
     case "captain":
       return "Captain";
     case "player":
