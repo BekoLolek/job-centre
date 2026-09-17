@@ -52,6 +52,7 @@ path of each use case is its acceptance test; every alternate and error flow get
 | R-166 | UC-23 extensions |
 | R-150 | UC-26 extensions |
 | R-169 | UC-27 extensions |
+| R-170 | UC-08 extensions, UC-12 extensions |
 | R-22, R-125, R-126, R-127, R-128, R-129, R-130 | UC-28 |
 | R-141 | UC-29 |
 | R-142 | UC-30 |
@@ -918,6 +919,7 @@ cases of their own.
 - **E3.** At step 4, manager labels a day - System uses the label wherever the day is named.
 - **E4.** At step 3, manager types a kind not in the list - System saves it and offers it as a filter once an event of that kind is published.
 - **E5.** At any step, System lists what is still missing or worth checking (no questions, no cap, a rank rule with no rank question). The list advises; it does not block - only UC-09 2a blocks.
+- **E6.** (R-170) At step 6, manager switches the waitlist off - System closes sign-ups once the seats are full instead of queueing.
 
 ## UC-11 extensions: Follow an event
 
@@ -927,8 +929,9 @@ cases of their own.
 
 ## UC-12 extensions: Apply to an event
 
-**Requirements covered:** R-121, R-122
+**Requirements covered:** R-121, R-122, R-170
 
+- **E3.** (R-170) At step 7, seats are full in a first-come event with the waitlist switched off - System refuses with "This event is full"; nothing stored.
 - **E1.** Precondition 2 fails because the member withdrew earlier - System lets them apply again; they go to the back of the queue.
 - **E2.** Precondition 2 fails because the member was declined - System refuses with "You were declined for this event" and offers no form.
 

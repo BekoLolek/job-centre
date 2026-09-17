@@ -133,9 +133,9 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 
 ### Task 7: Approval entry mode
 
-- **Serves:** R-27 / UC-08 6a, UC-12 7b, UC-14 2-4
+- **Serves:** R-27, R-170 / UC-08 6a, E6, UC-12 7b, E3, UC-14 2-4
 - **Files:** `src/db/schema.ts` (+ migration: `pending` enum value, `config.entryMode`), `src/lib/events-policy.ts`, `src/lib/events.ts`, `src/components/admin/events/BasicsTab.tsx`, `src/components/admin/events/ApplicantsTab.tsx`, `src/components/admin/TemplatesManager.tsx`, `src/app/me/events/page.tsx`, tests
-- **Do:** replace `config.waitlist` on/off with `entryMode: first_come | approval` (migration maps existing events to first_come). Approval: apply stores `pending`; manager accepts/waitlists/declines per `diagrams/application-state.md`.
+- **Do:** add `entryMode: first_come | approval` (migration maps existing events to first_come). Approval: apply stores `pending`; manager accepts/waitlists/declines per `diagrams/application-state.md`. The existing `config.waitlist` switch stays for first-come events (R-170, kept): off means the event closes when full.
 - **Acceptance criteria:**
   - [ ] UC-12 7b: approval event stores pending, member sees "Awaiting review"
   - [ ] Pending → accepted/waitlisted/declined; pending → withdrawn by applicant

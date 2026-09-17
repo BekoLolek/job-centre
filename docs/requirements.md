@@ -263,6 +263,7 @@ requirement, the note says how the two combine.
 | R-167 | As a member, I want to say how many players my event expects when applying to host, so that an admin can judge it. | Could | |
 | R-168 | As a member, I want to give a short summary when applying to host, so that an admin sees the idea quickly. | Could | |
 | R-169 | As an admin, I want the admin home to flag events that are ready to publish, missing captains, holding an open draft lot, or with a series needing a winner, so that those decisions reach me. | Could | Extends R-109 |
+| R-170 | As a manager, I want a first-come event to either keep a waitlist or simply close when full, so that a small event does not collect a queue it will never use. | Could | Added during Task 7 planning: the audit found it, and it was missed from the Gate 2 list. Applies to first-come entry only (R-27) |
 
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
