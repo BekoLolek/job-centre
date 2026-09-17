@@ -348,7 +348,7 @@ export default function FormatTab({
     setBusy(true);
     setError(null);
     try {
-      const result = await generateStageAction(eventId, stage.id);
+      const result = await generateStageAction(stage.id);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -447,7 +447,7 @@ export default function FormatTab({
             blocked.push(stage.name);
             continue;
           }
-          const result = await generateStageAction(eventId, stage.id);
+          const result = await generateStageAction(stage.id);
           if (cancelled) return;
           if (result.ok) built += result.data.created;
           else blocked.push(stage.name);

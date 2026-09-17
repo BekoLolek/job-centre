@@ -83,11 +83,9 @@ import {
 type View = "day" | "bracket";
 
 export default function ResultsTab({
-  eventId,
   format,
   matchIds,
 }: {
-  eventId: string;
   format: FormatView;
   /**
    * Slot to row id — `matchIdsFor`, read on the server.
@@ -169,7 +167,7 @@ export default function ResultsTab({
     setBusySlot(match.slot);
     setError(null);
     try {
-      const result = await recordGamesAction(eventId, id, fields);
+      const result = await recordGamesAction(id, fields);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -179,7 +177,7 @@ export default function ResultsTab({
       // The override is its own write because it is its own decision: the games
       // say what happened, the override says who advances anyway.
       if (override !== undefined && override !== (match.winnerOverrideId ?? "")) {
-        const decided = await setWinnerOverrideAction(eventId, id, override || null);
+        const decided = await setWinnerOverrideAction(id, override || null);
         if (!decided.ok) {
           setError(decided.error);
           return;
@@ -202,7 +200,7 @@ export default function ResultsTab({
     setBusySlot(match.slot);
     setError(null);
     try {
-      const result = await setWinnerOverrideAction(eventId, id, teamId);
+      const result = await setWinnerOverrideAction(id, teamId);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -221,7 +219,7 @@ export default function ResultsTab({
     setBusySlot(match.slot);
     setError(null);
     try {
-      const result = await reflipMatchAction(eventId, id, slot);
+      const result = await reflipMatchAction(id, slot);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -240,7 +238,7 @@ export default function ResultsTab({
     setBusySlot(match.slot);
     setError(null);
     try {
-      const result = await clearMatchAction(eventId, id, match.games.length);
+      const result = await clearMatchAction(id, match.games.length);
       if (!result.ok) {
         setError(result.error);
         return;

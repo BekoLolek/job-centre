@@ -123,7 +123,6 @@ export default function ApplicantsTab({
     setOffer(null);
     try {
       const result = await decideApplicationAction(row.id, status, {
-        eventId: event.id,
         promote: options.promote,
       });
       if (!result.ok) {

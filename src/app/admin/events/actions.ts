@@ -492,15 +492,16 @@ export type DecisionResult = {
 export async function decideApplicationAction(
   applicationId: string,
   status: ApplicationStatus,
-  options: { eventId: string; note?: string | null; promote?: boolean }
+  options: { note?: string | null; promote?: boolean }
 ): Promise<EventResult<DecisionResult>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign application id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and every read and audit line
+   * after it uses the event that row belongs to. There is deliberately no
+   * `eventId` option: one sent by the browser would let a host of one event
+   * log against another's by passing a foreign id beside their own application.
+   * See `src/lib/event-scope.ts`.
    */
-  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+  const { user: admin, eventId } = await requireManagerOfChild(() =>
     eventIdOfApplication(applicationId)
   );
 
@@ -525,7 +526,7 @@ export async function decideApplicationAction(
   await recordAudit({
     action: "application.decided",
     actor: admin,
-    eventId: options.eventId,
+    eventId,
     subject: applicationId,
     summary: `${DECISION_VERB[result.data.application.status]} ${who} for "${where}"${queue}.`,
     detail: {
@@ -552,15 +553,15 @@ export async function decideApplicationAction(
    */
   // "withdrawn" is the member's own doing, so there is nobody to tell.
   if (named?.userId && status !== "withdrawn") {
-    notifyApplicationDecided(scope, named.userId, status);
+    notifyApplicationDecided(eventId, named.userId, status);
   }
   for (const promoted of result.data.promoted) {
     if (promoted.userId) {
-      notifyApplicationDecided(scope, promoted.userId, "accepted");
+      notifyApplicationDecided(eventId, promoted.userId, "accepted");
     }
   }
 
-  refresh(scope);
+  refresh(eventId);
   return {
     ok: true,
     data: {

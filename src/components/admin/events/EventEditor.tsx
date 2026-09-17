@@ -254,7 +254,7 @@ function EditorBody({
           />
         )}
         {tab === "results" && (
-          <ResultsTab eventId={event.id} format={format.view} matchIds={format.matchIds} />
+          <ResultsTab format={format.view} matchIds={format.matchIds} />
         )}
         {tab === "publish" && (
           <PublishTab event={event} applicants={applicants} queue={queue} />

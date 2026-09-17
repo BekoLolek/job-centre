@@ -57,11 +57,7 @@ import type { FormatTiming, MatchSlot, StageConfig } from "@/lib/format-policy";
 import { updateEvent } from "@/lib/events";
 import { recordAudit } from "@/lib/audit";
 import { announceMatchResult } from "@/lib/discord";
-import {
-  eventIdOfApplication,
-  eventIdOfMatch,
-  eventIdOfStage,
-} from "@/lib/event-scope";
+import { eventIdOfMatch, eventIdOfStage } from "@/lib/event-scope";
 import {
   requireAdmin,
   requireEventManager,
@@ -76,16 +72,6 @@ function refresh(eventId: string): void {
 
 function fail<T>(error: string): FormatResult<T> {
   return { ok: false, error };
-}
-
-/* ------------------------------------------------------------------ */
-/* Reading the board                                                  */
-/* ------------------------------------------------------------------ */
-
-/** The whole resolved format, exactly as `formatFor` builds it. */
-export async function loadFormatAction(eventId: string): Promise<FormatView | null> {
-  await requireEventManager(eventId);
-  return formatFor(eventId);
 }
 
 /* ------------------------------------------------------------------ */
@@ -257,16 +243,16 @@ export async function saveStagesAction(
  * the screen asks `previewStagesAction` first and says what would go.
  */
 export async function generateStageAction(
-  eventId: string,
   stageId: string
 ): Promise<FormatResult<{ created: number; view: FormatView | null }>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign stage id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and every read and audit line
+   * after it uses the event that row belongs to. There is deliberately no
+   * `eventId` argument: one sent by the browser would let a host of one event
+   * read another's board by passing a foreign id beside their own stage.
+   * See `src/lib/event-scope.ts`.
    */
-  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+  const { user: admin, eventId } = await requireManagerOfChild(() =>
     eventIdOfStage(stageId)
   );
 
@@ -282,7 +268,7 @@ export async function generateStageAction(
     detail: { created: result.data.created },
   });
 
-  refresh(scope);
+  refresh(eventId);
   return { ok: true, data: { created: result.data.created, view: await formatFor(eventId) } };
 }
 
@@ -396,17 +382,17 @@ export type RecordFields = {
  * of the two the admin actually changed.
  */
 export async function recordGamesAction(
-  eventId: string,
   matchId: string,
   fields: RecordFields
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and every read and audit line
+   * after it uses the event that row belongs to. There is deliberately no
+   * `eventId` argument: one sent by the browser would let a host of one event
+   * read another's board by passing a foreign id beside their own match.
+   * See `src/lib/event-scope.ts`.
    */
-  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+  const { user: admin, eventId } = await requireManagerOfChild(() =>
     eventIdOfMatch(matchId)
   );
 
@@ -422,7 +408,7 @@ export async function recordGamesAction(
   );
   if (!result.ok) return result;
 
-  refresh(scope);
+  refresh(eventId);
   const view = await formatFor(eventId);
 
   // The board is re-read anyway, so the line the log stores is the scoreline
@@ -472,24 +458,24 @@ function matchLine(
  * rather than stored and then quietly ignored on read.
  */
 export async function setWinnerOverrideAction(
-  eventId: string,
   matchId: string,
   teamId: string | null
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and every read and audit line
+   * after it uses the event that row belongs to. There is deliberately no
+   * `eventId` argument: one sent by the browser would let a host of one event
+   * read another's board by passing a foreign id beside their own match.
+   * See `src/lib/event-scope.ts`.
    */
-  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+  const { user: admin, eventId } = await requireManagerOfChild(() =>
     eventIdOfMatch(matchId)
   );
 
   const result = await setWinnerOverride(matchId, teamId);
   if (!result.ok) return result;
 
-  refresh(scope);
+  refresh(eventId);
   const view = await formatFor(eventId);
   const ids = await matchIdsFor(eventId);
   const line = matchLine(view, matchId, ids);
@@ -529,24 +515,24 @@ export async function setWinnerOverrideAction(
  * happened in the room, and "first_side_choice is now b" is not.
  */
 export async function reflipMatchAction(
-  eventId: string,
   matchId: string,
   slot: MatchSlot | null = null
 ): Promise<FormatResult<{ firstSideChoice: MatchSlot; view: FormatView | null }>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and every read and audit line
+   * after it uses the event that row belongs to. There is deliberately no
+   * `eventId` argument: one sent by the browser would let a host of one event
+   * read another's board by passing a foreign id beside their own match.
+   * See `src/lib/event-scope.ts`.
    */
-  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+  const { user: admin, eventId } = await requireManagerOfChild(() =>
     eventIdOfMatch(matchId)
   );
 
   const result = await reflipMatch(matchId, slot);
   if (!result.ok) return result;
 
-  refresh(scope);
+  refresh(eventId);
   const view = await formatFor(eventId);
   const ids = await matchIdsFor(eventId);
   const resolvedSlot = Object.entries(ids).find(([, id]) => id === matchId)?.[0];
@@ -581,17 +567,17 @@ export async function reflipMatchAction(
  * What is left is the same shape as everything else here: guard, delegate, log.
  */
 export async function clearMatchAction(
-  eventId: string,
   matchId: string,
   gameCount: number
 ): Promise<FormatResult<{ view: FormatView | null }>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign match id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and every read and audit line
+   * after it uses the event that row belongs to. There is deliberately no
+   * `eventId` argument: one sent by the browser would let a host of one event
+   * read another's board by passing a foreign id beside their own match.
+   * See `src/lib/event-scope.ts`.
    */
-  const { user: admin, eventId: scope } = await requireManagerOfChild(() =>
+  const { user: admin, eventId } = await requireManagerOfChild(() =>
     eventIdOfMatch(matchId)
   );
 
@@ -611,6 +597,6 @@ export async function clearMatchAction(
     detail: { games: gameCount },
   });
 
-  refresh(scope);
+  refresh(eventId);
   return { ok: true, data: { view: await formatFor(eventId) } };
 }
