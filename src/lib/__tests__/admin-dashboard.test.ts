@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, events } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { loadDashboard } from "@/lib/admin-dashboard";
+import { recordAudit } from "@/lib/audit";
 import { openLot, setCaptains, setDraftPool, setTeams } from "@/lib/draft";
 import {
   applyToEvent,
@@ -45,7 +46,7 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 /** Only this event's lines — the suite shares one database. */
 async function itemsFor(eventId: string) {
   const view = await loadDashboard({}, db);
-  return view.items.filter((item) => item.event.id === eventId);
+  return view.items.filter((item) => item.event?.id === eventId);
 }
 
 describe("applications waiting", () => {
@@ -184,6 +185,74 @@ describe("the board", () => {
     const [item] = (await itemsFor(event.id)).filter((row) => row.kind === "unscheduled");
     expect(item.count).toBeGreaterThan(0);
     expect(item.href).toBe(`/admin/events/${event.id}?tab=schedule`);
+  });
+});
+
+describe("an announcement that did not post", () => {
+  /*
+   * Stamped on a clock of their own, each later than the last. Whether a
+   * webhook save hides a failure is tested through the real save action, in
+   * `src/app/admin/settings/__tests__/settings.test.ts`.
+   */
+  let tick = 0;
+  const later = () => new Date(Date.UTC(2030, 0, 1) + (tick += 1) * 60_000);
+
+  async function failed(eventId: string | null) {
+    await recordAudit(
+      {
+        action: "announcement.failed",
+        summary: "The announcement did not go out — Discord answered 404.",
+        eventId,
+        now: later(),
+      },
+      db
+    );
+  }
+
+  async function failuresFor(eventId: string | null) {
+    const view = await loadDashboard({}, db);
+    return view.items.filter(
+      (item) => item.kind === "announcements" && (item.event?.id ?? null) === eventId
+    );
+  }
+
+  async function publishedEvent(title: string) {
+    counter += 1;
+    const event = unwrap(await createEvent({ title: `${title} ${counter}` }, db));
+    unwrap(await publishEvent(event.id, db));
+    return event;
+  }
+
+  it("appears under its event and links to that event's audit log", async () => {
+    const event = await publishedEvent("Unheard");
+    await failed(event.id);
+
+    const [item] = await failuresFor(event.id);
+    expect(item.label).toBe("1 announcement did not post");
+    expect(item.href).toBe(`/admin/audit?event=${event.id}`);
+  });
+
+  it("still appears once the event is complete", async () => {
+    const event = await publishedEvent("Finished");
+    await failed(event.id);
+    await db.update(events).set({ status: "complete" }).where(eq(events.id, event.id));
+
+    expect(await failuresFor(event.id)).toHaveLength(1);
+  });
+
+  it("still appears more than a day later", async () => {
+    const event = await publishedEvent("Old");
+    await failed(event.id);
+
+    const view = await loadDashboard({ now: new Date(Date.UTC(2030, 0, 5)) }, db);
+    expect(view.items.filter((item) => item.kind === "announcements" && item.event?.id === event.id)).toHaveLength(1);
+  });
+
+  it("appears without an event, linking to the whole log", async () => {
+    await failed(null);
+
+    const [item] = await failuresFor(null);
+    expect(item.href).toBe("/admin/audit");
   });
 });
 

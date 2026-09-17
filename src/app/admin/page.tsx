@@ -113,15 +113,18 @@ export default async function AdminDashboardPage() {
                 {view.items.map((item) => (
                   <li key={item.key} className="flex flex-wrap items-center gap-4 py-5">
                     <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2">
-                        <Link
-                          href={`/admin/events/${item.event.id}`}
-                          className="text-xs text-muted hover:text-gold"
-                        >
-                          {item.event.title}
-                        </Link>
-                        <EventStatusPill status={item.event.status} />
-                      </div>
+                      {/* A failed announcement with no event has no event to name. */}
+                      {item.event && (
+                        <div className="mb-1 flex flex-wrap items-center gap-2">
+                          <Link
+                            href={`/admin/events/${item.event.id}`}
+                            className="text-xs text-muted hover:text-gold"
+                          >
+                            {item.event.title}
+                          </Link>
+                          <EventStatusPill status={item.event.status} />
+                        </div>
+                      )}
                       <div
                         className={cx(
                           "text-sm",

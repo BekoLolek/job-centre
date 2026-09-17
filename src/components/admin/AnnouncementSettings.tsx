@@ -1,18 +1,17 @@
 "use client";
 
 /**
- * The five Discord announcement switches (§14, checklist.md F2).
+ * The Discord announcement switches (§14, checklist.md F2).
  *
  * A toggle per kind, saved together. They are saved together because the
- * setting *is* one row — one key holding an object — and five independent
- * writes to one row is five chances for two tabs to disagree about what the
- * other four are.
+ * setting *is* one row — one key holding an object — and a write per switch to
+ * one row is that many chances for two tabs to disagree about the others.
  *
  * The panel says whether a webhook is configured at all, because the single
  * most confusing state this feature can be in is "every switch is on and
- * nothing is posting". That is not a failure, it is `DISCORD_WEBHOOK_URL` being
- * unset, and the screen should say so rather than let somebody spend an evening
- * looking for a bug.
+ * nothing is posting". That is not a failure, it is no webhook being set —
+ * neither on this screen nor in the deployment — and the screen should say so
+ * rather than let somebody spend an evening looking for a bug.
  */
 
 import { useState, useTransition } from "react";
@@ -23,7 +22,7 @@ import { saveAnnouncementSettingsAction } from "@/app/admin/settings/actions";
 export type AnnouncementSettingsProps = {
   specs: readonly AnnouncementSpec[];
   saved: Settings;
-  /** Whether `DISCORD_WEBHOOK_URL` is set. Resolved on the server; never the value. */
+  /** Whether a webhook is in force, from settings or the deployment. Never the value. */
   configured: boolean;
 };
 
@@ -61,7 +60,7 @@ export default function AnnouncementSettings({
       first
       icon="settings"
       title="Discord announcements"
-      description="Which moments get posted into the channel. All five save together, because the setting is one row."
+      description="Which moments get posted into the channel. They all save together, because the setting is one row."
       aside={
         <Eyebrow as="span" className={configured ? "text-signal" : "text-muted"}>
           {configured ? "Webhook configured" : "No webhook — nothing will post"}
@@ -71,11 +70,11 @@ export default function AnnouncementSettings({
     >
       {!configured && (
         <Alert tone="gold">
-          <code>DISCORD_WEBHOOK_URL</code> is not set, so every switch below is inert. Get
-          one from <strong>Server Settings → Integrations → Webhooks → New Webhook</strong>,
-          pick the channel, copy the URL, and put it in <code>.env.local</code>. Nothing
-          else changes — with the variable unset the whole feature is a no-op, exactly as
-          blank Discord credentials are on the sign-in page.
+          No webhook is set, so every switch below is inert. Get one from{" "}
+          <strong>Server Settings → Integrations → Webhooks → New Webhook</strong> in
+          Discord, pick the channel, copy the URL, and paste it under{" "}
+          <strong>Where announcements go</strong> below. Until then the whole feature is a
+          no-op, exactly as blank Discord credentials are on the sign-in page.
         </Alert>
       )}
 

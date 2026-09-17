@@ -7,10 +7,11 @@
  * event's tab strip is how somebody ends up believing they turned it off for
  * everything.
  *
- * `webhookUrl()` is called on the server and only its *presence* crosses to the
- * client. A webhook URL is a credential — anybody holding it can post into the
- * channel as the site — so the page says whether one is configured and never
- * what it is.
+ * The webhook is resolved on the server — this screen's setting first, the
+ * deployment second, exactly as `deliver` resolves it — and only its presence
+ * and a masked copy cross to the client. A webhook URL is a credential: anybody
+ * holding it can post into the channel as the site. Reading the environment
+ * alone here once told an admin "No webhook" about the one they had just saved.
  */
 
 import AppHeader from "@/components/AppHeader";
@@ -18,7 +19,7 @@ import AdminNav from "@/components/admin/AdminNav";
 import AnnouncementSettings from "@/components/admin/AnnouncementSettings";
 import ServerSettings from "@/components/admin/ServerSettings";
 import { Eyebrow, Section, StatTile } from "@/components/ui";
-import { ANNOUNCEMENTS, webhookUrl } from "@/lib/announce";
+import { ANNOUNCEMENTS } from "@/lib/announce";
 import { maskWebhook } from "@/lib/announce";
 import { getGateConfig } from "@/lib/auth";
 import { getAnnouncementSettings, getIntegrationConfig } from "@/lib/discord";
@@ -36,7 +37,7 @@ export default async function AdminSettingsPage() {
   const saved = await getAnnouncementSettings();
   const gate = await getGateConfig();
   const integrations = await getIntegrationConfig();
-  const configured = Boolean(webhookUrl());
+  const configured = Boolean(integrations.webhook);
   const on = ANNOUNCEMENTS.filter((spec) => saved[spec.kind]).length;
 
   return (

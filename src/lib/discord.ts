@@ -31,9 +31,11 @@
  *
  * ## Switched off by default
  *
- * With `DISCORD_WEBHOOK_URL` unset, `webhookUrl()` is `null` and `deliver`
- * returns before it reads a setting or touches the database. The whole feature
- * is an inert no-op, exactly as blank Discord credentials are on `/signin`.
+ * The webhook resolves from the settings screen first and `DISCORD_WEBHOOK_URL`
+ * second (`getIntegrationConfig`). With neither set, `deliver` finds nowhere to
+ * post and returns before it reads a switch or makes a request — nothing is
+ * sent and nothing is logged as failed. The whole feature is an inert no-op,
+ * exactly as blank Discord credentials are on `/signin`.
  */
 
 import { after } from "next/server";
@@ -66,6 +68,7 @@ import {
   siteOrigin,
 } from "./announce";
 import { recordAudit } from "./audit";
+import { eventIdOfApplication, eventIdOfMatch } from "./event-scope";
 import { formatFor } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -167,7 +170,7 @@ export async function setIntegrationSetting(
     .onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
 }
 
-/** Write the whole toggle set. The admin screen sends all five together. */
+/** Write the whole toggle set. The admin screen sends every switch together. */
 export async function setAnnouncementSettings(
   next: AnnouncementSettings,
   database: Database = defaultDb
@@ -207,7 +210,7 @@ export function announce(
   context: AnnounceContext = {}
 ): void {
   /*
-   * There used to be a synchronous `if (!webhookUrl()) return` here, to avoid
+   * There used to be a synchronous environment-only webhook check here, to avoid
    * scheduling work on an install with no webhook. It read the environment
    * only, so once the webhook could also come from the settings table it
    * became a guard that silently dropped every announcement on any install
@@ -233,32 +236,73 @@ export function announce(
  * recorded series, a lot that turned out not to be an award, a row that has
  * been changed again since. That is a decision the gathered data makes, so it
  * belongs here rather than in the action.
+ *
+ * A builder that returns something says which kind it turned out to be and
+ * which event it was about. The kind, because an application decision is not
+ * accepted, waitlisted or declined until its row has been read — so `kinds`
+ * lists everything it *could* be, the reads are skipped only when all of those
+ * are off, and the switch that decides is the one `deliver` checks for the
+ * kind that came back. The event, because the action only had a lot or a match
+ * id, and a failure not filed under its event is a failure nobody filtering the
+ * audit log by that event will ever see.
+ *
+ * A build that *throws* has returned no event, so `about` says how to find it
+ * anyway: the id the announcement was called with, and how to look up its
+ * event from that.
  */
+type Gathered = { kind: AnnouncementKind; message: DiscordMessage; eventId: string };
+
+type About = { subject: Record<string, string>; eventOf: () => Promise<string | null> };
+
 function announceGathered(
-  kind: AnnouncementKind,
-  build: () => Promise<DiscordMessage | null>,
-  context: AnnounceContext = {}
+  kinds: readonly AnnouncementKind[],
+  build: () => Promise<Gathered | null>,
+  about: About
 ): void {
   // Checked in `deliver`, with the settings included — see `announce` above.
   defer(async () => {
-    let message: DiscordMessage | null = null;
+    let gathered: Gathered | null = null;
     try {
       const enabled = await getAnnouncementSettings();
-      if (!enabled[kind]) return;
-      message = await build();
+      if (!kinds.some((kind) => enabled[kind])) return;
+      gathered = await build();
     } catch (error) {
+      const { eventId, detail } = await whereItFailed(about);
       await noteFailure(
-        kind,
-        context,
+        // The kind itself when the caller's is fixed; every kind a decision
+        // could have been when the row that says which was never read.
+        kinds.join(" / "),
+        { eventId },
         error instanceof Error
           ? `it could not be built (${error.message})`
           : "it could not be built",
-        {}
+        detail
       );
       return;
     }
-    if (message) await deliver(kind, message, context);
+    if (gathered) {
+      await deliver(gathered.kind, gathered.message, { eventId: gathered.eventId });
+    }
   });
+}
+
+/**
+ * The event a failed build belongs to, for its audit row.
+ *
+ * When even that lookup fails — the database is the likeliest reason the build
+ * threw in the first place — the row goes in without an event, carrying the id
+ * the announcement was called with so it can still be traced by hand.
+ */
+async function whereItFailed(
+  about: About
+): Promise<{ eventId: string | null; detail: Record<string, string> }> {
+  try {
+    const eventId = await about.eventOf();
+    if (eventId) return { eventId, detail: {} };
+  } catch (error) {
+    console.error("[discord] could not find the event of a failed announcement", error);
+  }
+  return { eventId: null, detail: about.subject };
 }
 
 /**
@@ -297,6 +341,14 @@ async function deliver(
   message: DiscordMessage,
   context: AnnounceContext
 ): Promise<void> {
+  /*
+   * Taken before the webhook is read, and used as the failure's timestamp. The
+   * admin home stops listing failures older than the latest webhook save, so a
+   * post that set off against the old webhook and was refused after somebody
+   * replaced it must be stamped from before the save — it failed against the
+   * webhook that save replaced, not the new one.
+   */
+  const startedAt = new Date();
   const { webhook: url } = await getIntegrationConfig();
   if (!url) return;
 
@@ -315,16 +367,21 @@ async function deliver(
     });
 
     if (!response.ok) {
-      await noteFailure(kind, context, `Discord answered ${response.status}.`, {
-        status: response.status,
-      });
+      await noteFailure(
+        kind,
+        context,
+        `Discord answered ${response.status}.`,
+        { status: response.status },
+        startedAt
+      );
     }
   } catch (error) {
     await noteFailure(
       kind,
       context,
       error instanceof Error ? error.message : "The request did not complete.",
-      {}
+      {},
+      startedAt
     );
   }
 }
@@ -337,10 +394,13 @@ async function deliver(
  * logged unhandled rejection in production for no benefit.
  */
 async function noteFailure(
-  kind: AnnouncementKind,
+  // A kind, or the kinds a build that failed before its read could have been.
+  kind: string,
   context: AnnounceContext,
   reason: string,
-  detail: Record<string, string | number>
+  detail: Record<string, string | number>,
+  // When the attempt began; see `deliver`. A build failure is stamped now.
+  at: Date = new Date()
 ): Promise<void> {
   console.error(`[discord] the "${kind}" announcement failed: ${reason}`);
   try {
@@ -350,6 +410,7 @@ async function noteFailure(
       eventId: context.eventId ?? null,
       subject: kind,
       detail: { kind, reason, ...detail },
+      now: at,
     });
   } catch (error) {
     console.error("[discord] could not record the announcement failure either", error);
@@ -374,35 +435,40 @@ async function noteFailure(
 /** An event went public. */
 export function announceEventPublished(eventId: string, database: Database = defaultDb): void {
   announceGathered(
-    "event_published",
+    ["event_published"],
     async () => {
       const [event] = await database.select().from(events).where(eq(events.id, eventId)).limit(1);
       // Only ever announce something that is actually published — a status that
       // moved on again between the click and the callback is not news.
       if (!event || event.status !== "published") return null;
 
-      return eventPublishedMessage({
-        title: event.title,
-        slug: event.slug,
-        type: event.type,
-        description: event.description,
-        capacity: event.capacity,
-        startsAt: event.startsAt,
-        signupClosesAt: event.signupClosesAt,
-        origin: await announceOrigin(),
-      });
+      return {
+        kind: "event_published",
+        eventId,
+        message: eventPublishedMessage({
+          title: event.title,
+          slug: event.slug,
+          type: event.type,
+          description: event.description,
+          capacity: event.capacity,
+          startsAt: event.startsAt,
+          signupClosesAt: event.signupClosesAt,
+          origin: await announceOrigin(),
+        }),
+      };
     },
-    { eventId }
+    { subject: { eventId }, eventOf: async () => eventId }
   );
 }
 
 /**
- * Somebody was accepted, or waitlisted.
+ * Somebody was accepted, waitlisted or declined.
  *
- * Nothing is announced for `declined` or `withdrawn`, and there is no setting
- * that would turn them on. Being turned down is not news, it is somebody's
- * afternoon, and a channel that posts it is a channel that costs the community
- * more than the integration is worth.
+ * Each has its own switch, and the one that decides is the one matching the
+ * row as it reads now — so "accepted off, waitlisted on" still posts a
+ * waitlisting. Declined defaults off: being turned down is somebody's
+ * afternoon, so it is posted only when an admin has asked for it. `withdrawn`
+ * is never announced; a member changing their mind is nobody else's news.
  */
 export function announceApplicationDecision(
   applicationId: string,
@@ -411,13 +477,11 @@ export function announceApplicationDecision(
   const kinds = {
     accepted: "application_accepted",
     waitlisted: "application_waitlisted",
+    declined: "application_declined",
   } as const;
 
   announceGathered(
-    // The kind is not known until the row is read, so the gate is applied
-    // inside the builder as well. This outer kind only picks the setting that
-    // is checked first; a mismatch simply means the builder returns null.
-    "application_accepted",
+    Object.values(kinds),
     async () => {
       const [row] = await database
         .select({
@@ -435,22 +499,25 @@ export function announceApplicationDecision(
         .where(eq(applications.id, applicationId))
         .limit(1);
 
-      if (!row) return null;
-      if (row.status !== "accepted" && row.status !== "waitlisted") return null;
+      if (!row || row.status === "withdrawn") return null;
 
-      // The waitlisted kind has its own toggle and it defaults off, so it is
-      // checked here rather than relying on the outer one.
+      // This kind's own switch is checked in `deliver`.
       const kind = kinds[row.status];
-      const enabled = await getAnnouncementSettings(database);
-      if (!enabled[kind]) return null;
-
-      return applicationDecidedMessage(kind, {
-        member: row.member ?? row.fallbackName ?? "A member",
-        eventTitle: row.eventTitle,
-        slug: row.slug,
-        waitlistPosition: row.waitlistPosition,
-        origin: await announceOrigin(),
-      });
+      return {
+        kind,
+        eventId: row.eventId,
+        message: applicationDecidedMessage(kind, {
+          member: row.member ?? row.fallbackName ?? "A member",
+          eventTitle: row.eventTitle,
+          slug: row.slug,
+          waitlistPosition: row.waitlistPosition,
+          origin: await announceOrigin(),
+        }),
+      };
+    },
+    {
+      subject: { applicationId },
+      eventOf: () => eventIdOfApplication(applicationId, database),
     }
   );
 }
@@ -458,7 +525,7 @@ export function announceApplicationDecision(
 /** A lot settled with a winner and a price. */
 export function announceLotSold(lotId: string, database: Database = defaultDb): void {
   announceGathered(
-    "draft_lot_sold",
+    ["draft_lot_sold"],
     async () => {
       const [row] = await database
         .select({
@@ -482,14 +549,29 @@ export function announceLotSold(lotId: string, database: Database = defaultDb): 
       // be announced as a sale — the undo is the whole reason lots are rows.
       if (!row || row.status !== "awarded") return null;
 
-      return lotSoldMessage({
-        player: row.player ?? row.fallbackName ?? "A player",
-        team: row.team,
-        price: row.price ?? 0,
-        eventTitle: row.eventTitle,
-        slug: row.slug,
-        origin: await announceOrigin(),
-      });
+      return {
+        kind: "draft_lot_sold",
+        eventId: row.eventId,
+        message: lotSoldMessage({
+          player: row.player ?? row.fallbackName ?? "A player",
+          team: row.team,
+          price: row.price ?? 0,
+          eventTitle: row.eventTitle,
+          slug: row.slug,
+          origin: await announceOrigin(),
+        }),
+      };
+    },
+    {
+      subject: { lotId },
+      eventOf: async () => {
+        const [lot] = await database
+          .select({ eventId: draftLots.eventId })
+          .from(draftLots)
+          .where(eq(draftLots.id, lotId))
+          .limit(1);
+        return lot?.eventId ?? null;
+      },
     }
   );
 }
@@ -505,7 +587,7 @@ export function announceLotSold(lotId: string, database: Database = defaultDb): 
  */
 export function announceMatchResult(matchId: string, database: Database = defaultDb): void {
   announceGathered(
-    "match_result",
+    ["match_result"],
     async () => {
       const [match] = await database
         .select({ eventId: matches.eventId, slot: matches.slot })
@@ -529,21 +611,22 @@ export function announceMatchResult(matchId: string, database: Database = defaul
 
       const named = new Map((view?.teams ?? []).map((team) => [team.id, team.name]));
 
-      return matchResultMessage({
-        label: resolved.displayLabel,
-        teamA: resolved.nameA,
-        teamB: resolved.nameB,
-        gamesWonA: resolved.gamesWonA,
-        gamesWonB: resolved.gamesWonB,
-        winner: resolved.winner ? (named.get(resolved.winner) ?? null) : null,
-        eventTitle: event.title,
-        slug: event.slug,
-        origin: await announceOrigin(),
-      });
-    }
-    // No `eventId` on the context: the action has a match id and the event is
-    // only known once the read has happened, by which point a failure row would
-    // have to be threaded back out. A failed result announcement is findable in
-    // the unfiltered log, which is enough.
+      return {
+        kind: "match_result",
+        eventId: match.eventId,
+        message: matchResultMessage({
+          label: resolved.displayLabel,
+          teamA: resolved.nameA,
+          teamB: resolved.nameB,
+          gamesWonA: resolved.gamesWonA,
+          gamesWonB: resolved.gamesWonB,
+          winner: resolved.winner ? (named.get(resolved.winner) ?? null) : null,
+          eventTitle: event.title,
+          slug: event.slug,
+          origin: await announceOrigin(),
+        }),
+      };
+    },
+    { subject: { matchId }, eventOf: () => eventIdOfMatch(matchId, database) }
   );
 }

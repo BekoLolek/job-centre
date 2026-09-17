@@ -139,6 +139,10 @@ export async function saveGuildGateAction(input: {
  * that treated an untouched masked field as an instruction to clear would
  * delete it every time somebody edited the address next to it. Clearing is its
  * own explicit flag.
+ *
+ * Every field is checked before anything is written. A good webhook next to a
+ * mistyped address is refused whole, so "That is not a URL" always means the
+ * old values are still the ones in force — never half of a save.
  */
 export async function saveIntegrationsAction(input: {
   webhookUrl?: string;
@@ -149,29 +153,31 @@ export async function saveIntegrationsAction(input: {
   const admin = await requireAdmin();
   const changed: string[] = [];
 
+  const webhook = input.clearWebhook ? "" : (input.webhookUrl ?? "").trim();
+  if (webhook && !resolveWebhookUrl(webhook, {})) {
+    return { ok: false, error: "That is not a URL. A webhook looks like https://discord.com/api/webhooks/…" };
+  }
+
+  const rawOrigin = input.clearSiteOrigin ? "" : (input.siteOrigin ?? "").trim();
+  // Stored as an origin, so a pasted link with a path on it does not put
+  // /admin/settings in front of every announcement link forever.
+  const origin = rawOrigin ? resolveSiteOrigin(rawOrigin, {}) : null;
+  if (rawOrigin && !origin) {
+    return { ok: false, error: "That is not a URL. It should look like https://jobcentre.vercel.app" };
+  }
+
   if (input.clearWebhook) {
     await setIntegrationSetting(SETTING_KEYS.webhookUrl, null);
     changed.push("webhook cleared");
-  } else if (input.webhookUrl !== undefined && input.webhookUrl.trim()) {
-    const raw = input.webhookUrl.trim();
-    if (!resolveWebhookUrl(raw, {})) {
-      return { ok: false, error: "That is not a URL. A webhook looks like https://discord.com/api/webhooks/…" };
-    }
-    await setIntegrationSetting(SETTING_KEYS.webhookUrl, raw);
+  } else if (webhook) {
+    await setIntegrationSetting(SETTING_KEYS.webhookUrl, webhook);
     changed.push("webhook set");
   }
 
   if (input.clearSiteOrigin) {
     await setIntegrationSetting(SETTING_KEYS.siteOrigin, null);
     changed.push("address cleared");
-  } else if (input.siteOrigin !== undefined && input.siteOrigin.trim()) {
-    const raw = input.siteOrigin.trim();
-    const origin = resolveSiteOrigin(raw, {});
-    if (!origin) {
-      return { ok: false, error: "That is not a URL. It should look like https://jobcentre.vercel.app" };
-    }
-    // Stored as an origin, so a pasted link with a path on it does not put
-    // /admin/settings in front of every announcement link forever.
+  } else if (origin) {
     await setIntegrationSetting(SETTING_KEYS.siteOrigin, origin);
     changed.push("address set");
   }
@@ -185,7 +191,14 @@ export async function saveIntegrationsAction(input: {
       summary: `Integrations changed — ${changed.join(", ")}.`,
       // The webhook is never written to the audit log in full: the log is a
       // screen an admin can read, and this is a credential.
-      detail: { changed, origin: after.origin, webhookConfigured: Boolean(after.webhook) },
+      detail: {
+        changed,
+        origin: after.origin,
+        webhookConfigured: Boolean(after.webhook),
+        // Read by the admin home: a webhook set or cleared is what clears the
+        // failed announcements listed there. A flag, not the wording above.
+        webhookChanged: Boolean(input.clearWebhook || webhook),
+      },
     });
   }
 

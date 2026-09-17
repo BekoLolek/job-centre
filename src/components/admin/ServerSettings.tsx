@@ -267,6 +267,17 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
               wrapperClassName="min-w-[18rem] flex-1"
               onChange={(input) => setOrigin(input.target.value)}
             />
+            {/* Only an address set here can be cleared here; the deployment's stays. */}
+            {integrations.source.origin === "settings" && (
+              <Button
+                variant="ember"
+                className="mb-1"
+                disabled={busy}
+                onClick={() => void run({ clearSiteOrigin: true }, "Address cleared.")}
+              >
+                Clear
+              </Button>
+            )}
           </div>
 
           <p className="max-w-2xl text-[13px] leading-relaxed text-muted">

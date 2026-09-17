@@ -15,7 +15,6 @@ import {
   resolveWebhookUrl,
   siteOrigin,
   stamp,
-  webhookUrl,
 } from "@/lib/announce";
 
 /**
@@ -37,11 +36,13 @@ describe("the toggle settings", () => {
     expect(defaults.match_result).toBe(true);
     // A full event posts one of these per applicant. Off until asked for.
     expect(defaults.application_waitlisted).toBe(false);
+    // Somebody's "no" is a consolation too, and off for the same reason.
+    expect(defaults.application_declined).toBe(false);
   });
 
   it("has a spec for every kind, and only for kinds", () => {
-    expect(ANNOUNCEMENTS).toHaveLength(5);
-    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(5);
+    expect(ANNOUNCEMENTS).toHaveLength(6);
+    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(6);
     for (const spec of ANNOUNCEMENTS) {
       expect(spec.label.length).toBeGreaterThan(0);
       expect(spec.detail.length).toBeGreaterThan(0);
@@ -85,23 +86,23 @@ describe("the toggle settings", () => {
   });
 });
 
-describe("the webhook URL", () => {
+describe("the webhook URL from the deployment alone", () => {
   it("is null when the variable is unset or blank — the whole off switch", () => {
-    expect(webhookUrl({})).toBeNull();
-    expect(webhookUrl({ DISCORD_WEBHOOK_URL: "" })).toBeNull();
-    expect(webhookUrl({ DISCORD_WEBHOOK_URL: "   " })).toBeNull();
+    expect(resolveWebhookUrl(null, {})).toBeNull();
+    expect(resolveWebhookUrl(null, { DISCORD_WEBHOOK_URL: "" })).toBeNull();
+    expect(resolveWebhookUrl(null, { DISCORD_WEBHOOK_URL: "   " })).toBeNull();
   });
 
   it("is null for a typo rather than something fetch will throw on", () => {
-    expect(webhookUrl({ DISCORD_WEBHOOK_URL: "not a url" })).toBeNull();
-    expect(webhookUrl({ DISCORD_WEBHOOK_URL: "ftp://example.test/hook" })).toBeNull();
+    expect(resolveWebhookUrl(null, { DISCORD_WEBHOOK_URL: "not a url" })).toBeNull();
+    expect(resolveWebhookUrl(null, { DISCORD_WEBHOOK_URL: "ftp://example.test/hook" })).toBeNull();
   });
 
   it("accepts the real thing, and a local listener to test against", () => {
-    expect(webhookUrl({ DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/1/abc" })).toBe(
+    expect(resolveWebhookUrl(null, { DISCORD_WEBHOOK_URL: "https://discord.com/api/webhooks/1/abc" })).toBe(
       "https://discord.com/api/webhooks/1/abc"
     );
-    expect(webhookUrl({ DISCORD_WEBHOOK_URL: "http://127.0.0.1:4599/hook" })).toBe(
+    expect(resolveWebhookUrl(null, { DISCORD_WEBHOOK_URL: "http://127.0.0.1:4599/hook" })).toBe(
       "http://127.0.0.1:4599/hook"
     );
   });
@@ -299,6 +300,12 @@ describe("an application decision", () => {
       waitlistPosition: null,
     }).embeds;
     expect(embed.description).toBe("**Beko** is on the waitlist.");
+  });
+
+  it("says a declined member was not accepted, and nothing more", () => {
+    const [embed] = applicationDecidedMessage("application_declined", base).embeds;
+    expect(embed.description).toBe("**Beko** was not accepted this time.");
+    expect(embed.footer?.text).toBe("Declined");
   });
 });
 

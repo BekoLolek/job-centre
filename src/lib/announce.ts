@@ -13,7 +13,8 @@
  * ## Which announcements exist, and which fire
  *
  * §14 names three; Phase 5 adds the draft sale, because a lot settling is the
- * single most-watched moment the community has. Which of the five actually post
+ * single most-watched moment the community has, and a decline is announceable
+ * too, though nobody gets it unless an admin asks. Which of them actually post
  * is an **admin setting** (`SETTING_KEYS.announcements`), read through
  * `announcementSettingsFrom`, which supplies a default for anything the stored
  * object does not mention. That is what lets a sixth kind ship without a
@@ -43,6 +44,8 @@ export type AnnouncementKind =
   | "application_accepted"
   /** An application was waitlisted. */
   | "application_waitlisted"
+  /** An application was declined. */
+  | "application_declined"
   /** A draft lot settled with a winner and a price. */
   | "draft_lot_sold"
   /** A series was decided. */
@@ -59,10 +62,10 @@ export type AnnouncementSpec = {
 };
 
 /**
- * The five, in the order the settings screen lists them, with their defaults.
+ * Every kind, in the order the settings screen lists them, with their defaults.
  *
- * "Sensible" here means: the two that are *news* are on, the one that is a
- * consolation is off. A published event and a settled lot are things people
+ * "Sensible" here means: the ones that are *news* are on, the two that are a
+ * consolation are off. A published event and a settled lot are things people
  * want pinged about; being told, in public, that four hundred applications were
  * each waitlisted is a channel nobody reads twice. Accepted stays on because
  * the accepted list is already on the public event page — announcing it tells
@@ -86,6 +89,12 @@ export const ANNOUNCEMENTS: readonly AnnouncementSpec[] = [
     kind: "application_waitlisted",
     label: "Somebody is waitlisted",
     detail: "Names the member and their place in the queue. Off by default — a full event posts one of these per applicant.",
+    fallback: false,
+  },
+  {
+    kind: "application_declined",
+    label: "Somebody is declined",
+    detail: "Names the member and the event. Off by default — being turned down is somebody's afternoon, not the channel's news.",
     fallback: false,
   },
   {
@@ -155,23 +164,6 @@ export type AnnounceEnv = {
 };
 
 /**
- * The webhook, or `null`.
- *
- * `null` is the entire off switch: with `DISCORD_WEBHOOK_URL` unset the whole
- * feature is an inert no-op, exactly as blank Discord credentials are on
- * `/signin`. Nothing throws, nothing warns on every request, and no caller
- * branches — `postAnnouncement` simply has nowhere to post.
- *
- * A value that is not an https URL is treated as unset rather than tried:
- * `fetch` on a nonsense string throws a different error every runtime, and the
- * one thing this feature must never do is turn a typo in an environment
- * variable into a failed application.
- */
-export function webhookUrl(env: AnnounceEnv = process.env as AnnounceEnv): string | null {
-  return resolveWebhookUrl(undefined, env);
-}
-
-/**
  * The webhook an admin set, or the one the deployment was given.
  *
  * Settings first, environment second — the same order and for the same reason
@@ -182,6 +174,11 @@ export function webhookUrl(env: AnnounceEnv = process.env as AnnounceEnv): strin
  * A stored value that is not a URL falls through to the environment rather
  * than switching announcements off. Silence is the worst possible response to
  * a typo, because nothing is ever going to tell you.
+ *
+ * `null` — neither says anything usable — is the entire off switch. A value
+ * that is not an http(s) URL is treated as unset rather than tried: `fetch` on
+ * a nonsense string throws a different error every runtime, and a typo must
+ * never become a failed application.
  */
 export function resolveWebhookUrl(
   stored: string | null | undefined,
@@ -313,7 +310,7 @@ function clamp(text: string, max: number): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* The five messages                                                  */
+/* The messages                                                       */
 /* ------------------------------------------------------------------ */
 
 export type EventPublishedInput = {
@@ -383,30 +380,43 @@ export type ApplicationDecidedInput = {
 };
 
 /**
- * Accepted, or waitlisted with a place in the queue.
+ * Accepted, waitlisted with a place in the queue, or declined.
  *
- * One function for two kinds because they are one sentence with two endings,
- * and splitting them would let the two drift into disagreeing about what an
- * event is called.
+ * One function for three kinds because they are one sentence with three
+ * endings, and splitting them would let them drift into disagreeing about what
+ * an event is called. A decline says no more than that — never why.
  */
 export function applicationDecidedMessage(
-  kind: "application_accepted" | "application_waitlisted",
+  kind: "application_accepted" | "application_waitlisted" | "application_declined",
   input: ApplicationDecidedInput
 ): DiscordMessage {
-  const accepted = kind === "application_accepted";
+  const member = `**${clamp(input.member, 80)}**`;
   const queue = input.waitlistPosition;
   const url = linkTo(`/events/${input.slug}`, input.origin ?? null);
 
+  const ending = {
+    application_accepted: { text: `${member} is in.`, color: COLOURS.signal, footer: "Accepted" },
+    application_waitlisted: {
+      text:
+        queue && queue > 0
+          ? `${member} is on the waitlist, number ${queue} in the queue.`
+          : `${member} is on the waitlist.`,
+      color: COLOURS.chalk,
+      footer: "Waitlisted",
+    },
+    application_declined: {
+      text: `${member} was not accepted this time.`,
+      color: COLOURS.ember,
+      footer: "Declined",
+    },
+  }[kind];
+
   return message({
     title: clamp(input.eventTitle, 240),
-    description: accepted
-      ? `**${clamp(input.member, 80)}** is in.`
-      : queue && queue > 0
-        ? `**${clamp(input.member, 80)}** is on the waitlist, number ${queue} in the queue.`
-        : `**${clamp(input.member, 80)}** is on the waitlist.`,
+    description: ending.text,
     ...(url ? { url } : {}),
-    color: accepted ? COLOURS.signal : COLOURS.chalk,
-    footer: { text: accepted ? "Accepted" : "Waitlisted" },
+    color: ending.color,
+    footer: { text: ending.footer },
   });
 }
 

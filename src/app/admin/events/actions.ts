@@ -536,9 +536,9 @@ export async function decideApplicationAction(
     },
   });
 
-  // Only the two kinds §14 names. `announceApplicationDecision` re-reads the row
-  // and returns without posting for anything else, so a decline is silent by
-  // construction rather than by this call site remembering to be.
+  // Every decision is handed over, whatever it was. `announceApplicationDecision`
+  // re-reads the row, and whether it posts is decided by the switch for the
+  // kind the row turned out to be — accepted, waitlisted or declined.
   announceApplicationDecision(applicationId);
 
   // Everybody a promotion let in is a decision too, and one nobody clicked.

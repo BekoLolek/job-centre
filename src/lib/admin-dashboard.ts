@@ -20,6 +20,9 @@
  * unfinished one always can, including a draft nobody else can see, which is
  * precisely where "ready to publish" lives.
  *
+ * The one exception is a failed Discord announcement, which is listed whatever
+ * state its event is in — see `failedAnnouncements`.
+ *
  * ## Nothing here decides a rule
  *
  * The publish checklist is `readiness()`'s, the drawn-series flag is
@@ -27,11 +30,12 @@
  * This module counts what those already worked out and writes the sentence.
  */
 
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import {
   type Database,
   type EventStatus,
   applications,
+  auditLog,
   db as defaultDb,
   draftLots,
   teams,
@@ -50,7 +54,8 @@ export type AttentionKind =
   | "captains"
   | "lot_open"
   | "needs_winner"
-  | "unscheduled";
+  | "unscheduled"
+  | "announcements";
 
 export type AttentionItem = {
   /** Stable across renders, so React and a test can both name a row. */
@@ -68,7 +73,8 @@ export type AttentionItem = {
   count: number;
   /** `ember` is "the night is blocked on this"; `gold` is "do this next". */
   tone: "ember" | "gold";
-  event: { id: string; title: string; slug: string; status: EventStatus };
+  /** Null only for a failed announcement nobody could file under an event. */
+  event: { id: string; title: string; slug: string; status: EventStatus } | null;
 };
 
 export type DashboardView = {
@@ -285,6 +291,8 @@ export async function loadDashboard(
     }
   }
 
+  items.push(...(await failedAnnouncements(all, database)));
+
   // Blocked first, then the biggest pile. Within an event the order the checks
   // were pushed in is already the order you would work through them.
   items.sort((a, b) => {
@@ -314,6 +322,70 @@ export async function loadDashboard(
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Announcements that did not post, one line per event.
+ *
+ * Unlike everything above, these are not limited to active events: a result
+ * announced on the night the event finished is exactly the one most likely to
+ * have been missed. A failure nobody could file under an event gets a line of
+ * its own, pointing at the whole log.
+ *
+ * A failure is not a row anybody resolves, so "deal with it and the line goes"
+ * needs a stand-in: the webhook being set or cleared. Whoever fixes a broken
+ * channel does it there, and everything that failed before was failing against
+ * the old one. A save that only touched the site address fixes nothing about
+ * delivery, so it does not count — and there is no time limit, because a
+ * failure nobody has acted on is still true next week.
+ */
+async function failedAnnouncements(
+  all: readonly EventSummary[],
+  database: Database
+): Promise<AttentionItem[]> {
+  // `webhookChanged` is written by `saveIntegrationsAction` for exactly this.
+  const [fixed] = await database
+    .select({ at: auditLog.at })
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, "settings.integrations"),
+        sql`${auditLog.detail}->>'webhookChanged' = 'true'`
+      )
+    )
+    .orderBy(desc(auditLog.at))
+    .limit(1);
+
+  const rows = await database
+    .select({ eventId: auditLog.eventId })
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.action, "announcement.failed"),
+        fixed ? gt(auditLog.at, fixed.at) : undefined
+      )
+    );
+
+  const byId = new Map(all.map((event) => [event.id, event]));
+  const failedBy = tally(rows.map((row) => row.eventId ?? ""));
+
+  return [...failedBy].map(([eventId, failed]) => {
+    const event = byId.get(eventId);
+    return {
+      key: `${eventId || "none"}:announcements`,
+      kind: "announcements",
+      label: `${failed} ${failed === 1 ? "announcement" : "announcements"} did not post`,
+      detail:
+        "Discord refused or could not be reached. The site action went through; the channel never heard. The log says why.",
+      href: event ? `/admin/audit?event=${event.id}` : "/admin/audit",
+      action: "See why",
+      count: failed,
+      tone: "gold",
+      event: event
+        ? { id: event.id, title: event.title, slug: event.slug, status: event.status }
+        : null,
+    };
+  });
+}
 
 function tally(ids: readonly string[]): Map<string, number> {
   const out = new Map<string, number>();
