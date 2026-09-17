@@ -1,5 +1,13 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Database, applications, events } from "@/db";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { and, eq } from "drizzle-orm";
+import {
+  type Database,
+  type NotificationKind,
+  applications,
+  events,
+  notificationDmClaims,
+  users,
+} from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   REMINDER_WINDOW_MS,
@@ -16,7 +24,23 @@ import {
   unreadCount,
 } from "@/lib/notifications";
 import { NOTIFICATION_KINDS, allChannels } from "@/lib/notify-policy";
-import { botToken, directMessagesConfigured, render } from "@/lib/discord-dm";
+import {
+  botToken,
+  directMessagesConfigured,
+  render,
+  sendDirectMessage,
+} from "@/lib/discord-dm";
+
+/*
+ * The sender is the one thing here that would touch the network, so it is
+ * replaced — but by a stand-in that calls the real function unless a test says
+ * otherwise. The token-less tests below therefore still exercise the real
+ * no-op, and only the "sent once" tests pretend Discord said yes.
+ */
+vi.mock("@/lib/discord-dm", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/discord-dm")>();
+  return { ...actual, sendDirectMessage: vi.fn(actual.sendDirectMessage) };
+});
 
 /**
  * Notifications.
@@ -427,5 +451,167 @@ describe("direct messages", () => {
   it("leaves the link relative when nothing says where the site is", () => {
     const text = render({ title: "T", body: null, href: "/events/x", key: "k" });
     expect(text).toContain("/events/x");
+  });
+});
+
+/*
+ * Once per person per piece of news.
+ *
+ * The in-site row is deduplicated by its unique key, but a DM leaves nothing
+ * behind to collide with — so without a claim of its own, every repeat of the
+ * same news would be another message on somebody's phone.
+ */
+describe("direct messages are sent once", () => {
+  const HOUR = 60 * 60 * 1000;
+  const send = vi.mocked(sendDirectMessage);
+  let snowflake = 100000000000000000n;
+
+  /** A member who has a Discord account and wants this kind by DM. */
+  async function dmMember(kind: "poll_posted" | "event_reminder", inApp = true) {
+    snowflake += 1n;
+    const userId = await makeUser(db, { discordId: snowflake.toString() });
+    await setPref(userId, kind, { inApp, discord: true }, db);
+    return userId;
+  }
+
+  /** How many DM claims exist for this person and this piece of news. */
+  async function claimsFor(userId: string, kind: NotificationKind, subject: string) {
+    const rows = await db
+      .select({ userId: notificationDmClaims.userId })
+      .from(notificationDmClaims)
+      .where(
+        and(
+          eq(notificationDmClaims.userId, userId),
+          eq(notificationDmClaims.dedupeKey, dedupeKey(kind, subject))
+        )
+      );
+    return rows.length;
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("DISCORD_BOT_TOKEN", "test-token");
+    // Forget calls from the token-less tests above; count only this test's.
+    send.mockReset();
+    send.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    // Back to the real, token-less sender for anything that runs after.
+    send.mockReset();
+  });
+
+  it("sends one DM per opted-in member when the same news is sent twice", async () => {
+    const a = await dmMember("poll_posted");
+    const b = await dmMember("poll_posted");
+    const input = {
+      kind: "poll_posted" as const,
+      userIds: [a, b],
+      title: "A poll",
+      subject: "dm-twice",
+    };
+
+    const first = await notify(input, db);
+    const second = await notify(input, db);
+
+    expect(first.discord).toBe(2);
+    expect(second.discord).toBe(0);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends one reminder DM across two runs inside the window", async () => {
+    const firstRun = new Date("2026-11-01T12:00:00.000Z");
+    const secondRun = new Date(firstRun.getTime() + 23 * HOUR);
+    const [event] = await db
+      .insert(events)
+      .values({
+        slug: "dm-reminder",
+        title: "DM reminder",
+        status: "published",
+        startsAt: new Date(firstRun.getTime() + 30 * HOUR),
+      })
+      .returning({ id: events.id });
+    const seat = await dmMember("event_reminder");
+    await db.insert(applications).values({ eventId: event.id, userId: seat, status: "accepted" });
+
+    await sendDueReminders(firstRun, db);
+    await sendDueReminders(secondRun, db);
+
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("DMs a member with the bell off once, and writes nothing in-site", async () => {
+    const userId = await dmMember("poll_posted", false);
+    const input = {
+      kind: "poll_posted" as const,
+      userIds: [userId],
+      title: "Bell off",
+      subject: "dm-bell-off",
+    };
+
+    await notify(input, db);
+    await notify(input, db);
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await listNotifications(userId, db)).toHaveLength(0);
+  });
+
+  /*
+   * A claim means "about to message this person" and nothing weaker. Claiming
+   * for somebody we could not message would silence them for good: the day
+   * they link Discord, or the day the bot is configured, the same news would
+   * find its claim already taken.
+   */
+
+  it("claims nothing for somebody opted in without a Discord id, and DMs them once they have one", async () => {
+    const userId = await dmMember("poll_posted");
+    await db.update(users).set({ discordId: null }).where(eq(users.id, userId));
+    const input = {
+      kind: "poll_posted" as const,
+      userIds: [userId],
+      title: "No Discord yet",
+      subject: "dm-no-id",
+    };
+
+    await notify(input, db);
+    expect(send).not.toHaveBeenCalled();
+    expect(await claimsFor(userId, "poll_posted", "dm-no-id")).toBe(0);
+
+    snowflake += 1n;
+    await db.update(users).set({ discordId: snowflake.toString() }).where(eq(users.id, userId));
+    await notify(input, db);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it("claims nothing for somebody who has not opted in to DMs", async () => {
+    snowflake += 1n;
+    const userId = await makeUser(db, { discordId: snowflake.toString() });
+
+    await notify(
+      { kind: "poll_posted", userIds: [userId], title: "Bell only", subject: "dm-not-opted" },
+      db
+    );
+
+    expect(send).not.toHaveBeenCalled();
+    expect(await claimsFor(userId, "poll_posted", "dm-not-opted")).toBe(0);
+  });
+
+  it("claims nothing without a bot token, and DMs once the token exists", async () => {
+    const userId = await dmMember("poll_posted");
+    const input = {
+      kind: "poll_posted" as const,
+      userIds: [userId],
+      title: "No bot yet",
+      subject: "dm-no-token",
+    };
+    vi.stubEnv("DISCORD_BOT_TOKEN", "");
+
+    await notify(input, db);
+    expect(send).not.toHaveBeenCalled();
+    expect(await claimsFor(userId, "poll_posted", "dm-no-token")).toBe(0);
+
+    vi.stubEnv("DISCORD_BOT_TOKEN", "test-token");
+    await notify(input, db);
+    expect(send).toHaveBeenCalledTimes(1);
   });
 });

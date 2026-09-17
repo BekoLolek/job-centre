@@ -722,6 +722,29 @@ export const notificationPrefs = pgTable(
   (table) => [primaryKey({ columns: [table.userId, table.kind] })]
 );
 
+/**
+ * Which Discord DMs have been claimed (about to be sent), one row per person per
+ * piece of news.
+ *
+ * Its own table rather than a column on `notifications`, because a member may
+ * switch the bell off and leave the DM on: then there is no in-site row to mark,
+ * and nothing else to stop a repeat of the same news messaging them again. The
+ * row is claimed *before* sending, so a DM that fails is not retried — a missed
+ * message is better than a member's phone buzzing twice.
+ */
+export const notificationDmClaims = pgTable(
+  "notification_dm_claims",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** The same key as the in-site notification. */
+    dedupeKey: text("dedupe_key").notNull(),
+    claimedAt: instant("claimed_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.dedupeKey] })]
+);
+
 /* ------------------------------------------------------------------ */
 /* Settings (§14)                                                     */
 /* ------------------------------------------------------------------ */

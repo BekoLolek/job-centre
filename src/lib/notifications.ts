@@ -1,10 +1,11 @@
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   type Database,
   type NotificationKind,
   applications,
   db as defaultDb,
   events,
+  notificationDmClaims,
   notificationPrefs,
   notifications,
   users,
@@ -15,7 +16,7 @@ import {
   dayStamp,
   dedupeKey,
 } from "./notify-policy";
-import { sendDirectMessage } from "./discord-dm";
+import { directMessagesConfigured, sendDirectMessage } from "./discord-dm";
 
 export * from "./notify-policy";
 
@@ -147,14 +148,14 @@ export async function notify(
   }
 
   /*
-   * Only people the in-app insert actually wrote for get a DM. Somebody who
-   * has already been told is not told again by another route — that is the
-   * whole point of the dedupe key, and it would be an odd feature that
-   * suppressed the quiet channel and not the loud one.
+   * The DM has its own claim on the same key, separate from the in-app insert.
+   * Somebody who has already been messaged about this is not messaged again —
+   * that is the whole point of the dedupe key, and it would be an odd feature
+   * that suppressed the quiet channel and not the loud one.
    *
-   * Somebody who has switched the bell off but the DM on is a real
-   * configuration, so they are sent to on the strength of the same key having
-   * been claimed for them.
+   * It cannot piggyback on the in-app rows, because somebody who has switched
+   * the bell off but the DM on is a real configuration: there is no row for
+   * them, and nothing else would stop a repeat.
    */
   const discord =
     wantsDiscord.length > 0
@@ -165,11 +166,22 @@ export async function notify(
 }
 
 /**
- * Send the direct messages, and say how many went.
+ * Claim the key for each person who can be messaged, then message only those
+ * the claim was new for, and say how many went.
  *
- * Deliberately not transactional with the insert: a Discord outage must not
- * roll back a notification anybody can already see on the site. A DM that fails
- * is logged and dropped, the same bargain `deliver` in `discord.ts` makes.
+ * A claim means "about to message this person", so nobody is claimed while
+ * there is no bot, or for somebody with no Discord account: either would use up
+ * the key, and the same news could never reach them once the bot or the
+ * account appeared.
+ *
+ * Claim first, send second: two overlapping runs cannot both win the insert, so
+ * neither can both send. The price is that a DM which fails after its claim is
+ * never retried — logged and dropped, the same bargain `deliver` in
+ * `discord.ts` makes — and a missed message is the better failure than a
+ * repeated one.
+ *
+ * Deliberately not transactional with the in-app insert: a Discord outage must
+ * not roll back a notification anybody can already see on the site.
  */
 async function claimForDiscord(
   database: Database,
@@ -177,14 +189,26 @@ async function claimForDiscord(
   key: string,
   input: NotifyInput
 ): Promise<number> {
+  if (!directMessagesConfigured()) return 0;
+
   const people = await database
     .select({ id: users.id, discordId: users.discordId })
     .from(users)
-    .where(inArray(users.id, [...userIds]));
+    .where(and(inArray(users.id, [...userIds]), isNotNull(users.discordId)));
+  if (people.length === 0) return 0;
+
+  const claimed = await database
+    .insert(notificationDmClaims)
+    .values(people.map((person) => ({ userId: person.id, dedupeKey: key })))
+    .onConflictDoNothing({
+      target: [notificationDmClaims.userId, notificationDmClaims.dedupeKey],
+    })
+    .returning({ userId: notificationDmClaims.userId });
+  const fresh = new Set(claimed.map((row) => row.userId));
 
   let sent = 0;
   for (const person of people) {
-    if (!person.discordId) continue;
+    if (!person.discordId || !fresh.has(person.id)) continue;
     const ok = await sendDirectMessage(person.discordId, {
       title: input.title,
       body: input.body ?? null,

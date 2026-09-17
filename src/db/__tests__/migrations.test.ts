@@ -45,6 +45,7 @@ describe("migrations", () => {
       // name, so the per-match maps are `match_games`.
       "match_games",
       "matches",
+      "notification_dm_claims",
       "notification_prefs",
       "notifications",
       "poll_options",
@@ -103,7 +104,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(38);
+    expect(await tableNames(ctx.client)).toHaveLength(39);
   });
 
   it("mints uuid primary keys database-side", async () => {
