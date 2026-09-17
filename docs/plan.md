@@ -118,6 +118,17 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] Valid webhook + invalid address saves nothing
 - **Depends on:** none
 
+### Task 36: Close the remaining lock races (found in Task 4 review)
+
+- **Serves:** R-39 / UC-09 6b
+- **Files:** `src/lib/draft.ts` (`setTeams`, `setCaptains`, `setDraftConfig`, `setDraftPool`, `setPoolKind`, `clearBid`), `src/lib/events.ts` (`setEventDays`, `setEventQuestions`), `src/lib/format.ts` (`clearMatch`), `src/lib/__tests__/archive-lock.test.ts`
+- **Do:** these writes check the finished-event lock with a plain read, not under the event row lock, so a write that reads `live` just before completion can commit just after. Read the event with `lockEvent(tx, …)` inside the write's transaction, as `applyToEvent` does. `clearMatch` runs two separate transactions, so completion landing between them leaves `setWinnerOverride` committed when `recordGames` refuses; make it one transaction.
+- **Acceptance criteria:**
+  - [ ] Each listed write guards and writes inside one transaction holding the event row lock
+  - [ ] `clearMatch` either clears everything or nothing when the event is completed mid-call (explicitly sequenced test, no timing luck)
+  - [ ] Existing lock table still passes
+- **Depends on:** Task 4. Runs with Section D (it touches the draft and format files those tasks change).
+
 ## B. Applications
 
 ### Task 7: Approval entry mode
