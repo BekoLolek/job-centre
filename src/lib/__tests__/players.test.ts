@@ -1,6 +1,6 @@
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Database, events, users } from "@/db";
+import { type Database, type EventStatus, events, users } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
@@ -205,7 +205,7 @@ async function playedEvent(): Promise<{
 }
 
 describe("the profile", () => {
-  it("lists the events, the team and what they went for", async () => {
+  it("lists the events, the team, the price in each draft and the draft totals (UC-05 E1)", async () => {
     const fixture = await playedEvent();
     const [user] = await db.select().from(users).where(eq(users.id, fixture.bought));
     const profile = await getPlayerProfile(user, db);
@@ -273,6 +273,29 @@ describe("the profile", () => {
       podiums: 0,
     });
     expect(profile.handle).toBeTruthy();
+  });
+});
+
+/** A member accepted to a published event that is then moved to `status`. */
+async function acceptedAt(status: EventStatus) {
+  counter += 1;
+  const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Status ${status} ${counter}` }, db));
+  unwrap(await publishEvent(event.id, db));
+  const userId = await makeUser(db, { displayName: `Status ${counter}` });
+  unwrap(await applyToEvent(event.id, userId, {}, db));
+  await db.update(events).set({ status }).where(eq(events.id, event.id));
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
+  return getPlayerProfile(user, db);
+}
+
+describe("which events the profile lists (UC-05 step 2)", () => {
+  it.each([
+    ["published", 1],
+    ["live", 1],
+    ["complete", 1],
+    ["cancelled", 0],
+  ] as const)("lists %s events %i time(s)", async (status, listed) => {
+    expect((await acceptedAt(status)).entries).toHaveLength(listed);
   });
 });
 

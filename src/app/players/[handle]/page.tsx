@@ -106,7 +106,7 @@ export default async function PlayerPage({
         {/* --- Who --------------------------------------------------- */}
         <Panel as="header" className="rise">
           <div className="flex flex-wrap items-center gap-5">
-            <Avatar name={profile.displayName} size="lg" />
+            <Avatar name={profile.displayName} src={profile.avatarUrl} size="lg" />
             <div className="min-w-0">
               <Eyebrow className="mb-1">/players/{profile.handle}</Eyebrow>
               <h1 className="font-display text-4xl leading-none">

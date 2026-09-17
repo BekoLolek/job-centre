@@ -244,8 +244,11 @@ export type PlayerProfile = {
   };
 };
 
-/** The statuses a profile counts. A draft event does not exist publicly. */
-const PUBLIC_STATUSES: readonly EventStatus[] = ["published", "live", "complete", "cancelled"];
+/**
+ * The statuses a profile counts (UC-05 step 2). A draft event does not exist
+ * publicly, and a cancelled one was never played.
+ */
+const LISTED_STATUSES: readonly EventStatus[] = ["published", "live", "complete"];
 
 /**
  * Look a member up by handle.
@@ -297,7 +300,7 @@ export async function getPlayerProfile(
         and(
           eq(applications.userId, user.id),
           eq(applications.status, "accepted"),
-          inArray(events.status, PUBLIC_STATUSES)
+          inArray(events.status, LISTED_STATUSES)
         )
       )
       .orderBy(desc(events.startsAt), desc(events.createdAt)),
@@ -320,7 +323,7 @@ export async function getPlayerProfile(
       .from(teamMembers)
       .innerJoin(teams, eq(teamMembers.teamId, teams.id))
       .innerJoin(events, eq(teamMembers.eventId, events.id))
-      .where(and(eq(teamMembers.userId, user.id), inArray(events.status, PUBLIC_STATUSES)))
+      .where(and(eq(teamMembers.userId, user.id), inArray(events.status, LISTED_STATUSES)))
       .orderBy(desc(events.startsAt), asc(teams.sort)),
   ]);
 
