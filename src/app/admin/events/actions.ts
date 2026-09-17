@@ -40,7 +40,12 @@
  */
 
 import { revalidatePath } from "next/cache";
-import type { ApplicationStatus, AvailabilityState, EventStatus } from "@/db/schema";
+import {
+  type ApplicationStatus,
+  type AvailabilityState,
+  type EventStatus,
+  eventStatus,
+} from "@/db/schema";
 import {
   type EventDayInput,
   type EventDaysImpact,
@@ -197,26 +202,53 @@ export async function saveBasicsAction(
 /* ------------------------------------------------------------------ */
 
 /**
- * Move the event along its lifecycle. Illegal jumps are refused by
- * `canTransition` inside `updateEvent`; the screen only ever offers the legal
- * ones, so a rejection here means the page was stale.
+ * Move the event along its lifecycle (UC-09). Illegal jumps, and publishing an
+ * event that is not set up, are refused inside `updateEvent`; the screen only
+ * ever offers the legal moves, so a rejection here means the page was stale or
+ * the setup is incomplete.
+ *
+ * `from` is the status the control was rendered with. The move is written only
+ * if the event still has it, so a stale page or a second manager acting at the
+ * same moment is refused — and a refused move logs and notifies nothing.
+ *
+ * Reopening — `complete` back to `live` — gets its own audit line naming who
+ * did it (UC-09 6a), because it is the one move that unlocks a finished record.
  */
 export async function setEventStatusAction(
   eventId: string,
+  from: EventStatus,
   status: EventStatus
 ): Promise<EventResult<{ status: EventStatus }>> {
+  // Both arrive from the browser; anything that is not a status is refused
+  // before it can reach a write, a log line or a notification.
+  const statuses: readonly string[] = eventStatus.enumValues;
+  if (!statuses.includes(from) || !statuses.includes(status)) {
+    return fail("That is not an event status.");
+  }
   const admin = await requireEventManager(eventId);
+  if (from === status) return fail(`The event is already ${status}.`);
 
-  const result = await updateEvent(eventId, { status });
+  const result = await updateEvent(eventId, { from, status });
   if (!result.ok) return result;
 
-  await recordAudit({
-    action: "event.status",
-    actor: admin,
-    eventId,
-    summary: `Moved "${result.data.title}" to ${result.data.status}.`,
-    detail: { status: result.data.status },
-  });
+  const reopened = from === "complete" && status === "live";
+  await recordAudit(
+    reopened
+      ? {
+          action: "event.reopened",
+          actor: admin,
+          eventId,
+          summary: `${admin.displayName ?? admin.name ?? "A manager"} reopened "${result.data.title}".`,
+          detail: { from: "complete", status: "live" },
+        }
+      : {
+          action: "event.status",
+          actor: admin,
+          eventId,
+          summary: `Moved "${result.data.title}" to ${result.data.status}.`,
+          detail: { status: result.data.status },
+        }
+  );
 
   // Reaching `published` from the status dropdown is the same event as reaching
   // it from the Publish tab, so it announces the same thing. Announcing from

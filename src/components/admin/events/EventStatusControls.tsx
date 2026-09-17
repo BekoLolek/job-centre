@@ -7,28 +7,25 @@ import type { EventStatus } from "@/db/schema";
 import { publishEventAction, setEventStatusAction } from "@/app/admin/events/actions";
 
 /**
- * Move an event between draft, published and complete, from the list.
+ * The one status control (UC-09): every move an event can make, and no other.
  *
- * These three live at the bottom of the Publish step, which is the right place
- * to *decide* to publish — it is the screen that tells you what is missing.
- * It is the wrong place to do it for the fourth event in a row, or to mark
- * last night's tournament finished, which is a thing you do while scanning the
- * list and not while reading a checklist about one event.
+ * It sits on the events list and at the bottom of the Publish step. Publishing
+ * goes through `publishEventAction`, the same call the Publish step's own button
+ * makes, refusals and Discord announcement included; every other move goes
+ * through `setEventStatusAction`. Both are second doorways to one action, not
+ * second implementations of it.
  *
- * So they are here as well. `publishEventAction` is the same call the Publish
- * step makes, refusals and Discord announcement included — this is a second
- * doorway to one action, not a second implementation of it, which is how the
- * two would otherwise drift until publishing from one place announced and
- * publishing from the other did not.
+ * The buttons are `EVENT_STATUS_FLOW` made clickable
+ * (docs/diagrams/event-state.md):
  *
- * Only ever forward, plus the one step back. Cancelling is not here: it is the
- * decision with the most consequence for the people who applied and it should
- * cost more than a click in a list.
+ *  - Unpublished: publish.
+ *  - Published: back to unpublished, mark running, or cancel.
+ *  - Running: mark complete, or cancel. No way back to published — people are
+ *    playing in it.
+ *  - Complete: reopen, which returns it to running and is audited by name.
+ *  - Cancelled: nothing. It is terminal, so there are no buttons to offer.
  *
- * What each status offers is not symmetrical, on purpose. A live event can be
- * completed but not hidden, because people are playing in it; a completed one
- * can only be reopened to published, never straight back to live, because
- * "live" is a claim about right now that an admin should have to make again.
+ * Cancelling asks first. It notifies every applicant and cannot be undone.
  */
 
 export default function EventStatusControls({
@@ -60,8 +57,21 @@ export default function EventStatusControls({
     });
   };
 
-  // `cancelled` has nowhere to go from here, and neither does anything else
-  // unexpected. Render nothing rather than a row of dead buttons.
+  const move = (to: EventStatus) => run(() => setEventStatusAction(eventId, status, to));
+
+  const cancel = () => {
+    if (confirm("Cancel this event? Applicants are told, and it cannot be undone.")) {
+      move("cancelled");
+    }
+  };
+
+  const cancelButton = (
+    <Button size="sm" variant="ember" disabled={busy} onClick={cancel}>
+      Cancel
+    </Button>
+  );
+
+  // `cancelled` is terminal. Render nothing rather than a row of dead buttons.
   const buttons =
     status === "draft" ? (
       <Button
@@ -74,42 +84,23 @@ export default function EventStatusControls({
       </Button>
     ) : status === "published" ? (
       <>
-        <Button
-          size="sm"
-          disabled={busy}
-          onClick={() => run(() => setEventStatusAction(eventId, "draft"))}
-        >
-          Back to draft
+        <Button size="sm" disabled={busy} onClick={() => move("draft")}>
+          Unpublish
         </Button>
-        <Button
-          size="sm"
-          disabled={busy}
-          onClick={() => run(() => setEventStatusAction(eventId, "complete"))}
-        >
-          Complete
+        <Button size="sm" variant="gold" disabled={busy} onClick={() => move("live")}>
+          Mark running
         </Button>
+        {cancelButton}
       </>
     ) : status === "live" ? (
-      /*
-         Running right now, which is the state this is most often used from:
-         the tournament finished last night and somebody has to say so. No
-         "back to draft" here — an event people are playing in is not a draft,
-         and pretending it could be is how a live bracket gets hidden.
-      */
-      <Button
-        size="sm"
-        variant="gold"
-        disabled={busy}
-        onClick={() => run(() => setEventStatusAction(eventId, "complete"))}
-      >
-        Complete
-      </Button>
+      <>
+        <Button size="sm" variant="gold" disabled={busy} onClick={() => move("complete")}>
+          Mark complete
+        </Button>
+        {cancelButton}
+      </>
     ) : status === "complete" ? (
-      <Button
-        size="sm"
-        disabled={busy}
-        onClick={() => run(() => setEventStatusAction(eventId, "published"))}
-      >
+      <Button size="sm" disabled={busy} onClick={() => move("live")}>
         Reopen
       </Button>
     ) : null;

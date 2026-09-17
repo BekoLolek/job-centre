@@ -1,7 +1,7 @@
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, applications, events } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { applyToEvent, createEvent, publishEvent } from "@/lib/events";
 
 /**
@@ -44,7 +44,7 @@ afterAll(async () => {
 
 /** A published event with `capacity` seats and nothing else in the way. */
 async function seatedEvent(title: string, capacity: number | null): Promise<string> {
-  const created = await createEvent({ title, capacity }, db);
+  const created = await createEvent({ ...PUBLISHABLE, title, capacity }, db);
   if (!created.ok) throw new Error(created.error);
   const published = await publishEvent(created.data.id, db);
   if (!published.ok) throw new Error(published.error);

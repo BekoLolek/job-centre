@@ -2,7 +2,7 @@
 // client components, and this file has to stay importable from a plain test.
 import { plural } from "@/components/ui/plural";
 import type { EventDetail } from "@/lib/events";
-import { rankMeetsMinimum } from "@/lib/events-policy";
+import { missingToPublish, rankMeetsMinimum } from "@/lib/events-policy";
 
 /**
  * Is this event ready to publish, and if not, what does each gap mean?
@@ -12,14 +12,14 @@ import { rankMeetsMinimum } from "@/lib/events-policy";
  * awkward combinations — a rank threshold on a game whose ladder no longer has
  * it, a signup window that closes before it opens — are cheap to test.
  *
- * ## Advisory, not a gate
+ * ## Mostly advice, with the publish gate marked
  *
- * `publishEvent` requires a title and a legal transition, and nothing else. An
- * event with no questions is a perfectly good "just turn up" night; one with no
- * days is a single evening. A checklist that refused those would be inventing
- * rules the rest of the system does not have, so almost everything here is
- * `warn` — it explains the consequence and lets the admin decide. Only the two
- * states that would make the event *impossible to apply to* are `stop`.
+ * Publishing is refused without a name, at least one day with a start time and
+ * a sign-up window (UC-09 2a) — `missingToPublish` decides that, on the server
+ * and here alike, so those three are `stop`. So are the two states that would
+ * make the event *impossible to apply to*. Everything else is `warn` (R-117): an
+ * event with no questions is a perfectly good "just turn up" night, so the
+ * checklist explains the consequence and lets the manager decide.
  */
 
 export type ReadinessLevel =
@@ -39,10 +39,11 @@ export type ReadinessCheck = {
 
 export function readiness(event: EventDetail): ReadinessCheck[] {
   const checks: ReadinessCheck[] = [];
+  const missing = missingToPublish(event);
 
   /* --- the title ---------------------------------------------------- */
   checks.push(
-    event.title.trim()
+    !missing.includes("name")
       ? {
           key: "title",
           label: "It has a title",
@@ -59,7 +60,7 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
 
   /* --- days --------------------------------------------------------- */
   checks.push(
-    event.days.length > 0
+    !missing.includes("day")
       ? {
           key: "days",
           label: plural(event.days.length, "day"),
@@ -68,10 +69,9 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
         }
       : {
           key: "days",
-          label: "No days",
-          level: "warn",
-          detail:
-            "Fine for a one-night thing — there is simply no availability question. Add days if you want to ask.",
+          label: "It needs a day with a start time",
+          level: "stop",
+          detail: "Publishing is refused until at least one day has a start time. Add it under Setup → Days.",
         }
   );
 
@@ -130,7 +130,14 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
   const closes = event.signupClosesAt;
   const starts = event.startsAt;
 
-  if (opens && closes && closes.getTime() < opens.getTime()) {
+  if (missing.includes("window")) {
+    checks.push({
+      key: "window",
+      label: "It needs a sign-up window",
+      level: "stop",
+      detail: "Publishing is refused until sign-ups have an opening and a closing time. Set them under Setup → Basics.",
+    });
+  } else if (opens && closes && closes.getTime() < opens.getTime()) {
     checks.push({
       key: "window",
       label: "Signups close before they open",

@@ -105,8 +105,8 @@ export default async function AdminEventsPage() {
         />
 
         <p className="pb-4 text-center text-xs text-muted">
-          Nothing on this page deletes an event. A mistake is cancelled, not erased — and a
-          cancelled event can go back to draft.
+          Nothing on this page deletes an event. A cancelled event stays in the archive with
+          its applications.
         </p>
       </main>
     </div>

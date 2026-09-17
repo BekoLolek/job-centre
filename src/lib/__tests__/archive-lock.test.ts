@@ -10,7 +10,7 @@ import {
   teamMembers,
   teams as teamsTable,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
   clearBid,
@@ -104,7 +104,7 @@ type Fixture = {
  */
 async function finishedEvent(): Promise<Fixture> {
   counter += 1;
-  const event = unwrap(await createEvent({ title: `Locked fixture ${counter}` }, db));
+  const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Locked fixture ${counter}` }, db));
   unwrap(await publishEvent(event.id, db));
 
   // Four accepted members: two captains, one to be drafted, one spare.
@@ -394,7 +394,7 @@ describe("the way out", () => {
 describe("a lot's bids", () => {
   it("cannot be cleared on a finished event", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Open lot ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Open lot ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
 
     const captain = await makeUser(db, { displayName: `Captain ${counter}` });
@@ -435,7 +435,7 @@ describe("a lot's bids", () => {
 describe("a team's starting balance", () => {
   it("cannot move once a lot has been awarded, even on a live event", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Balance ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Balance ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
 
     const captain = await makeUser(db, { displayName: `Cap ${counter}` });

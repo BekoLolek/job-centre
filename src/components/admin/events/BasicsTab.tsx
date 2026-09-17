@@ -13,18 +13,11 @@ import {
   Stepper,
   Textarea,
 } from "@/components/ui";
-import {
-  EVENT_TYPE_SUGGESTIONS,
-  eventStatusLabel,
-  eventStatusMeaning,
-  localInput,
-} from "@/components/events";
-import type { EventStatus } from "@/db/schema";
+import { EVENT_TYPE_SUGGESTIONS, localInput } from "@/components/events";
 import type { EventDetail } from "@/lib/events";
-import { nextStatuses } from "@/lib/events-policy";
 import { slugify } from "@/lib/profile-fields";
 import { toInstant, zoneLabel } from "@/lib/time";
-import { saveBasicsAction, setEventStatusAction } from "@/app/admin/events/actions";
+import { saveBasicsAction } from "@/app/admin/events/actions";
 import SaveRow, { type SaveState } from "./SaveRow";
 import type { GameOption } from "./types";
 
@@ -40,9 +33,8 @@ import type { GameOption } from "./types";
  * server disambiguates a clash (`freeSlug`) and the result is read back, so
  * "saved as rivals-2" is visible rather than discovered later.
  *
- * **Status lives here, and only the legal moves are offered.** `nextStatuses`
- * is the single source of that; rendering all five and letting the server
- * refuse four of them would be a screen that lies about what it can do.
+ * **Status does not live here.** It has one control, `EventStatusControls`, on
+ * the events list and the Publish step (UC-09).
  */
 
 const KNOWN_TYPES: readonly string[] = EVENT_TYPE_SUGGESTIONS;
@@ -75,7 +67,6 @@ export default function BasicsTab({
   const [state, setState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [statusBusy, setStatusBusy] = useState(false);
 
   const touch = () => {
     setState("dirty");
@@ -122,20 +113,6 @@ export default function BasicsTab({
     } catch {
       setError("Could not reach the server. Nothing was saved.");
       setState("error");
-    }
-  };
-
-  const moveTo = async (status: EventStatus) => {
-    setStatusBusy(true);
-    setError(null);
-    try {
-      const result = await setEventStatusAction(event.id, status);
-      if (!result.ok) setError(result.error);
-      else router.refresh();
-    } catch {
-      setError("Could not reach the server.");
-    } finally {
-      setStatusBusy(false);
     }
   };
 
@@ -347,43 +324,6 @@ export default function BasicsTab({
           disabled={!title.trim() || !slug.trim()}
           label="Save basics"
         />
-      </Panel>
-
-      {/* --- Status ------------------------------------------------- */}
-      <Panel as="section" padding="none" className="space-y-4 border-t border-hair pt-12 first:border-t-0 first:pt-0">
-        <Eyebrow>Status</Eyebrow>
-
-        <p className="text-sm">
-          <span className="text-chalk">{eventStatusLabel(event.status)}</span>
-          <span className="text-muted"> — {eventStatusMeaning(event.status)}</span>
-        </p>
-
-        <div>
-          <Eyebrow className="mb-2 text-chalk/70">Where it can go from here</Eyebrow>
-          <ChoiceRow>
-            {nextStatuses(event.status).map((status) => (
-              <ChoiceChip
-                key={status}
-                disabled={statusBusy}
-                onClick={() => void moveTo(status)}
-              >
-                {eventStatusLabel(status)}
-              </ChoiceChip>
-            ))}
-          </ChoiceRow>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
-            Only the legal moves are shown. Nothing is a dead end — a cancelled event can go
-            back to draft, and a completed one back to live, because the usual reason to
-            leave a status is that somebody clicked the wrong button.
-          </p>
-        </div>
-
-        {event.status === "draft" && (
-          <p className="text-xs text-muted">
-            Publishing has its own tab, with a readiness checklist — that is the one move
-            worth reading before making.
-          </p>
-        )}
       </Panel>
     </div>
   );

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { type Database, draftLots, users } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
   getDraftSnapshot,
@@ -83,7 +83,7 @@ type DraftEvent = { eventId: string; alpha: string; players: string[] };
  */
 async function draftEvent(): Promise<DraftEvent> {
   counter += 1;
-  const created = unwrap(await createEvent({ title: `Host draft ${counter}` }, db));
+  const created = unwrap(await createEvent({ ...PUBLISHABLE, title: `Host draft ${counter}` }, db));
   unwrap(await publishEvent(created.id, db));
 
   const members: string[] = [];
@@ -163,7 +163,7 @@ describe("the draft room of an unpublished event", () => {
   let hidden: { slug: string };
 
   beforeAll(async () => {
-    const created = unwrap(await createEvent({ title: "Unpublished draft" }, db));
+    const created = unwrap(await createEvent({ ...PUBLISHABLE, title: "Unpublished draft" }, db));
     await addHost(created.id, hostOfA, null, db);
     hidden = { slug: created.slug };
   });

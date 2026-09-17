@@ -1,7 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, events, users } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
   openLot,
@@ -162,7 +162,7 @@ async function playedEvent(): Promise<{
   slug: string;
 }> {
   counter += 1;
-  const event = unwrap(await createEvent({ title: `Profile fixture ${counter}` }, db));
+  const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Profile fixture ${counter}` }, db));
   unwrap(await publishEvent(event.id, db));
 
   const captain = await makeUser(db, { displayName: `Captain ${counter}` });
@@ -279,7 +279,7 @@ describe("the profile", () => {
 describe("what the profile refuses to show", () => {
   it("never lists a draft event, so it cannot leak that one is being planned", async () => {
     counter += 1;
-    const draft = unwrap(await createEvent({ title: `Secret ${counter}` }, db));
+    const draft = unwrap(await createEvent({ ...PUBLISHABLE, title: `Secret ${counter}` }, db));
     const userId = await makeUser(db, { displayName: `Insider ${counter}` });
 
     // An accepted application on an unpublished event — the admin's own test
@@ -295,7 +295,7 @@ describe("what the profile refuses to show", () => {
 
   it("never lists an event somebody was declined from or withdrew from", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Turned down ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Turned down ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
 
     const userId = await makeUser(db, { displayName: `Declined ${counter}` });
@@ -311,7 +311,7 @@ describe("what the profile refuses to show", () => {
     // the whole serialised profile rather than on a field, so it fails if an
     // answer ever arrives by a route nobody thought of.
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Answers ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Answers ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
     const questions = unwrap(
       await (

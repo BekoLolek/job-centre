@@ -1,13 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ApplicationStatus, EventStatus } from "@/db";
 import {
+  EVENT_STATUS_FLOW,
   type EventTimingView,
   type WaitlistApplication,
   applicationsOpen,
   canTransition,
   capacityState,
   eligibility,
-  nextStatuses,
+  missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
   rankMeetsMinimum,
@@ -56,26 +57,83 @@ function event(over: Partial<EventTimingView> = {}): EventTimingView {
 /* ------------------------------------------------------------------ */
 
 describe("event status transitions", () => {
-  it("lets a draft be published or cancelled, and nothing else", () => {
-    expect(nextStatuses("draft").sort()).toEqual(["cancelled", "published"]);
-    expect(canTransition("draft", "published")).toBe(true);
-    expect(canTransition("draft", "live")).toBe(false);
-    expect(canTransition("draft", "complete")).toBe(false);
+  // docs/diagrams/event-state.md, edge for edge, over every pair. UC-09 3a:
+  // any other transition is refused — including staying put, which is not a
+  // transition (`updateEvent` treats an unchanged status as no move at all).
+  // This replaces the old "a mistaken cancellation can be undone" test: the
+  // diagram makes cancelled terminal.
+  it.each([
+    ["draft", "draft", false],
+    ["draft", "published", true],
+    ["draft", "live", false],
+    ["draft", "complete", false],
+    ["draft", "cancelled", false],
+    ["published", "draft", true],
+    ["published", "published", false],
+    ["published", "live", true],
+    ["published", "complete", false],
+    ["published", "cancelled", true],
+    ["live", "draft", false],
+    ["live", "published", false],
+    ["live", "live", false],
+    ["live", "complete", true],
+    ["live", "cancelled", true],
+    ["complete", "draft", false],
+    ["complete", "published", false],
+    ["complete", "live", true],
+    ["complete", "complete", false],
+    ["complete", "cancelled", false],
+    ["cancelled", "draft", false],
+    ["cancelled", "published", false],
+    ["cancelled", "live", false],
+    ["cancelled", "complete", false],
+    ["cancelled", "cancelled", false],
+  ] as Array<[EventStatus, EventStatus, boolean]>)("%s → %s allowed: %s", (from, to, allowed) => {
+    expect(canTransition(from, to)).toBe(allowed);
   });
 
-  it("treats staying put as allowed, so a no-op edit is not an error", () => {
-    const every: EventStatus[] = ["draft", "published", "live", "complete", "cancelled"];
-    for (const status of every) expect(canTransition(status, status)).toBe(true);
+  it("treats cancelled as terminal", () => {
+    expect(EVENT_STATUS_FLOW.cancelled).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe("missingToPublish — UC-09 2 and 2a", () => {
+  const ready = {
+    title: "Rivals Cup",
+    signupOpensAt: hoursFromNow(1),
+    signupClosesAt: hoursFromNow(24),
+    days: [{ startsAt: hoursFromNow(48) }],
+  };
+
+  it("asks for nothing when there is a name, a timed day and a sign-up window", () => {
+    expect(missingToPublish(ready)).toEqual([]);
   });
 
-  it("never lists its own status as somewhere to go", () => {
-    const every: EventStatus[] = ["draft", "published", "live", "complete", "cancelled"];
-    for (const status of every) expect(nextStatuses(status)).not.toContain(status);
+  it("asks for a name", () => {
+    expect(missingToPublish({ ...ready, title: "   " })).toEqual(["name"]);
   });
 
-  it("lets a mistaken cancellation and a mistaken completion be undone", () => {
-    expect(canTransition("cancelled", "draft")).toBe(true);
-    expect(canTransition("complete", "live")).toBe(true);
+  it("asks for a day when there are none", () => {
+    expect(missingToPublish({ ...ready, days: [] })).toEqual(["day"]);
+  });
+
+  it("asks for a day when no day has a start time", () => {
+    expect(missingToPublish({ ...ready, days: [{ startsAt: null }] })).toEqual(["day"]);
+  });
+
+  it("asks for the sign-up window when it has no opening time", () => {
+    expect(missingToPublish({ ...ready, signupOpensAt: null })).toEqual(["window"]);
+  });
+
+  it("asks for the sign-up window when it has no closing time", () => {
+    expect(missingToPublish({ ...ready, signupClosesAt: null })).toEqual(["window"]);
+  });
+
+  it("lists everything missing at once", () => {
+    const bare = { title: "", signupOpensAt: null, signupClosesAt: null, days: [] };
+    expect(missingToPublish(bare)).toEqual(["name", "day", "window"]);
   });
 });
 

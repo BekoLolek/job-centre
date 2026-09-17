@@ -21,11 +21,10 @@ describe("which statuses lock", () => {
   });
 
   it("leaves a cancelled event editable, because it never ran", () => {
-    // `EVENT_STATUS_FLOW` lets a cancelled event go back to draft and the admin
-    // events list says so out loud. Locking it would turn "I clicked the wrong
-    // button" into a dead end.
+    // `cancelled` is not locked; it is terminal, so nothing moves it through
+    // the status flow (docs/diagrams/event-state.md, UC-09 5a).
     expect(isLocked("cancelled")).toBe(false);
-    expect(EVENT_STATUS_FLOW.cancelled).toContain("draft");
+    expect(EVENT_STATUS_FLOW.cancelled).toEqual([]);
   });
 });
 

@@ -18,18 +18,16 @@ import { blockers, gaps as gapsIn, readiness } from "./readiness";
 /**
  * Publish — the readiness checklist, then the button (§6.3).
  *
- * ## Advisory, not a gate
+ * ## Three refusals, the rest advice
  *
- * Almost nothing here blocks. `publishEvent` requires a title and a legal
- * transition and that is all, because an event with no questions is a
- * perfectly good "just turn up" event and an event with no days is a one-night
- * thing. A checklist that refused to let those through would be inventing rules
- * the rest of the system does not have.
+ * Publishing is refused without a name, at least one day with a start time and
+ * a sign-up window (UC-09 2a). Those, and the two states nobody could apply to,
+ * are marked as problems and disable the button; the server refuses them too.
+ * Everything else is a gap (R-117): the checklist says what it *means* — "no
+ * questions, so applying is one click" — so publishing is a decision rather
+ * than a hope.
  *
- * What it does instead is say what each gap *means* — "no signup window, so
- * applications open the moment you publish" — so publishing is a decision
- * rather than a hope. The two items that genuinely stop the write are marked as
- * such and disable the button.
+ * Once it is published, the button gives way to the one status control.
  */
 
 export default function PublishTab({
@@ -172,20 +170,8 @@ export default function PublishTab({
           </Alert>
         )}
 
-        {event.status === "published" || event.status === "complete" ? (
-          <div className="space-y-3">
-            <p className="text-sm text-signal">
-              {event.status === "published"
-                ? "Already published. Hide it again or mark it finished below — either way the applications stay."
-                : "Finished. Reopening puts it back on the hub with everything it recorded intact."}
-            </p>
-            {/*
-              The same two controls as the events list. Pointing at another
-              screen for "undo the thing you just did here" is the sort of
-              instruction nobody follows and everybody has to hunt for.
-            */}
-            <EventStatusControls eventId={event.id} status={event.status} />
-          </div>
+        {event.status !== "draft" ? (
+          <EventStatusControls eventId={event.id} status={event.status} />
         ) : (
           <div className="flex flex-wrap items-center gap-3">
             <Button

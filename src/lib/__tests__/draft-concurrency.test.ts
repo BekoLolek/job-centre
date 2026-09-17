@@ -8,7 +8,7 @@ import {
   events,
   teamMembers,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
   getTeams,
@@ -84,7 +84,7 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
  */
 async function draftReady(teamCount: number, spare: number, balance = 1000): Promise<Fixture> {
   counter += 1;
-  const created = await createEvent({ title: `Race ${counter}` }, db);
+  const created = await createEvent({ ...PUBLISHABLE, title: `Race ${counter}` }, db);
   if (!created.ok) throw new Error(created.error);
   const published = await publishEvent(created.data.id, db);
   if (!published.ok) throw new Error(published.error);

@@ -13,7 +13,7 @@ import {
   profileFields,
   profileValues,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { RIVALS_RANK_LADDER } from "@/db/seed";
 import {
   type CreateEventInput,
@@ -137,8 +137,35 @@ async function makeEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow
 
 /** An event members can actually apply to, with everything else left open. */
 async function openEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow> {
-  const event = await makeEvent(over);
+  const event = await makeEvent({ ...PUBLISHABLE, ...over });
   return expectOk(await publishEvent(event.id, db));
+}
+
+/**
+ * This file's database, except that the first `update` it is asked for runs
+ * `between` to completion before it is issued. Everything read before that
+ * point is then stale, which pins the read-write gap a race needs without
+ * relying on how two promises happen to interleave.
+ */
+function writingAfter(between: () => Promise<unknown>): Database {
+  let pending: (() => Promise<unknown>) | null = between;
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property !== "update") return Reflect.get(target, property, receiver);
+      return (table: typeof events) => ({
+        set: (values: Partial<EventRow>) => ({
+          where: (condition: Parameters<ReturnType<ReturnType<Database["update"]>["set"]>["where"]>[0]) => ({
+            returning: async () => {
+              const run = pending;
+              pending = null;
+              if (run) await run();
+              return target.update(table).set(values).where(condition).returning();
+            },
+          }),
+        }),
+      });
+    },
+  });
 }
 
 async function setProfileValue(userId: string, fieldId: string, value: unknown): Promise<void> {
@@ -270,9 +297,95 @@ describe("updateEvent and publishEvent", () => {
   });
 
   it("publishes a draft, and publishing twice is not an error", async () => {
+    const event = await makeEvent(PUBLISHABLE);
+    expect(expectOk(await publishEvent(event.id, db)).status).toBe("published");
+    expect(expectOk(await publishEvent(event.id, db)).status).toBe("published");
+  });
+
+  it("refuses to publish without a day or a sign-up window, and says which", async () => {
+    // UC-09 2a: required setup missing — the system lists what is missing and
+    // the event stays unpublished. (This used to be advice only.)
     const event = await makeEvent();
-    expect(expectOk(await publishEvent(event.id, db)).status).toBe("published");
-    expect(expectOk(await publishEvent(event.id, db)).status).toBe("published");
+
+    const error = expectFail(await publishEvent(event.id, db)).error;
+
+    expect(error).toMatch(/at least one day with a start time/);
+    expect(error).toMatch(/sign-up window/);
+    expect((await db.select().from(events).where(eq(events.id, event.id)))[0].status).toBe(
+      "draft"
+    );
+  });
+
+  it("refuses to publish when the only day has no start time", async () => {
+    const event = await makeEvent({ ...PUBLISHABLE, days: [{ label: "Some day" }] });
+
+    const error = expectFail(await publishEvent(event.id, db)).error;
+
+    expect(error).toMatch(/at least one day with a start time/);
+    expect(error).not.toMatch(/sign-up window/);
+  });
+
+  it("refuses the same publish through the status control", async () => {
+    // UC-09 2a on every path: moving the status to published is publishing.
+    const event = await makeEvent({ signupOpensAt: hours(1) });
+
+    const error = expectFail(await updateEvent(event.id, { status: "published" }, db)).error;
+
+    expect(error).toMatch(/at least one day with a start time/);
+    expect(error).toMatch(/sign-up window/);
+    expect((await db.select().from(events).where(eq(events.id, event.id)))[0].status).toBe(
+      "draft"
+    );
+  });
+
+  it("publishes a ready event through the status control", async () => {
+    const event = await makeEvent(PUBLISHABLE);
+    expect(expectOk(await updateEvent(event.id, { status: "published" }, db)).status).toBe(
+      "published"
+    );
+  });
+
+  it("keeps a basics save that lands between a cancel's read and its write", async () => {
+    // The cancel has read the old title; the rename commits; then the cancel
+    // writes. Only the keys in each patch may change, so both survive.
+    const event = await openEvent();
+    const save = () => updateEvent(event.id, { title: "Renamed while cancelling" }, db);
+
+    expectOk(await updateEvent(event.id, { status: "cancelled" }, writingAfter(save)));
+
+    const [row] = await db.select().from(events).where(eq(events.id, event.id));
+    expect(row.status).toBe("cancelled");
+    expect(row.title).toBe("Renamed while cancelling");
+  });
+
+  it("keeps a cancel that lands between a basics save's read and its write", async () => {
+    // The other order: the save has read `published`; the cancel commits; then
+    // the save writes. A save that did not ask to move the status must not
+    // put the event back to published.
+    const event = await openEvent();
+    const cancel = () => updateEvent(event.id, { status: "cancelled" }, db);
+
+    expectOk(
+      await updateEvent(event.id, { title: "Renamed while cancelling" }, writingAfter(cancel))
+    );
+
+    const [row] = await db.select().from(events).where(eq(events.id, event.id));
+    expect(row.status).toBe("cancelled");
+    expect(row.title).toBe("Renamed while cancelling");
+  });
+
+  it("refuses a move when the event is no longer in the status the caller saw", async () => {
+    const event = await openEvent();
+    expectOk(await updateEvent(event.id, { status: "cancelled" }, db));
+
+    const stale = await updateEvent(event.id, { from: "published", status: "live" }, db);
+
+    expect(expectFail(stale).error).toBe("The event changed meanwhile - reload.");
+  });
+
+  it("treats saving the status it already has as no move at all", async () => {
+    const event = await makeEvent();
+    expect(expectOk(await updateEvent(event.id, { status: "draft" }, db)).status).toBe("draft");
   });
 
   it("refuses a status jump that skips being published", async () => {
@@ -282,13 +395,37 @@ describe("updateEvent and publishEvent", () => {
     );
   });
 
-  it("walks a real event through its lifecycle", async () => {
-    const event = await makeEvent();
+  it("walks a real event through its lifecycle, reopening included", async () => {
+    // UC-09 1, 3, 5 and 6a.
+    const event = await openEvent();
+    expect(expectOk(await updateEvent(event.id, { status: "draft" }, db)).status).toBe("draft");
     expectOk(await publishEvent(event.id, db));
     expect(expectOk(await updateEvent(event.id, { status: "live" }, db)).status).toBe("live");
     expect(expectOk(await updateEvent(event.id, { status: "complete" }, db)).status).toBe(
       "complete"
     );
+    expect(expectOk(await updateEvent(event.id, { status: "live" }, db)).status).toBe("live");
+  });
+
+  it("refuses a completed event going back to unpublished", async () => {
+    // UC-09 3a, the example the use case gives.
+    const event = await openEvent();
+    expectOk(await updateEvent(event.id, { status: "live" }, db));
+    expectOk(await updateEvent(event.id, { status: "complete" }, db));
+
+    expect(expectFail(await updateEvent(event.id, { status: "draft" }, db)).error).toMatch(
+      /cannot go from complete to draft/i
+    );
+  });
+
+  it("keeps a cancelled event cancelled", async () => {
+    const event = await openEvent();
+    expectOk(await updateEvent(event.id, { status: "cancelled" }, db));
+
+    expect(expectFail(await updateEvent(event.id, { status: "draft" }, db)).error).toMatch(
+      /cannot go from cancelled to draft/i
+    );
+    expect(expectFail(await publishEvent(event.id, db)).error).toMatch(/cannot be published/);
   });
 
   it("keeps validating once the event exists", async () => {
@@ -1496,7 +1633,10 @@ describe("a whole event, end to end", () => {
       signupOpensAt: hours(-1),
       signupClosesAt: hours(6),
       startsAt: hours(24),
-      days: [{ label: "Saturday" }, { label: "Sunday" }],
+      days: [
+        { label: "Saturday", startsAt: hours(24) },
+        { label: "Sunday", startsAt: hours(48) },
+      ],
     });
 
     expectOk(

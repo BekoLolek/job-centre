@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, events } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { loadDashboard } from "@/lib/admin-dashboard";
 import { recordAudit } from "@/lib/audit";
 import { openLot, setCaptains, setDraftPool, setTeams } from "@/lib/draft";
@@ -52,7 +52,7 @@ async function itemsFor(eventId: string) {
 describe("applications waiting", () => {
   it("appears for somebody the cap queued and nobody has looked at", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Queue ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Queue ${counter}` }, db));
     unwrap(await updateEvent(event.id, { capacity: 1 }, db));
     unwrap(await publishEvent(event.id, db));
 
@@ -75,7 +75,7 @@ describe("applications waiting", () => {
 describe("ready to publish", () => {
   it("says so for a draft with nothing stopping it, and links to the tab", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Draft ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Draft ${counter}` }, db));
 
     const [item] = (await itemsFor(event.id)).filter((row) => row.kind === "publish");
     expect(item.label).toBe("Ready to publish");
@@ -84,7 +84,7 @@ describe("ready to publish", () => {
 
   it("counts what is stopping it instead, when something is", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Blocked ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Blocked ${counter}` }, db));
 
     // Signups that close before they open: nobody could ever apply. Written
     // straight to the row on purpose — `updateEvent` refuses this pair outright,
@@ -105,7 +105,7 @@ describe("ready to publish", () => {
 
   it("stops mentioning publishing once the event is published", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Published ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Published ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
     expect((await itemsFor(event.id)).filter((row) => row.kind === "publish")).toEqual([]);
   });
@@ -114,7 +114,7 @@ describe("ready to publish", () => {
 describe("captains", () => {
   it("counts the teams without one, and clears when they are chosen", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Captains ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Captains ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
 
     const captain = await makeUser(db, { displayName: `Cap ${counter}` });
@@ -134,7 +134,7 @@ describe("captains", () => {
 describe("a lot on the block", () => {
   it("is flagged as blocking, and points at the room rather than the editor", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Lot ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Lot ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
 
     const captain = await makeUser(db, { displayName: `Cap ${counter}` });
@@ -157,7 +157,7 @@ describe("a lot on the block", () => {
 describe("the board", () => {
   it("counts matches with no time only once a bracket has been generated", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Board ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Board ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
 
     const captains = [
@@ -218,7 +218,7 @@ describe("an announcement that did not post", () => {
 
   async function publishedEvent(title: string) {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `${title} ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `${title} ${counter}` }, db));
     unwrap(await publishEvent(event.id, db));
     return event;
   }
@@ -259,7 +259,7 @@ describe("an announcement that did not post", () => {
 describe("a finished event", () => {
   it("never appears, because nothing about it can need doing", async () => {
     counter += 1;
-    const event = unwrap(await createEvent({ title: `Over ${counter}` }, db));
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Over ${counter}` }, db));
     unwrap(await updateEvent(event.id, { capacity: 1 }, db));
     unwrap(await publishEvent(event.id, db));
 

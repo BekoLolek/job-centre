@@ -77,10 +77,13 @@ import {
   type ApplicationsState,
   type CapacityState,
   type Eligibility,
+  type PublishView,
+  PUBLISH_REQUIREMENT_TEXT,
   applicationsOpen,
   canTransition,
   capacityState,
   eligibility,
+  missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
   recomputeWaitlist,
@@ -536,7 +539,15 @@ export type CreateEventInput = EventFieldsInput & {
 export type UpdateEventInput = EventFieldsInput & {
   /** Guarded by `canTransition`; a nonsense jump is refused, not applied. */
   status?: EventStatus;
+  /**
+   * The status the caller saw. When given and the event has moved on since,
+   * the whole edit is refused rather than applied to a page that is stale.
+   */
+  from?: EventStatus;
 };
+
+/** The refusal when the status changed between reading the event and writing it. */
+const STATUS_CHANGED = "The event changed meanwhile - reload.";
 
 /** One place to check the things a title and a calendar can get wrong. */
 function validateFields(
@@ -727,11 +738,38 @@ async function resolveTemplateQuestions(
 }
 
 /**
+ * Why this event may not be published yet, as one sentence, or null when it
+ * may. Reads the days, since a day with a start time is one of the
+ * requirements (UC-09 2a); the event's own fields come from the caller, who may
+ * be about to change them in the same write.
+ */
+async function publishRefusal(
+  database: Database,
+  eventId: string,
+  event: Omit<PublishView, "days">
+): Promise<string | null> {
+  const missing = missingToPublish({ ...event, days: await readDays(database, eventId) });
+  if (missing.length === 0) return null;
+  const needs = missing.map((requirement) => PUBLISH_REQUIREMENT_TEXT[requirement]);
+  const list =
+    needs.length === 1 ? needs[0] : `${needs.slice(0, -1).join(", ")} and ${needs.at(-1)}`;
+  return `This event cannot be published yet. It still needs ${list}.`;
+}
+
+/**
  * Edit an event. Only the keys present in `patch` change.
  *
  * Status moves through here too, guarded by `canTransition` — an event cannot
  * jump from `draft` to `live` without ever having been published, because then
  * applications would have been impossible right up until they were too late.
+ * Moving to `published` this way is publishing, so it meets the same
+ * requirements `publishEvent` does. Sending the status the event already has
+ * is not a move and is not refused.
+ *
+ * Only the columns in `patch` are written, plus `updatedAt`, so an edit never
+ * puts back a value somebody else changed after this one read the row. A move
+ * is written only if the row still holds the status it was checked against, so
+ * two managers moving the same event at once cannot both win.
  */
 export async function updateEvent(
   eventId: string,
@@ -740,8 +778,10 @@ export async function updateEvent(
 ): Promise<EventResult<EventRow>> {
   const current = await readEvent(database, eventId);
   if (!current) return fail("That event no longer exists.");
+  if (patch.from !== undefined && patch.from !== current.status) return fail(STATUS_CHANGED);
 
-  if (patch.status && !canTransition(current.status, patch.status)) {
+  const moveTo = patch.status && patch.status !== current.status ? patch.status : null;
+  if (moveTo && !canTransition(current.status, moveTo)) {
     return fail(`An event cannot go from ${current.status} to ${patch.status}.`);
   }
 
@@ -788,6 +828,11 @@ export async function updateEvent(
     if (!title) return fail("Give the event a title.");
   }
 
+  if (moveTo === "published") {
+    const refusal = await publishRefusal(database, eventId, { title, ...next });
+    if (refusal) return fail(refusal);
+  }
+
   let slug = current.slug;
   if ("slug" in patch && patch.slug !== undefined) {
     const wanted = slugify(patch.slug);
@@ -795,26 +840,32 @@ export async function updateEvent(
     slug = wanted === current.slug ? current.slug : await freeSlug(database, wanted, wanted, eventId);
   }
 
+  const changes: Partial<typeof events.$inferInsert> = { updatedAt: new Date() };
+  if (moveTo) changes.status = moveTo;
+  if ("title" in patch) changes.title = title;
+  if ("slug" in patch && patch.slug !== undefined) changes.slug = slug;
+  if (patch.gameId !== undefined) changes.gameId = gameId;
+  if ("type" in patch) changes.type = cleanText(patch.type, 40) || current.type;
+  if ("description" in patch) {
+    changes.description = cleanNullable(patch.description, DESCRIPTION_MAX);
+  }
+  if ("bannerUrl" in patch) changes.bannerUrl = cleanNullable(patch.bannerUrl, 500);
+  if ("config" in patch) changes.config = { ...current.config, ...(patch.config ?? {}) };
+  for (const key of Object.keys(next) as Array<keyof typeof next>) {
+    if (key in patch) Object.assign(changes, { [key]: next[key] });
+  }
+
   const [updated] = await database
     .update(events)
-    .set({
-      title,
-      slug,
-      gameId,
-      status: patch.status ?? current.status,
-      type: "type" in patch ? cleanText(patch.type, 40) || current.type : current.type,
-      description:
-        "description" in patch
-          ? cleanNullable(patch.description, DESCRIPTION_MAX)
-          : current.description,
-      bannerUrl: "bannerUrl" in patch ? cleanNullable(patch.bannerUrl, 500) : current.bannerUrl,
-      config: "config" in patch ? { ...current.config, ...(patch.config ?? {}) } : current.config,
-      updatedAt: new Date(),
-      ...next,
-    })
-    .where(eq(events.id, eventId))
+    .set(changes)
+    .where(
+      moveTo
+        ? and(eq(events.id, eventId), eq(events.status, current.status))
+        : eq(events.id, eventId)
+    )
     .returning();
 
+  if (!updated) return fail(STATUS_CHANGED);
   return withData(updated);
 }
 
@@ -836,14 +887,16 @@ export async function publishEvent(
   if (!canTransition(current.status, "published")) {
     return fail(`A ${current.status} event cannot be published.`);
   }
-  if (!current.title.trim()) return fail("Give the event a title before publishing it.");
+  const refusal = await publishRefusal(database, eventId, current);
+  if (refusal) return fail(refusal);
 
   const [updated] = await database
     .update(events)
     .set({ status: "published", updatedAt: new Date() })
-    .where(eq(events.id, eventId))
+    .where(and(eq(events.id, eventId), eq(events.status, current.status)))
     .returning();
 
+  if (!updated) return fail(STATUS_CHANGED);
   return withData(updated);
 }
 

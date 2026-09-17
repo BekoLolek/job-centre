@@ -7,7 +7,7 @@ import {
   teams as teamsTable,
   users as usersTable,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
   clearBid,
@@ -65,7 +65,7 @@ type Fixture = { eventId: string; members: string[] };
 /** A published event with `people` accepted applicants, in application order. */
 async function seededEvent(people: number): Promise<Fixture> {
   counter += 1;
-  const created = await createEvent({ title: `Draft fixture ${counter}` }, db);
+  const created = await createEvent({ ...PUBLISHABLE, title: `Draft fixture ${counter}` }, db);
   if (!created.ok) throw new Error(created.error);
   const published = await publishEvent(created.data.id, db);
   if (!published.ok) throw new Error(published.error);

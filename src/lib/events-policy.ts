@@ -31,30 +31,65 @@ import type { ApplicationStatus, EventConfig, EventStatus } from "@/db/schema";
 /* ------------------------------------------------------------------ */
 
 /**
- * Which status may follow which.
+ * Which status may follow which — docs/diagrams/event-state.md, edge for edge.
  *
- * Nothing here is destructive — `cancelled` and `complete` are not dead ends,
- * because the usual reason to leave one is that somebody clicked the wrong
- * button. What the map does stop is the nonsense: an event cannot go from
- * `draft` straight to `live` without ever being published, so applications
- * cannot have been impossible and then suddenly be too late.
+ * Nothing else is allowed (UC-09 3a). An event cannot go from `draft` straight
+ * to `live` without ever being published, so applications cannot have been
+ * impossible and then suddenly be too late; a `live` event cannot be hidden or
+ * un-started, because people are playing in it; and `cancelled` is terminal —
+ * the record of an event called off stays exactly that. The one way back is
+ * `complete → live`, the reopen, because a finished event with a recorded
+ * mistake in it has to be correctable, and the action layer writes down who
+ * did it.
  */
 export const EVENT_STATUS_FLOW: Readonly<Record<EventStatus, readonly EventStatus[]>> = {
-  draft: ["published", "cancelled"],
-  published: ["draft", "live", "complete", "cancelled"],
-  live: ["published", "complete", "cancelled"],
+  draft: ["published"],
+  published: ["draft", "live", "cancelled"],
+  live: ["complete", "cancelled"],
   complete: ["live"],
-  cancelled: ["draft", "published"],
+  cancelled: [],
 };
 
-/** The statuses an admin may move this event to. Never includes its own. */
-export function nextStatuses(from: EventStatus): EventStatus[] {
-  return [...EVENT_STATUS_FLOW[from]];
+/**
+ * Is this status change allowed? Staying put is not a change, so it is not in
+ * the map; a caller saving an unchanged status should not be asking.
+ */
+export function canTransition(from: EventStatus, to: EventStatus): boolean {
+  return EVENT_STATUS_FLOW[from].includes(to);
 }
 
-/** Is this status change allowed? Staying put always is. */
-export function canTransition(from: EventStatus, to: EventStatus): boolean {
-  return from === to || EVENT_STATUS_FLOW[from].includes(to);
+/** The things UC-09 2 requires before an event may be published. */
+export type PublishRequirement = "name" | "day" | "window";
+
+/** Each requirement as the words that finish "It still needs …". */
+export const PUBLISH_REQUIREMENT_TEXT: Readonly<Record<PublishRequirement, string>> = {
+  name: "a name",
+  day: "at least one day with a start time",
+  window: "a sign-up window (when sign-ups open and when they close)",
+};
+
+/** Just enough of an event, with its days, to decide whether it may be published. */
+export type PublishView = {
+  title: string;
+  signupOpensAt: Date | null;
+  signupClosesAt: Date | null;
+  days: ReadonlyArray<{ startsAt: Date | null }>;
+};
+
+/**
+ * What this event still lacks before it may be published, in a fixed order;
+ * empty when nothing does.
+ *
+ * The gate on every publishing path — the Publish tab, the status control, a
+ * status patch — and the source of the checklist's refusals, so the screen
+ * never disagrees with the server about what stops the button.
+ */
+export function missingToPublish(event: PublishView): PublishRequirement[] {
+  const missing: PublishRequirement[] = [];
+  if (!event.title.trim()) missing.push("name");
+  if (!event.days.some((day) => day.startsAt !== null)) missing.push("day");
+  if (!event.signupOpensAt || !event.signupClosesAt) missing.push("window");
+  return missing;
 }
 
 /* ------------------------------------------------------------------ */

@@ -20,6 +20,17 @@ export async function freshDatabase(): Promise<TestDatabase> {
   return { db, client, close: () => client.close() };
 }
 
+/**
+ * What UC-09 2 requires before an event may be published — a day with a start
+ * time and a sign-up window — spread into `createEvent` by any test that
+ * publishes. Wide enough, 2000 to 2100, never to get in the way of the test.
+ */
+export const PUBLISHABLE = {
+  signupOpensAt: new Date("2000-01-01T00:00:00Z"),
+  signupClosesAt: new Date("2100-01-01T00:00:00Z"),
+  days: [{ startsAt: new Date("2100-01-02T18:00:00Z") }],
+};
+
 /** Insert a member and hand back their id. */
 export async function makeUser(
   db: Database,

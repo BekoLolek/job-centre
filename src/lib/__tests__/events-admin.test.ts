@@ -8,7 +8,7 @@ import {
   games,
   profileFields,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { RIVALS_RANK_LADDER } from "@/db/seed";
 import {
   type EventResult,
@@ -84,6 +84,8 @@ async function makeEvent(
   const event = expectOk(
     await createEvent(
       {
+        // Publishing needs a day and a sign-up window (UC-09 2a).
+        ...(options.publish === false ? {} : PUBLISHABLE),
         title: `Preview subject ${titleCounter}`,
         gameId: rivalsId,
         capacity: options.seats === undefined ? 4 : options.seats,
@@ -126,7 +128,8 @@ async function dayIds(eventId: string): Promise<string[]> {
 
 describe("previewEventDays", () => {
   it("reports nothing for an event that has no days", async () => {
-    const event = await makeEvent();
+    // Unpublished: a published event has at least one day (UC-09 2a).
+    const event = await makeEvent({ publish: false });
 
     expect(await previewEventDays(event.id, [], db)).toEqual({
       removed: [],

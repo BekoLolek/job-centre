@@ -133,16 +133,41 @@ describe("readiness", () => {
     expect(detailOf(await checksFor(eventId), "questions")).toMatch(/None of them prefill/);
   });
 
-  it("warns — but does not block — an event with no days and no questions", async () => {
+  it("warns — but does not block — an event with no questions", async () => {
     const eventId = await healthyEvent();
-    expectOk(await setEventDays(eventId, [], db));
     expectOk(await setEventQuestions(eventId, [], db));
 
     const checks = await checksFor(eventId);
-    expect(levelOf(checks, "days")).toBe("warn");
     expect(levelOf(checks, "questions")).toBe("warn");
-    // Neither is a rule the rest of the system has, so neither stops publishing.
+    // R-117: advice only, so it does not stop publishing.
     expect(blockers(checks)).toEqual([]);
+  });
+
+  it("blocks an event with no days", async () => {
+    // UC-09 2a: publishing needs at least one day. This used to be a warning.
+    const eventId = await healthyEvent();
+    expectOk(await setEventDays(eventId, [], db));
+
+    const checks = await checksFor(eventId);
+    expect(blockers(checks).map((check) => check.key)).toEqual(["days"]);
+  });
+
+  it("blocks an event whose only day has no start time", async () => {
+    // UC-09 2a: "at least one day with a start time".
+    const eventId = await healthyEvent();
+    expectOk(await setEventDays(eventId, [{ label: "Some day" }], db));
+
+    const checks = await checksFor(eventId);
+    expect(blockers(checks).map((check) => check.key)).toEqual(["days"]);
+  });
+
+  it("blocks an event with no sign-up window", async () => {
+    // UC-09 2a: publishing needs a sign-up window.
+    const eventId = await healthyEvent();
+    expectOk(await updateEvent(eventId, { signupClosesAt: null }, db));
+
+    const checks = await checksFor(eventId);
+    expect(blockers(checks).map((check) => check.key)).toEqual(["window"]);
   });
 
   it("treats an uncapped event as a gap rather than a fault", async () => {
@@ -164,7 +189,9 @@ describe("readiness", () => {
 
   it("warns about a missing start date, since applications would never close", async () => {
     const eventId = await healthyEvent();
-    expectOk(await updateEvent(eventId, { startsAt: null, signupOpensAt: null }, db));
+    // Only the start date goes: clearing the sign-up window too would now be a
+    // blocker (UC-09 2a), which is a different check.
+    expectOk(await updateEvent(eventId, { startsAt: null }, db));
 
     const checks = await checksFor(eventId);
     expect(levelOf(checks, "window")).toBe("warn");

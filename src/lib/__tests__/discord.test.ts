@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type Database, SETTING_KEYS } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import type { AnnouncementSettings, DiscordMessage } from "@/lib/announce";
 
 /*
@@ -102,7 +102,7 @@ async function switches(on: Partial<AnnouncementSettings>) {
 /** An application decided as `status`, on its own published event. */
 async function decided(status: "waitlisted" | "declined") {
   counter += 1;
-  const event = unwrap(await createEvent({ title: `Announce ${counter}` }, db));
+  const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Announce ${counter}` }, db));
   unwrap(await publishEvent(event.id, db));
   const member = await makeUser(db, { displayName: `Member ${counter}` });
   const application = unwrap(await applyToEvent(event.id, member, {}, db));

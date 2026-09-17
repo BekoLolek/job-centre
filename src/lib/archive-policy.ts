@@ -16,10 +16,9 @@
  *
  * ## Why only `complete`, and not `cancelled`
  *
- * `cancelled` means called off, not finished: `EVENT_STATUS_FLOW` lets a
- * cancelled event go back to `draft`, and the admin events list says so in as
- * many words. An event that never ran has nothing to protect, and locking it
- * would turn "I clicked the wrong button" into a dead end.
+ * `cancelled` means called off, not finished. It is not locked; it is terminal,
+ * so nothing moves it through the status flow — `EVENT_STATUS_FLOW` has no
+ * transition out of it.
  *
  * ## Why this is a lock and not a wall
  *

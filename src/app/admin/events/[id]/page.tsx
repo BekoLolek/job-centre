@@ -9,7 +9,7 @@
  *
  * Everything on screen comes from `src/lib/events.ts` and `src/lib/draft.ts`.
  * The eligibility column in the applicants table is `getApplicationsForEvent`'s,
- * not this page's; the legal status moves are `nextStatuses`'s; every balance
+ * not this page's; the legal status moves are `EVENT_STATUS_FLOW`'s; every balance
  * and every roster count is `getTeams`'s, derived from the awarded lots rather
  * than stored. Nothing here re-derives a rule.
  */
