@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { EventStatus } from "@/db/schema";
-import { LOCKED, LOCKED_STATUSES, isLocked, lockRefusal } from "@/lib/archive-policy";
+import { LOCKED_STATUSES, isLocked, lockRefusal } from "@/lib/archive-policy";
 import { EVENT_STATUS_FLOW, canTransition } from "@/lib/events-policy";
 
 /**
- * The standing rule as a function: nothing destructive, ever.
+ * The standing rule as a function: a finished event is a record.
  *
  * The refusals themselves are exercised against real Postgres in
  * `archive-lock.test.ts`; this file pins the decision and, more importantly,
@@ -31,62 +31,20 @@ describe("which statuses lock", () => {
 describe("the refusal", () => {
   it("is null for anything that is not finished, so the write proceeds", () => {
     for (const status of EVERY_STATUS.filter((s) => s !== "complete")) {
-      expect(lockRefusal({ status }, LOCKED.generate)).toBeNull();
+      expect(lockRefusal({ status })).toBeNull();
     }
   });
 
-  it("names the event, says what was refused, and says what to do", () => {
-    const refusal = lockRefusal({ status: "complete", title: "March Cup" }, LOCKED.clearResult);
-    expect(refusal).toContain("March Cup");
-    expect(refusal).toContain("its results cannot be cleared");
-    expect(refusal).toContain("Move it back to live");
-  });
-
-  it("still reads as a sentence without a title", () => {
-    const refusal = lockRefusal({ status: "complete" }, LOCKED.generate);
-    expect(refusal).toBe(
-      "This event is finished, so its bracket cannot be regenerated. Move it back to live first if it really is not over."
+  it("is one sentence for every write on a finished event (UC-09 6b)", () => {
+    expect(lockRefusal({ status: "complete" })).toBe(
+      "This event is finished - reopen it to change it"
     );
   });
 
   it("offers a way out that actually exists", () => {
-    // The whole design rests on this: the refusal tells an admin to move the
-    // event back to live, so `complete → live` had better be legal. If somebody
-    // ever tightens the status flow, this is the test that objects.
+    // The whole design rests on this: the refusal tells a manager to reopen the
+    // event, so `complete → live` had better be legal. If somebody ever tightens
+    // the status flow, this is the test that objects.
     expect(canTransition("complete", "live")).toBe(true);
-  });
-});
-
-describe("the catalogue of refusals", () => {
-  it("covers results, the bracket, the draft and the event's scaffolding", () => {
-    // This list *is* the answer to "what can a finished event no longer do".
-    expect(Object.keys(LOCKED).sort()).toEqual(
-      [
-        "bid",
-        "captains",
-        "clearResult",
-        "days",
-        "draftConfig",
-        "generate",
-        "moveMatch",
-        "overrideWinner",
-        "pool",
-        "questions",
-        "recordResult",
-        "reflip",
-        "reschedule",
-        "runDraft",
-        "stages",
-        "teams",
-        "voidLot",
-      ].sort()
-    );
-  });
-
-  it("phrases every one as the end of 'This event is finished, so …'", () => {
-    for (const attempt of Object.values(LOCKED)) {
-      expect(attempt).not.toMatch(/^[A-Z]/);
-      expect(attempt).not.toMatch(/\.$/);
-    }
   });
 });

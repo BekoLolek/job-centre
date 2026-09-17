@@ -41,7 +41,7 @@
  * docs/platform-plan.md §3.1's driver note.
  */
 
-import { and, asc, count, desc, eq, inArray, isNull, ne, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, ne, notInArray, or } from "drizzle-orm";
 import {
   type Application,
   type ApplicationAnswers,
@@ -72,7 +72,7 @@ import {
   profileValues,
   users,
 } from "@/db";
-import { LOCKED, lockRefusal } from "./archive-policy";
+import { LOCKED_STATUSES, lockRefusal } from "./archive-policy";
 import {
   type ApplicationsState,
   type CapacityState,
@@ -785,16 +785,12 @@ export async function updateEvent(
     return fail(`An event cannot go from ${current.status} to ${patch.status}.`);
   }
 
-  // A finished event keeps its title, its description and its dates editable —
-  // fixing a typo on an archived record is not destructive, and forbidding it
-  // would only teach an admin to un-finish the event to do it. `config` is the
-  // exception: `config.format` is where the schedule settings live (§10), and
-  // rewriting them changes the block plan the running order was derived from.
-  // That is the recorded shape of an event that has already happened.
-  if ("config" in patch && patch.config !== undefined) {
-    const locked = lockRefusal(current, LOCKED.reschedule);
-    if (locked) return fail(locked);
-  }
+  // A finished event takes one write: the reopen, on its own (UC-09 6a). An
+  // edit riding along with it is still an edit to a finished event.
+  const reopening =
+    moveTo === "live" && Object.keys(patch).every((key) => key === "status" || key === "from");
+  const locked = reopening ? null : lockRefusal(current);
+  if (locked) return fail(locked);
 
   const gameId = patch.gameId !== undefined ? (patch.gameId ?? null) : current.gameId;
   const game = await readGame(database, gameId);
@@ -855,13 +851,19 @@ export async function updateEvent(
     if (key in patch) Object.assign(changes, { [key]: next[key] });
   }
 
+  // A move lands only on the status it was checked against. An edit lands on
+  // any status but a locked one: the event may have been finished since this
+  // call read it, and the lock above only saw the status as it was then.
   const [updated] = await database
     .update(events)
     .set(changes)
     .where(
-      moveTo
-        ? and(eq(events.id, eventId), eq(events.status, current.status))
-        : eq(events.id, eventId)
+      and(
+        eq(events.id, eventId),
+        moveTo
+          ? eq(events.status, current.status)
+          : notInArray(events.status, [...LOCKED_STATUSES])
+      )
     )
     .returning();
 
@@ -1022,16 +1024,12 @@ export async function setEventDays(
 ): Promise<EventResult<{ days: EventDay[]; clearedAvailability: number }>> {
   const event = await readEvent(database, eventId);
   if (!event) return fail("That event no longer exists.");
+  const locked = lockRefusal(event);
+  if (locked) return fail(locked);
 
   if (days.length > MAX_EVENT_DAYS) {
     return fail(`An event runs over at most ${MAX_EVENT_DAYS} days.`);
   }
-
-  // Rewriting the day list deletes the days it drops, and every availability
-  // answer cascades with them. On a finished event those answers are part of
-  // the record of who could make which night.
-  const lockedDays = lockRefusal(event, LOCKED.days);
-  if (lockedDays) return fail(lockedDays);
 
   const existing = await readDays(database, eventId);
   const existingIds = new Set(existing.map((day) => day.id));
@@ -1176,14 +1174,11 @@ export async function setEventQuestions(
 ): Promise<EventResult<{ questions: EventQuestion[]; clearedAnswers: number }>> {
   const event = await readEvent(database, eventId);
   if (!event) return fail("That event no longer exists.");
+  const locked = lockRefusal(event);
+  if (locked) return fail(locked);
   if (questions.length > MAX_EVENT_QUESTIONS) {
     return fail(`${MAX_EVENT_QUESTIONS} questions is already more than anyone will answer.`);
   }
-
-  // Rewriting the question set drops the questions it does not keep and scrubs
-  // every answer to them out of `applications.answers`.
-  const lockedQuestions = lockRefusal(event, LOCKED.questions);
-  if (lockedQuestions) return fail(lockedQuestions);
 
   const game = await readGame(database, event.gameId);
   const existing = await readQuestions(database, eventId);
@@ -1412,6 +1407,8 @@ export async function applyToEvent(
   return database.transaction(async (tx) => {
     const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
     const [member] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!member) return fail("We do not have an account for you.");
@@ -1564,6 +1561,8 @@ export async function withdrawApplication(
   return database.transaction(async (tx) => {
     const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
     const rows = await readApplications(tx, eventId);
     const mine = rows.find((row) => row.userId === userId);
@@ -1658,6 +1657,8 @@ export async function setApplicationStatus(
 
     const event = await lockEvent(tx, current.eventId);
     if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
     const rows = await readApplications(tx, current.eventId);
     const others = rows.filter((row) => row.id !== current.id);
@@ -1725,20 +1726,26 @@ export async function setApplicationNote(
   note: string | null,
   database: Database = defaultDb
 ): Promise<EventResult<ApplicationView>> {
-  const [current] = await database
-    .select()
-    .from(applications)
-    .where(eq(applications.id, applicationId))
-    .limit(1);
-  if (!current) return fail("That application no longer exists.");
+  return database.transaction(async (tx) => {
+    const [current] = await tx
+      .select()
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+    if (!current) return fail("That application no longer exists.");
+    const event = await lockEvent(tx, current.eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
-  const [updated] = await database
-    .update(applications)
-    .set({ note: cleanNullable(note, NOTE_MAX) })
-    .where(eq(applications.id, applicationId))
-    .returning();
+    const [updated] = await tx
+      .update(applications)
+      .set({ note: cleanNullable(note, NOTE_MAX) })
+      .where(eq(applications.id, applicationId))
+      .returning();
 
-  return withData(await decorateOne(database, updated));
+    return withData(await decorateOne(tx, updated));
+  });
 }
 
 /**
@@ -1753,23 +1760,29 @@ export async function setAvailability(
   byDay: Record<string, AvailabilityState | null>,
   database: Database = defaultDb
 ): Promise<EventResult<Record<string, AvailabilityState>>> {
-  const [application] = await database
-    .select()
-    .from(applications)
-    .where(eq(applications.id, applicationId))
-    .limit(1);
-  if (!application) return fail("That application no longer exists.");
+  return database.transaction(async (tx) => {
+    const [application] = await tx
+      .select()
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+    if (!application) return fail("That application no longer exists.");
+    const event = await lockEvent(tx, application.eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
-  const days = await readDays(database, application.eventId);
-  const dayIds = new Set(days.map((day) => day.id));
-  for (const dayId of Object.keys(byDay)) {
-    if (!dayIds.has(dayId)) return fail("That day is not part of this event.");
-  }
+    const days = await readDays(tx, application.eventId);
+    const dayIds = new Set(days.map((day) => day.id));
+    for (const dayId of Object.keys(byDay)) {
+      if (!dayIds.has(dayId)) return fail("That day is not part of this event.");
+    }
 
-  await writeAvailability(database, applicationId, byDay, dayIds);
+    await writeAvailability(tx, applicationId, byDay, dayIds);
 
-  const view = await decorateOne(database, application);
-  return withData(view.availability);
+    const view = await decorateOne(tx, application);
+    return withData(view.availability);
+  });
 }
 
 /**
@@ -1785,27 +1798,33 @@ export async function setConfirmation(
   state: ConfirmationState,
   database: Database = defaultDb
 ): Promise<EventResult<{ state: ConfirmationState; confirmedAt: Date }>> {
-  const [application] = await database
-    .select()
-    .from(applications)
-    .where(eq(applications.id, applicationId))
-    .limit(1);
-  if (!application) return fail("That application no longer exists.");
+  return database.transaction(async (tx) => {
+    const [application] = await tx
+      .select()
+      .from(applications)
+      .where(eq(applications.id, applicationId))
+      .limit(1);
+    if (!application) return fail("That application no longer exists.");
+    const event = await lockEvent(tx, application.eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
-  if (application.status === "declined" || application.status === "withdrawn") {
-    return fail("That application is not active, so there is nothing to confirm.");
-  }
+    if (application.status === "declined" || application.status === "withdrawn") {
+      return fail("That application is not active, so there is nothing to confirm.");
+    }
 
-  const confirmedAt = new Date();
-  await database
-    .insert(confirmations)
-    .values({ applicationId, state, confirmedAt })
-    .onConflictDoUpdate({
-      target: confirmations.applicationId,
-      set: { state, confirmedAt },
-    });
+    const confirmedAt = new Date();
+    await tx
+      .insert(confirmations)
+      .values({ applicationId, state, confirmedAt })
+      .onConflictDoUpdate({
+        target: confirmations.applicationId,
+        set: { state, confirmedAt },
+      });
 
-  return withData({ state, confirmedAt });
+    return withData({ state, confirmedAt });
+  });
 }
 
 /* ------------------------------------------------------------------ */

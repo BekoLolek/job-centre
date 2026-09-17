@@ -53,7 +53,7 @@ import {
   type MatchBracket,
   generateStage,
 } from "./bracket";
-import { LOCKED, lockRefusal } from "./archive-policy";
+import { lockRefusal } from "./archive-policy";
 import type { EventResult } from "./events";
 import {
   type FormatTiming,
@@ -469,7 +469,7 @@ export async function setStages(
     const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
-    const locked = lockRefusal(event, LOCKED.stages);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const existing = await readStageRows(tx, eventId);
@@ -580,7 +580,7 @@ export async function generateMatches(
     // mid-tournament; the lock protects an event whose bracket was generated,
     // never played and then marked finished — nothing to erase in this stage,
     // but regenerating it would still rewrite a closed record's shape.
-    const locked = lockRefusal(event, LOCKED.generate);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     if (await stageHasResults(tx, stageId)) {
@@ -707,7 +707,7 @@ export async function recordGames(
 
     // This is the write that can untick a played game and zero its score, so
     // it is the single most important one to refuse on a finished event.
-    const locked = lockRefusal(event, LOCKED.recordResult);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const current = await tx
@@ -780,7 +780,7 @@ export async function setWinnerOverride(
     const event = await lockEvent(tx, match.eventId);
     if (!event) return fail("That event no longer exists.");
 
-    const locked = lockRefusal(event, LOCKED.overrideWinner);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     if (teamId) {
@@ -843,7 +843,7 @@ export async function reflipMatch(
     const event = await lockEvent(tx, match.eventId);
     if (!event) return fail("That event no longer exists.");
 
-    const locked = lockRefusal(event, LOCKED.reflip);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const played = await tx
@@ -894,7 +894,7 @@ export async function clearMatch(
   const event = await readEvent(database, match.eventId);
   if (!event) return fail("That event no longer exists.");
 
-  const locked = lockRefusal(event, LOCKED.clearResult);
+  const locked = lockRefusal(event);
   if (locked) return fail(locked);
 
   const cleared = await setWinnerOverride(matchId, null, database);
@@ -946,7 +946,7 @@ export async function setMatchSchedule(
     const event = await lockEvent(tx, match.eventId);
     if (!event) return fail("That event no longer exists.");
 
-    const locked = lockRefusal(event, LOCKED.moveMatch);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     let at: Date | null = null;
@@ -984,7 +984,7 @@ export async function applySchedule(
     const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
-    const locked = lockRefusal(event, LOCKED.reschedule);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const plan = await schedulablePlan(tx, event);

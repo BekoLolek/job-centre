@@ -374,6 +374,21 @@ describe("updateEvent and publishEvent", () => {
     expect(row.title).toBe("Renamed while cancelling");
   });
 
+  it("refuses an edit to an event completed between the edit's read and its write", async () => {
+    // UC-09 6b: the lock is checked against the status the edit read, so the
+    // write must not land if the event was finished after that read.
+    const event = await openEvent();
+    expectOk(await updateEvent(event.id, { status: "live" }, db));
+    const complete = () => updateEvent(event.id, { status: "complete" }, db);
+
+    const late = await updateEvent(event.id, { title: "Renamed too late" }, writingAfter(complete));
+
+    expect(expectFail(late).error).toBe("The event changed meanwhile - reload.");
+    const [row] = await db.select().from(events).where(eq(events.id, event.id));
+    expect(row.status).toBe("complete");
+    expect(row.title).toBe(event.title);
+  });
+
   it("refuses a move when the event is no longer in the status the caller saw", async () => {
     const event = await openEvent();
     expectOk(await updateEvent(event.id, { status: "cancelled" }, db));

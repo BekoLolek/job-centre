@@ -442,8 +442,7 @@ describe("the coin in the database", () => {
     const result = await reflipMatch(row.id, otherSlot(row.firstSideChoice as MatchSlot), db);
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toMatch(/finished/i);
-      expect(result.error).toMatch(/coin tosses cannot be re-flipped/i);
+      expect(result.error).toBe("This event is finished - reopen it to change it");
     }
     expect((await rowFor(eventId, "ubsf1")).firstSideChoice).toBe(row.firstSideChoice);
 

@@ -3,10 +3,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Database,
   applications,
+  availability,
+  confirmations,
+  draftBids,
+  draftConfigs,
   draftLots,
+  draftPoolEntries,
+  eventDays,
+  eventQuestions,
   events,
   matchGames,
   matches,
+  stages,
   teamMembers,
   teams as teamsTable,
 } from "@/db";
@@ -15,7 +23,6 @@ import {
   awardLot,
   clearBid,
   discardLot,
-  getDraftHistory,
   getTeams,
   moveToReserve,
   openLot,
@@ -32,40 +39,48 @@ import {
   applyToEvent,
   createEvent,
   publishEvent,
+  setApplicationNote,
   setApplicationStatus,
+  setAvailability,
+  setConfirmation,
   setEventDays,
   setEventQuestions,
   updateEvent,
+  withdrawApplication,
 } from "@/lib/events";
 import {
   applySchedule,
   clearMatch,
   formatFor,
   generateMatches,
-  matchIdsFor,
   recordGames,
+  reflipMatch,
   setMatchSchedule,
   setStages,
   setWinnerOverride,
 } from "@/lib/format";
 
 /**
- * **Nothing destructive, ever** — checklist.md's standing rule, enforced.
+ * **A finished event is a record** — R-39, UC-09 6b, enforced.
  *
- * This file is the evidence for it. Every write anywhere in the codebase that
- * can erase a completed event's results, rosters or draft prices gets one test
- * here: the event is marked `complete`, the write is attempted, and two things
- * are asserted — that it was refused with a sentence, and that the data it
- * would have taken is still there afterwards. The second assertion is the one
- * that matters. A refusal that returns `ok: false` after already deleting the
- * rows would pass the first on its own.
+ * While an event is `complete`, nothing belonging to it may change: its setup,
+ * its applications, its teams, its draft, its stages and its results (the Event
+ * domain rule). This file is the evidence. Every event-owned write on the site
+ * has one row in the table below, and each row is attempted twice:
  *
- * The rule exists because a draft's prices were lost once already.
+ *  - on a finished event, where it must be refused with the one sentence
+ *    UC-09 6b gives, *and* leave every event-owned table exactly as it was. The
+ *    second assertion is the one that matters: a refusal that returns
+ *    `ok: false` after already deleting the rows would pass the first alone;
+ *  - on the same event reopened (UC-09 6a), where it must go through.
  *
- * The last block is the other half of the promise: the lock is a lock and not a
- * trap. Moving the event back to `live` — one legal status change, itself in the
- * audit log — restores every one of these writes.
+ * One write gets past the lock after reopening only to meet a rule of its own:
+ * a reopened event is live, and a live event takes no new applications. That
+ * one is asserted separately, with the rule it meets, so the table never needs
+ * an `if`.
  */
+
+const REFUSAL = "This event is finished - reopen it to change it";
 
 let harness: TestDatabase;
 let db: Database;
@@ -88,38 +103,45 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 
 type Fixture = {
   eventId: string;
+  /** Captains, the drafted player, the pooled player, and a spare applicant. */
   members: string[];
+  /** Somebody who has not applied. */
+  outsider: string;
   teamIds: string[];
   stageId: string;
-  matchIds: Record<string, string>;
-  /** The slot of a match with a recorded, played result. */
-  playedSlot: string;
+  matchId: string;
+  /** A second stage, generated and never played. */
+  unplayedStageId: string;
+  unplayedMatchId: string;
+  dayId: string;
+  /** The spare applicant's application: decisions, notes, attendance. */
+  applicationId: string;
+  awardedLotId: string;
+  /** Only on the mid-lot fixture: a lot with a bid on it, still open. */
+  openLotId: string | null;
 };
 
 /**
  * A whole tournament, played: two teams with captains, a lot awarded for a
- * real price, a generated bracket and a recorded result. Then finished.
- *
- * Everything below tries to destroy some part of it.
+ * real price, a generated bracket and a recorded result. With `midLot`, a
+ * second lot is left open with a bid on it. Then finished.
  */
-async function finishedEvent(): Promise<Fixture> {
+async function finishedEvent(midLot = false): Promise<Fixture> {
   counter += 1;
   const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Locked fixture ${counter}` }, db));
   unwrap(await publishEvent(event.id, db));
 
-  // Four accepted members: two captains, one to be drafted, one spare.
   const members: string[] = [];
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 5; index += 1) {
     const userId = await makeUser(db, { displayName: `Locked ${counter}-${index}` });
     unwrap(await applyToEvent(event.id, userId, {}, db));
     members.push(userId);
   }
+  const outsider = await makeUser(db, { displayName: `Outsider ${counter}` });
 
-  const teams = unwrap(
+  const teamIds = unwrap(
     await setTeams(event.id, [{ name: "Red" }, { name: "Blue" }], db)
-  ).teams;
-  const teamIds = teams.map((team) => team.id);
-
+  ).teams.map((team) => team.id);
   unwrap(
     await setCaptains(
       event.id,
@@ -131,28 +153,26 @@ async function finishedEvent(): Promise<Fixture> {
     )
   );
 
-  // A lot, bid on and awarded: this is the price the rule is about.
   unwrap(await setDraftPool(event.id, { userIds: [members[2], members[3]] }, db));
-  const lot = unwrap(await openLot(event.id, { userId: members[2] }, db));
-  unwrap(await placeBid(lot.id, teamIds[0], 250, {}, db));
-  unwrap(await awardLot(lot.id, teamIds[0], {}, db));
+  const awarded = unwrap(await openLot(event.id, { userId: members[2] }, db));
+  unwrap(await placeBid(awarded.id, teamIds[0], 250, {}, db));
+  unwrap(await awardLot(awarded.id, teamIds[0], {}, db));
 
-  // A bracket, generated and played.
-  const stages = unwrap(await setStages(event.id, [{ kind: "single_elim" }], db));
-  const stageId = stages[0].id;
-  unwrap(await generateMatches(stageId, db));
-
-  const ids = await matchIdsFor(event.id, db);
-  const playedSlot = Object.keys(ids)[0];
+  const [stage, unplayed] = unwrap(
+    await setStages(event.id, [{ kind: "single_elim" }, { kind: "single_elim" }], db)
+  );
+  unwrap(await generateMatches(stage.id, db));
+  unwrap(await generateMatches(unplayed.id, db));
+  const [unplayedMatch] = await db.select().from(matches).where(eq(matches.stageId, unplayed.id));
+  const [playedMatch] = await db.select().from(matches).where(eq(matches.stageId, stage.id));
   const view = await formatFor(event.id, db);
-  const match = view?.stages
-    .flatMap((stage) => stage.matches)
-    .find((row) => row.slot === playedSlot);
-
+  const card = view?.stages
+    .find((row) => row.id === stage.id)
+    ?.matches.find((row) => row.slot === playedMatch.slot);
   unwrap(
     await recordGames(
-      ids[playedSlot],
-      (match?.games ?? []).map((_, index) => ({
+      playedMatch.id,
+      (card?.games ?? []).map((_, index) => ({
         index,
         scoreA: 1,
         scoreB: 0,
@@ -165,270 +185,220 @@ async function finishedEvent(): Promise<Fixture> {
     )
   );
 
+  const openLotId = midLot ? await openLotWithBid(event.id, members[3], teamIds[1]) : null;
+
+  const [day] = await db.select().from(eventDays).where(eq(eventDays.eventId, event.id));
+  const [spare] = await db
+    .select({ id: applications.id })
+    .from(applications)
+    .where(and(eq(applications.eventId, event.id), eq(applications.userId, members[4])));
+
   await db.update(events).set({ status: "complete" }).where(eq(events.id, event.id));
 
-  return { eventId: event.id, members, teamIds, stageId, matchIds: ids, playedSlot };
-}
-
-/** Everything that must survive whatever was just attempted. */
-async function census(fixture: Fixture) {
-  const [teamRows, memberRows, lotRows, matchRows, gameRows] = await Promise.all([
-    db.select().from(teamsTable).where(eq(teamsTable.eventId, fixture.eventId)),
-    db.select().from(teamMembers).where(eq(teamMembers.eventId, fixture.eventId)),
-    db.select().from(draftLots).where(eq(draftLots.eventId, fixture.eventId)),
-    db.select().from(matches).where(eq(matches.eventId, fixture.eventId)),
-    db.select().from(matchGames),
-  ]);
-
-  const ourMatchIds = new Set(matchRows.map((row) => row.id));
-  const played = gameRows.filter((row) => ourMatchIds.has(row.matchId) && row.played);
-
   return {
-    teams: teamRows.length,
-    members: memberRows.length,
-    prices: memberRows.map((row) => row.price).sort((a, b) => a - b),
-    awarded: lotRows.filter((row) => row.status === "awarded").length,
-    lotPrices: lotRows.map((row) => row.price),
-    matches: matchRows.length,
-    playedGames: played.length,
-    scheduled: matchRows.filter((row) => row.scheduledAt !== null).length,
-    finished: matchRows.filter((row) => row.finishedAt !== null).length,
+    eventId: event.id,
+    members,
+    outsider,
+    teamIds,
+    stageId: stage.id,
+    matchId: playedMatch.id,
+    unplayedStageId: unplayed.id,
+    unplayedMatchId: unplayedMatch.id,
+    dayId: day.id,
+    applicationId: spare.id,
+    awardedLotId: awarded.id,
+    openLotId,
   };
 }
 
-/** Attempt a write, assert it was refused, and assert nothing moved. */
-async function refuses(
-  fixture: Fixture,
-  attempt: () => Promise<{ ok: boolean; error?: string }>
-): Promise<string> {
-  const before = await census(fixture);
-  const result = await attempt();
-
-  expect(result.ok).toBe(false);
-  const error = (result as { error: string }).error;
-  expect(error).toMatch(/finished/i);
-  expect(error).toMatch(/back to live/i);
-
-  // The assertion that actually matters: a refusal that had already deleted the
-  // rows would pass the one above on its own.
-  expect(await census(fixture)).toEqual(before);
-  return error;
+async function openLotWithBid(eventId: string, userId: string, teamId: string): Promise<string> {
+  const lot = unwrap(await openLot(eventId, { userId }, db));
+  unwrap(await placeBid(lot.id, teamId, 40, {}, db));
+  return lot.id;
 }
 
-describe("a finished event's results", () => {
-  it("cannot be re-recorded, unticked or zeroed", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () =>
-      recordGames(
-        fixture.matchIds[fixture.playedSlot],
-        [{ index: 0, scoreA: 0, scoreB: 0, played: false }],
-        {},
+/**
+ * Every table that holds something belonging to an event, whole. The tests in
+ * this file run one after another, so any difference is the write just tried.
+ */
+async function census() {
+  return Promise.all(
+    [
+      events,
+      eventDays,
+      eventQuestions,
+      applications,
+      availability,
+      confirmations,
+      teamsTable,
+      teamMembers,
+      draftConfigs,
+      draftPoolEntries,
+      draftLots,
+      draftBids,
+      stages,
+      matches,
+      matchGames,
+    ].map((table) => db.select().from(table))
+  );
+}
+
+type Write = [name: string, midLot: boolean, attempt: (f: Fixture) => Promise<{ ok: boolean }>];
+
+/** The event-owned writes that simply work again once the event is reopened. */
+const WRITES: Write[] = [
+  /* --- the event's own setup (updateEvent, UC-09 6b) --------------- */
+  ["updateEvent: title", false, (f) => updateEvent(f.eventId, { title: "Corrected" }, db)],
+  ["updateEvent: description", false, (f) => updateEvent(f.eventId, { description: "New" }, db)],
+  [
+    "updateEvent: dates",
+    false,
+    (f) => updateEvent(f.eventId, { endsAt: new Date("2100-01-03T00:00:00Z") }, db),
+  ],
+  ["updateEvent: capacity", false, (f) => updateEvent(f.eventId, { capacity: 40 }, db)],
+  ["updateEvent: rank rules", false, (f) => updateEvent(f.eventId, { minRankToEnter: null }, db)],
+  [
+    "updateEvent: config",
+    false,
+    (f) => updateEvent(f.eventId, { config: { format: { days: 4 } } }, db),
+  ],
+  [
+    "updateEvent: an edit riding along with the reopen",
+    false,
+    (f) => updateEvent(f.eventId, { status: "live", title: "Sneaked in" }, db),
+  ],
+  ["setEventDays", false, (f) => setEventDays(f.eventId, [{ id: f.dayId, label: "Night" }], db)],
+  ["setEventQuestions", false, (f) => setEventQuestions(f.eventId, [], db)],
+  /* --- applications (UC-13 3b, UC-14 4a) ---------------------------- */
+  ["withdrawApplication", false, (f) => withdrawApplication(f.eventId, f.members[4], db)],
+  [
+    "setApplicationStatus",
+    false,
+    (f) => setApplicationStatus(f.applicationId, "declined", {}, db),
+  ],
+  ["setApplicationNote", false, (f) => setApplicationNote(f.applicationId, "No show", db)],
+  ["setAvailability", false, (f) => setAvailability(f.applicationId, { [f.dayId]: "no" }, db)],
+  ["setConfirmation", false, (f) => setConfirmation(f.applicationId, "out", db)],
+  /* --- teams and the draft ------------------------------------------ */
+  [
+    "setTeams",
+    false,
+    (f) =>
+      setTeams(
+        f.eventId,
+        [
+          { id: f.teamIds[0], name: "Crimson" },
+          { id: f.teamIds[1], name: "Blue" },
+        ],
         db
-      )
-    );
-  });
+      ),
+  ],
+  [
+    "setCaptains",
+    false,
+    (f) => setCaptains(f.eventId, [{ teamId: f.teamIds[1], userId: f.members[4] }], db),
+  ],
+  ["setDraftConfig", false, (f) => setDraftConfig(f.eventId, { defaultBalance: 10 }, db)],
+  ["setDraftPool", false, (f) => setDraftPool(f.eventId, { userIds: [f.members[3]] }, db)],
+  ["setPoolKind", false, (f) => setPoolKind(f.eventId, f.members[3], "reserve", db)],
+  ["openLot", false, (f) => openLot(f.eventId, { userId: f.members[3] }, db)],
+  ["placeBid", true, (f) => placeBid(f.openLotId ?? "", f.teamIds[0], 50, {}, db)],
+  ["clearBid", true, (f) => clearBid(f.openLotId ?? "", f.teamIds[1], db)],
+  ["awardLot", true, (f) => awardLot(f.openLotId ?? "", f.teamIds[1], {}, db)],
+  ["discardLot", true, (f) => discardLot(f.openLotId ?? "", {}, db)],
+  ["moveToReserve", true, (f) => moveToReserve(f.openLotId ?? "", {}, db)],
+  ["voidLot", false, (f) => voidLot(f.awardedLotId, {}, db)],
+  ["voidLastLot", false, (f) => voidLastLot(f.eventId, {}, db)],
+  /* --- stages and results ------------------------------------------- */
+  [
+    "setStages",
+    false,
+    (f) =>
+      setStages(
+        f.eventId,
+        [
+          { id: f.stageId, kind: "single_elim" },
+          { id: f.unplayedStageId, kind: "single_elim" },
+          { kind: "round_robin" },
+        ],
+        db
+      ),
+  ],
+  [
+    "recordGames",
+    false,
+    (f) => recordGames(f.matchId, [{ index: 0, scoreA: 2, scoreB: 0, played: true }], {}, db),
+  ],
+  ["setWinnerOverride", false, (f) => setWinnerOverride(f.matchId, f.teamIds[1], db)],
+  ["clearMatch", false, (f) => clearMatch(f.matchId, 3, db)],
+  ["setMatchSchedule", false, (f) => setMatchSchedule(f.matchId, null, db)],
+  ["generateMatches", false, (f) => generateMatches(f.unplayedStageId, db)],
+  ["reflipMatch", false, (f) => reflipMatch(f.unplayedMatchId, null, db)],
+  ["applySchedule", false, (f) => applySchedule(f.eventId, ["2100-01-02T16:00:00Z"], db)],
+];
 
-  it("cannot be cleared back to an unplayed card", async () => {
-    const fixture = await finishedEvent();
-    // The path that used to be composed in the action file, and therefore
-    // reached both writes without ever asking whether the event was finished.
-    await refuses(fixture, () => clearMatch(fixture.matchIds[fixture.playedSlot], 3, db));
-  });
+async function reopen(fixture: Fixture): Promise<void> {
+  unwrap(await updateEvent(fixture.eventId, { from: "complete", status: "live" }, db));
+}
 
-  it("cannot have its winner overturned, or the override dropped", async () => {
-    const fixture = await finishedEvent();
-    const matchId = fixture.matchIds[fixture.playedSlot];
-    await refuses(fixture, () => setWinnerOverride(matchId, fixture.teamIds[1], db));
-    // The clearing path used to have strictly less validation than the setting
-    // path — `teamId: null` skipped the membership block entirely.
-    await refuses(fixture, () => setWinnerOverride(matchId, null, db));
-  });
-});
+describe("a finished event refuses every change (UC-09 6b)", () => {
+  it.each<Write>([
+    ...WRITES,
+    ["applyToEvent", false, (f) => applyToEvent(f.eventId, f.outsider, {}, db)],
+  ])("%s is refused and writes nothing", async (_, midLot, attempt) => {
+    const fixture = await finishedEvent(midLot);
+    const before = await census();
 
-describe("a finished event's bracket", () => {
-  it("cannot be regenerated", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => generateMatches(fixture.stageId, db));
-  });
+    const result = await attempt(fixture);
 
-  it("cannot have its format changed or a stage removed", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => setStages(fixture.eventId, [{ kind: "round_robin" }], db));
-    await refuses(fixture, () => setStages(fixture.eventId, [], db));
-  });
-
-  it("cannot have its running order rebuilt, or one match moved", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => applySchedule(fixture.eventId, ["2026-09-12T16:00:00Z"], db));
-    await refuses(fixture, () =>
-      setMatchSchedule(fixture.matchIds[fixture.playedSlot], null, db)
-    );
-    // `config.format` is where the schedule settings live, so rewriting it
-    // changes the block plan the recorded order was derived from.
-    await refuses(fixture, () =>
-      updateEvent(fixture.eventId, { config: { format: { days: 4 } } }, db)
-    );
-  });
-});
-
-describe("a finished event's teams and rosters", () => {
-  it("cannot have a team removed or renamed", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => setTeams(fixture.eventId, [{ name: "Only one" }], db));
-  });
-
-  it("cannot have its captains changed", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () =>
-      setCaptains(fixture.eventId, [{ teamId: fixture.teamIds[0], userId: null }], db)
-    );
-  });
-});
-
-describe("a finished event's draft", () => {
-  it("cannot have its pool re-seeded", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => setDraftPool(fixture.eventId, {}, db));
-    await refuses(fixture, () => setPoolKind(fixture.eventId, fixture.members[3], "reserve", db));
-  });
-
-  it("cannot have its rules changed", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => setDraftConfig(fixture.eventId, { defaultBalance: 10 }, db));
-  });
-
-  it("cannot be run again", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => openLot(fixture.eventId, { userId: fixture.members[3] }, db));
-  });
-
-  it("cannot have a lot voided — the price is the record", async () => {
-    const fixture = await finishedEvent();
-    const [awarded] = (await getDraftHistory(fixture.eventId, db)).filter(
-      (lot) => lot.status === "awarded"
-    );
-    const message = await refuses(fixture, () => voidLot(awarded.id, {}, db));
-    expect(message).toContain("erase what was paid");
-
-    // The one-button undo goes through `voidLot`, so it is refused too — and it
-    // is the more dangerous of the two, since it picks its own target.
-    await refuses(fixture, () => voidLastLot(fixture.eventId, {}, db));
-  });
-
-  it("keeps the price on the roster row and on the lot", async () => {
-    const fixture = await finishedEvent();
-    const teams = await getTeams(fixture.eventId, db);
-    const bought = teams
-      .flatMap((team) => team.members)
-      .find((member) => !member.isCaptain);
-    expect(bought?.price).toBe(250);
+    expect(result).toEqual({ ok: false, error: REFUSAL });
+    expect(await census()).toEqual(before);
   });
 });
 
-describe("a finished event's scaffolding", () => {
-  it("cannot have its days rewritten, which would take availability with them", async () => {
+describe("a status move out of a finished event other than reopening", () => {
+  // Refused by the status flow before the lock is asked, so it keeps the
+  // sentence UC-09 3a gives it. Either way, nothing is written.
+  it.each([
+    ["updateEvent", (f: Fixture) => updateEvent(f.eventId, { status: "draft" }, db)],
+    ["publishEvent", (f: Fixture) => publishEvent(f.eventId, db)],
+  ])("%s is refused and writes nothing", async (_, attempt) => {
     const fixture = await finishedEvent();
-    await refuses(fixture, () => setEventDays(fixture.eventId, [], db));
-  });
+    const before = await census();
 
-  it("cannot have its application form rewritten, which would scrub answers", async () => {
-    const fixture = await finishedEvent();
-    await refuses(fixture, () => setEventQuestions(fixture.eventId, [], db));
-  });
-});
+    const result = await attempt(fixture);
 
-describe("what a finished event may still do", () => {
-  it("keeps its title and description editable — a typo is not destructive", async () => {
-    const fixture = await finishedEvent();
-    const result = await updateEvent(
-      fixture.eventId,
-      { title: "March Cup (corrected)", description: "Played over one night." },
-      db
-    );
-    expect(result.ok).toBe(true);
-  });
-
-  it("still accepts an application decision, which erases nothing", async () => {
-    // Deliberately not locked. `setApplicationStatus` is §8.3's override and the
-    // one write an admin genuinely may need afterwards — "they never turned up".
-    // It touches no result, no roster row and no price, which is the whole of
-    // what the standing rule protects.
-    const fixture = await finishedEvent();
-    const [spare] = await db
-      .select({ id: applications.id })
-      .from(applications)
-      .where(
-        and(eq(applications.eventId, fixture.eventId), eq(applications.userId, fixture.members[3]))
-      );
-    const before = await census(fixture);
-    const decided = await setApplicationStatus(spare.id, "declined", {}, db);
-    expect(decided.ok).toBe(true);
-    expect(await census(fixture)).toEqual(before);
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/complete/) });
+    expect(await census()).toEqual(before);
   });
 });
 
-describe("the way out", () => {
-  it("is one legal status change, and it restores every refused write", async () => {
+describe("a reopened event takes the same changes again (UC-09 6a)", () => {
+  it("allows the reopen itself, the one write a finished event accepts", async () => {
     const fixture = await finishedEvent();
 
-    // Refused while finished…
-    expect((await generateMatches(fixture.stageId, db)).ok).toBe(false);
-    expect((await setDraftConfig(fixture.eventId, { defaultBalance: 10 }, db)).ok).toBe(false);
-    expect((await setEventDays(fixture.eventId, [], db)).ok).toBe(false);
+    const result = await updateEvent(fixture.eventId, { from: "complete", status: "live" }, db);
 
-    // …and allowed again the moment the admin says it is not over. That is the
-    // difference between a rule that protects a record and one that traps its
-    // owner: the way out is one click, and it is itself audited.
-    unwrap(await updateEvent(fixture.eventId, { status: "live" }, db));
-
-    expect((await setDraftConfig(fixture.eventId, { defaultBalance: 10 }, db)).ok).toBe(true);
-    expect((await setEventDays(fixture.eventId, [], db)).ok).toBe(true);
-    // The bracket is still guarded by `stageHasResults`, which is the *other*
-    // rule and has nothing to do with the event's status.
-    const regenerated = await generateMatches(fixture.stageId, db);
-    expect(regenerated.ok).toBe(false);
-    expect((regenerated as { error: string }).error).toContain("already has results");
+    expect(result).toMatchObject({ ok: true, data: { status: "live" } });
   });
-});
 
-describe("a lot's bids", () => {
-  it("cannot be cleared on a finished event", async () => {
-    counter += 1;
-    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Open lot ${counter}` }, db));
-    unwrap(await publishEvent(event.id, db));
+  it.each(WRITES)("%s goes through", async (_, midLot, attempt) => {
+    const fixture = await finishedEvent(midLot);
+    await reopen(fixture);
 
-    const captain = await makeUser(db, { displayName: `Captain ${counter}` });
-    const player = await makeUser(db, { displayName: `Player ${counter}` });
-    for (const userId of [captain, player]) {
-      unwrap(await applyToEvent(event.id, userId, {}, db));
-    }
+    const result = await attempt(fixture);
 
-    const teams = unwrap(await setTeams(event.id, [{ name: "Red" }, { name: "Blue" }], db)).teams;
-    unwrap(await setCaptains(event.id, [{ teamId: teams[0].id, userId: captain }], db));
-    unwrap(await setDraftPool(event.id, { userIds: [player] }, db));
+    expect(result).toMatchObject({ ok: true });
+  });
 
-    const lot = unwrap(await openLot(event.id, { userId: player }, db));
-    unwrap(await placeBid(lot.id, teams[0].id, 40, {}, db));
+  it("applyToEvent gets past the lock to its own rule", async () => {
+    // A reopened event is live, and a live event takes no new applications.
+    const fixture = await finishedEvent();
+    await reopen(fixture);
 
-    // Marking an event finished mid-lot is odd but possible, and a bid is
-    // somebody's word — so the lot operations refuse rather than tidy up.
-    await db.update(events).set({ status: "complete" }).where(eq(events.id, event.id));
+    const result = await applyToEvent(fixture.eventId, fixture.outsider, {}, db);
 
-    for (const attempt of [
-      () => clearBid(lot.id, teams[0].id, db),
-      () => placeBid(lot.id, teams[0].id, 50, {}, db),
-      () => awardLot(lot.id, teams[0].id, {}, db),
-      () => discardLot(lot.id, {}, db),
-      () => moveToReserve(lot.id, {}, db),
-    ]) {
-      const result = await attempt();
-      expect(result.ok).toBe(false);
-      expect((result as { error: string }).error).toMatch(/finished/i);
-    }
-
-    // The bid is untouched.
-    const [still] = await db.select().from(draftLots).where(eq(draftLots.id, lot.id));
-    expect(still.status).toBe("open");
+    expect(result).toEqual({ ok: false, error: "This event has already started." });
   });
 });
 

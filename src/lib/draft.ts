@@ -91,7 +91,7 @@ import {
   resolveLot,
   rosterState,
 } from "./draft-policy";
-import { LOCKED, lockRefusal } from "./archive-policy";
+import { lockRefusal } from "./archive-policy";
 import type { EventResult } from "./events";
 
 /* ------------------------------------------------------------------ */
@@ -285,7 +285,7 @@ export async function setTeams(
     const config = await readConfig(tx, eventId);
     const existing = await readTeams(tx, eventId);
 
-    const locked = lockRefusal(event, LOCKED.teams);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
     const existingIds = new Set(existing.map((team) => team.id));
 
@@ -465,7 +465,7 @@ export async function setCaptains(
 
     const eventTeams = await readTeams(tx, eventId);
 
-    const locked = lockRefusal(event, LOCKED.captains);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
     const byId = new Map(eventTeams.map((team) => [team.id, team]));
 
@@ -691,7 +691,7 @@ export async function setDraftConfig(
 
     const current = await readConfig(tx, eventId);
 
-    const locked = lockRefusal(event, LOCKED.draftConfig);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
     const next = draftConfigFrom({ ...current, ...patch });
 
@@ -784,7 +784,7 @@ export async function setDraftPool(
 
     const members = await readMembers(tx, eventId);
 
-    const locked = lockRefusal(event, LOCKED.pool);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
     const drafted = new Set(members.map((member) => member.userId));
 
@@ -910,7 +910,7 @@ export async function setPoolKind(
 
     const entries = await readPool(tx, eventId);
 
-    const locked = lockRefusal(event, LOCKED.pool);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
     const entry = entries.find((row) => row.userId === userId);
     if (!entry) {
@@ -990,7 +990,7 @@ export async function openLot(
 
     const already = await readOpenLot(tx, eventId);
 
-    const locked = lockRefusal(event, LOCKED.runDraft);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
     if (already) return fail("Somebody is already on the block. Settle that lot first.");
 
@@ -1094,7 +1094,7 @@ export async function placeBid(
     // transaction may have awarded it.
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
-    const locked = lockRefusal(event, LOCKED.bid);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const [team] = await tx
@@ -1158,7 +1158,7 @@ export async function clearBid(
     // word.
     const event = await readEvent(tx, lot.eventId);
     if (!event) return fail("That event no longer exists.");
-    const locked = lockRefusal(event, LOCKED.bid);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const removed = await tx
@@ -1209,7 +1209,7 @@ export async function awardLot(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
-    const locked = lockRefusal(event, LOCKED.runDraft);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const [team] = await tx
@@ -1301,7 +1301,7 @@ export async function discardLot(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
-    const locked = lockRefusal(event, LOCKED.runDraft);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const [closed] = await tx
@@ -1347,7 +1347,7 @@ export async function moveToReserve(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
-    const locked = lockRefusal(event, LOCKED.runDraft);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const config = await readConfig(tx, lot.eventId);
@@ -1421,7 +1421,7 @@ export async function voidLot(
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status === "voided") return fail("That lot has already been voided.");
-    const locked = lockRefusal(event, LOCKED.voidLot);
+    const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
     const refunded = lot.status === "awarded" ? (lot.price ?? 0) : null;
