@@ -129,6 +129,16 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] Existing lock table still passes
 - **Depends on:** Task 4. Runs with Section D (it touches the draft and format files those tasks change).
 
+### Task 37: Make the file-backed migration test reliable (found in Task 7 review)
+
+- **Serves:** the test gate itself (no requirement)
+- **Files:** `src/db/__tests__/migrations.test.ts`
+- **Do:** "the file-backed local database - creates its directory, migrates, and survives a reopen" failed once under a full parallel run and passed alone and on every rerun. It boots two file-backed WASM Postgres instances in an `mkdtemp` directory, replays every migration into each and deletes the tree, inside a 30s budget, while a dozen vitest workers do similar work; on Windows that is where a timeout or a data-dir file-handle contention appears. Give it a budget that matches what it does, or isolate it from the parallel pool.
+- **Acceptance criteria:**
+  - [ ] The test passes in ten consecutive full-suite runs
+  - [ ] It still asserts a real reopen (a row written before the close is read after it)
+- **Depends on:** none. Do it before the suite is used as a release gate at Gate 3.
+
 ## B. Applications
 
 ### Task 7: Approval entry mode
@@ -373,7 +383,7 @@ Task 24, R-166 in Task 25, and R-151 in Task 17.
 
 - **Serves:** R-113 to R-124, R-134 to R-139, R-142 / UC-02 E1, E2, UC-06 E1, UC-08 E1-E5, UC-11 E1, UC-12 E1, E2, UC-13 E1, E2, UC-14 E1-E3, UC-30
 - **Files:** `src/lib/events.ts`, `src/components/admin/events/BasicsTab.tsx`, `src/components/admin/events/readiness.ts`, `src/app/events/[slug]/page.tsx`, `src/app/events/[slug]/apply/page.tsx`, `src/app/me/page.tsx`, `src/components/admin/events/ApplicantsTab.tsx`, `src/lib/availability.ts`, `src/components/admin/AvailabilityGrid.tsx`, `src/lib/admin-users.ts`, `src/lib/admin-allowlist.ts`, `src/lib/dev-login.ts`, tests beside each
-- **Do:** a test for each flow listed. Gaps already suspected: web address validation with a named reason (UC-08 E2a), date-override notes in the admin slot list (UC-06 E1), developer sign-in refused whenever `DATABASE_URL` is set (UC-30 1a).
+- **Do:** a test for each flow listed. Gaps already suspected: web address validation with a named reason (UC-08 E2a), date-override notes in the admin slot list (UC-06 E1), developer sign-in refused whenever `DATABASE_URL` is set (UC-30 1a). Also: the dev-login banner is `fixed bottom-0 z-50` and 45px tall, so it covers the unsaved-changes bar's Save and Discard buttons — they cannot be clicked while developer sign-in is on (found in Task 7's browser check). Lift the bar above the banner, or the banner out of its way.
 - **Acceptance criteria:** every flow listed has a passing test
 - **Depends on:** Task 10, Task 16
 
