@@ -468,7 +468,8 @@ export function announceEventPublished(eventId: string, database: Database = def
  * row as it reads now — so "accepted off, waitlisted on" still posts a
  * waitlisting. Declined defaults off: being turned down is somebody's
  * afternoon, so it is posted only when an admin has asked for it. `withdrawn`
- * is never announced; a member changing their mind is nobody else's news.
+ * and `pending` are never announced; a member changing their mind, and an
+ * application nobody has looked at yet, are nobody else's news.
  */
 export function announceApplicationDecision(
   applicationId: string,
@@ -499,7 +500,10 @@ export function announceApplicationDecision(
         .where(eq(applications.id, applicationId))
         .limit(1);
 
-      if (!row || row.status === "withdrawn") return null;
+      // `withdrawn` is the member changing their mind, and `pending` is an
+      // approval event's application still waiting for a manager (R-27).
+      // Neither is a decision, so neither is anybody else's news.
+      if (!row || row.status === "withdrawn" || row.status === "pending") return null;
 
       // This kind's own switch is checked in `deliver`.
       const kind = kinds[row.status];

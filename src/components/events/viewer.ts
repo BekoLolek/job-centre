@@ -35,6 +35,8 @@ export type ViewerActionKind =
   | "accepted"
   /** They are in the queue. */
   | "queued"
+  /** An approval event's manager has not decided yet (UC-12 7b). */
+  | "pending"
   /** An admin decided against them. */
   | "declined"
   /** Nothing to press: closed, cancelled, not open yet, finished. */
@@ -111,6 +113,17 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: place === null ? "You're in the queue" : `You're #${place} in the queue`,
       href: "/me/events",
       detail: "If somebody drops out you move up automatically — nothing to do but wait.",
+      tone: "gold",
+      primary: false,
+    };
+  }
+
+  if (application && application.status === "pending") {
+    return {
+      kind: "pending",
+      label: "Awaiting review",
+      href: "/me/events",
+      detail: "The organisers review every application to this event. You will hear either way.",
       tone: "gold",
       primary: false,
     };

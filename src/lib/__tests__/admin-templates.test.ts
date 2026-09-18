@@ -176,6 +176,18 @@ describe("normaliseTemplateConfig", () => {
     expect(expectOk(normaliseTemplateConfig(undefined))).toEqual({});
     expect(expectOk(normaliseTemplateConfig(null))).toEqual({});
   });
+
+  it("keeps the two entry modes and refuses anything else (R-27)", async () => {
+    expect(expectOk(normaliseTemplateConfig({ entryMode: "approval" })).entryMode).toBe(
+      "approval"
+    );
+    expect(expectOk(normaliseTemplateConfig({ entryMode: "first_come" })).entryMode).toBe(
+      "first_come"
+    );
+    expect(await expectFail(normaliseTemplateConfig({ entryMode: "lottery" }))).toMatch(
+      /first come or by approval/i
+    );
+  });
 });
 
 describe("normaliseTemplateQuestions", () => {
@@ -226,6 +238,18 @@ describe("describeTemplate", () => {
     expect(parts).toContain("bid draft");
     expect(parts).toContain("2 questions");
     expect(parts).toContain("1 prefilled from the profile");
+  });
+
+  it("says an approval template is by approval instead of naming its waitlist", () => {
+    // UC-08 6a. The waitlist default is first-come's (R-170), so a template
+    // carrying both must not preview as though the cap decided anything.
+    const parts = describeTemplate({
+      type: "custom",
+      config: { entryMode: "approval", waitlist: false },
+      questions: [],
+    });
+    expect(parts).toContain("by approval");
+    expect(parts).not.toContain("no waitlist");
   });
 
   it("says so when the template is carrying format settings", () => {

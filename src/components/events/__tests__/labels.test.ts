@@ -118,6 +118,11 @@ describe("application status", () => {
     expect(applicationStatusTone("declined")).toBe("cancelled");
     expect(applicationStatusTone("withdrawn")).toBe("closed");
   });
+
+  it("tells a pending applicant their application is awaiting review", () => {
+    expect(applicationStatusLabel("pending")).toBe("Awaiting review");
+    expect(applicationStatusTone("pending")).toBe("open");
+  });
 });
 
 describe("eventTypeLabel", () => {

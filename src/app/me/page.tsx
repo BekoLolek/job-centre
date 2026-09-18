@@ -62,9 +62,14 @@ export default async function MePage() {
     handleOf(user.id),
   ]);
 
+  // An application still going somewhere: a seat, a place in the queue, or an
+  // approval event's manager who has not decided yet (R-27). The pill says
+  // which, and the to-dos below ask only for what that status can answer.
   const live = mine.filter(
     (row) =>
-      (row.status === "accepted" || row.status === "waitlisted") &&
+      (row.status === "pending" ||
+        row.status === "accepted" ||
+        row.status === "waitlisted") &&
       (row.event.endsAt ?? row.event.startsAt ?? null) !== null &&
       (row.event.endsAt ?? row.event.startsAt ?? now).getTime() >= now.getTime()
   );

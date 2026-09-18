@@ -8,6 +8,7 @@ import {
   canTransition,
   capacityState,
   eligibility,
+  entryMode,
   missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
@@ -258,6 +259,25 @@ describe("applicationsOpen — the reason, not a boolean", () => {
       { accepted: 1 }
     );
     expect(state).toMatchObject({ open: false, reason: "cancelled" });
+  });
+
+  it("keeps an approval event open once the seats are full, waitlist or not (UC-12 7b)", () => {
+    const state = applicationsOpen(
+      event({ capacity: 12, config: { entryMode: "approval", waitlist: false } }),
+      NOW,
+      { accepted: 12 }
+    );
+    expect(state.open).toBe(true);
+    if (!state.open) return;
+    expect(state.willWaitlist).toBe(false);
+    expect(state.message).toMatch(/review/i);
+  });
+
+  it("reads an event with no entry mode as first come, so existing events are unchanged", () => {
+    expect(entryMode(null)).toBe("first_come");
+    expect(entryMode({})).toBe("first_come");
+    expect(entryMode({ waitlist: false })).toBe("first_come");
+    expect(entryMode({ entryMode: "approval" })).toBe("approval");
   });
 
   it("defaults the waitlist on, and only an explicit false turns it off", () => {

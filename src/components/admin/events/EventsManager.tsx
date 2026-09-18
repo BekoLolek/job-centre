@@ -207,19 +207,21 @@ export default function EventsManager({
 }
 
 /**
- * Applications that are not seats: declined and withdrawn.
+ * Applications that are not seats: awaiting review, declined and withdrawn.
  *
- * `EventCard` already shows the live counts from `capacityState`. These two are
- * the history behind them, and an admin scanning a list wants to know that the
- * event with four seats free has already turned six people away.
+ * `EventCard` already shows the live counts from `capacityState`. These are the
+ * history behind them, and an admin scanning a list wants to know that the
+ * event with four seats free has already turned six people away — or that an
+ * approval event (R-27) has three applications nobody has looked at.
  */
 function ApplicationTotals({ counts }: { counts: Record<ApplicationStatus, number> }) {
-  const total = counts.accepted + counts.waitlisted + counts.declined + counts.withdrawn;
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
   if (total === 0) return <Badge>No applications</Badge>;
 
   return (
     <>
       <Badge tone="signal">{plural(total, "application")}</Badge>
+      {counts.pending > 0 && <Badge tone="gold">{counts.pending} awaiting review</Badge>}
       {counts.declined > 0 && <Badge tone="ember">{counts.declined} declined</Badge>}
       {counts.withdrawn > 0 && <Badge>{counts.withdrawn} withdrew</Badge>}
     </>

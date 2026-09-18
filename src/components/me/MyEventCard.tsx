@@ -92,7 +92,13 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
   const [asking, setAsking] = useState(false);
 
   const active = row.status === "accepted" || row.status === "waitlisted";
-  const editable = active && !row.past;
+  /**
+   * Still going somewhere. An approval event's application (R-27) is neither in
+   * nor queued, but it is very much alive: its days can still be answered and
+   * it can still be withdrawn (docs/diagrams/application-state.md).
+   */
+  const live = active || row.status === "pending";
+  const editable = live && !row.past;
   const everyDayYes = row.days.length > 0 && row.days.every((day) => availability[day.id] === "yes");
 
   /** Somebody is queueing, and this seat is what they are queueing for. */
@@ -206,6 +212,13 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
 
       <div className="space-y-5 p-5">
         {/* --- What happens next ----------------------------------- */}
+        {row.status === "pending" && (
+          <p className="text-xs leading-relaxed text-muted">
+            This event is by approval, so the organisers read every application. You are not
+            holding a seat or a place in the queue yet — you will hear either way.
+          </p>
+        )}
+
         {row.status === "waitlisted" && (
           <p className="text-xs leading-relaxed text-muted">
             {row.waitlistPosition === null
@@ -228,7 +241,7 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
         )}
 
         {/* --- Availability ---------------------------------------- */}
-        {row.days.length > 0 && active && (
+        {row.days.length > 0 && live && (
           <section className="space-y-3">
             <div className="flex flex-wrap items-center gap-3">
               <Eyebrow>Which days you can make</Eyebrow>
@@ -343,7 +356,9 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
                 ? `${plural(row.seats.waitlisted, "person", "people")} waiting — the first of them takes your seat the moment you withdraw.`
                 : row.status === "accepted"
                   ? "Nobody is queueing, so this just frees the seat."
-                  : "You would leave the queue. Applying again later puts you at the back of it."}
+                  : row.status === "pending"
+                    ? "You would take your application off the organisers' list. You can apply again while signups are open."
+                    : "You would leave the queue. Applying again later puts you at the back of it."}
             </p>
           </div>
         )}
@@ -378,6 +393,8 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
             </>
           ) : row.status === "accepted" ? (
             "Nobody is on the waitlist, so the seat simply becomes free again. You can apply again while signups are still open."
+          ) : row.status === "pending" ? (
+            "The organisers have not decided yet, so nothing is lost but your place on their list. You can apply again while signups are still open."
           ) : (
             "You will leave the queue. Applying again later puts you at the back of it, which is what first-come means."
           )}

@@ -31,6 +31,7 @@ import {
   TEMPLATE_OMITS,
   describeTemplate,
 } from "@/lib/admin-templates-policy";
+import { entryMode } from "@/lib/events-policy";
 import {
   createTemplateAction,
   createTemplateFromEventAction,
@@ -553,14 +554,41 @@ function TemplateCard({
                   />
                 </div>
 
+                {/* UC-08 6/6a: how people get in. Unset is first come, so a
+                    template written before approval existed still means what it
+                    did. The waitlist below is a first-come rule, so an approval
+                    template does not offer it. */}
                 <div>
-                  <Eyebrow className="mb-2">Waitlist</Eyebrow>
-                  <Toggle
-                    value={config.waitlist ?? null}
-                    onChange={(next) => setKnob("waitlist", next ?? undefined)}
-                  />
-                  <p className="mt-1 text-xs text-muted">Unset means on, per §14.</p>
+                  <Eyebrow className="mb-2">Entry</Eyebrow>
+                  <ChoiceRow className="max-w-xs">
+                    <ChoiceChip
+                      block
+                      selected={entryMode(config) === "first_come"}
+                      onClick={() => setKnob("entryMode", undefined)}
+                    >
+                      First come
+                    </ChoiceChip>
+                    <ChoiceChip
+                      block
+                      selected={entryMode(config) === "approval"}
+                      onClick={() => setKnob("entryMode", "approval")}
+                    >
+                      By approval
+                    </ChoiceChip>
+                  </ChoiceRow>
+                  <p className="mt-1 text-xs text-muted">Unset means first come, per R-27.</p>
                 </div>
+
+                {entryMode(config) === "first_come" && (
+                  <div>
+                    <Eyebrow className="mb-2">Waitlist</Eyebrow>
+                    <Toggle
+                      value={config.waitlist ?? null}
+                      onChange={(next) => setKnob("waitlist", next ?? undefined)}
+                    />
+                    <p className="mt-1 text-xs text-muted">Unset means on, per §14.</p>
+                  </div>
+                )}
               </div>
 
               {config.format !== undefined && (

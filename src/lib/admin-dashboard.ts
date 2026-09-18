@@ -123,11 +123,15 @@ export async function loadDashboard(
       ? database
           .select({ id: applications.id, eventId: applications.eventId })
           .from(applications)
-          // §14 makes applications first-come, so there is no `applied` status
-          // to queue in — most people land accepted without anybody deciding
-          // anything. What actually waits on an admin is somebody the *cap*
-          // waitlisted rather than a person: `decided_at` null on a waitlisted
-          // row. That is the same definition the editor's Applicants tab dots.
+          // §14 makes a first-come event's applications land accepted or
+          // waitlisted without anybody deciding anything. What waits on an
+          // admin there is somebody the *cap* waitlisted rather than a person:
+          // `decided_at` null on a waitlisted row. That is the same definition
+          // the editor's Applicants tab dots.
+          //
+          // An approval event's `pending` rows wait on an admin too (R-27), and
+          // they are counted on `/admin/events` and on the Applicants tab. They
+          // are deliberately not an attention item yet — that is Task 35's.
           .where(
             and(
               inArray(applications.eventId, ids),

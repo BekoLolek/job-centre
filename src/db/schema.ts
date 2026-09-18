@@ -844,13 +844,21 @@ export const EVENT_TYPES = {
 
 export const DEFAULT_EVENT_TYPE = EVENT_TYPES.custom;
 
+/** First come gives a seat or a queue place on arrival; approval waits for a manager. */
+export type EntryMode = "first_come" | "approval";
+
 /**
  * The knobs §8.1 calls a capability set, plus the signup rules that are not
  * columns. Everything is optional and every reader must have a default: a
  * config written by an older template is a normal thing to meet.
  */
 export type EventConfig = {
-  /** May applicants queue once the seats are gone? Default true (§14). */
+  /**
+   * How applications land (R-27). Absent means `first_come`, which is how every
+   * event before approval existed behaved, so no stored row needs rewriting.
+   */
+  entryMode?: EntryMode;
+  /** First come only: may applicants queue once the seats are gone? Default true (§14). */
   waitlist?: boolean;
   /** How many teams the format engine should build. Null/absent: no teams. */
   teams?: number | null;
@@ -1044,12 +1052,14 @@ export const eventQuestions = pgTable(
 );
 
 /**
- * Where an application sits. §14 settles the default as first-come with a
- * waitlist, so there is no "applied, awaiting review" state: a submission is
- * `accepted` or `waitlisted` the moment it lands, decided inside the same
- * transaction that writes it.
+ * Where an application sits (docs/diagrams/application-state.md). In a
+ * first-come event a submission is `accepted` or `waitlisted` the moment it
+ * lands, decided inside the same transaction that writes it. In an approval
+ * event (R-27) it lands `pending` and waits for a manager.
  */
 export const applicationStatus = pgEnum("application_status", [
+  /** Awaiting a manager's review. Holds no seat and no place in the queue. */
+  "pending",
   "accepted",
   "waitlisted",
   /** Admin said no. */

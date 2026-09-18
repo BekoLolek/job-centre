@@ -24,7 +24,7 @@
  * passes with nobody looking. The same goes for "seats left": derived, always.
  */
 
-import type { ApplicationStatus, EventConfig, EventStatus } from "@/db/schema";
+import type { ApplicationStatus, EntryMode, EventConfig, EventStatus } from "@/db/schema";
 
 /* ------------------------------------------------------------------ */
 /* Status                                                             */
@@ -147,6 +147,15 @@ export type ApplicationsState =
       closesAt: Date | null;
     };
 
+/**
+ * How this event's applications land (R-27). Anything but an explicit
+ * `approval` is first come, so every event written before approval existed —
+ * and a template carrying a value nobody recognises — behaves exactly as it did.
+ */
+export function entryMode(config: EventConfig | null | undefined): EntryMode {
+  return config?.entryMode === "approval" ? "approval" : "first_come";
+}
+
 /** §14's default: a full event queues people rather than turning them away. */
 export function waitlistEnabled(config: EventConfig | null | undefined): boolean {
   return config?.waitlist !== false;
@@ -159,6 +168,8 @@ export function waitlistEnabled(config: EventConfig | null | undefined): boolean
  * signups close at 20:00 accepts an application timestamped exactly 20:00 —
  * and exclusive at the start of the event itself, because an event that has
  * begun is not one you can still sign up for.
+ *
+ * An approval event is open whatever its seat count; see `entryMode`.
  *
  * Being **full is not the same as being closed**. With the waitlist on (the
  * default) a full event still takes applications; they simply join the queue,
@@ -209,6 +220,19 @@ export function applicationsOpen(
   const seatsLeft =
     event.capacity === null ? null : Math.max(0, event.capacity - Math.max(0, seats.accepted));
 
+  // An approval event never closes on seats: the application waits for a
+  // manager, who can still accept past the cap or put it in the queue. The
+  // waitlist switch is a first-come setting and means nothing here.
+  if (entryMode(event.config) === "approval") {
+    return {
+      open: true,
+      willWaitlist: false,
+      seatsLeft,
+      closesAt,
+      message: "Applications are open — each one is reviewed by the organisers.",
+    };
+  }
+
   if (seatsLeft === 0) {
     if (!waitlistEnabled(event.config)) {
       return shut("full", "This event is full.");
@@ -230,6 +254,20 @@ export function applicationsOpen(
     message: "Applications are open.",
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Decisions                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where a manager may send an application — every status but `pending`.
+ *
+ * `pending` is where an approval event's application *arrives*; the state
+ * diagram (docs/diagrams/application-state.md) has no edge back into it. So a
+ * pending application is not a decision: it is not announced, it is not
+ * notified, and nothing carrying this type can name it.
+ */
+export type ApplicationDecision = Exclude<ApplicationStatus, "pending">;
 
 /* ------------------------------------------------------------------ */
 /* Rank thresholds (§8.3)                                             */

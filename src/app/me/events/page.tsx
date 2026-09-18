@@ -103,8 +103,12 @@ export default async function MyEventsPage({
     ];
   });
 
+  // Still going somewhere: a seat, a place in the queue, or — in an approval
+  // event (R-27) — a manager who has not decided yet.
   const current = rows.filter(
-    (row) => !row.past && (row.status === "accepted" || row.status === "waitlisted")
+    (row) =>
+      !row.past &&
+      (row.status === "pending" || row.status === "accepted" || row.status === "waitlisted")
   );
   const rest = rows.filter((row) => !current.includes(row));
 
@@ -181,16 +185,20 @@ export default async function MyEventsPage({
               description={`Where you stand on ${landed.title} right now.`}
             >
               <h2 className="font-display text-4xl leading-none">
-                {landed.status === "waitlisted"
-                  ? landed.waitlistPosition === null
-                    ? "You're in the queue"
-                    : `You're #${landed.waitlistPosition} in the queue`
-                  : "You're in"}
+                {landed.status === "pending"
+                  ? "Awaiting review"
+                  : landed.status === "waitlisted"
+                    ? landed.waitlistPosition === null
+                      ? "You're in the queue"
+                      : `You're #${landed.waitlistPosition} in the queue`
+                    : "You're in"}
               </h2>
               <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
-                {landed.status === "waitlisted"
-                  ? "The seats were gone, so you joined the waitlist. If somebody withdraws you move up automatically — nobody has to approve it, and you do not have to apply again."
-                  : "You have a seat. Closer to the day you will be asked to confirm you are still coming; until then you can change your availability or withdraw whenever you like."}
+                {landed.status === "pending"
+                  ? "This event is by approval, so the organisers read every application. You will hear either way; until then you can change your availability or withdraw."
+                  : landed.status === "waitlisted"
+                    ? "The seats were gone, so you joined the waitlist. If somebody withdraws you move up automatically — nobody has to approve it, and you do not have to apply again."
+                    : "You have a seat. Closer to the day you will be asked to confirm you are still coming; until then you can change your availability or withdraw whenever you like."}
               </p>
             </Section>
           )}

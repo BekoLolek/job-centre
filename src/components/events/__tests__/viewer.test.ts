@@ -84,6 +84,18 @@ describe("viewerAction", () => {
     expect(action.href).toBe("/me/events");
   });
 
+  it("tells a pending applicant they are awaiting review rather than offering Apply", () => {
+    const action = viewerAction({
+      slug: "cup",
+      signedIn: true,
+      state: openState(),
+      application: { status: "pending", waitlistPosition: null },
+    });
+    expect(action.kind).toBe("pending");
+    expect(action.label).toBe("Awaiting review");
+    expect(action.href).toBe("/me/events");
+  });
+
   it("names the queue position", () => {
     const action = viewerAction({
       slug: "cup",
@@ -212,6 +224,21 @@ describe("formatSummary", () => {
     expect(
       formatSummary({ type: "custom", config: { waitlist: false }, days: 0, capacity: 4 })
     ).toContain("no waitlist");
+  });
+
+  it("says an approval event is by approval rather than talking about its waitlist", () => {
+    // UC-08 6a: the waitlist switch is a first-come setting, so a leftover
+    // `waitlist: false` on an approval event must not be read out as if the cap
+    // were what decides anything.
+    const parts = formatSummary({
+      type: "custom",
+      config: { entryMode: "approval", waitlist: false },
+      days: 0,
+      capacity: 4,
+    });
+
+    expect(parts).toContain("by approval");
+    expect(parts).not.toContain("no waitlist");
   });
 });
 

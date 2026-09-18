@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Database,
+  type EventConfig,
   applications,
   availability,
   eventDays,
@@ -78,7 +79,12 @@ function expectFail<T>(result: EventResult<T>): { error: string } {
 
 /** A published, capacity-`seats` event with `dayCount` days, ready to apply to. */
 async function makeEvent(
-  options: { seats?: number | null; dayCount?: number; publish?: boolean } = {}
+  options: {
+    seats?: number | null;
+    dayCount?: number;
+    publish?: boolean;
+    config?: EventConfig;
+  } = {}
 ) {
   titleCounter += 1;
   const event = expectOk(
@@ -90,6 +96,7 @@ async function makeEvent(
         gameId: rivalsId,
         capacity: options.seats === undefined ? 4 : options.seats,
         startsAt: days(30),
+        config: options.config,
       },
       db
     )
@@ -388,7 +395,10 @@ describe("countApplicationsByStatus", () => {
 
     const counts = await countApplicationsByStatus([busy.id, quiet.id], db);
 
+    // `pending` is one of the five since approval entry (UC-08 6a, UC-12 7b);
+    // a first-come event simply never produces one.
     expect(counts.get(busy.id)).toEqual({
+      pending: 0,
       accepted: 2,
       waitlisted: 1,
       declined: 1,
@@ -397,6 +407,23 @@ describe("countApplicationsByStatus", () => {
     // An event nobody applied to is simply absent — callers fall back to zeroes.
     expect(counts.has(quiet.id)).toBe(false);
     expect(emptyApplicationCounts()).toEqual({
+      pending: 0,
+      accepted: 0,
+      waitlisted: 0,
+      declined: 0,
+      withdrawn: 0,
+    });
+  });
+
+  it("counts an approval event's applications as pending (UC-08 6a, UC-12 7b)", async () => {
+    const event = await makeEvent({ seats: 2, config: { entryMode: "approval" } });
+    expectOk(await applyToEvent(event.id, await makeUser(db), { now: NOW }, db));
+    expectOk(await applyToEvent(event.id, await makeUser(db), { now: hours(1) }, db));
+
+    const counts = await countApplicationsByStatus([event.id], db);
+
+    expect(counts.get(event.id)).toEqual({
+      pending: 2,
       accepted: 0,
       waitlisted: 0,
       declined: 0,

@@ -35,6 +35,7 @@ import {
   updateEvent,
   withdrawApplication,
 } from "@/lib/events";
+import { entryMode } from "@/lib/events-policy";
 
 /**
  * The events data layer, against real Postgres.
@@ -837,15 +838,16 @@ describe("applyToEvent — when applications are open", () => {
     expect(queued.waitlistPosition).toBe(1);
   });
 
-  it("refuses outright when a full event has switched its waitlist off", async () => {
+  it("stores nothing when a full first-come event has its waitlist off (R-170, UC-12 E3)", async () => {
     const event = await openEvent({ capacity: 1, config: { waitlist: false } });
     const first = await makeUser(db);
     const second = await makeUser(db);
     expectOk(await applyToEvent(event.id, first, { now: NOW }, db));
 
-    expect(expectFail(await applyToEvent(event.id, second, { now: NOW }, db)).error).toMatch(
-      /is full/i
-    );
+    const refused = expectFail(await applyToEvent(event.id, second, { now: NOW }, db));
+
+    expect(refused.error).toBe("This event is full.");
+    expect(Object.keys(await queueFor(event.id))).toEqual([first]);
   });
 
   it("refuses a second application from the same member", async () => {
@@ -1229,6 +1231,111 @@ describe("the waitlist", () => {
     const again = expectOk(await applyToEvent(event.id, leaver, { now: hours(3) }, db));
     expect(again.status).toBe("waitlisted");
     expect(again.waitlistPosition).toBe(2);
+  });
+});
+
+describe("approval entry mode (R-27, UC-12 7b, UC-14)", () => {
+  const approvalEvent = (over: Partial<CreateEventInput> = {}) =>
+    openEvent({ capacity: 1, config: { entryMode: "approval" }, ...over });
+
+  async function pendingApplication(eventId: string) {
+    const userId = await makeUser(db);
+    const application = expectOk(await applyToEvent(eventId, userId, { now: NOW }, db));
+    return { userId, application };
+  }
+
+  it("stores every application as pending, holding no seat and no queue place", async () => {
+    const event = await approvalEvent();
+    const first = await pendingApplication(event.id);
+    const second = await pendingApplication(event.id);
+
+    expect(await queueFor(event.id)).toEqual({
+      [first.userId]: ["pending", null],
+      [second.userId]: ["pending", null],
+    });
+  });
+
+  it("stores pending even when the waitlist is off and every seat is taken", async () => {
+    const event = await approvalEvent({ config: { entryMode: "approval", waitlist: false } });
+    const seated = await pendingApplication(event.id);
+    expectOk(await setApplicationStatus(seated.application.id, "accepted", { now: NOW }, db));
+
+    const late = await pendingApplication(event.id);
+
+    expect(late.application.status).toBe("pending");
+  });
+
+  it("refuses a second application while the first is pending", async () => {
+    const event = await approvalEvent();
+    const { userId } = await pendingApplication(event.id);
+
+    expect(expectFail(await applyToEvent(event.id, userId, { now: NOW }, db)).error).toMatch(
+      /already applied/i
+    );
+  });
+
+  it("lets a manager accept a pending applicant into a seat", async () => {
+    const event = await approvalEvent();
+    const { userId, application } = await pendingApplication(event.id);
+
+    const result = expectOk(await setApplicationStatus(application.id, "accepted", { now: NOW }, db));
+
+    expect(result.seats.accepted).toBe(1);
+    expect(await queueFor(event.id)).toEqual({ [userId]: ["accepted", null] });
+  });
+
+  it("lets a manager waitlist a pending applicant at the back of the queue", async () => {
+    const event = await approvalEvent();
+    const { userId, application } = await pendingApplication(event.id);
+
+    expectOk(await setApplicationStatus(application.id, "waitlisted", { now: NOW }, db));
+
+    expect(await queueFor(event.id)).toEqual({ [userId]: ["waitlisted", 1] });
+  });
+
+  it("lets a manager decline a pending applicant", async () => {
+    const event = await approvalEvent();
+    const { userId, application } = await pendingApplication(event.id);
+
+    expectOk(await setApplicationStatus(application.id, "declined", { now: NOW }, db));
+
+    expect(await queueFor(event.id)).toEqual({ [userId]: ["declined", null] });
+  });
+
+  it("refuses a manager moving an application back to pending", async () => {
+    const event = await approvalEvent();
+    const { application } = await pendingApplication(event.id);
+    expectOk(await setApplicationStatus(application.id, "accepted", { now: NOW }, db));
+
+    expect(
+      expectFail(await setApplicationStatus(application.id, "pending", { now: NOW }, db)).error
+    ).toMatch(/pending/i);
+  });
+
+  it("hands the apply page an open event with nothing queued behind it", async () => {
+    // What the form beside the submit button has to say (UC-12 7b) cannot be
+    // read off `willWaitlist`: an approval event with every seat taken is still
+    // open and still queues nobody, so the page has to be told the entry mode
+    // separately or it promises a seat the manager has not given.
+    const event = await approvalEvent();
+    const seated = await pendingApplication(event.id);
+    expectOk(await setApplicationStatus(seated.application.id, "accepted", { now: NOW }, db));
+
+    const form = await loadApplicationForm(event.id, await makeUser(db), { now: NOW }, db);
+
+    expect(entryMode(form?.event.config)).toBe("approval");
+    expect(form?.state.open).toBe(true);
+    expect(form?.state.open && form.state.willWaitlist).toBe(false);
+  });
+
+  it("lets the applicant withdraw while pending, promoting nobody", async () => {
+    const event = await approvalEvent();
+    const { userId } = await pendingApplication(event.id);
+
+    const result = expectOk(await withdrawApplication(event.id, userId, db));
+
+    expect(result.application.status).toBe("withdrawn");
+    expect(result.promoted).toEqual([]);
   });
 });
 

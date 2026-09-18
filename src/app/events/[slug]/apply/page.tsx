@@ -38,6 +38,7 @@ import {
 } from "@/components/events";
 import { Alert, Badge, Button, Eyebrow, Panel, StatTile } from "@/components/ui";
 import { getEventBySlug, loadApplicationForm } from "@/lib/events";
+import { entryMode } from "@/lib/events-policy";
 import { canSeeEvent } from "@/lib/hosting";
 import { requireUser } from "@/lib/session-guards";
 
@@ -66,8 +67,14 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
   if (!form) notFound();
 
   const application = form.application;
+  // `pending` counts: an approval event's application (R-27) is one
+  // `applyToEvent` would refuse a second time, so offering the form again would
+  // be offering a button that cannot work.
   const live =
-    application && (application.status === "accepted" || application.status === "waitlisted");
+    application &&
+    (application.status === "pending" ||
+      application.status === "accepted" ||
+      application.status === "waitlisted");
 
   // Someone with a live application has nothing to do here; `applyToEvent`
   // would refuse it. Their page is `/me/events`, where they can change
@@ -87,6 +94,12 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
   const closedBecause = form.state.open ? null : form.state.message;
   /** Open, but every seat is taken — so this application joins the queue (§14). */
   const willWaitlist = form.state.open && form.state.willWaitlist;
+  /**
+   * How this event's applications land (R-27). An approval event gives neither
+   * a seat nor a place in the queue, so every sentence on this page that
+   * promises one has to know about it.
+   */
+  const mode = entryMode(event.config);
 
   return (
     <div className="min-h-screen">
@@ -217,8 +230,9 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
               <Alert tone="gold">
                 <span className="block font-medium">You withdrew from this one before</span>
                 <span className="mt-1 block opacity-90">
-                  Applying again is fine. Your old answers are still here — you would join
-                  at the back of whatever queue exists now, which is what first-come means.
+                  {mode === "approval"
+                    ? "Applying again is fine. Your old answers are still here — the new application goes back to the organisers for review, so it holds no seat and no place in a queue until one of them decides."
+                    : "Applying again is fine. Your old answers are still here — you would join at the back of whatever queue exists now, which is what first-come means."}
                 </span>
               </Alert>
             )}
@@ -241,6 +255,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
               rankLadder={event.rankLadder}
               availability={form.availability}
               willWaitlist={willWaitlist}
+              entryMode={mode}
             />
           </>
         )}

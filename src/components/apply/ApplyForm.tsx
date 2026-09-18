@@ -16,7 +16,7 @@ import {
   cx,
   plural,
 } from "@/components/ui";
-import type { AvailabilityState, ProfileValue } from "@/db/schema";
+import type { AvailabilityState, EntryMode, ProfileValue } from "@/db/schema";
 import type { PrefilledQuestionView } from "@/lib/events";
 import { formatAnswer, hasAnswer } from "@/lib/profile-fields";
 import { applyToEventAction } from "@/app/events/[slug]/apply/actions";
@@ -71,6 +71,15 @@ export type ApplyFormProps = {
   availability: Record<string, AvailabilityState>;
   /** True when the seats are gone and this application joins the queue (§14). */
   willWaitlist: boolean;
+  /**
+   * How this event's applications land (R-27). `approval` means submitting
+   * hands the application to a manager rather than taking a seat, which is the
+   * one thing the member has to know *before* they press the button — so it is
+   * a prop rather than something inferred from `willWaitlist`, which
+   * `applicationsOpen` leaves false for an approval event whether or not there
+   * is a seat behind it.
+   */
+  entryMode: EntryMode;
 };
 
 export default function ApplyForm({
@@ -81,6 +90,7 @@ export default function ApplyForm({
   rankLadder,
   availability: initialAvailability,
   willWaitlist,
+  entryMode,
 }: ApplyFormProps) {
   const router = useRouter();
 
@@ -425,6 +435,8 @@ export default function ApplyForm({
               <span className="text-gold">
                 Confirm the answers above are still right, then this goes through.
               </span>
+            ) : entryMode === "approval" ? (
+              "The organisers review every application to this event, so this goes to them rather than taking a seat. You will hear either way, and you can withdraw it at any time until then."
             ) : willWaitlist ? (
               "Every seat is taken, so this joins the queue. You move up on your own if somebody withdraws."
             ) : (

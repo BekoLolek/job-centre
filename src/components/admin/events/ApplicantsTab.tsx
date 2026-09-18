@@ -35,6 +35,7 @@ import {
 } from "@/components/events";
 import type { ApplicationStatus, AvailabilityState } from "@/db/schema";
 import type { ApplicantView, EventDetail } from "@/lib/events";
+import { type ApplicationDecision, entryMode } from "@/lib/events-policy";
 import { formatAnswer } from "@/lib/profile-fields";
 import {
   decideApplicationAction,
@@ -70,6 +71,9 @@ type Filter = "all" | ApplicationStatus;
 
 const FILTERS: ReadonlyArray<{ value: Filter; label: string }> = [
   { value: "all", label: "All" },
+  // UC-14 2: filterable by status, and in an approval event (R-27) the one
+  // status that is a to-do list comes first.
+  { value: "pending", label: "Awaiting review" },
   { value: "accepted", label: "Accepted" },
   { value: "waitlisted", label: "Queue" },
   { value: "declined", label: "Declined" },
@@ -115,7 +119,7 @@ export default function ApplicantsTab({
 
   const decide = async (
     row: ApplicantView,
-    status: ApplicationStatus,
+    status: ApplicationDecision,
     options: { promote?: boolean } = {}
   ) => {
     setBusyId(row.id);
@@ -219,6 +223,13 @@ export default function ApplicantsTab({
             value={event.seats.waitlisted}
             valueClassName={event.seats.waitlisted > 0 ? "text-gold" : "text-muted"}
           />
+          {entryMode(event.config) === "approval" && (
+            <StatTile
+              label="Awaiting review"
+              value={counts.get("pending") ?? 0}
+              valueClassName={(counts.get("pending") ?? 0) > 0 ? "text-gold" : "text-muted"}
+            />
+          )}
           <StatTile label="Applications" value={applicants.length} />
           {event.days.length > 0 && (
             <StatTile label="Days" value={event.days.length} valueClassName="text-muted" />
@@ -317,7 +328,7 @@ function ApplicantRow({
   open: boolean;
   busy: boolean;
   onToggle: () => void;
-  onDecide: (status: ApplicationStatus) => void;
+  onDecide: (status: ApplicationDecision) => void;
   onChanged: () => void;
   onError: (message: string) => void;
 }) {

@@ -14,6 +14,7 @@
  */
 
 import type { EventConfig, EventQuestionSpec, ProfileFieldOption } from "@/db/schema";
+import { entryMode } from "./events-policy";
 import { isFieldType, normaliseOptions, slugify, uniqueKey } from "./profile-fields";
 
 /* ------------------------------------------------------------------ */
@@ -103,6 +104,13 @@ export function normaliseTemplateConfig(raw: unknown): TemplateResult<EventConfi
     if (config[key] !== undefined && typeof config[key] !== "boolean") {
       return templateFail(`"${key}" is a yes/no setting.`);
     }
+  }
+
+  // R-27's two modes and nothing else. Absent is first come, which is what
+  // every template written before approval existed means.
+  const mode = config.entryMode;
+  if (mode !== undefined && mode !== "first_come" && mode !== "approval") {
+    return templateFail("Entry is either first come or by approval.");
   }
 
   return templateData(config);
@@ -218,7 +226,10 @@ export function describeTemplate(template: {
   if (teams && teams > 0) parts.push(`${teams} teams`);
   if (config.draft === true) parts.push("bid draft");
   if (config.bracket === true) parts.push("bracket");
-  if (config.waitlist === false) parts.push("no waitlist");
+  // The waitlist is a first-come setting (R-27), so an approval template says
+  // how people get in rather than what the cap would do with them.
+  if (entryMode(config) === "approval") parts.push("by approval");
+  else if (config.waitlist === false) parts.push("no waitlist");
 
   parts.push(
     template.questions.length === 0

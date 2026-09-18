@@ -11,6 +11,7 @@ import {
   whenText,
 } from "@/components/events";
 import type { ApplicantView, EventDetail } from "@/lib/events";
+import { entryMode } from "@/lib/events-policy";
 import { publishEventAction } from "@/app/admin/events/actions";
 import EventStatusControls from "./EventStatusControls";
 import { blockers, gaps as gapsIn, readiness } from "./readiness";
@@ -157,10 +158,16 @@ export default function PublishTab({
             </span>
           </li>
           <li>
-            · Past {event.capacity ?? "∞"} accepted,{" "}
-            {event.config.waitlist === false
-              ? "the event closes rather than queueing anybody"
-              : "applications join the waitlist and are promoted automatically when somebody withdraws"}
+            {entryMode(event.config) === "approval" ? (
+              <>· Every application waits for a manager&apos;s review before it takes a seat</>
+            ) : (
+              <>
+                · Past {event.capacity ?? "∞"} accepted,{" "}
+                {event.config.waitlist === false
+                  ? "the event closes rather than queueing anybody"
+                  : "applications join the waitlist and are promoted automatically when somebody withdraws"}
+              </>
+            )}
           </li>
         </ul>
 

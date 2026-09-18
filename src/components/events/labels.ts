@@ -10,7 +10,7 @@
 
 import type { Status } from "@/components/ui";
 import type { EventConfig, EventStatus } from "@/db/schema";
-import type { ApplicationsState } from "@/lib/events-policy";
+import { type ApplicationsState, entryMode } from "@/lib/events-policy";
 import type { ApplicationStatus } from "@/db/schema";
 
 /* ------------------------------------------------------------------ */
@@ -83,6 +83,7 @@ export function applicationsPill(state: ApplicationsState): { tone: Status; labe
 /* ------------------------------------------------------------------ */
 
 const APPLICATION_TONE: Record<ApplicationStatus, Status> = {
+  pending: "open",
   accepted: "complete",
   waitlisted: "open",
   declined: "cancelled",
@@ -90,6 +91,7 @@ const APPLICATION_TONE: Record<ApplicationStatus, Status> = {
 };
 
 const APPLICATION_LABEL: Record<ApplicationStatus, string> = {
+  pending: "Awaiting review",
   accepted: "Accepted",
   waitlisted: "Waitlisted",
   declined: "Declined",
@@ -185,7 +187,11 @@ export function formatSummary(event: FormatView): string[] {
   if (event.days > 0) parts.push(event.days === 1 ? "one day" : `${event.days} days`);
 
   parts.push(event.capacity === null ? "no seat limit" : `${event.capacity} seats`);
-  if (config.waitlist === false) parts.push("no waitlist");
+  // The waitlist switch is a first-come rule (R-27), so an approval event says
+  // how people get in instead — "no waitlist" would be true of it in the least
+  // useful possible sense.
+  if (entryMode(config) === "approval") parts.push("by approval");
+  else if (config.waitlist === false) parts.push("no waitlist");
 
   return parts;
 }

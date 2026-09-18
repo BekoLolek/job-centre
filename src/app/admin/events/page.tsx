@@ -15,7 +15,12 @@ import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import EventsManager, { type EventListRow } from "@/components/admin/events/EventsManager";
 import { Eyebrow, StatTile } from "@/components/ui";
-import { countApplicationsByStatus, listEventTemplates, listEvents } from "@/lib/events";
+import {
+  countApplicationsByStatus,
+  emptyApplicationCounts,
+  listEventTemplates,
+  listEvents,
+} from "@/lib/events";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -36,23 +41,15 @@ export default async function AdminEventsPage() {
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
     .map((event) => ({
       event,
-      applications: totals.get(event.id) ?? {
-        accepted: 0,
-        waitlisted: 0,
-        declined: 0,
-        withdrawn: 0,
-      },
+      applications: totals.get(event.id) ?? emptyApplicationCounts(),
     }));
 
   const live = rows.filter((row) => row.event.status === "live").length;
   const drafts = rows.filter((row) => row.event.status === "draft").length;
+  // Every application, whatever became of it — the ones still awaiting review
+  // in an approval event (R-27) included.
   const applications = rows.reduce(
-    (total, row) =>
-      total +
-      row.applications.accepted +
-      row.applications.waitlisted +
-      row.applications.declined +
-      row.applications.withdrawn,
+    (total, row) => total + Object.values(row.applications).reduce((sum, n) => sum + n, 0),
     0
   );
 

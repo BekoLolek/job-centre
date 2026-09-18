@@ -43,6 +43,7 @@ import { revalidatePath } from "next/cache";
 import {
   type ApplicationStatus,
   type AvailabilityState,
+  type EntryMode,
   type EventStatus,
   eventStatus,
 } from "@/db/schema";
@@ -62,6 +63,7 @@ import {
   setEventQuestions,
   updateEvent,
 } from "@/lib/events";
+import type { ApplicationDecision } from "@/lib/events-policy";
 import { recordAudit } from "@/lib/audit";
 import {
   notifyApplicationDecided,
@@ -148,6 +150,10 @@ export type BasicsFields = {
   bannerUrl: string | null;
   gameId: string | null;
   capacity: number | null;
+  /** UC-08 6/6a. How applications land (R-27). */
+  entryMode: EntryMode;
+  /** UC-08 E6. False closes sign-ups once the seats are gone (R-170). */
+  waitlist: boolean;
   /** ISO instants, or null for "no bound that side". */
   signupOpensAt: string | null;
   signupClosesAt: string | null;
@@ -176,6 +182,12 @@ export async function saveBasicsAction(
     bannerUrl: fields.bannerUrl,
     gameId: fields.gameId,
     capacity: fields.capacity,
+    // Both arrive from the browser, so neither is stored as it was sent:
+    // `updateEvent` merges this into the config it already has.
+    config: {
+      entryMode: fields.entryMode === "approval" ? "approval" : "first_come",
+      waitlist: fields.waitlist !== false,
+    },
     signupOpensAt: parseStamp(fields.signupOpensAt),
     signupClosesAt: parseStamp(fields.signupClosesAt),
     startsAt: parseStamp(fields.startsAt),
@@ -493,8 +505,13 @@ export async function saveEntryRulesAction(
 /* Applicants                                                         */
 /* ------------------------------------------------------------------ */
 
-/** The word each decision reads as in the log. */
-const DECISION_VERB: Record<ApplicationStatus, string> = {
+/**
+ * The word each decision reads as in the log.
+ *
+ * `pending` is not here and cannot be: an approval event's application arrives
+ * pending and is never sent back to it (`ApplicationDecision`).
+ */
+const DECISION_VERB: Record<ApplicationDecision, string> = {
   accepted: "Accepted",
   waitlisted: "Waitlisted",
   declined: "Declined",
@@ -523,7 +540,7 @@ export type DecisionResult = {
  */
 export async function decideApplicationAction(
   applicationId: string,
-  status: ApplicationStatus,
+  status: ApplicationDecision,
   options: { note?: string | null; promote?: boolean }
 ): Promise<EventResult<DecisionResult>> {
   /*
@@ -560,7 +577,7 @@ export async function decideApplicationAction(
     actor: admin,
     eventId,
     subject: applicationId,
-    summary: `${DECISION_VERB[result.data.application.status]} ${who} for "${where}"${queue}.`,
+    summary: `${DECISION_VERB[status]} ${who} for "${where}"${queue}.`,
     detail: {
       status: result.data.application.status,
       promoted: result.data.promoted.length,

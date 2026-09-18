@@ -83,6 +83,7 @@ import {
   canTransition,
   capacityState,
   eligibility,
+  entryMode,
   missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
@@ -1387,7 +1388,7 @@ export type ApplyInput = {
  *  2. re-read the questions, the ladder and the counts from inside that lock;
  *  3. refuse everything that should be refused — closed signups, a failed rank
  *     gate, an unanswered required question, a second application;
- *  4. *then* decide accepted vs waitlisted, and write.
+ *  4. *then* decide pending, accepted or waitlisted, and write.
  *
  * Steps 2 and 4 being inside the same lock is the entire point. Split them and
  * two people take the last seat, which is the kind of bug that surfaces once,
@@ -1419,7 +1420,10 @@ export async function applyToEvent(
     const existing = await readApplications(tx, eventId);
     const mine = existing.find((row) => row.userId === userId) ?? null;
 
-    if (mine && (mine.status === "accepted" || mine.status === "waitlisted")) {
+    if (
+      mine &&
+      (mine.status === "pending" || mine.status === "accepted" || mine.status === "waitlisted")
+    ) {
       return fail("You have already applied to this event.");
     }
     if (mine && mine.status === "declined") {
@@ -1453,7 +1457,13 @@ export async function applyToEvent(
       if (!dayIds.has(dayId)) return fail("That day is not part of this event.");
     }
 
-    const status: ApplicationStatus = state.willWaitlist ? "waitlisted" : "accepted";
+    // UC-12 7b: an approval event stores the application for a manager to decide.
+    const status: ApplicationStatus =
+      entryMode(event.config) === "approval"
+        ? "pending"
+        : state.willWaitlist
+          ? "waitlisted"
+          : "accepted";
     const waitlistPosition =
       status === "waitlisted" ? nextWaitlistPosition(others) : null;
 
@@ -1646,6 +1656,9 @@ export async function setApplicationStatus(
   }>
 > {
   const now = options.now ?? new Date();
+  // Pending is where an application arrives, never where a manager sends one
+  // (docs/diagrams/application-state.md has no edge into it).
+  if (status === "pending") return fail("An application cannot be put back to pending review.");
 
   return database.transaction(async (tx) => {
     const [current] = await tx
@@ -1899,9 +1912,12 @@ export async function listEvents(
   return options.upcoming ? filtered : filtered.reverse();
 }
 
-/** Every status, at zero. The shape a caller can index without checking. */
-function noApplications(): Record<ApplicationStatus, number> {
-  return { accepted: 0, waitlisted: 0, declined: 0, withdrawn: 0 };
+/**
+ * Every status, at zero — the shape a caller can index without checking, and
+ * the fallback for an event `countApplicationsByStatus` left out of its map.
+ */
+export function emptyApplicationCounts(): Record<ApplicationStatus, number> {
+  return { pending: 0, accepted: 0, waitlisted: 0, declined: 0, withdrawn: 0 };
 }
 
 /**
@@ -1930,16 +1946,11 @@ export async function countApplicationsByStatus(
     .groupBy(applications.eventId, applications.status);
 
   for (const row of rows) {
-    const bag = out.get(row.eventId) ?? noApplications();
+    const bag = out.get(row.eventId) ?? emptyApplicationCounts();
     bag[row.status] += Number(row.total);
     out.set(row.eventId, bag);
   }
   return out;
-}
-
-/** The zeroed record, for a caller reading a map `countApplicationsByStatus` built. */
-export function emptyApplicationCounts(): Record<ApplicationStatus, number> {
-  return noApplications();
 }
 
 function summarise(
@@ -2107,8 +2118,9 @@ export async function getApplicationsForEvent(
   const rank: Record<ApplicationStatus, number> = {
     accepted: 0,
     waitlisted: 1,
-    declined: 2,
-    withdrawn: 3,
+    pending: 2,
+    declined: 3,
+    withdrawn: 4,
   };
 
   return views

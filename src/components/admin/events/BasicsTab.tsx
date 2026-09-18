@@ -15,6 +15,8 @@ import {
 } from "@/components/ui";
 import { EVENT_TYPE_SUGGESTIONS, localInput } from "@/components/events";
 import type { EventDetail } from "@/lib/events";
+import type { EntryMode } from "@/db/schema";
+import { entryMode, waitlistEnabled } from "@/lib/events-policy";
 import { slugify } from "@/lib/profile-fields";
 import { toInstant, zoneLabel } from "@/lib/time";
 import { saveBasicsAction } from "@/app/admin/events/actions";
@@ -59,6 +61,8 @@ export default function BasicsTab({
   const [bannerUrl, setBannerUrl] = useState(event.bannerUrl ?? "");
   const [gameId, setGameId] = useState(event.gameId ?? "");
   const [capacity, setCapacity] = useState<number | null>(event.capacity);
+  const [mode, setMode] = useState<EntryMode>(entryMode(event.config));
+  const [waitlist, setWaitlist] = useState(waitlistEnabled(event.config));
   const [signupOpensAt, setSignupOpensAt] = useState(localInput(event.signupOpensAt));
   const [signupClosesAt, setSignupClosesAt] = useState(localInput(event.signupClosesAt));
   const [startsAt, setStartsAt] = useState(localInput(event.startsAt));
@@ -92,6 +96,8 @@ export default function BasicsTab({
         bannerUrl: bannerUrl.trim() || null,
         gameId: gameId || null,
         capacity,
+        entryMode: mode,
+        waitlist,
         signupOpensAt: toInstant(signupOpensAt),
         signupClosesAt: toInstant(signupClosesAt),
         startsAt: toInstant(startsAt),
@@ -258,11 +264,73 @@ export default function BasicsTab({
             }}
           />
           <p className="mt-2 text-xs leading-relaxed text-muted">
-            Clear the box for an uncapped event. With a cap, applications past it join the
-            waitlist and are promoted automatically when somebody withdraws (§14). You can
-            still accept somebody over the cap — the screen will say so rather than refusing.
+            Clear the box for an uncapped event. You can still accept somebody over the cap
+            — the screen will say so rather than refusing.
           </p>
         </div>
+
+        {/* --- How people get in (UC-08 6, 6a, E6) -------------------- */}
+        <div>
+          <Eyebrow className="mb-2 text-chalk/70">How people get in</Eyebrow>
+          <ChoiceRow>
+            <ChoiceChip
+              selected={mode === "first_come"}
+              onClick={() => {
+                setMode("first_come");
+                touch();
+              }}
+            >
+              First come
+            </ChoiceChip>
+            <ChoiceChip
+              selected={mode === "approval"}
+              onClick={() => {
+                setMode("approval");
+                touch();
+              }}
+            >
+              By approval
+            </ChoiceChip>
+          </ChoiceRow>
+          <p className="mt-2 text-xs leading-relaxed text-muted">
+            {mode === "approval"
+              ? "Every application lands awaiting your review under Applicants, holding no seat and no place in the queue, until you accept, queue or decline it."
+              : "Applications take a seat the moment they arrive, and the cap decides what happens once the seats are gone."}
+          </p>
+        </div>
+
+        {/* The waitlist is a first-come rule: in an approval event nothing is
+            queued by the cap, so the switch would be a control with no effect. */}
+        {mode === "first_come" && (
+          <div>
+            <Eyebrow className="mb-2 text-chalk/70">Waitlist</Eyebrow>
+            <ChoiceRow>
+              <ChoiceChip
+                selected={waitlist}
+                onClick={() => {
+                  setWaitlist(true);
+                  touch();
+                }}
+              >
+                Queue them
+              </ChoiceChip>
+              <ChoiceChip
+                selected={!waitlist}
+                onClick={() => {
+                  setWaitlist(false);
+                  touch();
+                }}
+              >
+                Close when full
+              </ChoiceChip>
+            </ChoiceRow>
+            <p className="mt-2 text-xs leading-relaxed text-muted">
+              {waitlist
+                ? "Applications past the cap join the waitlist and are promoted automatically when somebody withdraws (§14)."
+                : "Sign-ups close the moment the seats are gone, and a late applicant is told the event is full rather than queueing for nothing."}
+            </p>
+          </div>
+        )}
       </Panel>
 
       {/* --- Dates -------------------------------------------------- */}

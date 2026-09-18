@@ -187,6 +187,17 @@ describe("readiness", () => {
     expect(detailOf(await checksFor(eventId), "capacity")).toMatch(/closes once they are gone/);
   });
 
+  it("says an approval event's cap waits on the manager, not on a waitlist", async () => {
+    // UC-08 6a: nothing takes a seat until it is accepted, so neither of the
+    // first-come sentences about the cap is true of one.
+    const eventId = await healthyEvent();
+    expectOk(
+      await updateEvent(eventId, { config: { entryMode: "approval", waitlist: false } }, db)
+    );
+
+    expect(detailOf(await checksFor(eventId), "capacity")).toMatch(/waits? for your review/i);
+  });
+
   it("warns about a missing start date, since applications would never close", async () => {
     const eventId = await healthyEvent();
     // Only the start date goes: clearing the sign-up window too would now be a

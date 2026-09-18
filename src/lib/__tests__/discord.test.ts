@@ -139,6 +139,31 @@ describe("an application decision", () => {
     expect(posted().map((message) => message.embeds[0].footer?.text)).toEqual(["Declined"]);
   });
 
+  it("posts nothing while an application is still awaiting review (R-27, UC-12 7b)", async () => {
+    // An approval event's application is not a decision: nobody has decided.
+    await switches({
+      application_accepted: true,
+      application_waitlisted: true,
+      application_declined: true,
+    });
+    counter += 1;
+    const event = unwrap(
+      await createEvent(
+        { ...PUBLISHABLE, title: `Approval ${counter}`, config: { entryMode: "approval" } },
+        db
+      )
+    );
+    unwrap(await publishEvent(event.id, db));
+    const member = await makeUser(db, { displayName: `Waiting ${counter}` });
+    const application = unwrap(await applyToEvent(event.id, member, {}, db));
+
+    await announced(application.id);
+
+    expect(fetchStub).not.toHaveBeenCalled();
+    // Not even composed: there is no kind of announcement this row is.
+    expect(applicationDecidedMessage).not.toHaveBeenCalled();
+  });
+
   it("posts nothing for a decline while its switch is off", async () => {
     await switches({ application_accepted: true, application_waitlisted: true });
     const { applicationId } = await decided("declined");

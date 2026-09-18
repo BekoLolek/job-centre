@@ -2,7 +2,7 @@
 // client components, and this file has to stay importable from a plain test.
 import { plural } from "@/components/ui/plural";
 import type { EventDetail } from "@/lib/events";
-import { missingToPublish, rankMeetsMinimum } from "@/lib/events-policy";
+import { entryMode, missingToPublish, rankMeetsMinimum } from "@/lib/events-policy";
 
 /**
  * Is this event ready to publish, and if not, what does each gap mean?
@@ -99,12 +99,19 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
   }
 
   /* --- capacity ------------------------------------------------------ */
+  // What the cap *does* depends on how people get in (R-27): an approval event
+  // queues nobody by itself, so neither sentence about the waitlist is true of
+  // one.
+  const byApproval = entryMode(event.config) === "approval";
+
   if (event.capacity === null) {
     checks.push({
       key: "capacity",
       label: "No capacity",
       level: "warn",
-      detail: "Uncapped: everybody who applies is accepted and there is never a waitlist.",
+      detail: byApproval
+        ? "Uncapped: no seat limit, but every application still waits for your review."
+        : "Uncapped: everybody who applies is accepted and there is never a waitlist.",
     });
   } else if (!Number.isInteger(event.capacity) || event.capacity < 1) {
     checks.push({
@@ -118,8 +125,9 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
       key: "capacity",
       label: plural(event.capacity, "seat"),
       level: "ok",
-      detail:
-        event.config.waitlist === false
+      detail: byApproval
+        ? "Applications wait for your review; nothing takes a seat until you accept it."
+        : event.config.waitlist === false
           ? "The waitlist is off, so the event closes once they are gone."
           : "Applications past that join the waitlist.",
     });
