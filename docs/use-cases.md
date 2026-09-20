@@ -53,6 +53,12 @@ path of each use case is its acceptance test; every alternate and error flow get
 | R-150 | UC-26 extensions |
 | R-169 | UC-27 extensions |
 | R-170 | UC-08 extensions, UC-12 extensions |
+| R-171, R-172, R-173, R-182, R-189, R-196 | UC-31 |
+| R-174, R-175, R-176, R-177 | UC-32 |
+| R-178, R-179, R-180, R-195 | UC-33 |
+| R-181, R-183, R-184, R-185, R-186, R-187, R-188, R-194 | UC-34 |
+| R-190, R-191, R-192 | UC-35 |
+| R-193, R-197, R-198 | UC-36 |
 | R-22, R-125, R-126, R-127, R-128, R-129, R-130 | UC-28 |
 | R-141 | UC-29 |
 | R-142 | UC-30 |
@@ -1094,3 +1100,187 @@ cases of their own.
 
 **Error flows**
 - **1a.** The site points at a remote database, or developer sign-in is off - System shows not found and signs nobody in.
+
+---
+
+# Championship (added 2026-09-20 — awaiting Gate 1)
+
+A season of two to four events a month across different games, with one running score.
+
+## UC-31: Set up a championship
+
+**Actor:** Admin
+**Requirements covered:** R-171, R-172, R-173, R-182, R-189, R-196
+**Trigger:** The community decides to run a season.
+
+**Preconditions**
+1. Actor is an admin.
+
+**Main success path**
+1. Admin creates a championship with a name, a description and the months it runs.
+2. System saves it hidden: only admins can see it.
+3. Admin sets what each finishing place is worth (25, 18, 15, 12, 10, 8, 6, 4, 2, 1 by default).
+4. Admin sets what taking part is worth, for anyone who played but finished outside the table.
+5. Admin publishes it.
+6. System shows it to everyone, with its scoring rules on the page.
+
+**Outcome**
+- A published championship with a points table, ready for events to be added (UC-32).
+
+**Alternate flows**
+- **3a.** Admin sets how many results count (best 8 of 12) - System scores only each member's best that many, and says so on the page.
+- **5a.** Admin leaves it hidden - only admins see it; nothing is announced.
+
+**Error flows**
+- **1a.** Name empty, or the end before the start - System rejects with the reason; nothing saved.
+- **3b.** A place worth less than the place below it - System rejects: the table must not go up as you finish lower.
+- **4a.** Taking part worth more than last place in the table - System rejects for the same reason.
+
+**Notes**
+- An event belongs to at most one championship (R-196), enforced when it is added.
+
+---
+
+## UC-32: Decide which events count, and for how much
+
+**Actor:** Manager (admin, or the host of that event)
+**Requirements covered:** R-174, R-175, R-176, R-177
+**Trigger:** An event is planned that belongs to the season.
+
+**Preconditions**
+1. The championship exists; actor manages the event.
+
+**Main success path**
+1. Manager adds the event to the championship.
+2. System counts it, at weight 1.
+3. Manager sets the weight to 2 for a whole-day tournament.
+4. System scores that event's places at double, and the event page says so.
+
+**Outcome**
+- The event counts towards the season at its weight; the championship lists it among its events.
+
+**Alternate flows**
+- **3a.** Manager gives the event its own points table - it is used instead of the championship's, still multiplied by the weight.
+- **4a.** Manager removes the event from the championship - System stops counting it and re-scores the season.
+
+**Error flows**
+- **1a.** The event already belongs to another championship - System refuses and names it.
+- **1b.** The event is complete and its places are already recorded - System allows it and scores it immediately.
+- **3b.** Weight of zero or less - System rejects.
+
+---
+
+## UC-33: Record where everyone finished
+
+**Actor:** Manager
+**Requirements covered:** R-178, R-179, R-180, R-195
+**Trigger:** A counting event has been played.
+
+**Preconditions**
+1. The event is in a championship and has taken place.
+
+**Main success path**
+1. Manager opens the event's result for the championship.
+2. System lists everyone who took part - the teams if it had teams, otherwise the accepted applicants.
+3. Manager puts them in finishing order.
+4. System saves the order, scores it against the table and the weight, and updates the standings.
+5. Admin home stops listing the event as missing a result.
+
+**Outcome**
+- Every player has points from that event; the standings show them; nothing is stored as a total.
+
+**Alternate flows**
+- **2a.** The event had teams - a team's place scores for every member of that team (R-180).
+- **3a.** Two players genuinely tie - Manager puts them in the same place; System gives each the place's points and leaves the next place empty.
+- **3b.** Somebody took part but is not placed - System gives them the taking-part points.
+- **4a.** Manager corrects the order later - System re-scores the season, and every standing that depended on it moves.
+
+**Error flows**
+- **3c.** The same player appears twice in the order - System rejects; nothing saved.
+- **3d.** A player who was not in the event - System rejects.
+- **1a.** The championship is closed - System refuses until it is reopened (UC-35).
+- **1b.** The event is complete (finished) - recording its championship result is still allowed, because the result belongs to the season rather than to the event's own record; the event's own results stay locked (UC-09 6b).
+
+---
+
+## UC-34: Follow the season
+
+**Actor:** Visitor; Member
+**Requirements covered:** R-181, R-183, R-184, R-185, R-186, R-187, R-188, R-194
+**Trigger:** Somebody wants to know who is winning.
+
+**Preconditions**
+1. A published championship exists.
+
+**Main success path**
+1. Visitor opens the championship from its own place in the top navigation.
+2. System shows the top three prominently, then the full standings: position, player, points.
+3. Visitor opens a player's row.
+4. System shows where those points came from, event by event and game by game.
+5. Visitor looks at the season's events.
+6. System lists the events that have counted, with the winner of each, and the ones still to come.
+
+**Outcome**
+- Nothing changes. The standings match the recorded places exactly.
+
+**Alternate flows**
+- **2a.** Two players are level on points - System orders them by most first places, then most seconds, and so on, and says that is the rule.
+- **2b.** Viewer is signed in and has points - System marks their own row.
+- **2c.** The last event moved people - System shows how far each player moved.
+- **2d.** Only the best results count (UC-31 3a) - System shows the counted total and says how many of how many count.
+
+**Error flows**
+- **1a.** No championship is published - the navigation item is not shown.
+- **2e.** A published championship has no results yet - System shows the events to come and says the season has not started.
+
+---
+
+## UC-35: End the season
+
+**Actor:** Admin
+**Requirements covered:** R-190, R-191, R-192
+**Trigger:** The last event of the season has been scored.
+
+**Preconditions**
+1. Actor is an admin; the championship is published.
+
+**Main success path**
+1. Admin closes the championship.
+2. System freezes the final standings and shows it as finished.
+3. Visitor opens past championships.
+4. System lists finished seasons with their winners.
+
+**Outcome**
+- A finished season that no longer changes; its page stays for good.
+
+**Alternate flows**
+- **2a.** Admin reopens it - System allows results to be recorded and corrected again, and records who reopened it.
+
+**Error flows**
+- **1a.** A counting event still has no result - System says which, and asks the admin to confirm closing without it.
+- **2b.** Any attempt to record or correct a result while closed - System refuses with "This championship is finished - reopen it to change it".
+
+---
+
+## UC-36: Hear about the season
+
+**Actor:** Member; Admin; Discord
+**Requirements covered:** R-193, R-197, R-198
+**Trigger:** A counting event's result is recorded.
+
+**Preconditions**
+1. The championship is published.
+
+**Main success path**
+1. A result is recorded (UC-33).
+2. System notifies each member who played in that event that the standings have changed, unless they switched that off.
+3. System posts the new top of the table to the Discord channel, if that announcement is on.
+4. A visitor opens a player's profile.
+5. System shows that player's championships and where they finished in each.
+
+**Outcome**
+- People hear about the season without having to watch the page.
+
+**Alternate flows**
+- **2a.** Member switched this kind off - no notification; the standings still change.
+- **3a.** The announcement is off, or no webhook is configured - nothing is posted (UC-26 3a, 4b).

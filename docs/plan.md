@@ -139,6 +139,70 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] It still asserts a real reopen (a row written before the close is read after it)
 - **Depends on:** none. Do it before the suite is used as a release gate at Gate 3.
 
+## I. Championship (R-171 to R-198)
+
+Added 2026-09-20. A season of two to four events a month across different games, with one
+running score. Runs alongside the rest: it touches `src/lib/championship*`, its own routes
+and its own tables, so only the nav item and the event editor overlap anything else.
+
+**The rule that shapes it:** a standing is never stored. Points are worked out from recorded
+places on every read, so correcting a place re-scores the season - the same rule that makes
+bracket corrections safe (R-79).
+
+### Task 38: Score a season
+
+- **Serves:** R-172, R-173, R-176, R-177, R-180, R-181, R-182 / UC-33, UC-34
+- **Files:** new `src/lib/championship-policy.ts` (pure) and its tests; `src/db/schema.ts` (+ migration: `championships`, `championship_events`, `championship_placements`)
+- **Do:** the schema from `docs/domain-model.md`, and the pure scoring function: placements (member or team) + points table + weight + participation points + optional best-N -> ordered standings, with the tie rule (points, then most firsts, then most seconds, ...). A team's place scores for every member. Nothing stored but the placements.
+- **Acceptance criteria:**
+  - [ ] Team placement scores every member; a member placed twice (directly and via a team) is rejected
+  - [ ] Shared position gives both the same points and leaves the next position empty
+  - [ ] Weight and per-event table override apply; participation points scale with weight
+  - [ ] best-N keeps each member's best results only
+  - [ ] Tie rule ordered exactly as specified, and level players shown level
+  - [ ] Correcting a placement changes the standings with nothing stale left behind
+- **Depends on:** none
+
+### Task 39: Set up and run a season
+
+- **Serves:** R-171, R-189, R-190, R-191, R-196 / UC-31, UC-35
+- **Files:** `src/lib/championships.ts`, `src/app/admin/championships/**`, `src/components/admin/ChampionshipEditor.tsx`, tests
+- **Do:** create, edit, publish, unpublish, close, reopen per `diagrams/championship-state.md`; the points table and participation points editor with UC-31's validation (a place never worth less than the one below it); the lock on a closed season; audit entries naming who.
+- **Acceptance criteria:** each transition and each refusal tested; closing with a counting event unscored asks for confirmation
+- **Depends on:** Task 38
+
+### Task 40: Decide which events count
+
+- **Serves:** R-174, R-175, R-176, R-177 / UC-32
+- **Files:** `src/lib/championships.ts`, the event editor (a Championship section), `src/app/admin/events/actions.ts`
+- **Do:** add or remove an event, set its weight, optionally give it its own table. An event belongs to at most one championship, enforced in the database.
+- **Acceptance criteria:** adding an event already in another season is refused and names it; removing re-scores; weight of 0 or less refused
+- **Depends on:** Task 39
+
+### Task 41: Record where everyone finished
+
+- **Serves:** R-178, R-179, R-195 / UC-33
+- **Files:** `src/lib/championships.ts`, `src/components/admin/PlacementEditor.tsx`, `src/app/admin/championships/actions.ts`, `src/lib/admin-dashboard.ts`
+- **Do:** list who took part (teams if the event had them, else accepted applicants), put them in order, save; correct later; unscored counting events appear on the admin home.
+- **Acceptance criteria:** UC-33's five error flows; a correction re-scores; refused while the season is closed
+- **Depends on:** Task 40
+
+### Task 42: The season, in public
+
+- **Serves:** R-183 to R-188, R-192, R-194, R-196 / UC-34, UC-35
+- **Files:** new `src/app/championship/**` and `src/app/championship/[slug]/**`, `src/components/championship/*`, `src/components/AppHeader.tsx`
+- **Do:** the standings (top three prominently, then the table), a player's points game by game, movement at the last event, events counted and still to come, the scoring rules, the viewer's own row marked, past seasons. Its own navigation item, visibly a cut above the others (the user asked for it) while staying inside the design system - no new palette, no new type scale.
+- **Acceptance criteria:** UC-34's alternate flows; nothing shown when no season is published; no horizontal scroll at 375px; verified in the browser
+- **Depends on:** Task 41, Task 30 (the page shell)
+
+### Task 43: Tell people about it
+
+- **Serves:** R-193, R-197, R-198 / UC-36
+- **Files:** `src/lib/notify-policy.ts`, `src/lib/notify-events.ts`, `src/lib/announce.ts`, `src/lib/discord.ts`, `src/lib/players.ts`, `src/app/players/[handle]/page.tsx`
+- **Do:** a `standings_changed` notification kind (switchable, off-by-default like the rest of the optional ones), a Discord announcement of the new top of the table, and a player's seasons on their profile.
+- **Acceptance criteria:** notified only to members who played that event; announcement respects its switch and a missing webhook; profile shows seasons and final positions
+- **Depends on:** Task 42
+
 ## B. Applications
 
 ### Task 7: Approval entry mode

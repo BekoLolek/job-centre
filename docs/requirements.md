@@ -265,6 +265,43 @@ requirement, the note says how the two combine.
 | R-169 | As an admin, I want the admin home to flag events that are ready to publish, missing captains, holding an open draft lot, or with a series needing a winner, so that those decisions reach me. | Could | Extends R-109 |
 | R-170 | As a manager, I want a first-come event to either keep a waitlist or simply close when full, so that a small event does not collect a queue it will never use. | Could | Added during Task 7 planning: the audit found it, and it was missed from the Gate 2 list. Applies to first-come entry only (R-27) |
 
+### Championship (added 2026-09-20, Tier 3 — awaiting Gate 1)
+
+A championship is a season: two to four events a month, across different games (Among Us,
+Fall Guys, Codenames, Marvel Rivals, Overwatch), with one running score. Points come from
+where you finished in each counting event, so different games can share one table.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-171 | As an admin, I want to create a championship with a name, a description and the months it runs, so that a season has an identity. | Must | |
+| R-172 | As an admin, I want to set the points a finishing place is worth, so that every game scores the same way. | Must | Default 25/18/15/12/10/8/6/4/2/1 |
+| R-173 | As an admin, I want to give points for taking part at all, so that turning up is worth something. | Should | |
+| R-174 | As a manager, I want to add an event to a championship, so that its result counts towards the season. | Must | |
+| R-175 | As a manager, I want to take an event out of a championship, so that a mistake or a cancelled night stops counting. | Should | Standings recompute |
+| R-176 | As a manager, I want to weight an event, so that a whole-day tournament is worth more than a half-hour game night. | Must | Points = place value x weight; default 1 |
+| R-177 | As a manager, I want to give one event its own points table, so that an unusual event can score its own way. | Could | Falls back to the championship's table |
+| R-178 | As a manager, I want to record where each player or team finished in a counting event, so that points can be worked out. | Must | |
+| R-179 | As a manager, I want to correct a finishing order afterwards, with the standings following, so that a mistake is not permanent. | Must | |
+| R-180 | As a member, I want a team's finishing place to score for everyone on that team, so that team games count the same as solo ones. | Must | |
+| R-181 | As a visitor, I want players level on points separated by a stated rule, so that the order is not arbitrary. | Should | Most firsts, then seconds, and so on |
+| R-182 | As an admin, I want to count only a member's best results, so that missing a night does not end someone's season. | Could | e.g. best 8 of 12 |
+| R-183 | As a visitor, I want to see the running standings, so that I know who is winning. | Must | |
+| R-184 | As a visitor, I want to see where a player's points came from, game by game, so that the total makes sense. | Should | |
+| R-185 | As a visitor, I want to see how each player's position moved at the last event, so that the season has a story. | Could | |
+| R-186 | As a visitor, I want to see which events have counted and which are still to come, so that I know what is left. | Should | |
+| R-187 | As a member, I want to find my own row quickly, so that I can see where I stand. | Should | |
+| R-188 | As a visitor, I want the top three shown prominently, so that the leaders are obvious at a glance. | Could | |
+| R-189 | As an admin, I want a championship hidden until I publish it, so that I can set it up in peace. | Must | |
+| R-190 | As an admin, I want to close a championship at the end of the season, so that the final standings stand. | Should | |
+| R-191 | As an admin, I want to reopen a closed championship, so that a late correction is possible. | Should | |
+| R-192 | As a visitor, I want to browse past championships, so that previous seasons are on the record. | Should | |
+| R-193 | As a member, I want to be told when the standings change after an event I played in, so that I do not have to keep checking. | Could | Switchable like every other notification (R-104) |
+| R-194 | As a visitor, I want the championship to have its own place in the top navigation, distinct from the rest, so that it reads as the thing the community is following. | Should | The user asked for it to look a cut above the other items |
+| R-195 | As an admin, I want to see which counting events still have no result recorded, so that the standings do not quietly go stale. | Should | Extends R-109 |
+| R-196 | As a visitor, I want to read the scoring rules on the championship page, so that the points are not a mystery. | Should | |
+| R-197 | As an admin, I want new standings announced in the Discord channel after a counting event, so that the server follows the season. | Could | Switchable (R-108) |
+| R-198 | As a visitor, I want a player's championship history on their profile, so that their seasons are in one place. | Could | Extends R-13 |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -278,6 +315,8 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - **Usable on a phone** at ~400px wide; readable contrast (WCAG AA); respects reduced-motion.
 - **Secrets** (`AUTH_SECRET`, `DISCORD_CLIENT_SECRET`, `DATABASE_URL`, bot token, cron secret) never reach the browser, the settings screen or the audit log. The webhook URL is shown masked only.
 - **Nothing on the record is hard-deleted** - events, applications, results and draft lots. (Polls and suggestions may be deleted by an admin; R-95.)
+- **Championship points are worked out from recorded finishing places, never stored as a total.** Correcting a place re-scores the season, the same rule that already makes bracket corrections safe (R-79).
+- **An event belongs to at most one championship**, so a result cannot count twice.
 
 ## Out of scope
 
@@ -296,6 +335,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - One host managing several events under a single grant (each grant is one event; R-86).
 - The retired password-based draft board and its env-var accounts.
 - Artificial delays or simulated mouse movement between actions.
+- Championship: skill ratings or ELO; automatic results from game APIs; prizes, money or entry fees; leaderboards across other communities; more than one championship counting the same event; per-game separate championships running as their own competitions (one season, one table, games are just where the points came from).
 
 ## Open questions
 

@@ -390,6 +390,58 @@ are listed; validation of a single form belongs to the use case.
 **Rules:** Secrets are never settings. A value set here wins over the deploy's environment value. The announcement channel address is only ever shown masked.
 **Appears in:** UC-01, UC-02, UC-26, UC-27
 
+### Championship
+**Means:** A season: many events across different games, with one running score.
+**Identified by:** its own id; the name is unique among open seasons.
+
+| Attribute | Type | Rules |
+|---|---|---|
+| name, description | text | name required |
+| runsFrom, runsTo | month | end not before start |
+| status | hidden, published, closed | see `diagrams/championship-state.md` |
+| pointsTable | ordered list of numbers | position 1 first; never rises as the position falls |
+| participationPoints | number | 0 or more; not more than the last place in the table |
+| countBest | number | optional; count only each member's best this many results |
+
+**Rules:**
+- Standings are worked out from recorded places every time. No total is ever stored.
+- While `closed`, no place can be recorded or corrected.
+
+**Appears in:** UC-31 to UC-36
+
+### CountingEvent
+**Means:** One event that counts towards a championship, and what it is worth.
+**Identified by:** the event (an event belongs to at most one championship).
+
+| Attribute | Type | Rules |
+|---|---|---|
+| weight | number | above 0; default 1 |
+| pointsTable | ordered list | optional; used instead of the championship's |
+
+**Rules:** Points for a place = (that event's table, else the championship's)[place] x weight. Participation points scale the same way.
+**Appears in:** UC-32, UC-33, UC-34
+
+### Placement
+**Means:** Where one player or one team finished in a counting event.
+**Identified by:** counting event + subject.
+
+| Attribute | Type | Rules |
+|---|---|---|
+| position | number | 1 or more; two subjects may share a position, and the next position is then empty |
+| subject | member, or team | a team's place scores for every member of that team |
+
+**Rules:**
+- A member appears at most once in one event's order, whether directly or through a team.
+- Only members who took part may be placed.
+- Members who took part and are not placed score the participation points.
+
+**Appears in:** UC-33, UC-34
+
+### Standing
+**Means:** A member's position in a season. Derived, never stored.
+**Rules:** Ordered by points, then by most first places, then most seconds, and so on; ties that survive that are shown level.
+**Appears in:** UC-34, UC-35, UC-36
+
 ### AuditEntry
 **Means:** A record that a member changed something, and what.
 **Rules:** Never edited or deleted. Never contains a secret or the unmasked announcement channel address.
