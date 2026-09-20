@@ -24,7 +24,16 @@
 import AppHeader from "@/components/AppHeader";
 import AvailabilityPanel from "@/components/profile/AvailabilityPanel";
 import ProfileSection from "@/components/profile/ProfileSection";
-import { Alert, Avatar, Badge, Eyebrow, Panel, Section, StatTile } from "@/components/ui";
+import {
+  Alert,
+  Avatar,
+  Badge,
+  Eyebrow,
+  Page,
+  Panel,
+  Section,
+  StatTile,
+} from "@/components/ui";
 import { getAvailability } from "@/lib/availability";
 import { loadProfile } from "@/lib/profile";
 import { requireUser } from "@/lib/session-guards";
@@ -58,9 +67,9 @@ export default async function ProfilePage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Profile" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[900px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         {/* --- Identity, read-only ---------------------------------- */}
         <Panel as="header" className="rise">
           <div className="flex flex-wrap items-center gap-5">
@@ -164,7 +173,7 @@ export default async function ProfilePage() {
         <p className="pb-4 text-center text-12 text-muted">
           Answers are stored per game, so a Jackbox night never asks for your Rivals rank.
         </p>
-      </main>
+      </Page>
     </div>
   );
 }

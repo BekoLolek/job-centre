@@ -35,7 +35,22 @@ export default function AdminNav({ className }: { className?: string }) {
   const pathname = usePathname() ?? "";
 
   return (
-    <nav className={cx("hidden items-center gap-6 lg:flex", className)} aria-label="Admin sections">
+    <nav
+      /*
+       * `min-w-0` so the header can shrink this instead of widening past the
+       * page shell, and `overflow-x-auto` so what will not fit is still
+       * reachable. `overflow-y-hidden` is explicit: `overflow-x: auto` promotes
+       * the other axis to `auto` too, and a vertical scrollbar inside a 72px
+       * bar is not a thing anybody asked for.
+       */
+      className={cx(
+        // `py-2` is not spacing: the active link's underline hangs 2px below
+        // its box, and `overflow-y-hidden` would otherwise shave it off.
+        "hidden min-w-0 items-center gap-5 overflow-x-auto overflow-y-hidden py-2 lg:flex",
+        className
+      )}
+      aria-label="Admin sections"
+    >
       {SECTIONS.map((section) => {
         const active =
           "exact" in section && section.exact

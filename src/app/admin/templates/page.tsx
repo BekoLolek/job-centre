@@ -17,7 +17,7 @@
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import TemplatesManager from "@/components/admin/TemplatesManager";
-import { Eyebrow, StatTile } from "@/components/ui";
+import { Eyebrow, Page, StatTile } from "@/components/ui";
 import { loadAdminTemplates } from "@/lib/admin-templates";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -36,11 +36,11 @@ export default async function AdminTemplatesPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="ADMIN">
+      <AppHeader>
         <AdminNav />
       </AppHeader>
 
-      <main className="mx-auto max-w-[1100px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Templates</Eyebrow>
@@ -71,7 +71,7 @@ export default async function AdminTemplatesPage() {
           touches an event already taking applications. Nothing here deletes a template —
           deactivating takes it out of the create-event picker and leaves everything else.
         </p>
-      </main>
+      </Page>
     </div>
   );
 }

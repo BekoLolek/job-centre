@@ -33,8 +33,15 @@ import {
   formatSummary,
   viewerAction,
 } from "@/components/events";
-import { Badge, Button, Eyebrow, Panel,
-  Section, StatTile } from "@/components/ui";
+import {
+  Badge,
+  Button,
+  Eyebrow,
+  Page,
+  Panel,
+  Section,
+  StatTile,
+} from "@/components/ui";
 import { type EventSummary, listEvents, loadApplicationForm } from "@/lib/events";
 import { getCurrentUser } from "@/lib/session-guards";
 
@@ -80,9 +87,9 @@ export default async function HubPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Events" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1400px] space-y-10 px-4 py-10 sm:px-6">
+      <Page className="space-y-10">
         {/* --- 1. Live now, and only when it is ---------------------- */}
         {live.length > 0 && (
           <section className="space-y-3">
@@ -231,7 +238,7 @@ export default async function HubPage() {
           </Section>
         )}
 
-      </main>
+      </Page>
     </div>
   );
 }

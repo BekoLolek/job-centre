@@ -42,7 +42,23 @@ export default function TeamsRail({ view }: TeamsRailProps) {
         )}
       </div>
 
-      <ul className="space-y-3">
+      {/*
+        The rosters scroll inside the rail, exactly as the lot history below
+        them and both pool lists already do. Nothing is hidden — every team is
+        still here — but the rail stops setting the height of the grid row it
+        sits in, which is what `lg:sticky` needs before it can mean anything:
+        at 66 roster rows this list ran 3028px, the row ran with it, and the
+        pool band underneath started 3256px down a 3655px page.
+
+        `50vh - 8rem` is the same cap as the lot list below, and the pair of
+        them is what sizes the rail: two lists plus the headings and the lot
+        panel's own chrome come to `100vh - 130px`, which is inside the
+        `100vh - 96px` the sticky offset leaves. That is the property worth
+        holding — a sticky rail taller than the screen pins with its bottom
+        below the fold, and whatever is down there can never be read. Sized off
+        the viewport it holds on a laptop and on a 1440-tall monitor alike.
+      */}
+      <ul className="space-y-3 lg:max-h-[calc(50vh-8rem)] lg:overflow-y-auto lg:pr-1">
         {view.teams.map((team) => {
           const mine = team.id === view.you.teamId;
           return (
@@ -98,7 +114,7 @@ export default function TeamsRail({ view }: TeamsRailProps) {
         ) : (
           // Every lot, newest first. The list scrolls rather than being cut
           // short: the prices are the record, and the record is the point.
-          <ul className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+          <ul className="max-h-[420px] space-y-2 overflow-y-auto pr-1 lg:max-h-[calc(50vh-8rem)]">
             {view.history.map((lot) => {
               const line = lotLine(lot, { players: view.players, teams: view.teams });
               // The lot history is the other half of §4's "link to it from

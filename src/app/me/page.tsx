@@ -30,6 +30,7 @@ import {
   Button,
   EmptyState,
   Eyebrow,
+  Page,
   Panel,
   Section,
   StatTile,
@@ -138,9 +139,9 @@ export default async function MePage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Dashboard" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1000px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         {/* --- Who --------------------------------------------------- */}
         <Panel as="header" className="rise">
           <div className="flex flex-wrap items-center gap-5">
@@ -331,7 +332,7 @@ export default async function MePage() {
             </div>
           </Section>
         </div>
-      </main>
+      </Page>
     </div>
   );
 }

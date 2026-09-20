@@ -14,7 +14,7 @@
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import EventsManager, { type EventListRow } from "@/components/admin/events/EventsManager";
-import { Eyebrow, StatTile } from "@/components/ui";
+import { Eyebrow, Page, StatTile } from "@/components/ui";
 import {
   countApplicationsByStatus,
   emptyApplicationCounts,
@@ -55,11 +55,11 @@ export default async function AdminEventsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="ADMIN">
+      <AppHeader>
         <AdminNav />
       </AppHeader>
 
-      <main className="mx-auto max-w-[1200px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Events</Eyebrow>
@@ -105,7 +105,7 @@ export default async function AdminEventsPage() {
           Nothing on this page deletes an event. A cancelled event stays in the archive with
           its applications.
         </p>
-      </main>
+      </Page>
     </div>
   );
 }

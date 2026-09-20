@@ -13,7 +13,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import AvailabilityWeek from "@/components/admin/AvailabilityWeek";
-import { Eyebrow, Section } from "@/components/ui";
+import { Eyebrow, Page, Section } from "@/components/ui";
 import { availabilityWeek } from "@/lib/availability";
 import { requireAdmin } from "@/lib/session-guards";
 import { formatDate, parseDate, todayIn, weekStart } from "@/lib/zoned-time";
@@ -45,9 +45,9 @@ export default async function AdminAvailabilityPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Admin" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1200px] px-4 py-8 sm:px-6">
+      <Page>
         <header className="mb-2">
           <Eyebrow className="mb-2">Admin · Availability</Eyebrow>
           <h1 className="text-36">When everyone is free</h1>
@@ -66,7 +66,7 @@ export default async function AdminAvailabilityPage({
         >
           <AvailabilityWeek people={people} weekOf={formatDate(monday)} />
         </Section>
-      </main>
+      </Page>
     </div>
   );
 }

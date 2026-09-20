@@ -33,7 +33,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Alert, Button, EmptyState, Eyebrow, Panel } from "@/components/ui";
+import {
+  Alert,
+  Button,
+  EmptyState,
+  Eyebrow,
+  PAGE_SHELL,
+  Page,
+  Panel,
+  cx,
+} from "@/components/ui";
 import { completionSentence, playerName } from "@/components/draft";
 import type { DraftPoolKind } from "@/db/schema";
 import AdminConsole from "./AdminConsole";
@@ -204,9 +213,11 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
-        <div className="mx-auto flex h-16 max-w-[1500px] items-center gap-4 px-4 sm:px-6">
-          <Link href="/" className="wordmark text-16 hover:text-hot">
-            JOB CENTRE<span className="text-union"> DRAFT</span>
+        <div className={cx(PAGE_SHELL, "flex h-16 items-center gap-4")}>
+          {/* The same mark as `AppHeader`, at the room's own size. What this
+              screen is, the title and the live pill under it already say. */}
+          <Link href="/" className="wordmark wordmark-accent text-16">
+            Job Centre
           </Link>
 
           <Eyebrow as="span" className="hidden items-center gap-2 sm:inline-flex">
@@ -234,7 +245,7 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
         </div>
       </header>
 
-      <div className="mx-auto max-w-[1500px] space-y-2 px-4 pt-4 sm:px-6">
+      <div className={cx(PAGE_SHELL, "space-y-2 pt-4")}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="font-display text-24 leading-none">
             {event.title}
@@ -258,7 +269,7 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
       </div>
 
       {noTeams ? (
-        <main className="mx-auto max-w-[1500px] px-4 py-10 sm:px-6">
+        <Page>
           <Panel>
             <EmptyState>
               This event has no draft set up yet — no teams, so no wheel and nothing to bid
@@ -272,13 +283,25 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
               </div>
             )}
           </Panel>
-        </main>
+        </Page>
       ) : (
-        <main
-          className={`mx-auto grid max-w-[1500px] gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[320px_minmax(0,1fr)] ${
-            isAdmin ? "xl:grid-cols-[320px_minmax(0,1fr)_340px]" : ""
-          }`}
-        >
+        /*
+          Two columns, never three.
+
+          The pool rail used to take a third column at `xl`, which worked only
+          because this page was 1500px wide. Inside the shared 1100px shell the
+          arithmetic does not close: 320 for the teams rail + 340 for the pool
+          + two 24px gaps leaves the stage 344px, and the stage — the wheel and
+          the player on the block — is the room. It needs about 560px before
+          the wheel and the lot card stop reading, and 320 + 24 + 560 + 24 +
+          340 is 1268 against a content box that tops out at 1052. There is no
+          viewport where three columns fit, so there is no breakpoint to push
+          them to; the pool goes underneath instead, across the full width.
+
+          Two columns start at `lg`, where the stage is already 632px, and it
+          settles at 708px from 1100 up. Below `lg` all three stack.
+        */
+        <Page className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
           <TeamsRail view={view} />
 
           <section className="flex min-w-0 flex-col items-center gap-6">
@@ -324,8 +347,12 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
             </div>
           </section>
 
-          {isAdmin && <PoolRail view={view} busy={busy} run={run} />}
-        </main>
+          {isAdmin && (
+            <div className="lg:col-span-2">
+              <PoolRail view={view} busy={busy} run={run} />
+            </div>
+          )}
+        </Page>
       )}
     </div>
   );

@@ -129,14 +129,13 @@ export default async function SignInPage({
         <Eyebrow className="rise">Members · Discord sign-in</Eyebrow>
 
         <div className="relative">
-          <h1 className="wordmark leading-[1.02] tracking-tight">
-            <span className="block text-hero rise">Job Centre</span>
-            <span
-              className="block text-hero text-union rise"
-              style={{ animationDelay: "90ms" }}
-            >
-              EVENTS
-            </span>
+          {/*
+            One line, the same mark as the header's. `rise` sits on the `<h1>`
+            and the drift on the `<span>` because both are `animation` on one
+            element and the later rule in `globals.css` would simply win.
+          */}
+          <h1 className="wordmark leading-[1.02] tracking-tight rise">
+            <span className="block text-hero wordmark-accent">Job Centre</span>
           </h1>
           <p
             className="mt-6 max-w-md text-muted leading-relaxed rise"
@@ -159,9 +158,9 @@ export default async function SignInPage({
       <section className="flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-sm rise">
           <div className="lg:hidden mb-10">
-            <h1 className="font-display text-48 leading-[0.85]">
-              JOB CENTRE
-              <span className="block text-union">Events</span>
+            {/* The same mark again, at the one fixed step this block used. */}
+            <h1 className="wordmark leading-[0.85] tracking-tight">
+              <span className="block text-48 wordmark-accent">Job Centre</span>
             </h1>
           </div>
 

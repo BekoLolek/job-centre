@@ -12,38 +12,54 @@
 
 import Link from "next/link";
 import type { ReactNode } from "react";
-import HeaderLink from "./HeaderLink";
+import { PAGE_SHELL, cx } from "./ui";
 import SessionNav from "./SessionNav";
+import SiteNav from "./SiteNav";
 
 export default function AppHeader({
-  /** The word after "Job Centre", picked out in union blue. */
-  section,
   /** Extra controls, left of the account menu. */
   children,
 }: {
-  section: string;
   children?: ReactNode;
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
-      <div className="mx-auto flex h-[72px] max-w-[1400px] items-center gap-8 px-5 sm:px-8">
-        <Link
-          href="/"
-          className="wordmark shrink-0 text-chalk transition-colors hover:text-hot"
-        >
-          JOB CENTRE <span className="wordmark-accent">{section}</span>
+      <div className={cx(PAGE_SHELL, "flex h-[72px] items-center gap-6")}>
+        {/*
+          The mark is the same three words on every page. It used to be
+          "JOB CENTRE" in chalk with the section after it — EVENTS, ARCHIVE,
+          ADMIN — which made the one fixed thing in the chrome change under the
+          reader every time they moved, and put the lit treatment on the word
+          that mattered least. The title of the page is the `<h1>` under it and
+          the `<title>` in the tab; the header says where you are by lighting
+          the link in the nav. So the accent moved onto the name itself.
+        */}
+        <Link href="/" className="wordmark wordmark-accent shrink-0">
+          Job Centre
         </Link>
 
-        <nav className="hidden items-center gap-7 md:flex" aria-label="Main">
-          <HeaderLink href="/events">Events</HeaderLink>
-          <HeaderLink href="/archive">Archive</HeaderLink>
-          <HeaderLink href="/suggestions">Suggestions</HeaderLink>
-          <HeaderLink href="/polls">Polls</HeaderLink>
-        </nav>
+        {/* Renders nothing under `/admin`, where `children` is the section
+            nav and the bar has no room for both. See `SiteNav`. */}
+        <SiteNav />
 
-        <div className="ml-auto flex items-center gap-5">
+        {/*
+          `min-w-0` is the backstop. A flex item defaults to `min-width: auto`,
+          so a `children` row wider than the space left over pushes the bar
+          past the shell instead of giving — and the account menu ends up
+          outside the column every page's `<h1>` starts from, which is the one
+          alignment this shell exists to hold. With it, a long `children` is
+          what gives, and it scrolls inside itself.
+
+          Nothing currently needs it: `SiteNav` stands the site links down
+          under `/admin`, which is what makes the seven admin sections fit
+          unscrolled. This is here so that the next thing put in this slot
+          cannot break the alignment, only its own row.
+        */}
+        <div className="ml-auto flex min-w-0 items-center gap-5">
           {children}
-          <SessionNav />
+          <div className="shrink-0">
+            <SessionNav />
+          </div>
         </div>
       </div>
 

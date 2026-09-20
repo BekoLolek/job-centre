@@ -69,7 +69,15 @@ export default function EventRow({ event, href, meta, trailing, className }: Eve
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-4">
+      {/*
+        `shrink-0` only from `sm` up, where the row is `flex-nowrap` and this
+        group must hold its width against the title beside it. Below that the
+        row already wraps this onto its own line, and `shrink-0` there meant a
+        line that could not wrap or shrink: on `/admin/events`, where `trailing`
+        is the publish/unpublish controls, the group ran to 571px and took the
+        page 196px past a 375px screen.
+      */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:shrink-0 sm:flex-nowrap">
         {trailing}
         <ApplicationsPill state={event.applicationsState} />
         <EventStatusPill status={event.status} />

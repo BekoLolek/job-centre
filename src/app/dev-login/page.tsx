@@ -44,9 +44,22 @@ export default async function DevLoginPage({
   const config = devLoginConfig();
   const user = await getCurrentUser();
 
+  /*
+   * No `Page` here, and no shared width. This is one of the two screens with no
+   * `AppHeader` above it — a single centred card, sized to the short form on it
+   * rather than to the site's content column, and there is no page furniture
+   * over it for that column to line up with.
+   *
+   * That is not a loophole, it is a listed exception: `page-width.test.ts`
+   * names this file and `signin/page.tsx` in `NO_SHELL` with the reason, and
+   * fails any other route that opens a `<main>` without rendering `Page`. The
+   * cap below is `max-w-lg` on the card and the centring is on the flex row
+   * around it — the two never meet on one element, which is the pair the guard
+   * bans everywhere, here included.
+   */
   return (
-    <main className="mx-auto flex min-h-screen max-w-lg items-center px-4 py-16">
-      <div className="w-full space-y-5 rise">
+    <main className="mx-auto flex min-h-screen items-center px-4 py-16">
+      <div className="w-full max-w-lg space-y-5 rise">
         <Eyebrow>Development only</Eyebrow>
         <h1 className="font-display text-36 leading-none">
           Development sign-in

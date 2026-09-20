@@ -16,6 +16,7 @@
 
 import { notFound } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
+import { Page } from "@/components/ui";
 import AdminNav from "@/components/admin/AdminNav";
 import EventEditor from "@/components/admin/events/EventEditor";
 import { setupFrom, tabFrom } from "@/components/admin/events/tabs";
@@ -180,11 +181,11 @@ export default async function AdminEventPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="ADMIN">
+      <AppHeader>
         <AdminNav />
       </AppHeader>
 
-      <main className="mx-auto max-w-[1200px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <EventEditor
           event={event}
           initialTab={tabFrom(tab)}
@@ -203,7 +204,7 @@ export default async function AdminEventPage({
           maxQuestions={MAX_EVENT_QUESTIONS}
           maxStages={MAX_STAGES}
         />
-      </main>
+      </Page>
     </div>
   );
 }

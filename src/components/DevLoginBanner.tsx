@@ -11,6 +11,7 @@
  * costs a deployment nothing and never forces a page to render dynamically.
  */
 
+import { PAGE_SHELL, cx } from "@/components/ui";
 import { DEV_LOGIN_PATH, devLoginConfig, devLoginEnabled } from "@/lib/dev-login";
 import { getCurrentUser } from "@/lib/session-guards";
 
@@ -31,7 +32,7 @@ export default async function DevLoginBanner() {
         role="status"
         className="fixed inset-x-0 bottom-0 z-50 border-t border-flare/60 bg-flare-tint-15"
       >
-        <div className="mx-auto flex h-11 max-w-[1500px] items-center gap-3 px-4 sm:px-6">
+        <div className={cx(PAGE_SHELL, "flex h-11 items-center gap-3")}>
           <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-flare live-dot" />
 
           <span className="eyebrow truncate text-flare">

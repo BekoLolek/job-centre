@@ -18,7 +18,7 @@ import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import AnnouncementSettings from "@/components/admin/AnnouncementSettings";
 import ServerSettings from "@/components/admin/ServerSettings";
-import { Eyebrow, Section, StatTile } from "@/components/ui";
+import { Eyebrow, Page, Section, StatTile } from "@/components/ui";
 import { ANNOUNCEMENTS } from "@/lib/announce";
 import { maskWebhook } from "@/lib/announce";
 import { getGateConfig } from "@/lib/auth";
@@ -42,11 +42,11 @@ export default async function AdminSettingsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="ADMIN">
+      <AppHeader>
         <AdminNav />
       </AppHeader>
 
-      <main className="mx-auto max-w-[900px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Settings</Eyebrow>
@@ -117,7 +117,7 @@ export default async function AdminSettingsPage() {
           />
         </div>
 
-      </main>
+      </Page>
     </div>
   );
 }

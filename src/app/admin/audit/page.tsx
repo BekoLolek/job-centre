@@ -23,6 +23,7 @@ import {
   Button,
   EmptyState,
   Eyebrow,
+  Page,
   Section,
   StatTile,
   cx,
@@ -65,11 +66,11 @@ export default async function AdminAuditPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="ADMIN">
+      <AppHeader>
         <AdminNav />
       </AppHeader>
 
-      <main className="mx-auto max-w-[1200px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Audit</Eyebrow>
@@ -197,7 +198,7 @@ export default async function AdminAuditPage({
           <ZoneNote /> The log is append-only: there is no code anywhere that updates or
           deletes a line.
         </p>
-      </main>
+      </Page>
     </div>
   );
 }

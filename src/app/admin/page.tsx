@@ -24,6 +24,7 @@ import {
   Button,
   EmptyState,
   Eyebrow,
+  Page,
   Section,
   StatTile,
   cx,
@@ -47,11 +48,11 @@ export default async function AdminDashboardPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="ADMIN">
+      <AppHeader>
         <AdminNav />
       </AppHeader>
 
-      <main className="mx-auto max-w-[1200px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Tonight</Eyebrow>
@@ -235,7 +236,7 @@ export default async function AdminDashboardPage() {
           Signed in as {admin.displayName ?? admin.name ?? "an admin"}. A finished event
           never appears above — it is read-only, so nothing about it can need doing.
         </p>
-      </main>
+      </Page>
     </div>
   );
 }

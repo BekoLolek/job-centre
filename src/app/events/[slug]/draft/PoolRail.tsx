@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Who is left — the admin's third column.
+ * Who is left — the band under the stage, for the admin.
  *
  * Both pools, in wheel order, and only an admin gets them: `redactDraft` sends
  * `mainPool` and `reservePool` as null to everybody else, so the reserve list
@@ -36,33 +36,46 @@ export default function PoolRail({ view, busy, run }: PoolRailProps) {
   const picking = view.config.selectionMode === "admin_pick" && view.lot === null;
 
   return (
-    <Panel as="aside" padding="md" className="h-fit xl:sticky xl:top-24">
-      <List
-        title={`Main wheel · ${main.length}`}
-        players={main}
-        view={view}
-        onBlockId={onBlockId}
-        empty="Nobody left on the main wheel."
-        onPick={picking ? (userId) => run({ type: "pick", userId, kind: "main" }) : undefined}
-        busy={busy}
-      />
-
-      <div className="mt-6 border-t border-hair pt-5">
+    /*
+     * This used to be a 340px column beside the stage, stacking its two wheels
+     * one above the other and sticking to the top of the viewport. It sits
+     * under the stage now, at the full width of the page, so the two wheels go
+     * side by side instead: stacked, they would be a second screenful of
+     * 500px-wide name chips, and `sticky` means nothing for a band at the
+     * bottom of the page. The rule between them is a top border while they are
+     * stacked and a left border once they are not.
+     */
+    <Panel as="aside" padding="md" className="h-fit">
+      <div className="grid gap-6 sm:grid-cols-2">
         <List
-          title={`Reserve wheel · ${reserve.length}`}
-          players={reserve}
+          title={`Main wheel · ${main.length}`}
+          players={main}
           view={view}
           onBlockId={onBlockId}
-          empty="Nothing held back yet."
+          empty="Nobody left on the main wheel."
           onPick={
-            picking ? (userId) => run({ type: "pick", userId, kind: "reserve" }) : undefined
+            picking ? (userId) => run({ type: "pick", userId, kind: "main" }) : undefined
           }
           busy={busy}
         />
-        <p className="mt-3 text-11 leading-relaxed text-muted">
-          Only you can see these names. Switch the wheel above to Reserve once the main pool
-          is done.
-        </p>
+
+        <div className="border-t border-hair pt-5 sm:border-l sm:border-t-0 sm:pl-6 sm:pt-0">
+          <List
+            title={`Reserve wheel · ${reserve.length}`}
+            players={reserve}
+            view={view}
+            onBlockId={onBlockId}
+            empty="Nothing held back yet."
+            onPick={
+              picking ? (userId) => run({ type: "pick", userId, kind: "reserve" }) : undefined
+            }
+            busy={busy}
+          />
+          <p className="mt-3 text-11 leading-relaxed text-muted">
+            Only you can see these names. Switch the wheel above to Reserve once the main
+            pool is done.
+          </p>
+        </div>
       </div>
 
       {view.completion.short.length > 0 && (

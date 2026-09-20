@@ -10,7 +10,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import PollList from "@/components/polls/PollList";
-import { Eyebrow, Section } from "@/components/ui";
+import { Eyebrow, Page, Section } from "@/components/ui";
 import { listPolls } from "@/lib/polls";
 import { getCurrentUser } from "@/lib/session-guards";
 
@@ -28,9 +28,9 @@ export default async function PollsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Polls" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[860px] px-4 py-8 sm:px-6">
+      <Page>
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · Polls</Eyebrow>
           <h1 className="text-36">Polls</h1>
@@ -54,7 +54,7 @@ export default async function PollsPage() {
             isAdmin={Boolean(user?.isAdmin)}
           />
         </Section>
-      </main>
+      </Page>
     </div>
   );
 }

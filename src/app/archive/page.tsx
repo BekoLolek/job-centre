@@ -14,7 +14,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import { EventListing } from "@/components/events";
-import { Eyebrow } from "@/components/ui";
+import { Eyebrow, Page } from "@/components/ui";
 import { listEvents } from "@/lib/events";
 import { PUBLIC_STATUSES, firstParam } from "../events/scope";
 
@@ -41,9 +41,9 @@ export default async function ArchivePage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Archive" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1400px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <header>
           <Eyebrow className="mb-2">Job Centre · Archive</Eyebrow>
           <h1 className="text-36">What we have run</h1>
@@ -60,7 +60,7 @@ export default async function ArchivePage({
           type={type}
           nothingAtAll={upcoming.length === 0 && past.length === 0}
         />
-      </main>
+      </Page>
     </div>
   );
 }

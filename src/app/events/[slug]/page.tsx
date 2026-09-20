@@ -50,6 +50,7 @@ import {
   Button,
   EmptyState,
   Eyebrow,
+  Page,
   Panel,
   StatTile,
   cx,
@@ -162,9 +163,9 @@ export default async function EventPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Events" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1100px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <nav className="text-12 text-muted">
           <Link href="/events" className="hover:text-union">
             ← All events
@@ -351,7 +352,7 @@ export default async function EventPage({
         {tab === "results" && (
           <ResultsTab matches={board.matches} dayBySlot={dayBySlot} />
         )}
-      </main>
+      </Page>
     </div>
   );
 }

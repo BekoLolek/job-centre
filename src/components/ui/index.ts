@@ -34,6 +34,9 @@ export type { FieldProps } from "./Field";
 export { default as Modal } from "./Modal";
 export type { ModalProps } from "./Modal";
 
+export { default as Page, PAGE_SHELL } from "./Page";
+export type { PageProps } from "./Page";
+
 export { default as Panel } from "./Panel";
 export type { PanelPadding } from "./Panel";
 

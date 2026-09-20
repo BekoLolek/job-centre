@@ -161,23 +161,30 @@ export default function EventsManager({
         icon="calendar"
         title="All events"
         description="Newest first. Drafts included — they are only visible here."
-        aside={
-          <div className="flex flex-wrap items-center gap-3">
-        <Tabs
-          aria-label="Status"
-          rule={false}
-          size="sm"
-          items={FILTERS.map((entry) => ({
-            value: entry.value,
-            label: entry.label,
-            count: counts.get(entry.value) ?? 0,
-          }))}
-          value={filter}
-          onChange={setFilter}
-        />
-          </div>
-        }
       >
+        {/*
+          The status filter was a `Section` aside, opposite the heading. An
+          aside is wrapped in `shrink-0` — it has to be, or a two-word count
+          would wrap mid-phrase — and `Tabs` is a scroller, so at 375px the
+          seven statuses could neither shrink nor scroll and took the page
+          476px wide instead. Here it is ordinary section content, inside the
+          `min-w-0` column, and the scroller `Tabs` already has does its job.
+        */}
+        <div className="mb-6 min-w-0">
+          <Tabs
+            aria-label="Status"
+            rule={false}
+            size="sm"
+            items={FILTERS.map((entry) => ({
+              value: entry.value,
+              label: entry.label,
+              count: counts.get(entry.value) ?? 0,
+            }))}
+            value={filter}
+            onChange={setFilter}
+          />
+        </div>
+
         {shown.length === 0 ? (
         <div className="py-10">
           <EmptyState>

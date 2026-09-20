@@ -36,7 +36,15 @@ import {
   applicationStatusLabel,
   eventTypeLabel,
 } from "@/components/events";
-import { Alert, Badge, Button, Eyebrow, Panel, StatTile } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Eyebrow,
+  Page,
+  Panel,
+  StatTile,
+} from "@/components/ui";
 import { getEventBySlug, loadApplicationForm } from "@/lib/events";
 import { entryMode } from "@/lib/events-policy";
 import { canSeeEvent } from "@/lib/hosting";
@@ -103,9 +111,9 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Events" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[900px] space-y-5 px-4 py-8 sm:px-6">
+      <Page className="space-y-5">
         <nav className="text-12 text-muted">
           <Link href={`/events/${event.slug}`} className="hover:text-union">
             ← {event.title}
@@ -259,7 +267,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
             />
           </>
         )}
-      </main>
+      </Page>
     </div>
   );
 }

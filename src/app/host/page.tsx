@@ -9,7 +9,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import HostApplyForm from "@/components/host/HostApplyForm";
-import { Badge, Eyebrow, Section } from "@/components/ui";
+import { Badge, Eyebrow, Page, Section } from "@/components/ui";
 import { eventsHostedBy, hostableGames, myHostApplications } from "@/lib/hosting";
 import { requireUser } from "@/lib/session-guards";
 import Link from "next/link";
@@ -30,9 +30,9 @@ export default async function HostPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Host" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[860px] px-4 py-8 sm:px-6">
+      <Page>
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · Hosting</Eyebrow>
           <h1 className="text-36">Run an event</h1>
@@ -75,7 +75,7 @@ export default async function HostPage() {
         >
           <HostApplyForm mine={mine} games={games} />
         </Section>
-      </main>
+      </Page>
     </div>
   );
 }

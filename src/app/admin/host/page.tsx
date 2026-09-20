@@ -7,7 +7,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import HostQueue from "@/components/admin/HostQueue";
-import { Eyebrow, Section } from "@/components/ui";
+import { Eyebrow, Page, Section } from "@/components/ui";
 import { listHostApplications } from "@/lib/hosting";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -24,9 +24,9 @@ export default async function AdminHostPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Admin" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1000px] px-4 py-8 sm:px-6">
+      <Page>
         <header className="mb-2">
           <Eyebrow className="mb-2">Admin · Hosting</Eyebrow>
           <h1 className="text-36">Who wants to run something</h1>
@@ -45,7 +45,7 @@ export default async function AdminHostPage() {
         >
           <HostQueue applications={applications} />
         </Section>
-      </main>
+      </Page>
     </div>
   );
 }

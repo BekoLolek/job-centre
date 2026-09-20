@@ -16,7 +16,15 @@ import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
 import MyEventCard, { type MyEventRow } from "@/components/me/MyEventCard";
 import { viewerAction } from "@/components/events";
-import { Alert, Button, Eyebrow, Section, StatTile, plural } from "@/components/ui";
+import {
+  Alert,
+  Button,
+  Eyebrow,
+  Page,
+  Section,
+  StatTile,
+  plural,
+} from "@/components/ui";
 import { getEventById, getMyApplications } from "@/lib/events";
 import { requireUser } from "@/lib/session-guards";
 
@@ -128,9 +136,9 @@ export default async function MyEventsPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="My events" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1000px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">
@@ -273,7 +281,7 @@ export default async function MyEventsPage({
           </Link>
           .
         </p>
-      </main>
+      </Page>
     </div>
   );
 }

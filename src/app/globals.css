@@ -564,9 +564,14 @@ h1 {
 }
 
 /*
- * The section word in the wordmark — ADMIN, EVENTS, PROFILE. Same drift,
- * poured into the letterforms instead of a line, and faster, because it is
- * crossing five characters rather than the whole page.
+ * The wordmark itself — "Job Centre", on every page. Same drift as the seam,
+ * poured into the letterforms instead of a line.
+ *
+ * This used to light the section word after the name (ADMIN, EVENTS, PROFILE)
+ * and ran at 11s because it was crossing five characters. It now crosses the
+ * whole mark, and the gradient is sized to its box rather than to its text, so
+ * the same duration over twice the width reads as twice the speed. 16s puts it
+ * back to roughly the pace it had, still well short of the seam's 22s.
  *
  * Every stop clears AA on the ground on its own: the darkest is union blue at
  * 5.3:1. A gradient that dips below contrast somewhere in the middle is a
@@ -588,7 +593,27 @@ h1 {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: seam-drift 11s linear infinite;
+  animation: seam-drift 16s linear infinite;
+}
+
+/*
+ * Hover — and `a` in the selector is load-bearing.
+ *
+ * Where the mark is a link home it has to answer the pointer, and it cannot do
+ * it the way every other link does: `color` is what the gradient is clipped
+ * through, so a `hover:text-hot` on the element changes nothing at all while
+ * `background-clip: text` is in force. Dropping the image is what lets the
+ * colour through, and the mark snaps from lit to solid white.
+ *
+ * But the class is the gradient, not the link. `/signin` wears it on a `<span>`
+ * inside an `<h1>` twice, and unscoped this lit the largest thing on a
+ * signed-out visitor's first screen on hover — advertising a click that does
+ * nothing. The old `hover:text-hot` was a utility on the `<Link>` and could
+ * never have done that; scoping to `a` puts the behaviour back where it was.
+ */
+a.wordmark-accent:hover {
+  background-image: none;
+  color: var(--hot);
 }
 
 @supports not ((background-clip: text) or (-webkit-background-clip: text)) {

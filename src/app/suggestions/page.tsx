@@ -12,7 +12,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import SuggestionBox from "@/components/suggestions/SuggestionBox";
-import { Eyebrow, Section } from "@/components/ui";
+import { Eyebrow, Page, Section } from "@/components/ui";
 import { getCurrentUser } from "@/lib/session-guards";
 import { listSuggestions } from "@/lib/suggestions";
 
@@ -30,9 +30,9 @@ export default async function SuggestionsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Suggestions" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[900px] px-4 py-8 sm:px-6">
+      <Page>
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · Suggestions</Eyebrow>
           <h1 className="text-36">What should we run?</h1>
@@ -56,7 +56,7 @@ export default async function SuggestionsPage() {
             viewerId={user?.id ?? null}
           />
         </Section>
-      </main>
+      </Page>
     </div>
   );
 }

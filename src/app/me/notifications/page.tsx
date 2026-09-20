@@ -10,7 +10,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import NotificationList from "@/components/me/NotificationList";
-import { Eyebrow, Section } from "@/components/ui";
+import { Eyebrow, Page, Section } from "@/components/ui";
 import { directMessagesConfigured } from "@/lib/discord-dm";
 import { getPrefs, listNotifications, unreadCount } from "@/lib/notifications";
 import { allChannels } from "@/lib/notify-policy";
@@ -32,9 +32,9 @@ export default async function NotificationsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Notifications" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[880px] px-4 py-8 sm:px-6">
+      <Page>
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · You</Eyebrow>
           <h1 className="text-36">Notifications</h1>
@@ -58,7 +58,7 @@ export default async function NotificationsPage() {
             hasDiscordAccount={Boolean(user.discordId)}
           />
         </Section>
-      </main>
+      </Page>
     </div>
   );
 }

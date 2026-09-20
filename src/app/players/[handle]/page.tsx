@@ -36,6 +36,7 @@ import {
   Button,
   EmptyState,
   Eyebrow,
+  Page,
   Panel,
   StatTile,
   cx,
@@ -100,9 +101,9 @@ export default async function PlayerPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader section="Player" />
+      <AppHeader />
 
-      <main className="mx-auto max-w-[1000px] space-y-6 px-4 py-8 sm:px-6">
+      <Page className="space-y-6">
         {/* --- Who --------------------------------------------------- */}
         <Panel as="header" className="rise">
           <div className="flex flex-wrap items-center gap-5">
@@ -249,7 +250,7 @@ export default async function PlayerPage({
             ` Teams have paid ${formatMoney(totals.spent)} for them across ${plural(totals.drafted, "draft")}.`}{" "}
           Nothing anybody wrote on an application form appears on this page.
         </p>
-      </main>
+      </Page>
     </div>
   );
 }
