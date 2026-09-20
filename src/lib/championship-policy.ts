@@ -10,9 +10,20 @@
  * placements is the entire correction path (R-179), exactly as a bracket slot's
  * teams are re-derived on every read rather than written down (§1.1, §8.5).
  *
- * Nothing here knows what a championship's status is. Whether a place may be
- * recorded at all is the `closed` lock, which belongs to the write path; a
- * closed season is scored the same way as an open one.
+ * **The scoring half below knows nothing about a championship's status**, and
+ * must not: a closed season is scored exactly like an open one, and whether a
+ * place may be *recorded* is a different question entirely. That question, and
+ * the rest of the lifecycle, is the second half of this file — the state flow,
+ * the closed lock and the two guards on the scoring rules an admin types. They
+ * are here rather than in a module of their own because they are the same kind
+ * of thing: plain data in, one sentence or one list out, no database. The
+ * refusals themselves live at the top of every write in `./championships`.
+ *
+ * The scoring-rule guards are also what the arithmetic above quietly assumes.
+ * `placementValue` falls through to the participation points, and the note
+ * below leans on that keeping the table non-increasing all the way down — which
+ * is only true while `scoringRulesProblem` refuses a table that rises and a
+ * participation value above its last row. Two halves of one rule, one file.
  *
  * ## Two rules this module decides, because the domain model does not
  *
@@ -31,6 +42,11 @@
  *     produce it. Scoring is read by the public page, so it stays total: it
  *     takes the result worth the most and never adds two.
  */
+
+import type { ChampionshipStatusValue } from "@/db/schema";
+// The bracket's ordinal, not a second one. `./format-policy` imports nothing,
+// so borrowing it keeps this module as free of I/O as it was.
+import { ordinal } from "./format-policy";
 
 /** UC-31 3's table, and the default a new championship is created with. */
 export const DEFAULT_POINTS_TABLE = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
@@ -321,4 +337,176 @@ export function scoreChampionship(
   }
 
   return rows;
+}
+
+/* ------------------------------------------------------------------ */
+/* The lifecycle (docs/diagrams/championship-state.md)                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which status may follow which — the state diagram, edge for edge.
+ *
+ * Four edges and no more. A hidden season cannot be closed, because closing is
+ * what freezes standings and a season nobody has seen has none worth freezing;
+ * a closed one cannot be hidden, because the whole promise of UC-35 is that a
+ * finished season's page stays for good. The one way out of `closed` is the
+ * reopen, and it is deliberately one click and written down — the same shape,
+ * and the same argument, as `complete → live` in `./events-policy`.
+ *
+ * Staying put is not a move and is not in the map: a caller sending the status
+ * a season already has should not be asking.
+ */
+export const CHAMPIONSHIP_STATUS_FLOW: Readonly<
+  Record<ChampionshipStatusValue, readonly ChampionshipStatusValue[]>
+> = {
+  hidden: ["published"],
+  published: ["hidden", "closed"],
+  closed: ["published"],
+};
+
+/** Is this status change one of the four the diagram draws? */
+export function canMoveChampionship(
+  from: ChampionshipStatusValue,
+  to: ChampionshipStatusValue
+): boolean {
+  return CHAMPIONSHIP_STATUS_FLOW[from].includes(to);
+}
+
+/* ------------------------------------------------------------------ */
+/* The lock on a finished season                                      */
+/* ------------------------------------------------------------------ */
+
+/** What every refused write on a closed season says (UC-35 2b). */
+export const CHAMPIONSHIP_LOCKED_REFUSAL =
+  "This championship is finished - reopen it to change it";
+
+/**
+ * The refusal for a write that would touch a closed season, or `null` when the
+ * write may proceed — `lockRefusal` in `./archive-policy`, for a season.
+ *
+ * Asked at the top of every write in `./championships` rather than retyped as
+ * `status === "closed"`, because a second copy of the rule is a second copy
+ * that drifts. The reopen is the one write that skips it, which is what makes
+ * this a lock rather than a wall.
+ */
+export function championshipLockRefusal(championship: {
+  status: ChampionshipStatusValue;
+}): string | null {
+  return championship.status === "closed" ? CHAMPIONSHIP_LOCKED_REFUSAL : null;
+}
+
+/* ------------------------------------------------------------------ */
+/* What a season needs before it may be published (UC-31 5)           */
+/* ------------------------------------------------------------------ */
+
+export type ChampionshipPublishRequirement = "name" | "pointsTable";
+
+/** Each requirement as the words that finish "It still needs …". */
+export const CHAMPIONSHIP_PUBLISH_REQUIREMENT_TEXT: Readonly<
+  Record<ChampionshipPublishRequirement, string>
+> = {
+  name: "a name",
+  pointsTable: "a points table",
+};
+
+/**
+ * What this season still lacks before it may be published, in a fixed order;
+ * empty when nothing does.
+ *
+ * The gate on every publishing path, and the source of its refusal, so the
+ * screen never disagrees with the server about what stops the button.
+ */
+export function missingToPublishChampionship(championship: {
+  name: string;
+  pointsTable: readonly number[];
+}): ChampionshipPublishRequirement[] {
+  const missing: ChampionshipPublishRequirement[] = [];
+  if (!championship.name.trim()) missing.push("name");
+  if (championship.pointsTable.length === 0) missing.push("pointsTable");
+  return missing;
+}
+
+/* ------------------------------------------------------------------ */
+/* The scoring rules an admin types (UC-31 3, 3a, 3b, 4, 4a)          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The most places a table may have.
+ *
+ * Not a rule anybody asked for, but the absence of one is: `points_table` is
+ * jsonb, so Postgres will store three hundred rows as happily as ten, and every
+ * screen that renders the table would then render three hundred boxes. Ten is
+ * the default and a big season might want twenty; a hundred is far past any
+ * finishing order this community will ever run and still small enough that
+ * nothing downstream has to think about it.
+ */
+export const MAX_POINTS_PLACES = 100;
+
+/**
+ * The one thing wrong with these scoring rules, as a sentence, or `null`.
+ *
+ * Five rules, none of which a CHECK constraint can state — the table is a
+ * jsonb array, so Postgres cannot compare one element with the next or with
+ * the participation points, and it will accept `"abc"` into that column
+ * without blinking:
+ *
+ *  - **It has to be an array, and a short one.** Every caller of this module
+ *    is a server action, which is a public endpoint: the payload is whatever
+ *    was sent, not whatever the editor would have sent. Without the first
+ *    check `.entries()` throws a TypeError out of the action and the admin
+ *    reads "Could not reach the server"; without the second, three hundred
+ *    places simply store, and every screen that renders the table renders
+ *    three hundred boxes for ever.
+ *
+ *  - **The table must not go up as you finish lower** (UC-31 3b). A season
+ *    where 2nd beats 1st is not a finishing order.
+ *  - **Taking part must not beat last place** (UC-31 4a), for the same reason
+ *    read from the other end — and because `placementValue` floors the table
+ *    out at the participation points, so breaking it would make 11th of 40
+ *    worth more than 10th.
+ *  - **Whole numbers only.** `weight` is an integer for this reason already:
+ *    a table of tenths gives two members 0.6000000000000001 and 0.6 and calls
+ *    them not level, which is a bug nobody will ever find by reading the page.
+ *
+ * `countBest` is checked here too so the editor can say so before saving,
+ * rather than letting `championships_count_best_positive` fail the insert with
+ * a constraint name.
+ */
+export function scoringRulesProblem(rules: {
+  pointsTable: readonly number[];
+  participationPoints: number;
+  countBest: number | null;
+}): string | null {
+  if (!Array.isArray(rules.pointsTable)) {
+    return "The points table has to be a list of places, worth most first.";
+  }
+  if (rules.pointsTable.length > MAX_POINTS_PLACES) {
+    return `A points table cannot have more than ${MAX_POINTS_PLACES} places.`;
+  }
+
+  for (const [index, value] of rules.pointsTable.entries()) {
+    if (!Number.isInteger(value) || value < 0) {
+      return `${ordinal(index + 1)} place has to be worth a whole number of points, 0 or more.`;
+    }
+    if (index > 0 && value > rules.pointsTable[index - 1]) {
+      return `${ordinal(index + 1)} place is worth more than ${ordinal(index)}: the table must not go up as you finish lower.`;
+    }
+  }
+
+  if (!Number.isInteger(rules.participationPoints) || rules.participationPoints < 0) {
+    return "Taking part has to be worth a whole number of points, 0 or more.";
+  }
+  const last = rules.pointsTable.at(-1);
+  if (last !== undefined && rules.participationPoints > last) {
+    return `Taking part cannot be worth more than last place in the table, which is ${last}.`;
+  }
+
+  if (
+    rules.countBest !== null &&
+    (!Number.isInteger(rules.countBest) || rules.countBest < 1)
+  ) {
+    return "How many results count has to be a whole number of 1 or more, or empty to count them all.";
+  }
+
+  return null;
 }

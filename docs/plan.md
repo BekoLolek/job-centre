@@ -129,6 +129,28 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] Existing lock table still passes
 - **Depends on:** Task 4. Runs with Section D (it touches the draft and format files those tasks change).
 
+### Task 38c: `.field` silently beats the utilities on every input (found in Task 31a)
+
+- **Serves:** the Constraints in `docs/requirements.md`; every form control in the app
+- **Files:** `src/app/globals.css` (`.field`), and whatever call sites the change exposes
+- **Do:** `.field` sets `width: 100%` and is defined after `@tailwind utilities` at equal specificity, so it beats any `w-*`, `p*-` or `text-*` utility written on the element itself. Measured: a `Select` carrying `w-[11rem]` renders 1010px; `TimeSelect`'s `w-auto py-1.5 text-13` loses all three (1010px wide, 14px, 8px padding); `SuggestionBox`'s status select is the same. Every author who has written a utility on a field since has had it silently discarded, and the workaround is a wrapper per call site. Fix it at the source - most likely `.field` dropping its `width` (and the padding and size it hard-codes) so utilities win as they do everywhere else - then remove the wrappers the old behaviour forced.
+- **Acceptance criteria:**
+  - [ ] A utility written on a `Field`/`Select`/`Textarea` takes effect, measured before and after on at least three call sites
+  - [ ] No control changes its rendered size where no utility was written
+  - [ ] The `AvailabilityPanel` wrapper added in Task 31a is removed if it becomes unnecessary
+- **Depends on:** Task 31a
+
+### Task 38b: Checkbox tap targets on a phone (found in Task 31a)
+
+- **Serves:** the Constraints in `docs/requirements.md` ("usable on a phone at ~400px")
+- **Files:** `src/components/ui/Checkbox.tsx`, its call sites
+- **Do:** the checkbox input renders 16x16, well under the 44px touch guideline. It is what the hand-rolled controls already rendered, so Task 31a neither caused nor worsened it, but `/me/notifications` is a member-facing page people open on a phone. Give the control a real hit area - a `<label>` wrapping the cell, or padding on the input - without changing the rendered box.
+- **Acceptance criteria:**
+  - [ ] Every checkbox's hit area is at least 44x44 at 375px, measured
+  - [ ] The drawn box is unchanged
+  - [ ] Keyboard behaviour and the focus ring are unchanged
+- **Depends on:** Task 31a
+
 ### Task 37: Make the file-backed migration test reliable (found in Task 7 review)
 
 - **Serves:** the test gate itself (no requirement)

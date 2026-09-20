@@ -7,7 +7,7 @@ import { cx } from "@/components/ui";
 /**
  * The admin area's own navigation, sat in the top bar next to the session links.
  *
- * Seven sections as text links on the ground rather than seven bordered
+ * Eight sections as text links on the ground rather than eight bordered
  * buttons: side by side, boxes read as one object and the bar stops looking
  * like navigation at all. Only the current section is lit, and it carries a
  * hairline under it.
@@ -24,6 +24,7 @@ import { cx } from "@/components/ui";
 const SECTIONS = [
   { href: "/admin", label: "Tonight", exact: true },
   { href: "/admin/events", label: "Events" },
+  { href: "/admin/championships", label: "Seasons" },
   { href: "/admin/templates", label: "Templates" },
   { href: "/admin/games", label: "Games" },
   { href: "/admin/users", label: "Members" },

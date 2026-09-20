@@ -96,6 +96,10 @@ export const AUDIT_ACTIONS = {
   "template.from_event": "Template made from an event",
   "template.activated": "Template activated",
   "template.deactivated": "Template deactivated",
+  "championship.created": "Championship created",
+  "championship.updated": "Championship changed",
+  "championship.status": "Championship status changed",
+  "championship.reopened": "Championship reopened",
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
