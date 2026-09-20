@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, createPgliteDatabase, driverFor, games } from "@/db";
 import { applyMigrations } from "@/db/migrate";
+import { DEFAULT_POINTS_TABLE } from "@/lib/championship-policy";
 import { type TestDatabase, freshDatabase, tableNames } from "./helpers";
 
 let ctx: TestDatabase;
@@ -28,6 +29,9 @@ describe("migrations", () => {
       "availability",
       "availability_exceptions",
       "availability_rules",
+      "championship_events",
+      "championship_placements",
+      "championships",
       "confirmations",
       "draft_bids",
       "draft_configs",
@@ -104,7 +108,17 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(39);
+    expect(await tableNames(ctx.client)).toHaveLength(42);
+  });
+
+  it("ships the default points table a new championship starts with", async () => {
+    // The column default is spelled out in the migration and the constant lives
+    // in the policy module; this is the test that stops the two drifting.
+    const result = await ctx.client.query<{ points_table: number[] }>(
+      `insert into championships (slug, name) values ('defaults', 'Defaults')
+       returning points_table`
+    );
+    expect(result.rows[0].points_table).toEqual(DEFAULT_POINTS_TABLE);
   });
 
   it("mints uuid primary keys database-side", async () => {

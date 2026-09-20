@@ -1914,6 +1914,192 @@ export const matchGames = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Championships (Phase 6 — docs/domain-model.md, UC-31 to UC-36)     */
+/* ------------------------------------------------------------------ */
+
+/** `docs/diagrams/championship-state.md`. While `closed`, no place may be recorded. */
+export const championshipStatus = pgEnum("championship_status", [
+  "hidden",
+  "published",
+  "closed",
+]);
+
+export type ChampionshipStatusValue = (typeof championshipStatus.enumValues)[number];
+
+/**
+ * A season: many events across different games, with one running score.
+ *
+ * **There is no `points` column anywhere below this comment.** A standing is
+ * worked out from the recorded places every time it is asked for, by
+ * `scoreChampionship` in src/lib/championship-policy.ts — the same rule that
+ * keeps a bracket slot's teams out of `matches` and a team's remaining balance
+ * out of `teams`. It is what makes a correction three months later re-score the
+ * whole season with nothing left behind to disagree with it (R-179).
+ *
+ * `runs_from` / `runs_to` are months, stored as the first of the month: a
+ * season runs "March to November", not "March 3rd to November 17th", and a
+ * `date` compares and sorts the way a text "2026-03" only looks like it does.
+ *
+ * The points table is jsonb rather than a child table for the reason
+ * `stages.config` is: it is one ordered list saved whole by one form, it is
+ * never queried a row at a time, and a child table would buy an ordering
+ * column and a second write path for nothing. Its default is
+ * `DEFAULT_POINTS_TABLE` in src/lib/championship-policy.ts spelled out; the
+ * "ships the default points table" test holds the two together.
+ */
+export const championships = pgTable(
+  "championships",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    /** The public URL segment: /championship/[slug]. */
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    description: text("description"),
+    status: championshipStatus("status").notNull().default("hidden"),
+    /** The first of the first month, and the first of the last. Null while undecided. */
+    runsFrom: date("runs_from"),
+    runsTo: date("runs_to"),
+    /** Position 1 first; never rises as the position falls (checked in the editor). */
+    pointsTable: json<number[]>("points_table")
+      .notNull()
+      .default(sql`'[25,18,15,12,10,8,6,4,2,1]'::jsonb`),
+    /**
+     * What taking part is worth, and — because `placementValue` falls through
+     * to it — what a place past the end of the table is worth too.
+     *
+     * It must never exceed the last row of the table, or the season stops
+     * being non-increasing: participation of 100 against the default table
+     * would make 11th worth 100 and 1st worth 25. No CHECK can say that, since
+     * it is a comparison against the last element of a jsonb array, so it is
+     * the editor's job (UC-31 4a) exactly as the table's own ordering is.
+     */
+    participationPoints: integer("participation_points").notNull().default(0),
+    /** Count only each member's best this many results. Null counts them all. */
+    countBest: integer("count_best"),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // "Unique among open seasons": two finished seasons may both be called
+    // "Winter 2026", but two live ones may not, or the navigation item and the
+    // admin list both become a guess.
+    uniqueIndex("championships_open_name_uniq")
+      .on(table.name)
+      .where(sql`status <> 'closed'`),
+    index("championships_status_idx").on(table.status),
+    check(
+      "championships_months_ordered",
+      sql`${table.runsFrom} is null or ${table.runsTo} is null or ${table.runsTo} >= ${table.runsFrom}`
+    ),
+    // A season runs in months, and a `date` is the only thing that sorts like
+    // one — so the day part is pinned rather than merely hoped for. Without
+    // this "March to November" and "March 3rd to November 17th" are the same
+    // row, and the second one is a season somebody will later have to explain.
+    check(
+      "championships_months_are_first",
+      sql`(${table.runsFrom} is null or extract(day from ${table.runsFrom}) = 1)
+          and (${table.runsTo} is null or extract(day from ${table.runsTo}) = 1)`
+    ),
+    check("championships_participation_positive", sql`${table.participationPoints} >= 0`),
+    check(
+      "championships_count_best_positive",
+      sql`${table.countBest} is null or ${table.countBest} > 0`
+    ),
+  ]
+);
+
+/**
+ * One event counting towards one championship, and what it is worth.
+ *
+ * `event_id` is unique on its own, and that single word is the whole of
+ * R-196: **an event belongs to at most one championship**, refused by Postgres
+ * rather than by whichever screen happens to be adding it. Adding the event to
+ * a second season fails on the constraint, and UC-32 1a turns that into a
+ * message naming the season it is already in.
+ *
+ * `weight` is an integer. The domain model says "a number above 0", and the
+ * case it exists for is "a whole-day tournament is worth double"; keeping it
+ * whole means the weight never turns an exact table into an inexact total. It
+ * is not on its own a guarantee that totals are exact — `points_table` is
+ * jsonb and nothing here checks what is in it, so a table of tenths would give
+ * two members 0.6000000000000001 and 0.6 and call them not level. Whole rows
+ * in the table are the editor's job (UC-31 3), like its ordering.
+ * `scoreChampionship` itself takes a plain number and would multiply by 1.5
+ * quite happily, so this restriction is the column's alone and can be relaxed
+ * without touching the scoring.
+ */
+export const championshipEvents = pgTable(
+  "championship_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    championshipId: uuid("championship_id")
+      .notNull()
+      .references(() => championships.id, { onDelete: "cascade" }),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** Points for a place are multiplied by this. Taking part scales too. */
+    weight: integer("weight").notNull().default(1),
+    /** Used instead of the championship's when it has any rows. Null: use theirs. */
+    pointsTable: json<number[] | null>("points_table"),
+    addedAt: instant("added_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("championship_events_event_uniq").on(table.eventId),
+    index("championship_events_championship_idx").on(table.championshipId),
+    check("championship_events_weight_positive", sql`${table.weight} > 0`),
+  ]
+);
+
+/**
+ * Where one player, or one team, finished in a counting event.
+ *
+ * The only thing a season stores. Two subjects may share a position and the
+ * next position is then empty, so there is no unique constraint on the
+ * position — 1, 1, 3 is a correct order, not a collision.
+ *
+ * Exactly one of `user_id` and `team_id` is set, and each may appear only once
+ * per event. The rule Postgres cannot state is the one that spans the two: a
+ * member placed directly *and* through a team is one member placed twice, and
+ * whether that is true changes when somebody joins a team. `duplicateMemberIn`
+ * in src/lib/championship-policy.ts is where that check lives, and scoring
+ * survives the case regardless by counting such a member once.
+ *
+ * Deleting a member or a team removes their place rather than blocking the
+ * delete: unlike a played match, a finishing order with a row missing is still
+ * a readable finishing order, and the standings simply re-score without them.
+ */
+export const championshipPlacements = pgTable(
+  "championship_placements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    championshipEventId: uuid("championship_event_id")
+      .notNull()
+      .references(() => championshipEvents.id, { onDelete: "cascade" }),
+    /** 1 or more. Shared positions are allowed and leave the next one empty. */
+    position: integer("position").notNull(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    teamId: uuid("team_id").references(() => teams.id, { onDelete: "cascade" }),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("championship_placements_event_user_uniq").on(table.championshipEventId, table.userId),
+    unique("championship_placements_event_team_uniq").on(table.championshipEventId, table.teamId),
+    // No index on (championship_event_id, position): the two uniques above are
+    // already indexes led by the counting event, which is the only way anybody
+    // reads this table, and a finishing order is tens of rows sorted in memory.
+    check("championship_placements_position_positive", sql`${table.position} >= 1`),
+    // A place belongs to somebody. Both at once would be two subjects in one
+    // row, and neither would be a place with nobody in it.
+    check(
+      "championship_placements_one_subject",
+      sql`(${table.userId} is not null) <> (${table.teamId} is not null)`
+    ),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
 /* Audit log (Phase 5)                                                */
 /* ------------------------------------------------------------------ */
 

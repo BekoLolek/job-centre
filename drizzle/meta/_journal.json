@@ -92,6 +92,13 @@
       "when": 1789659705957,
       "tag": "0012_application_pending",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789925796944,
+      "tag": "0013_championships",
+      "breakpoints": true
     }
   ]
 }
