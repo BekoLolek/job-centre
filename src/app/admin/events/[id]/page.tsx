@@ -20,8 +20,13 @@ import { Page } from "@/components/ui";
 import AdminNav from "@/components/admin/AdminNav";
 import EventEditor from "@/components/admin/events/EventEditor";
 import { setupFrom, tabFrom } from "@/components/admin/events/tabs";
-import type { DraftTabData, FormatTabData } from "@/components/admin/events/types";
+import type {
+  ChampionshipTabData,
+  DraftTabData,
+  FormatTabData,
+} from "@/components/admin/events/types";
 import { loadAdminGames } from "@/lib/admin-games";
+import { championshipOfEvent, championshipsToAddTo } from "@/lib/championships";
 import {
   getDiscardedPlayers,
   getDraftConfig,
@@ -62,7 +67,7 @@ export default async function AdminEventPage({
    * `requireEventManager` redirects a member who wanders here by id, so
    * nothing below runs for somebody who should not see it.
    */
-  await requireEventManager(id);
+  const manager = await requireEventManager(id);
   const { tab } = await searchParams;
 
   const event = await getEventById(id);
@@ -79,6 +84,8 @@ export default async function AdminEventPage({
     lots,
     formatView,
     matchIds,
+    counting,
+    seasons,
   ] = await Promise.all([
     getApplicationsForEvent(event.id),
     loadAdminGames(),
@@ -90,7 +97,18 @@ export default async function AdminEventPage({
     getDraftHistory(event.id),
     formatFor(event.id),
     matchIdsFor(event.id),
+    championshipOfEvent(event.id),
+    /*
+     * UC-32 1. Which seasons may be offered to *this* reader is
+     * `championshipsToAddTo`'s rule, not this page's: an admin is offered the
+     * hidden ones too, a host only the published (UC-31 2). The season this
+     * event is already in comes across whatever its status, because the panel
+     * has to be able to say what it is in.
+     */
+    championshipsToAddTo(manager),
   ]);
+
+  const championship: ChampionshipTabData = { counting, seasons };
 
   // What a question on this event may prefill from: its game's profile fields
   // plus the global ones. A field belonging to another game would prefill an
@@ -200,6 +218,7 @@ export default async function AdminEventPage({
           linkableFields={linkableFields}
           draft={draft}
           format={format}
+          championship={championship}
           maxDays={MAX_EVENT_DAYS}
           maxQuestions={MAX_EVENT_QUESTIONS}
           maxStages={MAX_STAGES}

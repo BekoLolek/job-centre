@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   Alert,
   Button,
+  EmptyState,
   Field,
   Section,
   SectionList,
@@ -13,6 +15,7 @@ import {
   plural,
 } from "@/components/ui";
 import type { ChampionshipStatusValue } from "@/db/schema";
+import type { CountingEvent } from "@/lib/championships";
 import {
   DEFAULT_POINTS_TABLE,
   MAX_POINTS_PLACES,
@@ -82,7 +85,14 @@ function numberFrom(raw: string): number {
   return Number.isFinite(value) ? value : Number.NaN;
 }
 
-export default function ChampionshipEditor({ view }: { view: ChampionshipEditorView }) {
+export default function ChampionshipEditor({
+  view,
+  counting,
+}: {
+  view: ChampionshipEditorView;
+  /** Which events count towards this season (UC-32's outcome). */
+  counting: CountingEvent[];
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -334,6 +344,40 @@ export default function ChampionshipEditor({ view }: { view: ChampionshipEditorV
               Nothing here is announced. Publishing is the step that shows it to everybody.
             </span>
           </div>
+        </Section>
+
+        {/* --- What counts (UC-32) ---------------------------------- */}
+        <Section
+          icon="calendar"
+          title="Events that count"
+          description="An event joins a season from its own editor, because the person who knows a tournament is a whole day is the person running it. This is the list."
+          aside={<span className="text-12 text-muted">{plural(counting.length, "event")}</span>}
+        >
+          {counting.length === 0 ? (
+            <EmptyState>
+              Nothing counts towards this season yet. Open an event, go to Setup →
+              Championship, and add it there.
+            </EmptyState>
+          ) : (
+            <ul className="divide-y divide-hair">
+              {counting.map((row) => (
+                <li key={row.id}>
+                  <Link
+                    href={`/admin/events/${row.eventId}?tab=championship`}
+                    className="flex flex-wrap items-center gap-x-4 gap-y-1 py-4 transition-colors hover:text-chalk"
+                  >
+                    <span className="min-w-0 flex-1 text-16 text-chalk">{row.title}</span>
+                    {row.pointsTable !== null && (
+                      <span className="text-13 text-muted">its own points table</span>
+                    )}
+                    <span className="num text-13 text-muted">
+                      {row.weight === 1 ? "single points" : `${row.weight}× points`}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
         </Section>
 
         {/* --- The lifecycle (UC-31 5, UC-35) ----------------------- */}

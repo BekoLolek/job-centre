@@ -443,6 +443,25 @@ export function missingToPublishChampionship(championship: {
 export const MAX_POINTS_PLACES = 100;
 
 /**
+ * The one thing wrong with a counting event's weight, as a sentence, or `null`
+ * (UC-32 3b).
+ *
+ * `championship_events_weight_positive` says the same thing in the column, and
+ * the integer type says the rest of it, but neither says it in words — and the
+ * screen typing the number has no database to ask. So it is here, pure, and
+ * asked twice: once under the box as it is typed, once by the write.
+ *
+ * Whole numbers only, for the reason the column gives: a weight of 1.5 turns an
+ * exact points table into totals that disagree with themselves about who is
+ * level.
+ */
+export function weightProblem(weight: number): string | null {
+  return Number.isInteger(weight) && weight > 0
+    ? null
+    : "The weight has to be a whole number of 1 or more.";
+}
+
+/**
  * The one thing wrong with these scoring rules, as a sentence, or `null`.
  *
  * Five rules, none of which a CHECK constraint can state — the table is a

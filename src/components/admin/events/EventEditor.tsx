@@ -7,6 +7,7 @@ import type { ApplicantView, EventDetail } from "@/lib/events";
 import ApplicantsTab from "./ApplicantsTab";
 import BasicsTab from "./BasicsTab";
 import CaptainsTab from "./CaptainsTab";
+import ChampionshipTab from "./ChampionshipTab";
 import DaysTab from "./DaysTab";
 import DraftTab from "./DraftTab";
 import EntryRulesTab from "./EntryRulesTab";
@@ -18,7 +19,13 @@ import ScheduleTab from "./ScheduleTab";
 import TeamsTab from "./TeamsTab";
 import UnsavedChangesProvider, { useNavigationLock } from "./UnsavedChanges";
 import type { SetupKey, TabKey } from "./tabs";
-import type { DraftTabData, FormatTabData, GameOption, LinkableField } from "./types";
+import type {
+  ChampionshipTabData,
+  DraftTabData,
+  FormatTabData,
+  GameOption,
+  LinkableField,
+} from "./types";
 
 /**
  * The event editor shell — plan §6.3.
@@ -82,6 +89,8 @@ type EventEditorProps = {
   draft: DraftTabData;
   /** Stages, matches, blocks and the schedule settings — one read, three panels. */
   format: FormatTabData;
+  /** Which season this event counts towards, and which it could (UC-32). */
+  championship: ChampionshipTabData;
   /**
    * `MAX_EVENT_DAYS` / `MAX_EVENT_QUESTIONS`, handed down from the server page.
    * They live in `src/lib/events.ts`, which reaches the database — importing it
@@ -103,6 +112,7 @@ function EditorBody({
   linkableFields,
   draft,
   format,
+  championship,
   maxDays,
   maxQuestions,
   maxStages,
@@ -230,6 +240,9 @@ function EditorBody({
               />
             )}
             {setup === "rules" && <EntryRulesTab event={event} />}
+            {setup === "championship" && (
+              <ChampionshipTab eventId={event.id} data={championship} />
+            )}
           </Setup>
         )}
 
@@ -383,12 +396,12 @@ function RailLink({
 }
 
 /**
- * Setup: the four screens that were all answering "what is this event".
+ * Setup: the screens that are all answering "what is this event".
  *
- * They are one decision described four ways — what it is, when it runs, what
- * you have to tell us, who is allowed in — so they are one step with a
- * secondary rail, rather than four steps that each look as significant as
- * running the draft.
+ * They are one decision described five ways — what it is, when it runs, what
+ * you have to tell us, who is allowed in, what it counts towards — so they are
+ * one step with a secondary rail, rather than five steps that each look as
+ * significant as running the draft.
  */
 function Setup({
   current,
@@ -418,6 +431,7 @@ function Setup({
             { value: "days", label: "Days", count: counts.days },
             { value: "questions", label: "Questions", count: counts.questions },
             { value: "rules", label: "Entry rules" },
+            { value: "championship", label: "Championship" },
           ]}
         />
       </div>

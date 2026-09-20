@@ -64,6 +64,13 @@ import {
   updateEvent,
 } from "@/lib/events";
 import type { ApplicationDecision } from "@/lib/events-policy";
+import {
+  type ChampionshipResult,
+  type CountingEventFields,
+  addCountingEvent,
+  removeCountingEvent,
+  setCountingEvent,
+} from "@/lib/championships";
 import { recordAudit } from "@/lib/audit";
 import {
   notifyApplicationDecided,
@@ -498,6 +505,129 @@ export async function saveEntryRulesAction(
   if (!result.ok) return result;
 
   refresh(eventId);
+  return { ok: true, data: null };
+}
+
+/* ------------------------------------------------------------------ */
+/* Championship (UC-32)                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `refresh`, plus the season whose list of counting events just changed.
+ *
+ * The season's own screen lists them (UC-32's outcome), so a weight changed
+ * from the event editor has to reach it — these are two screens onto one row.
+ */
+function refreshSeason(eventId: string, championshipId: string): void {
+  refresh(eventId);
+  revalidatePath("/admin/championships");
+  revalidatePath(`/admin/championships/${championshipId}`);
+  revalidatePath("/admin/audit");
+}
+
+/**
+ * Count this event towards a season (UC-32 1).
+ *
+ * Authorised with `requireEventManager`, exactly like every other write on this
+ * page, because UC-32's actor is "an admin, or the host of that event" and its
+ * precondition is that the actor manages the *event*. The season is an admin's
+ * object and stays one: nothing here can change what a season is worth, only
+ * whether this one event is in it, and a finished season refuses all three
+ * writes below with UC-35 2b's message.
+ *
+ * **The offer is filtered by who is asking; this write is not.**
+ * `championshipsToAddTo` gives a host the published seasons only (UC-31 2), so
+ * a hidden season is never *listed* to them — but a host who already holds a
+ * hidden season's id and posts it straight here is not refused, and will then
+ * see its name on their own event. That is the right split: UC-31 2 is about
+ * browsing other people's unpublished seasons, and a uuid somebody already has
+ * is not a secret. Refusing it would also mean a host could not be asked to put
+ * their event into a season an admin is still setting up, which is the ordinary
+ * way an event joins one.
+ */
+export async function addEventToChampionshipAction(
+  eventId: string,
+  championshipId: string
+): Promise<ChampionshipResult<null>> {
+  const admin = await requireEventManager(eventId);
+
+  const result = await addCountingEvent(championshipId, eventId);
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "championship.event.added",
+    actor: admin,
+    eventId,
+    subject: result.data.season.id,
+    summary: `"${result.data.title}" now counts towards "${result.data.season.name}".`,
+    detail: { championship: result.data.season.id, weight: result.data.weight },
+  });
+
+  refreshSeason(eventId, result.data.season.id);
+  return { ok: true, data: null };
+}
+
+/**
+ * Set what this event is worth to its season — the weight, its own points
+ * table, or both (UC-32 3, 3a).
+ *
+ * Only the settings that were sent are written. That buys nothing from this
+ * screen, which shows both in one save and sends both every time — it is
+ * `setCountingEvent`'s shape, not a claim about what this caller does, and a
+ * weight saved from here does write back the points table the page was loaded
+ * with.
+ */
+export async function saveEventChampionshipAction(
+  eventId: string,
+  fields: CountingEventFields
+): Promise<ChampionshipResult<null>> {
+  const admin = await requireEventManager(eventId);
+
+  const result = await setCountingEvent(eventId, fields);
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "championship.event.changed",
+    actor: admin,
+    eventId,
+    subject: result.data.season.id,
+    summary:
+      result.data.pointsTable === null
+        ? `"${result.data.title}" counts towards "${result.data.season.name}" at weight ${result.data.weight}.`
+        : `"${result.data.title}" counts towards "${result.data.season.name}" at weight ${result.data.weight}, on its own points table.`,
+    detail: {
+      championship: result.data.season.id,
+      weight: result.data.weight,
+      ownTable: result.data.pointsTable !== null,
+    },
+  });
+
+  refreshSeason(eventId, result.data.season.id);
+  return { ok: true, data: null };
+}
+
+/**
+ * Stop counting this event (UC-32 4a). The season re-scores by itself, because
+ * nothing about its standings was ever stored.
+ */
+export async function removeEventFromChampionshipAction(
+  eventId: string
+): Promise<ChampionshipResult<null>> {
+  const admin = await requireEventManager(eventId);
+
+  const result = await removeCountingEvent(eventId);
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "championship.event.removed",
+    actor: admin,
+    eventId,
+    subject: result.data.season.id,
+    summary: `"${result.data.title}" no longer counts towards "${result.data.season.name}".`,
+    detail: { championship: result.data.season.id },
+  });
+
+  refreshSeason(eventId, result.data.season.id);
   return { ok: true, data: null };
 }
 

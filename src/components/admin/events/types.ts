@@ -1,5 +1,10 @@
 import type { PlayerBook, TeamLike } from "@/components/draft";
-import type { ProfileFieldOption, ProfileFieldType } from "@/db/schema";
+import type {
+  ChampionshipStatusValue,
+  ProfileFieldOption,
+  ProfileFieldType,
+} from "@/db/schema";
+import type { EventChampionship } from "@/lib/championships";
 import type { DraftConfig } from "@/lib/draft-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
 
@@ -66,6 +71,22 @@ export type DraftTabData = {
    * rejection.
    */
   started: boolean;
+};
+
+/**
+ * What the Championship panel reads (UC-32).
+ *
+ * `counting` is the season this event is already in — null for the common case
+ * of an event that counts towards nothing, and present whatever that season's
+ * status, because the panel has to be able to say what the event is in.
+ *
+ * `seasons` is what may be *offered* to whoever is reading, which is
+ * `championshipsToAddTo`'s rule: never a finished season, and hidden ones for
+ * admins only (UC-31 2).
+ */
+export type ChampionshipTabData = {
+  counting: EventChampionship | null;
+  seasons: { id: string; name: string; status: ChampionshipStatusValue }[];
 };
 
 /**

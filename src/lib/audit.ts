@@ -100,6 +100,9 @@ export const AUDIT_ACTIONS = {
   "championship.updated": "Championship changed",
   "championship.status": "Championship status changed",
   "championship.reopened": "Championship reopened",
+  "championship.event.added": "Event counts towards a championship",
+  "championship.event.changed": "Counting event changed",
+  "championship.event.removed": "Event stopped counting",
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
@@ -122,6 +125,9 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   // read the log, so it gets the colour that says "look at this one".
   "user.admin.revoked",
   "template.deactivated",
+  // It takes a season's results away with it: the places recorded in that event
+  // go by the cascade, and the standings re-score without them.
+  "championship.event.removed",
 ]);
 
 /** The actions that hand something out. Read next to `DESTRUCTIVE` above. */

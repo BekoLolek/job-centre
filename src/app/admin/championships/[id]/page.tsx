@@ -15,7 +15,7 @@ import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import ChampionshipEditor from "@/components/admin/ChampionshipEditor";
 import { Button, Eyebrow, Page } from "@/components/ui";
-import { getChampionship } from "@/lib/championships";
+import { getChampionship, listCountingEvents } from "@/lib/championships";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +37,8 @@ export default async function AdminChampionshipPage({
   const season = await getChampionship(id);
   if (!season) notFound();
 
+  const counting = await listCountingEvents(season.id);
+
   return (
     <div className="min-h-screen">
       <AppHeader>
@@ -55,6 +57,7 @@ export default async function AdminChampionshipPage({
         </header>
 
         <ChampionshipEditor
+          counting={counting}
           view={{
             id: season.id,
             name: season.name,

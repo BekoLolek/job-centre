@@ -1,5 +1,5 @@
 /**
- * Championships — the part that talks to Postgres (UC-31, UC-35).
+ * Championships — the part that talks to Postgres (UC-31, UC-32, UC-35).
  *
  * The rules themselves live in `./championship-policy`, which has no database
  * handle: the state flow, the closed lock, what a season needs before it may be
@@ -16,6 +16,16 @@
  * closed the season. The `update` itself therefore also carries
  * `status <> 'closed'` in its `where`, so a season closed between the read and
  * the write takes no edit either.
+ *
+ * The writes that count an event towards a season do the same, in the same
+ * words, which is the whole of "a finished season does not change" — and they
+ * carry it into the statement too, because a check followed by an
+ * unconditional write is a window an admin can close a season inside.
+ * `championship_events` cannot name `status` in its own `where`, so each write
+ * reaches the season its own way: {@link setCountingEvent} and
+ * {@link removeCountingEvent} through the {@link openSeasons} subquery,
+ * {@link addCountingEvent} by inserting *from* a select over `championships`
+ * that returns no row once the season is closed.
  *
  * `setChampionshipStatus` is the one write that does not ask, because the one
  * legal move out of `closed` is the reopen. That is `canMoveChampionship`'s
@@ -38,7 +48,7 @@
  * must not break every one of them.
  */
 
-import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   type ChampionshipStatusValue,
   type Database,
@@ -55,6 +65,7 @@ import {
   championshipLockRefusal,
   missingToPublishChampionship,
   scoringRulesProblem,
+  weightProblem,
 } from "./championship-policy";
 import { uniqueKey } from "./profile-fields";
 
@@ -271,20 +282,22 @@ async function nameTaken(
 /** The two indexes a season's name can collide on — its own, and its slug's. */
 const NAME_COLLISION = /championships_(open_name_uniq|slug_unique)/;
 
+/** R-196's index: one event, at most one season (UC-32 1a). */
+const EVENT_COLLISION = /championship_events_event_uniq/;
+
 /**
- * Did this error come from another admin getting the same name in first?
+ * Did this error come from somebody getting there first on one of these
+ * indexes?
  *
  * drizzle re-throws with a generic "Failed query: …" and hangs the real
  * Postgres error off `cause`, so the chain is walked rather than the top
  * message read — the same shape `expectRejection` in the test helpers uses.
- * Both indexes count: two admins typing "Winter 2026" at once collide on
- * whichever of the name and the slug Postgres happens to check first, and the
- * sentence an admin needs is the same either way.
  *
  * Anything else is re-thrown by the callers. A refusal that swallows unrelated
- * database errors is worse than no refusal.
+ * database errors is worse than no refusal, so the index has to be named: a
+ * unique violation somewhere else is still a bug.
  */
-function duplicateSeason(error: unknown): boolean {
+function uniqueViolation(error: unknown, index: RegExp): boolean {
   const parts: string[] = [];
   let unique = false;
   let current: unknown = error;
@@ -301,7 +314,18 @@ function duplicateSeason(error: unknown): boolean {
     current = row.cause;
   }
   const text = parts.join("\n");
-  return (unique || /unique constraint/i.test(text)) && NAME_COLLISION.test(text);
+  return (unique || /unique constraint/i.test(text)) && index.test(text);
+}
+
+/**
+ * Did this error come from another admin getting the same name in first?
+ *
+ * Both indexes count: two admins typing "Winter 2026" at once collide on
+ * whichever of the name and the slug Postgres happens to check first, and the
+ * sentence an admin needs is the same either way.
+ */
+function duplicateSeason(error: unknown): boolean {
+  return uniqueViolation(error, NAME_COLLISION);
 }
 
 /* ------------------------------------------------------------------ */
@@ -405,12 +429,14 @@ export async function updateChampionship(
 
   /*
    * Only the columns the caller sent, plus `updatedAt`, so a caller that sends
-   * three fields writes three — `updateEvent`'s shape, and what lets a later
-   * screen (Task 40's Championship section on the event editor) save one
-   * setting without carrying the rest of the season along with it.
+   * three fields writes three — `updateEvent`'s shape, and the shape
+   * {@link setCountingEvent} took for the Championship section on the event
+   * editor, which saves a weight without carrying a points table it never
+   * showed.
    *
-   * It buys nothing today: the editor is a single form and sends all seven
-   * every time, so the merged values it writes back are the ones it just read.
+   * It still buys nothing *here*: this editor is a single form and sends all
+   * seven every time, so the merged values it writes back are the ones it just
+   * read.
    * The rules above are checked against that merged season regardless, because
    * UC-31 4a is a rule *between* two of these fields and cannot be decided from
    * a partial payload.
@@ -528,6 +554,408 @@ export async function setChampionshipStatus(
     }
     throw error;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Which events count, and for how much (UC-32)                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One event counting towards a season, as a screen lists it.
+ *
+ * `id` is the `championship_events` row rather than the event: it is what a
+ * placement hangs off, so it is the id Task 41 records against.
+ */
+export type CountingEvent = {
+  id: string;
+  eventId: string;
+  title: string;
+  /** Above 0. Multiplies everything this event is worth. */
+  weight: number;
+  /** This event's own table, or null when it uses the season's. */
+  pointsTable: number[] | null;
+};
+
+/**
+ * The season one event counts towards, seen from the event.
+ *
+ * Carries the season's own scoring rules because the two settings below are
+ * meaningless without them: the event editor has to show what "the season's
+ * table" is before offering to replace it, and an event's own table is checked
+ * against the season's participation points (see {@link setCountingEvent}).
+ */
+export type EventChampionship = CountingEvent & {
+  season: {
+    id: string;
+    name: string;
+    status: ChampionshipStatusValue;
+    pointsTable: number[];
+    participationPoints: number;
+    countBest: number | null;
+  };
+};
+
+/** Everything that may be set about one counting event. Only the keys present change. */
+export type CountingEventFields = {
+  weight?: number;
+  /** The event's own table, or null to go back to the season's. */
+  pointsTable?: number[] | null;
+};
+
+/** Asked by everything keyed on an event rather than on a counting row. */
+const NOT_COUNTING = "This event does not count towards a championship.";
+
+/** UC-32 1a: refuse, and name the season that already has it. */
+function alreadyCounting(name: string): string {
+  return `This event already counts towards "${name}". Take it out of that season first.`;
+}
+
+/**
+ * The seasons a child row may still be written under — the lock, as the write
+ * itself sees it.
+ *
+ * `championshipLockRefusal` is asked first and produces the sentence; this is
+ * the same rule in the `where`, so a season closed between the read and the
+ * write takes no edit either. `updateChampionship` carries `status <> 'closed'`
+ * for exactly this reason; a child table needs the subquery to say it.
+ */
+function openSeasons(database: Database) {
+  return database
+    .select({ id: championships.id })
+    .from(championships)
+    .where(ne(championships.status, "closed"));
+}
+
+/** Who is being offered a season to put an event into. */
+export type CountingViewer = { isAdmin: boolean };
+
+/**
+ * The seasons this person may add an event to, newest first (UC-32 1).
+ *
+ * Two rules, and they pull in opposite directions, which is why this is a
+ * function and not a `.filter()` in a page:
+ *
+ *  - **A finished season takes no new events** (UC-35 2b), so offering one
+ *    would be offering a refusal. That holds for everybody.
+ *  - **A hidden season is admins only** (UC-31 2: "only admins can see it").
+ *    Its name and its points table are still being argued about, and a
+ *    dropdown of every draft season is exactly the browsing that "only admins"
+ *    excludes. A host is offered the published ones.
+ *
+ * The second rule is not a wall around the *event*: a host whose event already
+ * counts towards a hidden season still sees that season on their own event and
+ * can weight it or take it out, because {@link championshipOfEvent} answers
+ * "what is this event in" rather than "what seasons exist". What a host may not
+ * do is read the list of everybody else's unpublished ones.
+ *
+ * Nothing downstream depends on this being right — the three writes authorise
+ * on the event, and a host who posts a hidden season's id straight at
+ * `addEventToChampionshipAction` is not refused by it. That is deliberate, and
+ * the reasoning is written out where that action is defined. This decides what
+ * is *offered*.
+ */
+export async function championshipsToAddTo(
+  viewer: CountingViewer,
+  database: Database = defaultDb
+): Promise<Array<{ id: string; name: string; status: ChampionshipStatusValue }>> {
+  return database
+    .select({
+      id: championships.id,
+      name: championships.name,
+      status: championships.status,
+    })
+    .from(championships)
+    .where(
+      viewer.isAdmin
+        ? ne(championships.status, "closed")
+        : eq(championships.status, "published")
+    )
+    .orderBy(desc(championships.createdAt));
+}
+
+/** Every event counting towards this season, by name. */
+export async function listCountingEvents(
+  championshipId: string,
+  database: Database = defaultDb
+): Promise<CountingEvent[]> {
+  return database
+    .select({
+      id: championshipEvents.id,
+      eventId: championshipEvents.eventId,
+      title: events.title,
+      weight: championshipEvents.weight,
+      pointsTable: championshipEvents.pointsTable,
+    })
+    .from(championshipEvents)
+    .innerJoin(events, eq(events.id, championshipEvents.eventId))
+    .where(eq(championshipEvents.championshipId, championshipId))
+    .orderBy(asc(events.title));
+}
+
+/**
+ * The season this event counts towards, or null.
+ *
+ * One row at most, because `championship_events.event_id` is unique — which is
+ * the whole of R-196 and is why every write below is keyed on the event id
+ * rather than on the counting row's. The caller authorising these writes
+ * authorises on an event, so keying them on anything else would mean checking
+ * one id and writing another (see `src/lib/event-scope.ts`).
+ */
+export async function championshipOfEvent(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<EventChampionship | null> {
+  const [row] = await database
+    .select({
+      id: championshipEvents.id,
+      eventId: championshipEvents.eventId,
+      title: events.title,
+      weight: championshipEvents.weight,
+      pointsTable: championshipEvents.pointsTable,
+      seasonId: championships.id,
+      seasonName: championships.name,
+      seasonStatus: championships.status,
+      seasonPointsTable: championships.pointsTable,
+      participationPoints: championships.participationPoints,
+      countBest: championships.countBest,
+    })
+    .from(championshipEvents)
+    .innerJoin(championships, eq(championships.id, championshipEvents.championshipId))
+    .innerJoin(events, eq(events.id, championshipEvents.eventId))
+    .where(eq(championshipEvents.eventId, eventId))
+    .limit(1);
+
+  if (!row) return null;
+  return {
+    id: row.id,
+    eventId: row.eventId,
+    title: row.title,
+    weight: row.weight,
+    pointsTable: row.pointsTable,
+    season: {
+      id: row.seasonId,
+      name: row.seasonName,
+      status: row.seasonStatus,
+      pointsTable: row.seasonPointsTable,
+      participationPoints: row.participationPoints,
+      countBest: row.countBest,
+    },
+  };
+}
+
+/**
+ * Count this event towards this season, at weight 1 (UC-32 1-2).
+ *
+ * An event completed weeks ago is as welcome as one that has not happened
+ * (UC-32 1b): nothing is stored about what a season is worth, so its places
+ * count from the moment they are recorded against it, which for a finished
+ * event is the moment somebody types them in.
+ *
+ * The refusal an event already in a season gets names that season (UC-32 1a).
+ * It is asked before the insert so the common path reads a sentence, and caught
+ * after it so the race does too — `createChampionship`'s shape, for the same
+ * reason: the check is the common path, the catch is the correct one.
+ *
+ * The lock gets the same treatment, which is why this inserts from a `select`
+ * over `championships` rather than from plain values: the row only appears if
+ * the season is *still* not closed when the insert runs. Checking the status
+ * and then inserting unconditionally leaves a window in which an admin closes
+ * the season — freezing standings somebody is about to read — and a new event
+ * lands in it anyway.
+ */
+export async function addCountingEvent(
+  championshipId: string,
+  eventId: string,
+  database: Database = defaultDb
+): Promise<ChampionshipResult<EventChampionship>> {
+  const season = await getChampionship(championshipId, database);
+  if (!season) return fail("That championship no longer exists.");
+
+  const locked = championshipLockRefusal(season);
+  if (locked) return fail(locked);
+
+  const [event] = await database
+    .select({ id: events.id, title: events.title })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  if (!event) return fail("That event no longer exists.");
+
+  const existing = await championshipOfEvent(eventId, database);
+  if (existing) return fail(alreadyCounting(existing.season.name));
+
+  let added: typeof championshipEvents.$inferSelect | undefined;
+  try {
+    [added] = await database
+      .insert(championshipEvents)
+      .select(
+        /*
+         * Every column, in the table's order, because that is the list an
+         * `insert … select` carries — there is no `default` keyword available
+         * in a select list. The four that are not the two ids are
+         * `championship_events`' own defaults, restated: a new counting event
+         * is worth exactly one turn of the season's table (UC-32 2), on the
+         * season's own points table until somebody says otherwise.
+         */
+        database
+          .select({
+            id: sql<string>`gen_random_uuid()`.as("id"),
+            championshipId: championships.id,
+            eventId: sql<string>`${eventId}::uuid`.as("event_id"),
+            weight: sql<number>`1`.as("weight"),
+            pointsTable: sql<number[] | null>`null::jsonb`.as("points_table"),
+            addedAt: sql<Date>`now()`.as("added_at"),
+          })
+          .from(championships)
+          .where(
+            and(eq(championships.id, championshipId), ne(championships.status, "closed"))
+          )
+      )
+      .returning();
+  } catch (error) {
+    if (uniqueViolation(error, EVENT_COLLISION)) {
+      const winner = await championshipOfEvent(eventId, database);
+      return fail(alreadyCounting(winner?.season.name ?? season.name));
+    }
+    throw error;
+  }
+
+  // Nothing inserted means the `select` matched nothing, and only the season
+  // can have changed since it was read a moment ago.
+  if (!added) {
+    const fresh = await getChampionship(championshipId, database);
+    if (!fresh) return fail("That championship no longer exists.");
+    return fail(championshipLockRefusal(fresh) ?? CHANGED);
+  }
+
+  return {
+    ok: true,
+    data: {
+      id: added.id,
+      eventId,
+      title: event.title,
+      weight: added.weight,
+      pointsTable: added.pointsTable,
+      season: {
+        id: season.id,
+        name: season.name,
+        status: season.status,
+        pointsTable: season.pointsTable,
+        participationPoints: season.participationPoints,
+        countBest: season.countBest,
+      },
+    },
+  };
+}
+
+/**
+ * Set what one counting event is worth — its weight, its own points table, or
+ * both (UC-32 3, 3a).
+ *
+ * Only the keys present change — `updateChampionship`'s shape, and it buys
+ * nothing today for the same reason: the Championship panel shows both
+ * settings in one save and sends both every time, so what it writes back for
+ * the one it did not touch is what it just read. The rules below are checked
+ * against the merged row regardless, because an event's own table is only
+ * legal *relative to* the season it is in.
+ *
+ * The event's own table is checked by `scoringRulesProblem` against the
+ * **season's** participation points, which is not a convenience: `placementValue`
+ * floors any table out at those points, so a table whose last place is worth
+ * less than taking part would pay better for finishing outside it than for
+ * finishing last in it. One rule, asked of whichever table is in use.
+ *
+ * An empty table is stored as null rather than as `[]`. Scoring already treats
+ * the two the same — `resultsForEvent` falls back to the season's table when
+ * the event's has no rows — and one way of saying "use the season's" is enough.
+ */
+export async function setCountingEvent(
+  eventId: string,
+  fields: CountingEventFields,
+  database: Database = defaultDb
+): Promise<ChampionshipResult<EventChampionship>> {
+  const current = await championshipOfEvent(eventId, database);
+  if (!current) return fail(NOT_COUNTING);
+
+  const locked = championshipLockRefusal(current.season);
+  if (locked) return fail(locked);
+
+  const changes: Partial<typeof championshipEvents.$inferInsert> = {};
+
+  if ("weight" in fields) {
+    const weight = Number(fields.weight);
+    const problem = weightProblem(weight);
+    if (problem) return fail(problem);
+    changes.weight = weight;
+  }
+
+  if ("pointsTable" in fields) {
+    const table = fields.pointsTable ?? null;
+    if (table !== null) {
+      const problem = scoringRulesProblem({
+        pointsTable: table,
+        participationPoints: current.season.participationPoints,
+        countBest: current.season.countBest,
+      });
+      if (problem) return fail(problem);
+    }
+    changes.pointsTable = table === null || table.length === 0 ? null : table;
+  }
+
+  // A caller that asked for nothing gets what is already there rather than an
+  // `update` with an empty `set`, which is not a statement Postgres has.
+  if (Object.keys(changes).length === 0) return { ok: true, data: current };
+
+  const [updated] = await database
+    .update(championshipEvents)
+    .set(changes)
+    .where(
+      and(
+        eq(championshipEvents.eventId, eventId),
+        inArray(championshipEvents.championshipId, openSeasons(database))
+      )
+    )
+    .returning();
+
+  if (!updated) return fail(CHANGED);
+  return {
+    ok: true,
+    data: { ...current, weight: updated.weight, pointsTable: updated.pointsTable },
+  };
+}
+
+/**
+ * Stop counting this event (UC-32 4a).
+ *
+ * There is nothing to re-score afterwards and that is the design, not an
+ * omission: a standing is `scoreChampionship` over the rows that are there, so
+ * the season is already correct the next time anybody reads it. The places
+ * recorded in this event go with it, by the cascade on
+ * `championship_placements.championship_event_id` — they were places *in a
+ * counting event*, and outside one they are not places in anything.
+ */
+export async function removeCountingEvent(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<ChampionshipResult<EventChampionship>> {
+  const current = await championshipOfEvent(eventId, database);
+  if (!current) return fail(NOT_COUNTING);
+
+  const locked = championshipLockRefusal(current.season);
+  if (locked) return fail(locked);
+
+  const [removed] = await database
+    .delete(championshipEvents)
+    .where(
+      and(
+        eq(championshipEvents.eventId, eventId),
+        inArray(championshipEvents.championshipId, openSeasons(database))
+      )
+    )
+    .returning({ id: championshipEvents.id });
+
+  if (!removed) return fail(CHANGED);
+  return { ok: true, data: current };
 }
 
 /** `["a", "b", "c"]` → `"a, b and c"`. */

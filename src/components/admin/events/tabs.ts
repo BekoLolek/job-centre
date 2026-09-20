@@ -24,6 +24,9 @@
  *
  * Setup swallowed the four screens that were all "describe the event": basics,
  * days, questions, entry rules. They were four tabs holding one decision.
+ * Championship (UC-32) joined them for the same reason — which season this
+ * event counts towards is another sentence describing it, not a stage of
+ * running it.
  */
 
 export type TabKey =
@@ -38,7 +41,7 @@ export type TabKey =
   | "captains";
 
 /** The panels inside Setup. */
-export type SetupKey = "basics" | "days" | "questions" | "rules";
+export type SetupKey = "basics" | "days" | "questions" | "rules" | "championship";
 
 export const STEP_KEYS: readonly TabKey[] = [
   "setup",
@@ -53,18 +56,30 @@ export const PEOPLE_KEYS: readonly TabKey[] = ["applicants", "teams", "captains"
 
 export const TAB_KEYS: readonly TabKey[] = [...STEP_KEYS, ...PEOPLE_KEYS];
 
-export const SETUP_KEYS: readonly SetupKey[] = ["basics", "days", "questions", "rules"];
+export const SETUP_KEYS: readonly SetupKey[] = [
+  "basics",
+  "days",
+  "questions",
+  "rules",
+  "championship",
+];
 
 /**
- * The four names Setup absorbed. Old links and bookmarks still name them, and
- * `/admin`'s action lines were written against them, so they keep working —
- * they land on Setup with the right panel open.
+ * The four names Setup absorbed, plus the one it grew. Old links and bookmarks
+ * still name the four, and `/admin`'s action lines were written against them,
+ * so they keep working — they land on Setup with the right panel open.
+ *
+ * `championship` is a panel rather than a seventh step for the same reason the
+ * other four are not steps: which season an event counts towards is a sentence
+ * describing the event, not a stage of running one. Nobody visits it in the
+ * middle of a draft.
  */
 const SETUP_ALIASES: Record<string, SetupKey> = {
   basics: "basics",
   days: "days",
   questions: "questions",
   rules: "rules",
+  championship: "championship",
 };
 
 /**
