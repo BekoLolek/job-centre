@@ -159,16 +159,16 @@ export default function EventQuestionDialog({
           <Button size="sm" onClick={onClose}>
             Cancel
           </Button>
-          <Button size="sm" variant="gold" disabled={Boolean(blocked)} onClick={() => commit(false)}>
+          <Button size="sm" variant="union" disabled={Boolean(blocked)} onClick={() => commit(false)}>
             {editing ? "Save question" : "Add question"}
           </Button>
         </>
       }
     >
-      {blocked && <Alert tone="gold">{blocked}</Alert>}
+      {blocked && <Alert tone="union">{blocked}</Alert>}
 
       {confirmLoss !== null && (
-        <Alert tone="ember">
+        <Alert tone="flare">
           <span className="block font-medium">
             This change clears {plural(confirmLoss, "stored answer")}
           </span>
@@ -177,7 +177,7 @@ export default function EventQuestionDialog({
             written until you save the whole question list.
           </span>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" variant="ember" onClick={() => commit(true)}>
+            <Button size="sm" variant="flare" onClick={() => commit(true)}>
               Change it anyway
             </Button>
             <Button size="sm" onClick={() => setConfirmLoss(null)}>
@@ -201,18 +201,18 @@ export default function EventQuestionDialog({
         <div className="flex flex-wrap items-baseline gap-2">
           <Eyebrow className="text-chalk/70">Prefill from the profile</Eyebrow>
           {linked && linkStillValid && (
-            <span className="eyebrow text-signal">Linked · answered in advance</span>
+            <span className="eyebrow text-success">Linked · answered in advance</span>
           )}
         </div>
 
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           Link this to a profile question and the application arrives with the member&apos;s
           stored answer already in it — they check it instead of typing it again. That is
           the whole reason the profile exists.
         </p>
 
         {linkableFields.length === 0 ? (
-          <p className="text-xs text-gold/80">
+          <p className="text-12 text-union">
             Nothing to link to: this event has no game, or its game has no profile questions
             yet. Add them under Admin → Games.
           </p>
@@ -251,8 +251,8 @@ export default function EventQuestionDialog({
                   }}
                 >
                   {field.label}
-                  <span className="ml-1.5 font-mono text-[10px] opacity-60">{field.scope}</span>
-                  {!matches && <span className="ml-1.5 text-[10px] text-gold">↻</span>}
+                  <span className="ml-1.5 font-mono text-11 opacity-60">{field.scope}</span>
+                  {!matches && <span className="ml-1.5 text-11 text-union">↻</span>}
                 </ChoiceChip>
               );
             })}
@@ -260,7 +260,7 @@ export default function EventQuestionDialog({
         )}
 
         {linked && !linkStillValid && (
-          <p className="text-xs text-ember">
+          <p className="text-12 text-flare">
             {linked.label} is a {fieldTypeInfo(linked.type).label} question, so it can no
             longer prefill this one. Saving now asks the question fresh.
           </p>
@@ -284,15 +284,15 @@ export default function EventQuestionDialog({
             </ChoiceChip>
           ))}
         </ChoiceRow>
-        <p className="mt-2 text-xs text-muted">{info.hint}</p>
+        <p className="mt-2 text-12 text-muted">{info.hint}</p>
         {type === "text" && (
-          <p className="mt-1 text-xs text-gold/80">
+          <p className="mt-1 text-12 text-union">
             Free text is the last resort — an applicant has to type it every time and nothing
             can validate it. Use it only where a list genuinely cannot be written down.
           </p>
         )}
         {type === "rank" && rankLadder.length === 0 && (
-          <p className="mt-1 text-xs text-ember">
+          <p className="mt-1 text-12 text-flare">
             This event has no game with a rank ladder, so a rank question would have nothing
             to offer. Pick a game under Setup → Basics first.
           </p>
@@ -319,7 +319,7 @@ export default function EventQuestionDialog({
             Required
           </ChoiceChip>
         </ChoiceRow>
-        <p className="mt-2 text-xs text-muted">
+        <p className="mt-2 text-12 text-muted">
           Unlike on a profile, required here is a hard gate: an application missing one is
           refused. A linked question counts as answered when the profile has it.
         </p>
@@ -327,7 +327,7 @@ export default function EventQuestionDialog({
 
       <Panel padding="sm" className="bg-ink/40">
         <Eyebrow className="mb-3">What the applicant sees</Eyebrow>
-        <div className="mb-2 text-sm text-chalk/80">{previewField.label}</div>
+        <div className="mb-2 text-14 text-chalk/80">{previewField.label}</div>
         <FieldControl
           field={previewField}
           value={previewValue}

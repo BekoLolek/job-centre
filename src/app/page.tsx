@@ -86,7 +86,7 @@ export default async function HubPage() {
         {/* --- 1. Live now, and only when it is ---------------------- */}
         {live.length > 0 && (
           <section className="space-y-3">
-            <Eyebrow className="text-ember">Live now</Eyebrow>
+            <Eyebrow className="text-flare">Live now</Eyebrow>
             {live.map((event) => (
               <LivePanel key={event.id} event={event} />
             ))}
@@ -121,14 +121,14 @@ export default async function HubPage() {
                     ))}
                   </div>
 
-                  <h1 className="font-display text-5xl leading-[0.9]">
-                    <Link href={`/events/${hero.slug}`} className="hover:text-gold">
+                  <h1 className="font-display text-48 leading-[0.9]">
+                    <Link href={`/events/${hero.slug}`} className="hover:text-union">
                       {hero.title}
                     </Link>
                   </h1>
 
                   {hero.description && (
-                    <p className="max-w-2xl text-sm leading-relaxed text-muted">
+                    <p className="max-w-2xl text-14 leading-relaxed text-muted">
                       {hero.description.length > 260
                         ? `${hero.description.slice(0, 260).trimEnd()}…`
                         : hero.description}
@@ -139,7 +139,7 @@ export default async function HubPage() {
                     <EventDateRange
                       startsAt={hero.startsAt}
                       endsAt={hero.endsAt}
-                      className="text-sm"
+                      className="text-14"
                     />
                     <EventSeats seats={hero.seats} size="md" />
                   </div>
@@ -176,10 +176,10 @@ export default async function HubPage() {
         ) : (
           <Panel as="section" className="rise">
             <Eyebrow className="mb-3">Nothing on right now</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">
+            <h1 className="font-display text-36 leading-none">
               Nothing scheduled
             </h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               There is no upcoming event taking applications at the moment. Everything the
               community has run is kept in the archive, and the next one will appear here the
               moment it is published.
@@ -198,7 +198,7 @@ export default async function HubPage() {
             title="Also coming up"
             description="Everything with a date on it, soonest first."
             aside={
-              <Link href="/events" className="text-[13px] text-muted transition-colors hover:text-union">
+              <Link href="/events" className="text-13 text-muted transition-colors hover:text-union">
                 See all events →
               </Link>
             }
@@ -218,7 +218,7 @@ export default async function HubPage() {
             title="Recently finished"
             description="How the last few turned out, and who won them."
             aside={
-              <Link href="/archive" className="text-[13px] text-muted transition-colors hover:text-union">
+              <Link href="/archive" className="text-13 text-muted transition-colors hover:text-union">
                 Archive →
               </Link>
             }
@@ -243,25 +243,25 @@ export default async function HubPage() {
  */
 function LivePanel({ event }: { event: EventSummary }) {
   return (
-    <Panel className="border-ember/40">
+    <Panel className="border-flare/40">
       <div className="flex flex-wrap items-center gap-5">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <EventStatusPill status={event.status} />
             <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
           </div>
-          <h2 className="font-display text-3xl leading-none">
-            <Link href={`/events/${event.slug}`} className="hover:text-gold">
+          <h2 className="font-display text-30 leading-none">
+            <Link href={`/events/${event.slug}`} className="hover:text-union">
               {event.title}
             </Link>
           </h2>
-          <p className="mt-2 text-xs text-muted">
+          <p className="mt-2 text-12 text-muted">
             Running now · <EventSeats seats={event.seats} />
           </p>
         </div>
 
         <div className="ml-auto flex flex-wrap gap-2">
-          <Button href={`/events/${event.slug}`} variant="gold">
+          <Button href={`/events/${event.slug}`} variant="union">
             Follow it
           </Button>
         </div>

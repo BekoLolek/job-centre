@@ -117,7 +117,7 @@ function Options<T extends string>({
           </ChoiceChip>
         ))}
       </ChoiceRow>
-      <p className={cx("text-xs leading-relaxed", forced ? "text-gold" : "text-muted")}>
+      <p className={cx("text-12 leading-relaxed", forced ? "text-union" : "text-muted")}>
         {forced ?? hint}
       </p>
     </div>
@@ -153,7 +153,7 @@ function Switch({
           {offLabel}
         </ChoiceChip>
       </ChoiceRow>
-      {hint && <p className="text-xs leading-relaxed text-muted">{hint}</p>}
+      {hint && <p className="text-12 leading-relaxed text-muted">{hint}</p>}
     </div>
   );
 }
@@ -192,7 +192,7 @@ function Number_({
         aria-label={label}
         onChange={onChange}
       />
-      {hint && <p className="text-xs leading-relaxed text-muted">{hint}</p>}
+      {hint && <p className="text-12 leading-relaxed text-muted">{hint}</p>}
     </div>
   );
 }
@@ -372,7 +372,7 @@ export default function DraftTab({
       {error && <Alert>{error}</Alert>}
 
       {started && (
-        <Alert tone="gold">
+        <Alert tone="union">
           <span className="block font-medium">This draft has already awarded players</span>
           <span className="mt-1 block opacity-90">
             The roster size can go up but not down, and changing the default balance no
@@ -541,7 +541,7 @@ export default function DraftTab({
           onSave={() => void saveConfig()}
           label="Save draft rules"
         >
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             The figures above update as you change these — nothing is saved until you press
             the button.
           </span>
@@ -556,13 +556,13 @@ export default function DraftTab({
         </div>
 
         {poolError && <Alert>{poolError}</Alert>}
-        {poolNote && <Alert tone="signal">{poolNote}</Alert>}
+        {poolNote && <Alert tone="success">{poolNote}</Alert>}
 
         <div className="flex flex-wrap gap-8">
           <StatTile
             label="Main pool"
             value={pool.main.length}
-            valueClassName={pool.main.length > 0 ? "text-gold" : "text-muted"}
+            valueClassName={pool.main.length > 0 ? "text-union" : "text-muted"}
           />
           <StatTile
             label="Reserve"
@@ -574,18 +574,18 @@ export default function DraftTab({
             label="Slots to fill"
             value={slotsToFill}
             valueClassName={
-              slotsToFill > poolTotal ? "text-ember" : "text-signal"
+              slotsToFill > poolTotal ? "text-flare" : "text-success"
             }
           />
           <StatTile
             label="Not yet pooled"
             value={data.unpooled.length}
-            valueClassName={data.unpooled.length > 0 ? "text-gold" : "text-muted"}
+            valueClassName={data.unpooled.length > 0 ? "text-union" : "text-muted"}
           />
         </div>
 
         {slotsToFill > poolTotal && teams.length > 0 && (
-          <Alert tone="gold">
+          <Alert tone="union">
             There are {plural(slotsToFill, "slot")} to fill and only{" "}
             {plural(poolTotal, "player")} in the pool. The draft will end with teams short —
             accept more applicants, or lower the roster target.
@@ -595,7 +595,7 @@ export default function DraftTab({
         <div className="flex flex-wrap items-center gap-2 border-t border-hair pt-4">
           <Button
             size="sm"
-            variant="gold"
+            variant="union"
             disabled={poolBusy !== null}
             onClick={seed}
           >
@@ -608,7 +608,7 @@ export default function DraftTab({
           >
             Everyone back to the main pool
           </Button>
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             Seeding keeps anybody already held over in the reserve pool, and never adds a
             captain or a player who has been bought.
           </span>
@@ -662,7 +662,7 @@ export default function DraftTab({
           <Eyebrow>Not in the pool</Eyebrow>
 
           {data.unpooled.length > 0 && (
-            <Alert tone="gold">
+            <Alert tone="union">
               <span className="block font-medium">
                 {plural(data.unpooled.length, "accepted applicant")} in neither a roster nor
                 the pool
@@ -679,7 +679,7 @@ export default function DraftTab({
               Everybody accepted into this event is in the pool.
             </EmptyState>
           ) : (
-            <ul className="divide-y divide-hair/50 rounded-xl border border-hair">
+            <ul className="divide-y divide-hair/50 rounded-lg border border-hair">
               {excluded.map((entry) => (
                 <li key={`${entry.reason}-${entry.userId}`} className="px-3">
                   <PlayerChip
@@ -693,8 +693,8 @@ export default function DraftTab({
                         )}
                         <span
                           className={cx(
-                            "text-xs",
-                            entry.reason === "captain" ? "text-gold" : "text-muted"
+                            "text-12",
+                            entry.reason === "captain" ? "text-union" : "text-muted"
                           )}
                         >
                           {EXCLUSION_REASONS[entry.reason]}
@@ -707,7 +707,7 @@ export default function DraftTab({
             </ul>
           )}
 
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             A captain being out of the pool is the settled rule, not an omission — plan §14.
             They already have their roster slot, so drafting them would be buying somebody
             the team already has.
@@ -749,12 +749,12 @@ function PoolList({
         <Eyebrow>{title}</Eyebrow>
         <Badge>{userIds.length}</Badge>
       </div>
-      <p className="text-xs text-muted">{eyebrow}</p>
+      <p className="text-12 text-muted">{eyebrow}</p>
 
       {userIds.length === 0 ? (
         <EmptyState size="sm">{empty}</EmptyState>
       ) : (
-        <ul className="divide-y divide-hair/50 rounded-xl border border-hair">
+        <ul className="divide-y divide-hair/50 rounded-lg border border-hair">
           {userIds.map((userId, index) => (
             <li key={userId} className="px-3">
               <PlayerChip

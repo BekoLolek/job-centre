@@ -20,8 +20,8 @@ export type EventStatusLineProps = {
 export default function EventStatusLine({ state, className }: EventStatusLineProps) {
   const tone = state.open
     ? state.willWaitlist
-      ? "text-gold"
-      : "text-signal"
+      ? "text-union"
+      : "text-success"
     : "text-muted";
 
   const deadline = state.open
@@ -33,7 +33,7 @@ export default function EventStatusLine({ state, className }: EventStatusLinePro
   const deadlineWord = state.open ? "Closes" : "Opens";
 
   return (
-    <p className={cx("flex flex-wrap items-baseline gap-x-2 text-xs", className)}>
+    <p className={cx("flex flex-wrap items-baseline gap-x-2 text-12", className)}>
       <span className={tone}>{state.message}</span>
       {deadline && (
         <span className="text-muted">

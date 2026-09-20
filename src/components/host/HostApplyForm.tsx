@@ -99,7 +99,7 @@ export default function HostApplyForm({
       )}
 
       {pending ? (
-        <Alert tone="gold">
+        <Alert tone="union">
           <span className="block font-medium">You have one waiting</span>
           <span className="mt-1 block opacity-90">
             An admin will look at it. Withdraw it above if you would rather send a different
@@ -142,7 +142,7 @@ export default function HostApplyForm({
               />
             )}
           </div>
-          <p className="text-[13px] leading-relaxed text-muted">{GAME_HINT}</p>
+          <p className="text-13 leading-relaxed text-muted">{GAME_HINT}</p>
 
           <Field
             label="What happens"
@@ -179,7 +179,7 @@ export default function HostApplyForm({
             />
           </div>
 
-          <div className="rounded-xl bg-panel px-5 py-4">
+          <div className="rounded-lg bg-panel px-5 py-4">
             <Field
               label="What do you need to know about each player?"
               placeholder="Their in-game name, and whether they own the DLC."
@@ -187,7 +187,7 @@ export default function HostApplyForm({
               maxLength={1000}
               onChange={(input) => setPlayerInfo(input.target.value)}
             />
-            <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-muted">
+            <p className="mt-2 max-w-2xl text-13 leading-relaxed text-muted">
               This becomes the sign-up questions. Rank, role, in-game name, which packs they
               own — whatever you would otherwise have to ask forty people individually. An
               admin turns it into the form before handing the event over.
@@ -196,13 +196,13 @@ export default function HostApplyForm({
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
-              variant="gold"
+              variant="union"
               disabled={busy || !title.trim() || !effectiveGameName.trim() || !playerInfo.trim()}
               onClick={() => void send()}
             >
               {busy ? "Sending…" : "Send it"}
             </Button>
-            <span className="text-[12.5px] text-dim">
+            <span className="text-13 text-dim">
               An admin sets the event up, then it is yours to run.
             </span>
           </div>
@@ -212,10 +212,10 @@ export default function HostApplyForm({
   );
 }
 
-const STATUS_TONE: Record<HostApplication["status"], "gold" | "signal" | "ember" | undefined> = {
-  pending: "gold",
-  approved: "signal",
-  declined: "ember",
+const STATUS_TONE: Record<HostApplication["status"], "union" | "success" | "flare" | undefined> = {
+  pending: "union",
+  approved: "success",
+  declined: "flare",
   withdrawn: undefined,
 };
 
@@ -229,24 +229,24 @@ function MineRow({
   return (
     <div
       className={cx(
-        "rounded-xl bg-panel px-5 py-4",
+        "rounded-lg bg-panel px-5 py-4",
         application.status === "withdrawn" && "opacity-60"
       )}
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-[15px] text-chalk">{application.title}</span>
+        <span className="text-16 text-chalk">{application.title}</span>
         <Badge tone={STATUS_TONE[application.status]}>{application.status}</Badge>
         <Badge>{application.gameName}</Badge>
       </div>
 
       {application.decisionNote && (
-        <p className="mt-2 max-w-2xl text-[13.5px] leading-relaxed text-muted">
+        <p className="mt-2 max-w-2xl text-13 leading-relaxed text-muted">
           {application.decisionNote}
         </p>
       )}
 
       {application.status === "approved" && application.eventId && (
-        <p className="mt-2 text-[13.5px] text-signal">
+        <p className="mt-2 text-13 text-success">
           It is yours to run —{" "}
           <Link
             href={`/admin/events/${application.eventId}`}
@@ -260,7 +260,7 @@ function MineRow({
 
       {application.status === "pending" && (
         <div className="mt-3">
-          <Button size="sm" variant="ember" onClick={onWithdraw}>
+          <Button size="sm" variant="flare" onClick={onWithdraw}>
             Withdraw
           </Button>
         </div>

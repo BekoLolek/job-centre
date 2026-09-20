@@ -12,12 +12,12 @@ export type Status =
   | "cancelled";
 
 const TONE: Record<Status, string> = {
-  draft: "bg-white/[0.05] text-muted",
-  open: "bg-gold/15 text-gold",
-  closed: "bg-white/[0.05] text-muted",
-  live: "bg-ember/15 text-ember",
-  complete: "bg-signal/15 text-signal",
-  cancelled: "bg-white/[0.04] text-ember",
+  draft: "bg-overlay-2 text-muted",
+  open: "bg-union-tint-15 text-union",
+  closed: "bg-overlay-2 text-muted",
+  live: "bg-flare-tint-15 text-flare",
+  complete: "bg-success-tint-15 text-success",
+  cancelled: "bg-overlay-1 text-flare",
 };
 
 const FALLBACK = TONE.draft;

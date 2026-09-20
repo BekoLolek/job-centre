@@ -82,8 +82,8 @@ export default function AdminConsole({
         />
 
         <Button
-          variant="gold"
-          className="min-w-[160px] flex-1 text-sm"
+          variant="union"
+          className="min-w-[160px] flex-1 text-14"
           disabled={busy || spinning || Boolean(lot) || poolSize === 0 || byHand}
           onClick={() => run({ type: "spin", kind })}
           title={
@@ -101,12 +101,12 @@ export default function AdminConsole({
       </div>
 
       {/* Undo, with the consequence spelled out. */}
-      <div className="mb-5 rounded-xl border border-hair px-3 py-2">
+      <div className="mb-5 rounded-lg border border-hair px-3 py-2">
         <div className="flex flex-wrap items-center gap-2">
           {confirmUndo ? (
             <>
               <Button
-                variant="ember"
+                variant="flare"
                 size="sm"
                 disabled={busy}
                 onClick={async () => {
@@ -129,14 +129,14 @@ export default function AdminConsole({
               {plan.label}
             </Button>
           )}
-          <span className="min-w-[12rem] flex-1 text-xs leading-relaxed text-muted">
+          <span className="min-w-[12rem] flex-1 text-12 leading-relaxed text-muted">
             {plan.sentence}
           </span>
         </div>
       </div>
 
       {!lotOpen ? (
-        <p className="text-sm text-muted">
+        <p className="text-14 text-muted">
           {spinning
             ? "The wheel is running — bidding opens the moment it stops."
             : byHand && poolSize > 0
@@ -153,13 +153,13 @@ export default function AdminConsole({
             <Eyebrow as="span">
               Bids · {lot?.bidCount ?? 0}/{view.teams.length} on {onBlock ?? "this player"}
             </Eyebrow>
-            <Eyebrow as="span" className={lot?.allBidsIn ? "text-signal" : "text-ember"}>
+            <Eyebrow as="span" className={lot?.allBidsIn ? "text-success" : "text-flare"}>
               {lot?.allBidsIn ? "All in" : "Incomplete"}
             </Eyebrow>
           </div>
 
           {resolution?.kind === "tie" && (
-            <Alert tone="ember" className="mb-3">
+            <Alert tone="flare" className="mb-3">
               <span className="block font-medium">
                 Tied at {resolution.amount}
               </span>
@@ -174,7 +174,7 @@ export default function AdminConsole({
           )}
 
           {resolution?.kind === "winner" && (
-            <p className="mb-3 text-xs text-muted">
+            <p className="mb-3 text-12 text-muted">
               {view.teams.find((team) => team.id === resolution.teamId)?.name ?? "A team"} leads
               at <Money value={resolution.amount} size="sm" />
               {resolution.contested && resolution.runnerUp !== null ? (
@@ -189,7 +189,7 @@ export default function AdminConsole({
           )}
 
           {resolution?.kind === "none" && (
-            <p className="mb-3 text-xs text-muted">
+            <p className="mb-3 text-12 text-muted">
               Nobody has bid yet. You can take {onBlock ?? "them"} off the list or hold them
               over for the reserve wheel.
             </p>
@@ -203,10 +203,10 @@ export default function AdminConsole({
                 <li
                   key={team.id}
                   className={`flex items-center gap-3 border px-3 py-2 ${
-                    leads ? "border-gold/60 bg-gold/[0.06]" : tied ? "border-ember/50" : "border-hair"
+                    leads ? "border-union/60 bg-union/5" : tied ? "border-flare/50" : "border-hair"
                   }`}
                 >
-                  <span className="flex-1 truncate text-sm">
+                  <span className="flex-1 truncate text-14">
                     {team.name}
                     {team.roster.slotsLeft === 0 && (
                       <span className="eyebrow ml-2 text-muted">full</span>
@@ -229,7 +229,7 @@ export default function AdminConsole({
                   </Button>
                   <Button
                     size="sm"
-                    variant={leads ? "gold" : "default"}
+                    variant={leads ? "union" : "default"}
                     disabled={busy || !team.hasBid}
                     onClick={() => run({ type: "award", teamId: team.id })}
                   >
@@ -241,7 +241,7 @@ export default function AdminConsole({
           </ul>
 
           <div className="flex flex-wrap gap-2">
-            <Button variant="ember" disabled={busy} onClick={() => run({ type: "discard" })}>
+            <Button variant="flare" disabled={busy} onClick={() => run({ type: "discard" })}>
               Take off the list
             </Button>
             <Button
@@ -264,7 +264,7 @@ export default function AdminConsole({
             {confirmCancel ? (
               <>
                 <Button
-                  variant="ember"
+                  variant="flare"
                   disabled={busy}
                   onClick={async () => {
                     setConfirmCancel(false);
@@ -282,7 +282,7 @@ export default function AdminConsole({
             )}
           </div>
 
-          <p className="mt-3 text-[11px] leading-relaxed text-muted">
+          <p className="mt-3 text-11 leading-relaxed text-muted">
             Cancelling puts {onBlock ?? "them"} back on the wheel and loses the bids. Taking
             them off the list ends their draft; holding them over sends them round again on
             the reserve wheel.

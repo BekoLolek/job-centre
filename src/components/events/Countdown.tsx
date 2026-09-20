@@ -76,7 +76,7 @@ export default function Countdown({
   return (
     <span
       suppressHydrationWarning
-      className={cx("num", valid ? "text-gold" : "text-muted", className)}
+      className={cx("num", valid ? "text-union" : "text-muted", className)}
     >
       {text}
     </span>

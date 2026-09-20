@@ -55,10 +55,10 @@ describe("the vocabulary", () => {
   });
 
   it("marks the ones that took something away", () => {
-    expect(actionTone("draft.voided")).toBe("ember");
-    expect(actionTone("result.cleared")).toBe("ember");
-    expect(actionTone("announcement.failed")).toBe("ember");
-    expect(actionTone("draft.awarded")).toBe("gold");
+    expect(actionTone("draft.voided")).toBe("flare");
+    expect(actionTone("result.cleared")).toBe("flare");
+    expect(actionTone("announcement.failed")).toBe("flare");
+    expect(actionTone("draft.awarded")).toBe("union");
     expect(actionTone("event.status")).toBe("muted");
   });
 });

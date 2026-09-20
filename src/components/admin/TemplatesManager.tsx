@@ -122,7 +122,7 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
               }
             }}
           />
-          <Button variant="gold" disabled={pending || !newName.trim()} onClick={create}>
+          <Button variant="union" disabled={pending || !newName.trim()} onClick={create}>
             Add template
           </Button>
         </div>
@@ -262,7 +262,7 @@ function FromEventPanel({
               onChange={(event) => setName(event.target.value)}
             />
             <Button
-              variant="gold"
+              variant="union"
               disabled={busy || pending || !chosen}
               onClick={make}
             >
@@ -287,7 +287,7 @@ function FromEventPanel({
             </div>
           </div>
 
-          <p className="mt-4 text-xs leading-relaxed text-muted">
+          <p className="mt-4 text-12 leading-relaxed text-muted">
             Not carried over: {TEMPLATE_OMITS.join(", ")}. Days and dates are always
             different next month, capacity and the rank thresholds are decisions about one
             event rather than about a format, and a bracket is generated from the teams that
@@ -386,9 +386,9 @@ function TemplateCard({
           className="flex min-w-0 items-center gap-3 text-left"
           aria-expanded={open}
         >
-          <span className="font-mono text-xs text-muted">{open ? "▾" : "▸"}</span>
+          <span className="font-mono text-12 text-muted">{open ? "▾" : "▸"}</span>
           <span className="min-w-0">
-            <span className="block truncate font-display text-xl leading-none">
+            <span className="block truncate font-display text-20 leading-none">
               {template.name}
             </span>
             <span className="eyebrow mt-1 block">
@@ -407,11 +407,11 @@ function TemplateCard({
           label={template.isActive ? "Active" : "Hidden"}
         />
         <Badge>{eventTypeLabel(template.type)}</Badge>
-        <Badge tone={template.events > 0 ? "signal" : "default"}>
+        <Badge tone={template.events > 0 ? "success" : "default"}>
           {template.events === 0 ? "never used" : `used ${plural(template.events, "time")}`}
         </Badge>
         {template.liveEvents > 0 && (
-          <Badge tone="gold">{plural(template.liveEvents, "event")} running</Badge>
+          <Badge tone="union">{plural(template.liveEvents, "event")} running</Badge>
         )}
 
         <span className="ml-auto flex shrink-0 items-center gap-1">
@@ -492,7 +492,7 @@ function TemplateCard({
                     onChange={(event) => setType(event.target.value)}
                   />
                 )}
-                <p className="mt-2 text-xs text-muted">
+                <p className="mt-2 text-12 text-muted">
                   A type is a label, not a code branch (§8.1) — anything typed here is a
                   valid type the moment it is saved.
                 </p>
@@ -500,14 +500,14 @@ function TemplateCard({
 
               <div className="border-t border-hair pt-4">
                 <Eyebrow className="mb-2">Visibility</Eyebrow>
-                <p className="mb-3 text-xs leading-relaxed text-muted">
+                <p className="mb-3 text-12 leading-relaxed text-muted">
                   {template.isActive
                     ? "Active: this template appears in the create-event picker."
                     : "Hidden: it is out of the picker. Every event ever made from it is untouched, and switching it back on restores it."}
                 </p>
                 <Button
                   size="sm"
-                  variant={template.isActive ? "ember" : "gold"}
+                  variant={template.isActive ? "flare" : "union"}
                   disabled={busy}
                   onClick={() => onSetActive(!template.isActive)}
                 >
@@ -519,7 +519,7 @@ function TemplateCard({
 
           {tab === "format" && (
             <div className="space-y-5">
-              <p className="text-xs leading-relaxed text-muted">
+              <p className="text-12 leading-relaxed text-muted">
                 What an event made from this template starts with. Every one of these is
                 still editable on the event afterwards — a template is a starting point, not
                 a rule.
@@ -535,7 +535,7 @@ function TemplateCard({
                     aria-label="Teams"
                     onChange={(next) => setKnob("teams", next)}
                   />
-                  <p className="mt-1 text-xs text-muted">Empty means no teams at all.</p>
+                  <p className="mt-1 text-12 text-muted">Empty means no teams at all.</p>
                 </div>
 
                 <div>
@@ -576,7 +576,7 @@ function TemplateCard({
                       By approval
                     </ChoiceChip>
                   </ChoiceRow>
-                  <p className="mt-1 text-xs text-muted">Unset means first come, per R-27.</p>
+                  <p className="mt-1 text-12 text-muted">Unset means first come, per R-27.</p>
                 </div>
 
                 {entryMode(config) === "first_come" && (
@@ -586,13 +586,13 @@ function TemplateCard({
                       value={config.waitlist ?? null}
                       onChange={(next) => setKnob("waitlist", next ?? undefined)}
                     />
-                    <p className="mt-1 text-xs text-muted">Unset means on, per §14.</p>
+                    <p className="mt-1 text-12 text-muted">Unset means on, per §14.</p>
                   </div>
                 )}
               </div>
 
               {config.format !== undefined && (
-                <p className="rounded-xl border border-hair bg-raised/40 p-3 text-xs leading-relaxed text-muted">
+                <p className="rounded-lg border border-hair bg-raised/40 p-3 text-12 leading-relaxed text-muted">
                   This template also carries the event&apos;s <strong>format settings</strong>{" "}
                   — the schedule and stage configuration from §10 — which came across whole
                   when it was made from an event. They are not editable here; edit them on an
@@ -613,10 +613,10 @@ function TemplateCard({
 
           <div className="flex flex-wrap items-center gap-3 border-t border-hair pt-4">
             <Eyebrow as="span">Would produce</Eyebrow>
-            <span className="text-xs text-muted">{preview.join(" · ")}</span>
+            <span className="text-12 text-muted">{preview.join(" · ")}</span>
             <span className="ml-auto flex items-center gap-2">
-              {dirty && <span className="text-xs text-gold">Unsaved changes</span>}
-              <Button variant="gold" disabled={busy || !dirty} onClick={save}>
+              {dirty && <span className="text-12 text-union">Unsaved changes</span>}
+              <Button variant="union" disabled={busy || !dirty} onClick={save}>
                 Save template
               </Button>
             </span>

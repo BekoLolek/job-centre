@@ -71,8 +71,8 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
     return (
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Entry rules</Eyebrow>
-        <Alert tone="gold">This event has no game, so there is no rank ladder to gate on.</Alert>
-        <p className="text-sm leading-relaxed text-muted">
+        <Alert tone="union">This event has no game, so there is no rank ladder to gate on.</Alert>
+        <p className="text-14 leading-relaxed text-muted">
           Pick a game under Setup → Basics and its ladder appears here. An event without one —
           a movie night, a Jackbox evening — takes everybody, which is usually the point.
         </p>
@@ -84,8 +84,8 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
     return (
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Entry rules</Eyebrow>
-        <Alert tone="gold">{event.game.name} has no rank ladder, so there is nothing to compare.</Alert>
-        <p className="text-sm leading-relaxed text-muted">
+        <Alert tone="union">{event.game.name} has no rank ladder, so there is nothing to compare.</Alert>
+        <p className="text-14 leading-relaxed text-muted">
           Ladders are per game and live under Admin → Games. Plenty of games never get one —
           Jackbox has no ranks and never will — and an event on such a game simply has no
           entry threshold.
@@ -108,11 +108,11 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
       <Panel as="section" padding="none" className="space-y-6 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div>
           <Eyebrow className="mb-2">Entry rules</Eyebrow>
-          <p className="text-sm leading-relaxed text-muted">
+          <p className="text-14 leading-relaxed text-muted">
             Two optional thresholds, read against{" "}
             <span className="text-chalk/80">{event.game.name}</span>&apos;s{" "}
             {ladder.length}-rank ladder. They are{" "}
-            <span className="text-gold">guidance, not a wall</span>: the application form
+            <span className="text-union">guidance, not a wall</span>: the application form
             tells somebody they are below the bar before they waste their time, and you can
             still accept them anyway from the Applicants tab.
           </p>
@@ -147,7 +147,7 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
 
       <Panel as="section" padding="none" className="space-y-2 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>How a member&apos;s rank is read</Eyebrow>
-        <p className="text-sm leading-relaxed text-muted">
+        <p className="text-14 leading-relaxed text-muted">
           From their profile — the `rank` question on {event.game.name}, which is a picker
           over this same ladder. Somebody who has never answered it does not clear a
           threshold, and the form tells them to add it rather than silently refusing. A
@@ -178,7 +178,7 @@ function Threshold({
     <div className="space-y-3 border-t border-hair pt-5 first:border-0 first:pt-0">
       <div>
         <Eyebrow className="mb-1 text-chalk/70">{title}</Eyebrow>
-        <p className="text-xs leading-relaxed text-muted">{hint}</p>
+        <p className="text-12 leading-relaxed text-muted">{hint}</p>
       </div>
 
       <ChoiceRow>
@@ -186,12 +186,12 @@ function Threshold({
           No minimum
         </ChoiceChip>
         {value !== null && (
-          <span className="eyebrow self-center text-gold">{value} or above</span>
+          <span className="eyebrow self-center text-union">{value} or above</span>
         )}
       </ChoiceRow>
 
       {unknown && (
-        <Alert tone="ember">
+        <Alert tone="flare">
           “{unknown}” is not in this ladder any more, so it is not being enforced — everybody
           clears it. Pick a current rank, or clear it.
         </Alert>

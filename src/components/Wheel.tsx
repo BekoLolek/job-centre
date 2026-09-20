@@ -107,7 +107,7 @@ export default function Wheel({
       {/* Pointer */}
       <div className="absolute left-1/2 -translate-x-1/2 -top-1 z-20">
         <svg width="30" height="34" viewBox="0 0 30 34" aria-hidden>
-          <path d="M15 32 L2 2 L28 2 Z" fill="var(--ember)" />
+          <path d="M15 32 L2 2 L28 2 Z" fill="var(--flare)" />
           <path d="M15 26 L7 6 L23 6 Z" fill="#0a0b0c" opacity="0.35" />
         </svg>
       </div>
@@ -135,7 +135,7 @@ export default function Wheel({
           {count === 0 && <circle cx={CX} cy={CY} r={R} fill={TRACK_A} />}
 
           {count === 1 && (
-            <circle cx={CX} cy={CY} r={R} fill={settled ? "var(--gold)" : TRACK_B} />
+            <circle cx={CX} cy={CY} r={R} fill={settled ? "var(--union)" : TRACK_B} />
           )}
 
           {count > 1 &&
@@ -146,7 +146,7 @@ export default function Wheel({
                 <path
                   key={`${name}-${i}`}
                   d={wedge(i * seg, (i + 1) * seg, R)}
-                  fill={isTarget ? "var(--gold)" : i % 2 === 0 ? TRACK_A : TRACK_B}
+                  fill={isTarget ? "var(--union)" : i % 2 === 0 ? TRACK_A : TRACK_B}
                   stroke="rgba(255,255,255,0.06)"
                   strokeWidth="1"
                 />
@@ -187,7 +187,7 @@ export default function Wheel({
           x={CX}
           y={CY - 6}
           textAnchor="middle"
-          fill="var(--gold)"
+          fill="var(--union)"
           fontFamily="var(--font-display), sans-serif"
           fontSize="26"
         >

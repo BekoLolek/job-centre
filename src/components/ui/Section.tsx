@@ -64,10 +64,10 @@ export default function Section({
           <div className="min-w-0">
             <div className="flex items-baseline gap-2.5">
               {icon && <Icon name={icon} className="relative top-[3px] text-muted" />}
-              {title && <h2 className="text-[20px] text-chalk">{title}</h2>}
+              {title && <h2 className="text-20 text-chalk">{title}</h2>}
             </div>
             {description && (
-              <p className="mt-1.5 max-w-[62ch] text-[14px] leading-relaxed text-muted">
+              <p className="mt-1.5 max-w-[62ch] text-14 leading-relaxed text-muted">
                 {description}
               </p>
             )}

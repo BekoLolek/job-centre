@@ -234,17 +234,17 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
       {error && <Alert>{error}</Alert>}
 
       <div className="flex flex-wrap items-center gap-3">
-        <Badge tone={days > 0 ? "gold" : undefined}>
+        <Badge tone={days > 0 ? "union" : undefined}>
           {days > 0 ? `${plural(days, "day")} a week` : "Nothing set"}
         </Badge>
         {draft.exceptions.length > 0 && (
           <Badge>{plural(draft.exceptions.length, "odd day")}</Badge>
         )}
-        <span className="text-[12.5px] text-dim">Times are {zone}</span>
+        <span className="text-13 text-dim">Times are {zone}</span>
       </div>
 
       {/* --- The week ------------------------------------------------ */}
-      <div className="overflow-hidden rounded-xl bg-panel">
+      <div className="overflow-hidden rounded-lg bg-panel">
         {DAYS.map((label, weekday) => {
           const mode = modeFor(weekday);
           const windows = rulesFor(weekday);
@@ -253,7 +253,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
               key={label}
               className="flex flex-wrap items-start gap-x-4 gap-y-3 border-t border-hair px-5 py-4 first:border-t-0"
             >
-              <span className="w-[6.5rem] shrink-0 pt-2 text-[14px] text-chalk">{label}</span>
+              <span className="w-[6.5rem] shrink-0 pt-2 text-14 text-chalk">{label}</span>
 
               <Select
                 aria-label={`${label} availability`}
@@ -290,7 +290,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
                       {windows.length > 1 && (
                         <Button
                           size="sm"
-                          variant="ember"
+                          variant="flare"
                           aria-label="Remove this window"
                           onClick={() => removeWindow(weekday, index)}
                         >
@@ -319,11 +319,11 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
       {/* --- Odd days ------------------------------------------------ */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-baseline gap-3">
-          <span className="flex items-center gap-2 text-[15px] text-chalk">
+          <span className="flex items-center gap-2 text-16 text-chalk">
             <Icon name="calendar" className="text-dim" />
             Odd days
           </span>
-          <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-muted">
+          <p className="min-w-0 flex-1 text-13 leading-relaxed text-muted">
             One-off dates that do not follow the pattern above. A date named here replaces the
             week entirely for that day — so &ldquo;can&rsquo;t do the 14th&rsquo; sticks even if
             it is a Tuesday you are normally free.
@@ -331,7 +331,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
         </div>
 
         {draft.exceptions.length > 0 && (
-          <div className="overflow-hidden rounded-xl bg-panel">
+          <div className="overflow-hidden rounded-lg bg-panel">
             {draft.exceptions.map((exception, index) => (
               <div
                 key={index}
@@ -389,7 +389,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
 
                 <Button
                   size="sm"
-                  variant="ember"
+                  variant="flare"
                   className="mb-1"
                   aria-label="Remove this date"
                   onClick={() => removeException(index)}
@@ -407,11 +407,11 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
       </div>
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
-        <Button variant="gold" disabled={busy || !dirty} onClick={() => void save()}>
+        <Button variant="union" disabled={busy || !dirty} onClick={() => void save()}>
           {busy ? "Saving…" : "Save availability"}
         </Button>
-        {note && !dirty && <span className="text-[13px] text-signal">{note}</span>}
-        {dirty && <span className="text-[13px] text-muted">Unsaved changes</span>}
+        {note && !dirty && <span className="text-13 text-success">{note}</span>}
+        {dirty && <span className="text-13 text-muted">Unsaved changes</span>}
       </div>
     </div>
   );
@@ -438,7 +438,7 @@ function TimeSelect({
   return (
     <select
       aria-label={label}
-      className="field w-auto py-1.5 text-[13px]"
+      className="field w-auto py-1.5 text-13"
       value={value}
       onChange={(input) => onChange(Number(input.target.value))}
     >
@@ -468,10 +468,10 @@ function MaybeToggle({
       aria-pressed={state === "maybe"}
       onClick={() => onChange(state === "maybe" ? "yes" : "maybe")}
       className={cx(
-        "rounded px-2.5 py-1.5 text-[12.5px] font-medium transition-colors",
+        "rounded px-2.5 py-1.5 text-13 font-medium transition-colors",
         state === "maybe"
-          ? "bg-union/15 text-union"
-          : "bg-white/[0.05] text-muted hover:text-chalk"
+          ? "bg-union-tint-15 text-union"
+          : "bg-overlay-2 text-muted hover:text-chalk"
       )}
       title={
         state === "maybe"

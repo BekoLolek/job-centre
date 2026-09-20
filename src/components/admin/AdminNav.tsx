@@ -47,7 +47,7 @@ export default function AdminNav({ className }: { className?: string }) {
             href={section.href}
             aria-current={active ? "page" : undefined}
             className={cx(
-              "relative py-1 text-sm transition-colors",
+              "relative py-1 text-14 transition-colors",
               active ? "text-hot" : "text-muted hover:text-chalk"
             )}
           >

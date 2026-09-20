@@ -37,8 +37,8 @@ export default async function NotificationsPage() {
       <main className="mx-auto max-w-[880px] px-4 py-8 sm:px-6">
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · You</Eyebrow>
-          <h1 className="text-4xl">Notifications</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">Notifications</h1>
+          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
             New events, changes to things you applied to, and the day before something you
             have a seat at. Every one of them can be switched off below — except the answer
             to your own application, which is the reply rather than the news.

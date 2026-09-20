@@ -29,16 +29,16 @@ export default async function DevLoginBanner() {
 
       <div
         role="status"
-        className="fixed inset-x-0 bottom-0 z-50 border-t border-ember/60 bg-ember/15 backdrop-blur"
+        className="fixed inset-x-0 bottom-0 z-50 border-t border-flare/60 bg-flare-tint-15"
       >
         <div className="mx-auto flex h-11 max-w-[1500px] items-center gap-3 px-4 sm:px-6">
-          <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-ember live-dot" />
+          <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-flare live-dot" />
 
-          <span className="eyebrow truncate text-ember">
+          <span className="eyebrow truncate text-flare">
             Development sign-in active — not a real session
           </span>
 
-          <span className="hidden truncate text-xs text-chalk/70 sm:inline">
+          <span className="hidden truncate text-12 text-chalk/70 sm:inline">
             {signedIn
               ? `Signed in as ${user?.displayName ?? "the dev user"}${user?.isAdmin ? " · admin" : " · not an admin"}`
               : "No session yet"}
@@ -47,7 +47,7 @@ export default async function DevLoginBanner() {
           <span className="ml-auto flex shrink-0 items-center gap-2">
             {/* A link to the page, never an action: signing in and out are
                 state changes and belong behind the buttons there. */}
-            <a href={DEV_LOGIN_PATH} className="btn border-ember/50 px-3 py-1.5 text-ember">
+            <a href={DEV_LOGIN_PATH} className="btn border-flare/50 px-3 py-1.5 text-flare">
               {signedIn
                 ? "End dev session"
                 : config.isAdmin

@@ -83,22 +83,22 @@ export default function QuestionList({
           No questions yet — {gameName} asks members for nothing.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
+        <ul className="divide-y divide-hair/60 rounded-lg border border-hair">
           {fields.map((field, index) => (
             <li key={field.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-              <span className="num w-6 shrink-0 text-xs text-muted">{index + 1}</span>
+              <span className="num w-6 shrink-0 text-12 text-muted">{index + 1}</span>
 
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm">{field.label}</span>
+                <span className="block truncate text-14">{field.label}</span>
                 <span className="eyebrow mt-0.5 block truncate">
                   {field.key} · {fieldTypeInfo(field.type).label}
                   {field.options.length > 0 && ` · ${plural(field.options.length, "option")}`}
                 </span>
               </span>
 
-              {field.required && <Badge tone="gold">Required</Badge>}
+              {field.required && <Badge tone="union">Required</Badge>}
 
-              <Badge tone={field.answers > 0 ? "signal" : "default"}>
+              <Badge tone={field.answers > 0 ? "success" : "default"}>
                 {plural(field.answers, "answer")}
               </Badge>
 
@@ -124,7 +124,7 @@ export default function QuestionList({
                 </Button>
                 <Button
                   size="sm"
-                  variant="ember"
+                  variant="flare"
                   disabled={locked}
                   onClick={() => setDeleting(field)}
                 >
@@ -174,7 +174,7 @@ export default function QuestionList({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               disabled={working}
               onClick={() => void confirmDelete()}
             >
@@ -184,7 +184,7 @@ export default function QuestionList({
         }
       >
         {deleting && deleting.answers > 0 ? (
-          <Alert tone="ember">
+          <Alert tone="flare">
             <span className="block font-medium">
               This destroys {plural(deleting.answers, "stored answer")}
             </span>
@@ -196,12 +196,12 @@ export default function QuestionList({
             </span>
           </Alert>
         ) : (
-          <p className="text-sm text-muted">
+          <p className="text-14 text-muted">
             Nobody has answered this one yet, so nothing is lost but the question itself.
           </p>
         )}
 
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           If you only want to stop asking it for now, deactivate the whole game instead —
           that hides its questions without touching a single answer.
         </p>

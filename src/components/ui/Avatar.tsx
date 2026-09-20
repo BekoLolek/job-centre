@@ -15,9 +15,9 @@ import { cx } from "./cx";
 export type AvatarSize = "sm" | "md" | "lg";
 
 const SIZE: Record<AvatarSize, string> = {
-  sm: "h-6 w-6 text-[9px]",
-  md: "h-8 w-8 text-[10px]",
-  lg: "h-10 w-10 text-xs",
+  sm: "h-6 w-6 text-11",
+  md: "h-8 w-8 text-11",
+  lg: "h-10 w-10 text-12",
 };
 
 /** First letter of the first two words, so "Team lolek" reads as TL. */

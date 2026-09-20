@@ -21,7 +21,7 @@ import type { ApplicationStatus } from "@/db/schema";
  * The five event statuses onto the six pill tones.
  *
  * `published` becomes `open` rather than getting a tone of its own: a published
- * event is the one members can act on, and the gold tone is what makes it the
+ * event is the one members can act on, and union blue is what makes it the
  * thing the eye lands on in a list of drafts.
  */
 const STATUS_TONE: Record<EventStatus, Status> = {
@@ -221,8 +221,8 @@ export function availabilityMark(state: string | null | undefined): string {
 
 /** The colour that mark should carry. */
 export function availabilityTone(state: string | null | undefined): string {
-  if (state === "yes") return "text-signal";
-  if (state === "maybe") return "text-gold";
-  if (state === "no") return "text-ember";
+  if (state === "yes") return "text-success";
+  if (state === "maybe") return "text-union";
+  if (state === "no") return "text-flare";
   return "text-muted";
 }

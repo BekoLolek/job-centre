@@ -47,10 +47,10 @@ export default async function AdminGamesPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Profiles</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">
+            <h1 className="font-display text-36 leading-none">
               GAMES &amp; QUESTIONS
             </h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Every question a member is asked lives here. Add a game, give it the questions
               you want answered, and it appears on everyone&apos;s profile straight away —
               that answer then pre-fills every application, which is the bit Google Forms
@@ -64,14 +64,14 @@ export default async function AdminGamesPage() {
             <StatTile
               label="Answers"
               value={answers}
-              valueClassName={answers > 0 ? "text-signal" : "text-muted"}
+              valueClassName={answers > 0 ? "text-body" : "text-muted"}
             />
           </div>
         </header>
 
         <GamesManager view={view} />
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           Reordering here reorders the member&apos;s profile. Deactivating hides a game
           without losing a single answer.
         </p>

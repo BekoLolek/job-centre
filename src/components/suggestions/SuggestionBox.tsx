@@ -113,7 +113,7 @@ export default function SuggestionBox({
 
       {/* --- Add one -------------------------------------------------- */}
       {signedIn ? (
-        <div className="space-y-3 rounded-xl bg-panel px-5 py-4">
+        <div className="space-y-3 rounded-lg bg-panel px-5 py-4">
           <div className="flex flex-wrap items-end gap-3">
             <Field
               label="What should we run?"
@@ -141,13 +141,13 @@ export default function SuggestionBox({
           />
           <div className="flex items-center gap-3">
             <Button
-              variant="gold"
+              variant="union"
               disabled={busy || title.trim().length < 3}
               onClick={() => void add()}
             >
               {busy ? "Adding…" : "Suggest it"}
             </Button>
-            <span className="text-[12.5px] text-dim">
+            <span className="text-13 text-dim">
               Yours counts as the first vote.
             </span>
           </div>
@@ -160,7 +160,7 @@ export default function SuggestionBox({
 
       {/* --- The list ------------------------------------------------- */}
       {rows.length === 0 ? (
-        <p className="text-[13px] text-muted">
+        <p className="text-13 text-muted">
           Nothing suggested yet. The first one is the hardest.
         </p>
       ) : (
@@ -238,7 +238,7 @@ function Row({
         />
         <span
           className={cx(
-            "num text-[17px] leading-none",
+            "num text-16 leading-none",
             row.score > 0 ? "text-chalk" : row.score < 0 ? "text-dim" : "text-muted"
           )}
         >
@@ -254,22 +254,22 @@ function Row({
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <h3 className="text-[16px] text-chalk">{row.title}</h3>
+          <h3 className="text-16 text-chalk">{row.title}</h3>
           {row.gameName && <Badge>{row.gameName}</Badge>}
           {row.status !== "open" && (
-            <Badge tone={row.status === "declined" ? "ember" : "gold"}>
+            <Badge tone={row.status === "declined" ? "flare" : "union"}>
               {STATUS_LABEL[row.status]}
             </Badge>
           )}
         </div>
 
         {row.detail && (
-          <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-muted">
+          <p className="mt-1.5 max-w-2xl text-13 leading-relaxed text-muted">
             {row.detail}
           </p>
         )}
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-dim">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-13 text-dim">
           <span>
             {plural(row.up, "person", "people")} want{row.up === 1 ? "s" : ""} this
             {row.down > 0 && `, ${row.down} do not`}
@@ -281,7 +281,7 @@ function Row({
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {isAdmin && (
               <select
-                className="field w-auto py-1 text-[12.5px]"
+                className="field w-auto py-1 text-13"
                 value={row.status}
                 onChange={(input) => onMark(input.target.value as SuggestionStatus)}
               >
@@ -293,7 +293,7 @@ function Row({
               </select>
             )}
             {canRemove && (
-              <Button size="sm" variant="ember" onClick={onRemove}>
+              <Button size="sm" variant="flare" onClick={onRemove}>
                 Remove
               </Button>
             )}

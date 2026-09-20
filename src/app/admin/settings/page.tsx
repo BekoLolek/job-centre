@@ -50,8 +50,8 @@ export default async function AdminSettingsPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Settings</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">Settings</h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <h1 className="font-display text-36 leading-none">Settings</h1>
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Switches that apply to the whole server rather than to one event. Every
               change is written to the audit log.
             </p>
@@ -61,12 +61,12 @@ export default async function AdminSettingsPage() {
             <StatTile
               label="Announcing"
               value={`${on}/${ANNOUNCEMENTS.length}`}
-              valueClassName={configured && on > 0 ? "text-signal" : "text-muted"}
+              valueClassName={configured && on > 0 ? "text-success" : "text-muted"}
             />
             <StatTile
               label="Webhook"
               value={configured ? "Set" : "None"}
-              valueClassName={configured ? "text-signal" : "text-muted"}
+              valueClassName={configured ? "text-success" : "text-muted"}
             />
           </div>
         </header>
@@ -83,7 +83,7 @@ export default async function AdminSettingsPage() {
             title="What an announcement cannot do"
             description="Why a webhook that is slow, deleted or rate-limited can never break the thing that triggered it."
           >
-            <p className="text-sm leading-relaxed text-muted">
+            <p className="text-14 leading-relaxed text-muted">
               It cannot fail anything. A message is built and posted <em>after</em> the
               response has gone out, so a webhook that is slow, deleted or rate-limited
               never delays or reverses the thing that triggered it — the member&rsquo;s

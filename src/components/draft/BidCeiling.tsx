@@ -38,7 +38,7 @@ export default function BidCeiling({ teams, config, bare, className }: BidCeilin
     <div className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <Eyebrow>What that means in money</Eyebrow>
-        <span className="text-xs text-muted">
+        <span className="text-12 text-muted">
           {config.mustFillRoster
             ? `Each unfilled slot is held at ${config.minBid > 0 ? "the minimum bid" : "1"}, so a team can never arrive at its last pick with nothing.`
             : "The rule is off, so a team may spend everything on one player and finish short."}
@@ -46,19 +46,19 @@ export default function BidCeiling({ teams, config, bare, className }: BidCeilin
       </div>
 
       {rows.length === 0 ? (
-        <p className="text-sm text-muted">
+        <p className="text-14 text-muted">
           Add some teams and this fills in with what each of them could bid.
         </p>
       ) : (
-        <ul className="divide-y divide-hair/50 rounded-xl border border-hair">
+        <ul className="divide-y divide-hair/50 rounded-lg border border-hair">
           {rows.map((row) => (
             <li
               key={row.team.id}
               className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2"
             >
-              <span className="min-w-[8rem] flex-1 truncate text-sm">{row.team.name}</span>
+              <span className="min-w-[8rem] flex-1 truncate text-14">{row.team.name}</span>
 
-              <span className="num text-xs text-muted">
+              <span className="num text-12 text-muted">
                 {row.roster.slotsLeft > 0
                   ? `${row.roster.slotsLeft} ${row.roster.slotsLeft === 1 ? "slot" : "slots"} left`
                   : "full"}
@@ -68,7 +68,7 @@ export default function BidCeiling({ teams, config, bare, className }: BidCeilin
                 <Eyebrow as="span">Max bid</Eyebrow>
                 <Money
                   value={row.max}
-                  tone={row.stuck ? "ember" : row.max === 0 ? "muted" : "gold"}
+                  tone={row.stuck ? "flare" : row.max === 0 ? "muted" : "union"}
                   size="lg"
                 />
               </span>
@@ -85,11 +85,11 @@ export default function BidCeiling({ teams, config, bare, className }: BidCeilin
       )}
 
       {rows.length > 0 && (
-        <p className={cx("text-xs leading-relaxed text-muted")}>{rows[0].sentence}</p>
+        <p className={cx("text-12 leading-relaxed text-muted")}>{rows[0].sentence}</p>
       )}
 
       {stuck.length > 0 && (
-        <Alert tone="ember">
+        <Alert tone="flare">
           <span className="block font-medium">
             {stuck.length === 1 ? "One team cannot" : `${stuck.length} teams cannot`} meet the
             minimum bid

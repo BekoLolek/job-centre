@@ -495,17 +495,17 @@ export default function FormatTab({
         className="flex flex-wrap items-center gap-x-4 gap-y-2"
       >
         <Eyebrow>Teams</Eyebrow>
-        <Badge tone={usingPlaceholders ? "ember" : "gold"}>
+        <Badge tone={usingPlaceholders ? "flare" : "union"}>
           {teamCount}/{MAX_TEAMS}
         </Badge>
 
         {usingPlaceholders ? (
           <>
-            <span className="text-xs text-muted">
+            <span className="text-12 text-muted">
               Placeholders. Build the shape now with{" "}
               <label className="inline-flex items-center gap-1.5">
                 <select
-                  className="field w-auto py-1 text-xs"
+                  className="field w-auto py-1 text-12"
                   value={previewSize}
                   onChange={(input) => setPreviewSize(Number(input.target.value))}
                 >
@@ -523,7 +523,7 @@ export default function FormatTab({
             </span>
           </>
         ) : (
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             From the Teams tab. Every bracket below is built for exactly that many, byes
             included.
           </span>
@@ -574,7 +574,7 @@ export default function FormatTab({
       )}
 
       {dropping.length > 0 && (
-        <Alert tone="gold">
+        <Alert tone="union">
           <span className="block font-medium">
             {plural(dropping.length, "stage")} will be deleted when you save
           </span>
@@ -592,10 +592,10 @@ export default function FormatTab({
           onSave={() => void attemptSave()}
           label="Save format"
         >
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             {stages.length}/{maxStages} stages · the matches are rebuilt to match whenever
             you save or the teams change, and never over a recorded result.
-            {autoNote && <span className="ml-1 text-signal">{autoNote}</span>}
+            {autoNote && <span className="ml-1 text-body">{autoNote}</span>}
           </span>
         </SaveRow>
       </Panel>
@@ -627,7 +627,7 @@ export default function FormatTab({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               disabled={busy || state === "saving" || pending?.impact.blocked}
               onClick={() => {
                 if (!pending) return;
@@ -650,7 +650,7 @@ export default function FormatTab({
 function ImpactBody({ impact }: { impact: StageImpact }) {
   return (
     <>
-      <Alert tone={impact.blocked ? "ember" : "gold"}>
+      <Alert tone={impact.blocked ? "flare" : "union"}>
         <span className="block font-medium">
           {plural(impact.matches, "match", "matches")} in “{impact.name}”
           {impact.playedGames > 0 && ` · ${plural(impact.playedGames, "game")} played`}
@@ -664,20 +664,20 @@ function ImpactBody({ impact }: { impact: StageImpact }) {
       </Alert>
 
       {impact.draftedScores > 0 && (
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           {plural(impact.draftedScores, "score")} typed in but never ticked off. Those count
           for nothing anywhere, so they are not what is stopping this.
         </p>
       )}
 
       {impact.results.length > 0 && (
-        <ul className="space-y-1 text-sm">
+        <ul className="space-y-1 text-14">
           {impact.results.map((row) => (
             <li key={row.slot} className="flex flex-wrap items-baseline gap-2">
               <Eyebrow as="span" className="text-muted">
                 {row.label}
               </Eyebrow>
-              <span className="num text-xs text-chalk/80">{row.line}</span>
+              <span className="num text-12 text-chalk/80">{row.line}</span>
             </li>
           ))}
         </ul>
@@ -794,14 +794,14 @@ function StagePanel({
     <Panel
       as="section"
       padding="none"
-      className="overflow-hidden rounded-xl bg-panel px-5 py-4"
+      className="overflow-hidden rounded-lg bg-panel px-5 py-4"
     >
       <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
           onClick={() => setShut((was) => !was)}
           aria-expanded={!shut}
-          className="group -ml-1 flex shrink-0 items-center gap-2 rounded py-1 pl-1 pr-2 text-left transition-colors hover:bg-white/[0.04]"
+          className="group -ml-1 flex shrink-0 items-center gap-2 rounded py-1 pl-1 pr-2 text-left transition-colors hover:bg-overlay-1"
         >
           <svg
             viewBox="0 0 10 10"
@@ -813,7 +813,7 @@ function StagePanel({
           >
             <path d="M3 1l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.6" />
           </svg>
-          <span className="num text-xs text-muted">Stage {index + 1}</span>
+          <span className="num text-12 text-muted">Stage {index + 1}</span>
         </button>
 
         {/*
@@ -822,10 +822,10 @@ function StagePanel({
         */}
         {shut && (
           <>
-            <span className="min-w-0 truncate text-[14px] font-medium text-chalk">
+            <span className="min-w-0 truncate text-14 font-medium text-chalk">
               {stage.name.trim() || "Untitled stage"}
             </span>
-            <span className="min-w-0 truncate text-[12.5px] text-dim">
+            <span className="min-w-0 truncate text-13 text-dim">
               {formatSentence(spec).join(" · ")}
             </span>
           </>
@@ -869,13 +869,13 @@ function StagePanel({
           >
             ↓
           </Button>
-          <Button size="sm" variant="ember" aria-label="Remove stage" onClick={onRemove}>
+          <Button size="sm" variant="flare" aria-label="Remove stage" onClick={onRemove}>
             Remove
           </Button>
         </span>
 
         {stage.id === undefined && (
-          <Badge tone="gold" className="self-center">
+          <Badge tone="union" className="self-center">
             New
           </Badge>
         )}
@@ -887,10 +887,10 @@ function StagePanel({
         ))}
       </div>
 
-      <p className="text-xs leading-relaxed text-muted">
+      <p className="text-12 leading-relaxed text-muted">
         {STAGE_KIND_CHOICES.find((choice) => choice.value === stage.kind)?.blurb}
         {dirtyShape && (
-          <span className="ml-1 text-gold">
+          <span className="ml-1 text-union">
             Changing the shape of a stage with results is refused — nothing is lost until you
             save, and the confirm says what it would cost.
           </span>
@@ -1009,14 +1009,14 @@ function MatchesState({
 }) {
   if (!saved) {
     return (
-      <span className="text-xs text-muted">
+      <span className="text-12 text-muted">
         Save the format and the matches are built for you.
       </span>
     );
   }
   if (placeholders) {
     return (
-      <span className="text-xs text-muted">
+      <span className="text-12 text-muted">
         Nothing written yet — these are placeholder teams. The matches are built once the
         real teams exist.
       </span>
@@ -1024,7 +1024,7 @@ function MatchesState({
   }
   if (held) {
     return (
-      <span className="text-xs text-ember">
+      <span className="text-12 text-flare">
         {plural(rows, "match", "matches")} stored, and this shape wants {wanted}. Results
         have been recorded, so nothing was touched.
       </span>
@@ -1032,14 +1032,14 @@ function MatchesState({
   }
   if (rows === wanted) {
     return (
-      <span className="text-xs text-muted">
+      <span className="text-12 text-muted">
         {plural(rows, "match", "matches")} in the database, matching this shape.
       </span>
     );
   }
   if (working) {
     return (
-      <span className="text-xs text-muted">
+      <span className="text-12 text-muted">
         Building {plural(wanted, "match", "matches")}…
       </span>
     );
@@ -1048,7 +1048,7 @@ function MatchesState({
   // is open over another stage, or when the rebuild could not reach the
   // server. Saying "building" here would be a lie the admin waits on.
   return (
-    <span className="text-xs text-muted">
+    <span className="text-12 text-muted">
       {plural(rows, "match", "matches")} stored, and this shape wants {wanted}. It is
       rebuilt when you save.
     </span>
@@ -1108,7 +1108,7 @@ function StageSettings({
       {/* --- Series lengths ---------------------------------------- */}
       <section className="space-y-3">
         <Eyebrow>Series lengths</Eyebrow>
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           The most specific setting wins: a named match beats a round number, which beats a
           half of the bracket, which beats the stage default. Round numbers restart in each
           half, so “round 1” means the upper bracket’s and the lower bracket’s alike — use the
@@ -1173,7 +1173,7 @@ function StageSettings({
       {/* --- Maps and modes ---------------------------------------- */}
       <section className="space-y-3 border-t border-hair pt-5">
         <Eyebrow>Map and mode sequence</Eyebrow>
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           One mode per game, in order. A mode is a plain name that belongs to the game rather
           than to this site, so anything typed here is a mode — “convoy”, “domination”,
           “escort”. The schedule reads its minutes from the Schedule tab, per mode.
@@ -1220,7 +1220,7 @@ function StageSettings({
               </ChoiceChip>
             ))}
           </ChoiceRow>
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             {bracketKind === "single_elim"
               ? "A single elimination has no lower final, so “third place” can only be a separate match between the two beaten semi-finalists — and only when two semis were actually played."
               : "A double elimination already ranks everyone below the final, so the lower final’s loser takes bronze and third place costs no extra match."}
@@ -1235,7 +1235,7 @@ function StageSettings({
                 noLabel="Off"
                 onChange={(value) => onConfig({ bracketReset: value === true })}
               />
-              <p className="text-xs leading-relaxed text-muted">
+              <p className="text-12 leading-relaxed text-muted">
                 Off by default. With it on, a team that comes up from the lower bracket and
                 wins the grand final has only levelled it — a second match decides. The
                 schedule leaves room for it and finishes early when it is not needed.
@@ -1281,7 +1281,7 @@ function StageSettings({
               <option value="double_elim">Double elimination</option>
             </Select>
           </div>
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             A group of one is a team with nothing to play, so the number of groups is capped
             at what the field can fill — {spec.groups.length} here — and you cannot advance
             more teams than the thinnest group holds, which is {advancePerGroup(spec)}.
@@ -1303,7 +1303,7 @@ function StageSettings({
               onChange={(value) => onConfig({ rounds: value ?? 3 })}
             />
           </label>
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             Only round one can be generated — every later pairing is a function of results
             that do not exist yet, and is created from the table once the round before it is
             in.
@@ -1427,11 +1427,11 @@ function TiebreakerEditor({
     <div className="space-y-2">
       <Eyebrow className="text-dim">Tiebreakers, in order</Eyebrow>
 
-      <ol className="divide-y divide-hair/60 rounded-xl border border-hair">
+      <ol className="divide-y divide-hair/60 rounded-lg border border-hair">
         {chosen.map((rule, index) => (
           <li key={rule} className="flex items-center gap-2 px-3 py-2">
-            <span className="num w-5 shrink-0 text-xs text-muted">{index + 1}</span>
-            <span className="min-w-0 flex-1 truncate text-sm">{tiebreakerLabel(rule)}</span>
+            <span className="num w-5 shrink-0 text-12 text-muted">{index + 1}</span>
+            <span className="min-w-0 flex-1 truncate text-14">{tiebreakerLabel(rule)}</span>
             <Button size="sm" aria-label="Earlier" disabled={index === 0} onClick={() => move(index, -1)}>
               ↑
             </Button>
@@ -1445,7 +1445,7 @@ function TiebreakerEditor({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               aria-label="Remove"
               onClick={() => onChange([...chosen.filter((entry) => entry !== rule), "name"])}
             >
@@ -1454,8 +1454,8 @@ function TiebreakerEditor({
           </li>
         ))}
         <li className="flex items-center gap-2 px-3 py-2 text-muted">
-          <span className="num w-5 shrink-0 text-xs">{chosen.length + 1}</span>
-          <span className="min-w-0 flex-1 truncate text-sm">{tiebreakerLabel("name")}</span>
+          <span className="num w-5 shrink-0 text-12">{chosen.length + 1}</span>
+          <span className="min-w-0 flex-1 truncate text-14">{tiebreakerLabel("name")}</span>
           <Badge>Always last</Badge>
         </li>
       </ol>

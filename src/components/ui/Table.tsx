@@ -12,7 +12,7 @@ const ALIGN: Record<TableAlign, string> = {
 
 /** The `<table>` itself — pass a `min-w-[…]` so the Panel can scroll it horizontally. */
 export function Table({ className, children }: { className?: string; children?: ReactNode }) {
-  return <table className={cx("w-full text-sm", className)}>{children}</table>;
+  return <table className={cx("w-full text-14", className)}>{children}</table>;
 }
 
 /** Renders both the `<thead>` and its single hairline-ruled `<tr>`. */

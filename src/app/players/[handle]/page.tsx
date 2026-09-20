@@ -60,9 +60,9 @@ export async function generateMetadata({
   };
 }
 
-/** Gold for a win, chalk for the rest of the podium. */
+/** Union blue for a win, chalk for the rest of the podium. */
 const PLACE_TONE: Record<number, string> = {
-  1: "text-gold",
+  1: "text-union",
   2: "text-chalk",
   3: "text-chalk/80",
 };
@@ -109,12 +109,12 @@ export default async function PlayerPage({
             <Avatar name={profile.displayName} src={profile.avatarUrl} size="lg" />
             <div className="min-w-0">
               <Eyebrow className="mb-1">/players/{profile.handle}</Eyebrow>
-              <h1 className="font-display text-4xl leading-none">
+              <h1 className="font-display text-36 leading-none">
                 {profile.displayName}
               </h1>
               {totals.won > 0 && (
                 <p className="mt-2">
-                  <Badge tone="gold">
+                  <Badge tone="union">
                     {totals.won === 1 ? "Winner" : `${totals.won}× winner`}
                   </Badge>
                 </p>
@@ -126,7 +126,7 @@ export default async function PlayerPage({
               <StatTile
                 label="Drafted"
                 value={totals.drafted}
-                valueClassName={totals.drafted > 0 ? "text-gold" : "text-muted"}
+                valueClassName={totals.drafted > 0 ? "text-union" : "text-muted"}
               />
               <StatTile
                 label="Captained"
@@ -136,7 +136,7 @@ export default async function PlayerPage({
               <StatTile
                 label="Podiums"
                 value={totals.podiums}
-                valueClassName={totals.podiums > 0 ? "text-signal" : "text-muted"}
+                valueClassName={totals.podiums > 0 ? "text-body" : "text-muted"}
               />
             </div>
           </div>
@@ -179,13 +179,13 @@ export default async function PlayerPage({
                       <div className="mb-1 flex flex-wrap items-center gap-2">
                         <EventStatusPill status={entry.event.status} />
                         <Badge>{eventTypeLabel(entry.event.type)}</Badge>
-                        {entry.isCaptain && <Badge tone="gold">Captain</Badge>}
+                        {entry.isCaptain && <Badge tone="union">Captain</Badge>}
                       </div>
 
-                      <h2 className="font-display text-2xl leading-none">
+                      <h2 className="font-display text-24 leading-none">
                         <Link
                           href={`/events/${entry.event.slug}`}
-                          className="hover:text-gold"
+                          className="hover:text-union"
                         >
                           {entry.event.title}
                         </Link>
@@ -199,7 +199,7 @@ export default async function PlayerPage({
                         {entry.team && (
                           <Link
                             href={`/events/${entry.event.slug}?tab=teams`}
-                            className="text-sm text-chalk hover:text-gold"
+                            className="text-14 text-chalk hover:text-union"
                           >
                             {entry.team.name}
                           </Link>
@@ -213,7 +213,7 @@ export default async function PlayerPage({
                           <Eyebrow>Finished</Eyebrow>
                           <div
                             className={cx(
-                              "font-display text-2xl leading-none",
+                              "font-display text-24 leading-none",
                               PLACE_TONE[entry.placement.position] ?? "text-muted"
                             )}
                           >
@@ -242,7 +242,7 @@ export default async function PlayerPage({
           )}
         </section>
 
-        <p className="pb-4 text-center text-xs leading-relaxed text-muted">
+        <p className="pb-4 text-center text-12 leading-relaxed text-muted">
           Everything here is already public on the event pages — a roster, a price paid at
           a draft, a bracket result.
           {totals.spent > 0 &&

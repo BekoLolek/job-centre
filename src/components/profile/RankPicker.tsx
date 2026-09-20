@@ -48,7 +48,7 @@ export default function RankPicker({ ladder, value, onChange, disabled }: RankPi
 
   if (tiers.length === 0) {
     return (
-      <p className="text-sm text-muted">
+      <p className="text-14 text-muted">
         This game has no rank ladder yet, so there is nothing to pick. An admin can add
         one under Admin → Games.
       </p>
@@ -77,16 +77,16 @@ export default function RankPicker({ ladder, value, onChange, disabled }: RankPi
             <ChoiceChip
               key={tier.tier}
               selected={holdsAnswer}
-              tone={holdsAnswer ? "gold" : "default"}
+              tone={holdsAnswer ? "union" : "default"}
               disabled={disabled}
               className={
-                !holdsAnswer && tier.tier === activeTier ? "border-gold/50 text-gold" : undefined
+                !holdsAnswer && tier.tier === activeTier ? "border-union/50 text-union" : undefined
               }
               onClick={() => pickTier(tier.tier)}
             >
               {tier.tier}
               {holdsAnswer && tier.entries.length > 1 && (
-                <span className="ml-1.5 font-mono text-xs">
+                <span className="ml-1.5 font-mono text-12">
                   {tier.entries.find((entry) => entry.name === value)?.division}
                 </span>
               )}
@@ -96,7 +96,7 @@ export default function RankPicker({ ladder, value, onChange, disabled }: RankPi
       </ChoiceRow>
 
       {divisions && divisions.entries.length > 1 && (
-        <div className="border-l-2 border-gold/30 pl-3">
+        <div className="border-l-2 border-union/30 pl-3">
           <Eyebrow className="mb-2">{divisions.tier} — which one?</Eyebrow>
           <ChoiceRow>
             {[...divisions.entries].reverse().map((entry) => (

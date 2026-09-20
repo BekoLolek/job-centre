@@ -226,7 +226,7 @@ export default function TeamsTab({
       <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Teams</Eyebrow>
-          <Badge tone={teams.length > MAX_TEAMS ? "ember" : "default"}>
+          <Badge tone={teams.length > MAX_TEAMS ? "flare" : "default"}>
             {teams.length}/{MAX_TEAMS}
           </Badge>
           {perTeam ? (
@@ -245,7 +245,7 @@ export default function TeamsTab({
             bracket and the schedule all count from here.
           </EmptyState>
         ) : (
-          <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
+          <ul className="divide-y divide-hair/60 rounded-lg border border-hair">
             {teams.map((team, index) => {
               const existing = team.id ? existingById.get(team.id) : undefined;
               const problem = errors[team.id ?? `new-${index}`];
@@ -253,7 +253,7 @@ export default function TeamsTab({
               return (
                 <li key={team.key} className="space-y-2 p-3">
                   <div className="flex flex-wrap items-end gap-3">
-                    <span className="num w-10 shrink-0 self-center text-xs text-muted">
+                    <span className="num w-10 shrink-0 self-center text-12 text-muted">
                       #{index + 1}
                     </span>
 
@@ -318,7 +318,7 @@ export default function TeamsTab({
                       </Button>
                       <Button
                         size="sm"
-                        variant="ember"
+                        variant="flare"
                         aria-label={`Remove team ${index + 1}`}
                         onClick={() => remove(team.key)}
                       >
@@ -327,14 +327,14 @@ export default function TeamsTab({
                     </span>
 
                     {team.id === undefined && (
-                      <Badge tone="gold" className="self-center">
+                      <Badge tone="union" className="self-center">
                         New
                       </Badge>
                     )}
                   </div>
 
                   {existing && (
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pl-10 text-xs text-muted">
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pl-10 text-12 text-muted">
                       <span className="num">
                         {existing.roster.size}/{existing.roster.target} on the roster
                       </span>
@@ -342,7 +342,7 @@ export default function TeamsTab({
                         {existing.captainUserId ? (
                           <>Captain {playerName(players, existing.captainUserId)}</>
                         ) : (
-                          <span className="text-gold/80">No captain yet</span>
+                          <span className="text-union">No captain yet</span>
                         )}
                       </span>
                       {existing.balance !== existing.balanceStart && (
@@ -359,7 +359,7 @@ export default function TeamsTab({
         )}
 
         {dropping.length > 0 && (
-          <Alert tone="gold">
+          <Alert tone="union">
             <span className="block font-medium">
               {plural(dropping.length, "team")} will be removed when you save
             </span>
@@ -371,7 +371,7 @@ export default function TeamsTab({
         )}
 
         {named > 0 && named < MIN_TEAMS && (
-          <p className="text-xs text-muted">
+          <p className="text-12 text-muted">
             A draft needs {MIN_TEAMS} teams to run. That is a publish-time question, not
             something to fix mid-sentence — carry on naming them.
           </p>
@@ -389,7 +389,7 @@ export default function TeamsTab({
           <Button size="sm" disabled={teams.length === 0} onClick={seedByOrder}>
             Seed by list order
           </Button>
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             Reordering keeps every roster — a team carries its identity with it.
           </span>
         </SaveRow>
@@ -420,7 +420,7 @@ export default function TeamsTab({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               disabled={state === "saving" || impact?.anyBlocked}
               onClick={() => void commit()}
             >
@@ -432,7 +432,7 @@ export default function TeamsTab({
         {impact && (
           <>
             {impact.anyBlocked ? (
-              <Alert tone="ember">
+              <Alert tone="flare">
                 <span className="block font-medium">
                   {impact.removed
                     .filter((team) => team.blocked)
@@ -449,7 +449,7 @@ export default function TeamsTab({
                 </span>
               </Alert>
             ) : (
-              <Alert tone="ember">
+              <Alert tone="flare">
                 <span className="block font-medium">
                   {plural(impact.clearedMembers, "roster place")} across{" "}
                   {plural(impact.removed.length, "team")}
@@ -463,12 +463,12 @@ export default function TeamsTab({
 
             <ul className="space-y-3">
               {impact.removed.map((team) => (
-                <li key={team.id} className="rounded-xl border border-hair p-3">
+                <li key={team.id} className="rounded-lg border border-hair p-3">
                   <div className="mb-1 flex flex-wrap items-baseline gap-2">
-                    <span className="font-display text-base">{team.name}</span>
-                    {team.blocked && <Badge tone="ember">Refused</Badge>}
+                    <span className="font-display text-16">{team.name}</span>
+                    {team.blocked && <Badge tone="flare">Refused</Badge>}
                     {team.spent > 0 && (
-                      <span className="flex items-baseline gap-1 text-xs text-muted">
+                      <span className="flex items-baseline gap-1 text-12 text-muted">
                         <Money value={team.spent} size="sm" /> spent
                       </span>
                     )}

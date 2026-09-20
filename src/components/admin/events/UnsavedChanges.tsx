@@ -226,15 +226,15 @@ function UnsavedBar({ entry, onDiscard }: { entry: Registration; onDiscard: () =
       <div
         className={cx(
           "unsaved-bar pointer-events-auto flex w-full max-w-[760px] flex-wrap items-center",
-          "gap-x-4 gap-y-2 rounded-[10px] border border-hair bg-raised px-4 py-3 shadow-lift"
+          "gap-x-4 gap-y-2 rounded-lg border border-hair bg-raised px-4 py-3 shadow-lift"
         )}
       >
         <div className="min-w-0 flex-1">
-          <p className="text-[13.5px] leading-tight text-chalk">
+          <p className="text-13 leading-tight text-chalk">
             {entry.saving ? "Saving…" : "You have unsaved changes."}
           </p>
           {entry.reason && (
-            <p className="mt-0.5 text-[12px] leading-tight text-flare">{entry.reason}</p>
+            <p className="mt-0.5 text-12 leading-tight text-flare">{entry.reason}</p>
           )}
         </div>
 
@@ -249,7 +249,7 @@ function UnsavedBar({ entry, onDiscard }: { entry: Registration; onDiscard: () =
           </button>
           <button
             type="button"
-            className="btn btn-gold"
+            className="btn btn-union"
             onClick={entry.save}
             disabled={entry.saving || entry.blocked}
           >

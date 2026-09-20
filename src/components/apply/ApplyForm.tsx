@@ -196,13 +196,13 @@ export default function ApplyForm({
       {known.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-            <h2 className="font-display text-xl leading-none">
+            <h2 className="font-display text-20 leading-none">
               Already answered
             </h2>
-            <Badge tone={confirmed ? "signal" : "gold"}>
+            <Badge tone={confirmed ? "success" : "union"}>
               {confirmed ? "Checked" : "Needs a look"}
             </Badge>
-            <span className="ml-auto text-xs text-muted">
+            <span className="ml-auto text-12 text-muted">
               {plural(known.length, "answer")} from your profile
             </span>
           </div>
@@ -219,7 +219,7 @@ export default function ApplyForm({
                     {!isOpen && (
                       <span
                         className={cx(
-                          "num text-sm",
+                          "num text-14",
                           hasAnswer(value) ? "text-chalk" : "text-muted"
                         )}
                       >
@@ -237,7 +237,7 @@ export default function ApplyForm({
 
                     <button
                       type="button"
-                      className="ml-auto text-xs text-muted underline underline-offset-4 hover:text-gold"
+                      className="ml-auto text-12 text-muted underline underline-offset-4 hover:text-union"
                       onClick={() =>
                         setOpen((current) => ({ ...current, [question.id]: !isOpen }))
                       }
@@ -266,7 +266,7 @@ export default function ApplyForm({
                   )}
 
                   {errors[question.id] && (
-                    <p className="mt-2 text-xs text-ember">{errors[question.id]}</p>
+                    <p className="mt-2 text-12 text-flare">{errors[question.id]}</p>
                   )}
                 </div>
               );
@@ -275,13 +275,13 @@ export default function ApplyForm({
 
           <div className="flex flex-wrap items-center gap-3 border-t border-hair px-5 py-4">
             <Button
-              variant={confirmed ? "default" : "gold"}
+              variant={confirmed ? "default" : "union"}
               onClick={() => setConfirmed(true)}
               disabled={confirmed}
             >
               {confirmed ? "✓ Confirmed" : "Yes, that's all still right"}
             </Button>
-            <p className="text-xs leading-relaxed text-muted">
+            <p className="text-12 leading-relaxed text-muted">
               These came from your profile. One tap says they are still true — nothing to
               retype.
             </p>
@@ -293,10 +293,10 @@ export default function ApplyForm({
       {blank.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-            <h2 className="font-display text-xl leading-none">
+            <h2 className="font-display text-20 leading-none">
               {known.length > 0 ? "Just these" : "The questions"}
             </h2>
-            <span className="ml-auto text-xs text-muted">
+            <span className="ml-auto text-12 text-muted">
               {blank.every((question) => !question.required)
                 ? "All optional"
                 : `${blank.filter((question) => question.required).length} to answer`}
@@ -309,7 +309,7 @@ export default function ApplyForm({
                 <div className="mb-3 flex flex-wrap items-baseline gap-2">
                   <span className="eyebrow text-chalk/70">{question.label}</span>
                   {question.required && !hasAnswer(values[question.id] ?? null) && (
-                    <Badge tone="gold">Needed</Badge>
+                    <Badge tone="union">Needed</Badge>
                   )}
                 </div>
 
@@ -329,7 +329,7 @@ export default function ApplyForm({
                 />
 
                 {errors[question.id] && (
-                  <p className="mt-2 text-xs text-ember">{errors[question.id]}</p>
+                  <p className="mt-2 text-12 text-flare">{errors[question.id]}</p>
                 )}
               </div>
             ))}
@@ -350,12 +350,12 @@ export default function ApplyForm({
       {days.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-            <h2 className="font-display text-xl leading-none">
+            <h2 className="font-display text-20 leading-none">
               Which days can you make?
             </h2>
             <Button
               size="sm"
-              variant={everyDayYes ? "default" : "gold"}
+              variant={everyDayYes ? "default" : "union"}
               className="ml-auto"
               onClick={() =>
                 setAvailability(
@@ -375,7 +375,7 @@ export default function ApplyForm({
                 className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4"
               >
                 <div className="min-w-40">
-                  <div className="text-sm">{day.label ?? `Day ${day.dayIndex + 1}`}</div>
+                  <div className="text-14">{day.label ?? `Day ${day.dayIndex + 1}`}</div>
                   <EventDateRange
                     startsAt={day.startsAt}
                     fallback="Time to be confirmed"
@@ -405,7 +405,7 @@ export default function ApplyForm({
             ))}
           </div>
 
-          <p className="border-t border-hair px-5 py-3 text-xs text-muted">
+          <p className="border-t border-hair px-5 py-3 text-12 text-muted">
             Optional, and you can change it any time from My events — it is what the
             schedule gets built around, not a commitment.
           </p>
@@ -417,7 +417,7 @@ export default function ApplyForm({
         <div className="flex flex-wrap items-center gap-4">
           <div className="min-w-0">
             <Button
-              variant="gold"
+              variant="union"
               onClick={submit}
               disabled={busy || missing.length > 0 || (known.length > 0 && !confirmed)}
             >
@@ -425,14 +425,14 @@ export default function ApplyForm({
             </Button>
           </div>
 
-          <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
+          <p className="min-w-0 flex-1 text-12 leading-relaxed text-muted">
             {missing.length > 0 ? (
-              <span className="text-gold">
+              <span className="text-union">
                 {plural(missing.length, "question")} still needed:{" "}
                 {missing.map((question) => question.label).join(", ")}
               </span>
             ) : known.length > 0 && !confirmed ? (
-              <span className="text-gold">
+              <span className="text-union">
                 Confirm the answers above are still right, then this goes through.
               </span>
             ) : entryMode === "approval" ? (
@@ -446,7 +446,7 @@ export default function ApplyForm({
 
           <button
             type="button"
-            className="text-xs text-muted underline underline-offset-4 hover:text-gold"
+            className="text-12 text-muted underline underline-offset-4 hover:text-union"
             onClick={() => router.push(`/events/${slug}`)}
           >
             Cancel

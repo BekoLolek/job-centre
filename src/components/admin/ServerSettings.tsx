@@ -102,10 +102,10 @@ function GuildGate({ gate }: { gate: ServerSettingsProps["gate"] }) {
             className="mt-1 h-4 w-4 shrink-0 accent-union"
           />
           <span className="min-w-0">
-            <span className="block text-[14px] text-chalk">
+            <span className="block text-14 text-chalk">
               Only members of the server below may sign in
             </span>
-            <span className="mt-0.5 block text-[13px] leading-relaxed text-muted">
+            <span className="mt-0.5 block text-13 leading-relaxed text-muted">
               Checked, this fails closed: if Discord will not say whether somebody is a
               member, they are refused.
             </span>
@@ -113,7 +113,7 @@ function GuildGate({ gate }: { gate: ServerSettingsProps["gate"] }) {
         </label>
 
         {!enabled && (
-          <Alert tone="ember">
+          <Alert tone="flare">
             <span className="block font-medium">Anyone with a Discord account could sign in</span>
             <span className="mt-1 block opacity-90">
               Not just people in your server — anybody, from anywhere. They would land on the
@@ -136,14 +136,14 @@ function GuildGate({ gate }: { gate: ServerSettingsProps["gate"] }) {
           <SourceBadge source={gate.source} />
         </div>
 
-        <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
+        <p className="max-w-2xl text-13 leading-relaxed text-muted">
           With Developer Mode on in Discord, right-click the server and choose{" "}
           <span className="text-chalk">Copy Server ID</span>. Leave this blank to fall back
           to <code className="num text-dim">DISCORD_GUILD_ID</code> from the deployment.
         </p>
 
         {changingServer && (
-          <Alert tone="gold">
+          <Alert tone="union">
             <span className="block font-medium">Changing the server locks out everyone not in the new one</span>
             <span className="mt-1 block opacity-90">
               Existing sessions keep working — nobody is thrown out mid-draft — but the next
@@ -154,10 +154,10 @@ function GuildGate({ gate }: { gate: ServerSettingsProps["gate"] }) {
         )}
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button variant="gold" disabled={busy || !dirty} onClick={() => void save()}>
+          <Button variant="union" disabled={busy || !dirty} onClick={() => void save()}>
             {busy ? "Saving…" : "Save"}
           </Button>
-          {note && <span className="text-[13px] text-signal">{note}</span>}
+          {note && <span className="text-13 text-success">{note}</span>}
         </div>
       </div>
     </Section>
@@ -211,14 +211,14 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
         {/* --- Webhook ------------------------------------------------ */}
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[14px] text-chalk">Discord webhook</span>
+            <span className="text-14 text-chalk">Discord webhook</span>
             <SourceBadge source={integrations.source.webhook} />
           </div>
 
           {masked ? (
-            <p className="num text-[12.5px] text-muted">{masked}</p>
+            <p className="num text-13 text-muted">{masked}</p>
           ) : (
-            <p className="text-[13px] text-muted">
+            <p className="text-13 text-muted">
               Nothing set. Announcements are switched off entirely until there is one.
             </p>
           )}
@@ -234,7 +234,7 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
             />
             {masked && (
               <Button
-                variant="ember"
+                variant="flare"
                 className="mb-1"
                 disabled={busy}
                 onClick={() => void run({ clearWebhook: true }, "Webhook cleared.")}
@@ -244,7 +244,7 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
             )}
           </div>
 
-          <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
+          <p className="max-w-2xl text-13 leading-relaxed text-muted">
             Only ever shown with its token hidden — anybody holding the full URL can post to
             that channel as the webhook, so the site does not hand it back out. Make one in
             Discord under <span className="text-chalk">Server Settings → Integrations →
@@ -255,7 +255,7 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
         {/* --- Site address ------------------------------------------- */}
         <div className="space-y-3 border-t border-hair pt-5">
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-[14px] text-chalk">Site address</span>
+            <span className="text-14 text-chalk">Site address</span>
             <SourceBadge source={integrations.source.origin} />
           </div>
 
@@ -270,7 +270,7 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
             {/* Only an address set here can be cleared here; the deployment's stays. */}
             {integrations.source.origin === "settings" && (
               <Button
-                variant="ember"
+                variant="flare"
                 className="mb-1"
                 disabled={busy}
                 onClick={() => void run({ clearSiteOrigin: true }, "Address cleared.")}
@@ -280,7 +280,7 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
             )}
           </div>
 
-          <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
+          <p className="max-w-2xl text-13 leading-relaxed text-muted">
             Where the links inside an announcement point. Get this wrong and nothing breaks
             loudly — the messages still send, they just link somewhere that is not the site.
             Worth checking after any change of domain.
@@ -289,7 +289,7 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
 
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            variant="gold"
+            variant="union"
             disabled={busy || !dirty}
             onClick={() =>
               void run(
@@ -300,7 +300,7 @@ function Integrations({ integrations }: { integrations: ServerSettingsProps["int
           >
             {busy ? "Saving…" : "Save"}
           </Button>
-          {note && <span className="text-[13px] text-signal">{note}</span>}
+          {note && <span className="text-13 text-success">{note}</span>}
         </div>
       </div>
     </Section>
@@ -341,29 +341,29 @@ function DeployTime({ deployTime }: { deployTime: ServerSettingsProps["deployTim
       title="Set where the site is deployed"
       description="These four are credentials for the application itself, so they are not editable here — a screen that could change them could read them back, and an admin account is not the same thing as access to the deployment."
     >
-      <div className="overflow-hidden rounded-xl bg-panel">
+      <div className="overflow-hidden rounded-lg bg-panel">
         {rows.map((row) => (
           <div
             key={row.name}
             className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-hair px-5 py-3.5 first:border-t-0"
           >
-            <code className="num w-[15rem] shrink-0 text-[12.5px] text-chalk">{row.name}</code>
+            <code className="num w-[15rem] shrink-0 text-13 text-chalk">{row.name}</code>
             <span
               className={cx(
-                "shrink-0 rounded px-2 py-0.5 text-[11.5px]",
-                row.set ? "bg-union/15 text-union" : "bg-flare/15 text-flare"
+                "shrink-0 rounded px-2 py-0.5 text-12",
+                row.set ? "bg-union-tint-15 text-union" : "bg-flare-tint-15 text-flare"
               )}
             >
               {row.set ? "Set" : "Missing"}
             </span>
-            <span className="min-w-0 flex-1 text-[13px] leading-relaxed text-muted">
+            <span className="min-w-0 flex-1 text-13 leading-relaxed text-muted">
               {row.why}
             </span>
           </div>
         ))}
       </div>
 
-      <p className="mt-4 flex items-start gap-2 text-[13px] leading-relaxed text-muted">
+      <p className="mt-4 flex items-start gap-2 text-13 leading-relaxed text-muted">
         <Icon name="people" className="relative top-[3px] shrink-0 text-dim" />
         <span>
           Admins are not on this list either — they live on{" "}
@@ -380,9 +380,9 @@ function DeployTime({ deployTime }: { deployTime: ServerSettingsProps["deployTim
 
 /** Where the value in force actually came from. */
 function SourceBadge({ source }: { source: "settings" | "env" | "none" }) {
-  if (source === "none") return <Badge tone="ember">Not set</Badge>;
+  if (source === "none") return <Badge tone="flare">Not set</Badge>;
   return source === "settings" ? (
-    <Badge tone="gold">Set here</Badge>
+    <Badge tone="union">Set here</Badge>
   ) : (
     <Badge>From the deployment</Badge>
   );

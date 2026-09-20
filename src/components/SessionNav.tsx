@@ -25,7 +25,7 @@ export default async function SessionNav() {
     return (
       <Link
         href="/signin"
-        className="text-sm text-chalk/80 transition-colors hover:text-hot"
+        className="text-14 text-chalk/80 transition-colors hover:text-hot"
       >
         Sign in
       </Link>

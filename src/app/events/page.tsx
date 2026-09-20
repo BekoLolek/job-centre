@@ -49,8 +49,8 @@ export default async function EventsPage({
       <main className="mx-auto max-w-[1400px] space-y-6 px-4 py-8 sm:px-6">
         <header>
           <Eyebrow className="mb-2">Job Centre · Events</Eyebrow>
-          <h1 className="text-4xl">Coming up</h1>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">Coming up</h1>
+          <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
             Everything the community has planned. Anything already run keeps its page for
             the record — that is what the archive is.
           </p>

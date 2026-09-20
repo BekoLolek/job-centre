@@ -192,8 +192,8 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
         <EventStatusPill status={row.eventStatus} />
         <Badge>{eventTypeLabel(row.type)}</Badge>
 
-        <h2 className="font-display text-xl leading-none">
-          <Link href={`/events/${row.slug}`} className="hover:text-gold">
+        <h2 className="font-display text-20 leading-none">
+          <Link href={`/events/${row.slug}`} className="hover:text-union">
             {row.title}
           </Link>
         </h2>
@@ -213,14 +213,14 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
       <div className="space-y-5 p-5">
         {/* --- What happens next ----------------------------------- */}
         {row.status === "pending" && (
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             This event is by approval, so the organisers read every application. You are not
             holding a seat or a place in the queue yet — you will hear either way.
           </p>
         )}
 
         {row.status === "waitlisted" && (
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             {row.waitlistPosition === null
               ? "You are in the queue."
               : `You are #${row.waitlistPosition} in the queue.`}{" "}
@@ -231,7 +231,7 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
 
         {(row.status === "declined" || row.status === "withdrawn") && (
           <div className="space-y-3">
-            <p className="text-xs leading-relaxed text-muted">
+            <p className="text-12 leading-relaxed text-muted">
               {row.status === "declined"
                 ? "An admin decided against this application. Nothing here is deleted, so it stays on your list."
                 : "You withdrew from this one. Your answers are kept in case you come back to it."}
@@ -248,7 +248,7 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
               {editable && (
                 <Button
                   size="sm"
-                  variant={everyDayYes ? "default" : "gold"}
+                  variant={everyDayYes ? "default" : "union"}
                   className="ml-auto"
                   disabled={busy || everyDayYes}
                   onClick={() =>
@@ -264,14 +264,14 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
               )}
             </div>
 
-            <div className="divide-y divide-hair/60 rounded-xl border border-hair">
+            <div className="divide-y divide-hair/60 rounded-lg border border-hair">
               {row.days.map((day) => (
                 <div
                   key={day.id}
                   className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
                 >
                   <div className="min-w-40">
-                    <div className="text-sm">{day.label ?? `Day ${day.dayIndex + 1}`}</div>
+                    <div className="text-14">{day.label ?? `Day ${day.dayIndex + 1}`}</div>
                     <EventDateRange
                       startsAt={day.startsAt}
                       fallback="Time to be confirmed"
@@ -312,8 +312,8 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
               {confirmation && (
                 <span
                   className={cx(
-                    "text-xs",
-                    confirmation === "in" ? "text-signal" : "text-ember"
+                    "text-12",
+                    confirmation === "in" ? "text-success" : "text-flare"
                   )}
                 >
                   {confirmation === "in" ? "✓ Confirmed" : "✕ You said you cannot make it"}
@@ -338,7 +338,7 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
               </ChoiceChip>
             </ChoiceRow>
 
-            <p className="text-xs leading-relaxed text-muted">
+            <p className="text-12 leading-relaxed text-muted">
               Saying you cannot make it is not the same as withdrawing — it tells the admin,
               and keeps your place until they decide what to do about it.
             </p>
@@ -348,10 +348,10 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
         {/* --- Withdraw -------------------------------------------- */}
         {editable && (
           <div className="flex flex-wrap items-center gap-4 border-t border-hair pt-4">
-            <Button variant="ember" size="sm" disabled={busy} onClick={() => setAsking(true)}>
+            <Button variant="flare" size="sm" disabled={busy} onClick={() => setAsking(true)}>
               Withdraw
             </Button>
-            <p className="min-w-0 flex-1 text-xs leading-relaxed text-muted">
+            <p className="min-w-0 flex-1 text-12 leading-relaxed text-muted">
               {freesASeat
                 ? `${plural(row.seats.waitlisted, "person", "people")} waiting — the first of them takes your seat the moment you withdraw.`
                 : row.status === "accepted"
@@ -375,16 +375,16 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
             <Button size="sm" onClick={() => setAsking(false)} disabled={busy}>
               Keep my place
             </Button>
-            <Button variant="ember" size="sm" onClick={() => void withdraw()} disabled={busy}>
+            <Button variant="flare" size="sm" onClick={() => void withdraw()} disabled={busy}>
               {busy ? "Withdrawing…" : "Yes, withdraw"}
             </Button>
           </>
         }
       >
-        <p className="text-sm leading-relaxed text-muted">
+        <p className="text-14 leading-relaxed text-muted">
           {freesASeat ? (
             <>
-              <span className="text-ember">
+              <span className="text-flare">
                 {plural(row.seats.waitlisted, "person", "people")} are waiting for a seat.
               </span>{" "}
               The one at the front takes yours immediately and automatically — so if you

@@ -123,11 +123,11 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
 /** The actions that hand something out. Read next to `DESTRUCTIVE` above. */
 const NOTABLE: ReadonlySet<string> = new Set(["user.admin.granted"]);
 
-export function actionTone(action: string): "gold" | "ember" | "muted" {
-  if (DESTRUCTIVE.has(action)) return "ember";
-  if (action === "announcement.failed") return "ember";
-  if (NOTABLE.has(action)) return "gold";
-  return action.startsWith("draft.") || action.startsWith("result.") ? "gold" : "muted";
+export function actionTone(action: string): "union" | "flare" | "muted" {
+  if (DESTRUCTIVE.has(action)) return "flare";
+  if (action === "announcement.failed") return "flare";
+  if (NOTABLE.has(action)) return "union";
+  return action.startsWith("draft.") || action.startsWith("result.") ? "union" : "muted";
 }
 
 /* ------------------------------------------------------------------ */
@@ -196,7 +196,7 @@ export type AuditView = {
   at: Date;
   action: string;
   label: string;
-  tone: "gold" | "ember" | "muted";
+  tone: "union" | "flare" | "muted";
   summary: string;
   subject: string | null;
   detail: Record<string, SettingValue>;

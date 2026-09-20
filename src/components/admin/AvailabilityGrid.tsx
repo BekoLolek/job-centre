@@ -127,14 +127,14 @@ export default function AvailabilityGrid({
           </Button>
         </div>
 
-        <span className="text-[14px] text-chalk">
+        <span className="text-14 text-chalk">
           {rangeLabel(monday)}
         </span>
 
-        <label className="flex items-center gap-2 text-[12.5px] text-muted">
+        <label className="flex items-center gap-2 text-13 text-muted">
           Show
           <select
-            className="field w-auto py-1 text-[12.5px]"
+            className="field w-auto py-1 text-13"
             value={window.startMinute}
             onChange={(input) => {
               const start = Number(input.target.value);
@@ -152,7 +152,7 @@ export default function AvailabilityGrid({
           </select>
           to
           <select
-            className="field w-auto py-1 text-[12.5px]"
+            className="field w-auto py-1 text-13"
             value={window.endMinute}
             onChange={(input) => {
               const end = Number(input.target.value);
@@ -171,7 +171,7 @@ export default function AvailabilityGrid({
         </label>
 
         <Badge>{plural(people.length, "member")} answered</Badge>
-        <span className="text-[12.5px] text-dim">Times are {zone}</span>
+        <span className="text-13 text-dim">Times are {zone}</span>
       </div>
 
       {/* --- The grid ------------------------------------------------ */}
@@ -185,13 +185,13 @@ export default function AvailabilityGrid({
                 <div key={index} className="pb-2 text-center">
                   <div
                     className={cx(
-                      "text-[12.5px] font-medium",
+                      "text-13 font-medium",
                       isToday ? "text-union" : "text-muted"
                     )}
                   >
                     {DAY_LABELS[index]}
                   </div>
-                  <div className="num text-[11px] text-dim">{day.day}</div>
+                  <div className="num text-11 text-dim">{day.day}</div>
                 </div>
               );
             })}
@@ -204,7 +204,7 @@ export default function AvailabilityGrid({
               return [
                 <div
                   key={`t-${slot}`}
-                  className="num pr-2 text-right text-[11px] leading-[1.6rem] text-dim"
+                  className="num pr-2 text-right text-11 leading-[1.6rem] text-dim"
                 >
                   {onTheHour ? clockWithDay(minute) : ""}
                 </div>,
@@ -224,7 +224,7 @@ export default function AvailabilityGrid({
                         cell.yes.length
                       } free${cell.maybe.length > 0 ? `, ${cell.maybe.length} maybe` : ""}`}
                       className={cx(
-                        "h-[1.6rem] w-full rounded-[3px] transition-[background-color,box-shadow] duration-100",
+                        "h-[1.6rem] w-full rounded transition-[background-color,box-shadow] duration-100",
                         isHovered && "ring-1 ring-union",
                         onTheHour && "border-t border-t-hair/60"
                       )}
@@ -244,33 +244,33 @@ export default function AvailabilityGrid({
         reach without losing it. It keeps the last slot you pointed at, so the
         list is still there when your mouse has moved to read it.
       */}
-      <div className="min-h-[5.5rem] rounded-xl bg-panel px-5 py-4">
+      <div className="min-h-[5.5rem] rounded-lg bg-panel px-5 py-4">
         {!active ? (
-          <p className="text-[13px] text-dim">
+          <p className="text-13 text-dim">
             Point at a slot to see who is free in it. The darker the cell, the more people.
           </p>
         ) : (
           <div className="space-y-2">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <span className="text-[14px] text-chalk">
+              <span className="text-14 text-chalk">
                 {DAY_LABELS[hovered!.day]} {days[hovered!.day].day}{" "}
                 {clockOf(window.startMinute + hovered!.slot * SLOT_MINUTES)} –{" "}
                 {clockOf(window.startMinute + (hovered!.slot + 1) * SLOT_MINUTES)}
               </span>
-              <Badge tone={active.yes.length > 0 ? "gold" : undefined}>
+              <Badge tone={active.yes.length > 0 ? "union" : undefined}>
                 {plural(active.yes.length, "free")}
               </Badge>
               {active.maybe.length > 0 && <Badge>{active.maybe.length} maybe</Badge>}
             </div>
 
             {active.yes.length === 0 && active.maybe.length === 0 ? (
-              <p className="text-[13px] text-muted">Nobody.</p>
+              <p className="text-13 text-muted">Nobody.</p>
             ) : (
               <div className="flex flex-wrap gap-x-2 gap-y-1.5">
                 {active.yes.map((name) => (
                   <span
                     key={`y-${name}`}
-                    className="rounded bg-union/15 px-2 py-0.5 text-[12.5px] text-chalk"
+                    className="rounded bg-union/15 px-2 py-0.5 text-13 text-chalk"
                   >
                     {name}
                   </span>
@@ -278,7 +278,7 @@ export default function AvailabilityGrid({
                 {active.maybe.map((name) => (
                   <span
                     key={`m-${name}`}
-                    className="rounded bg-white/[0.05] px-2 py-0.5 text-[12.5px] text-muted"
+                    className="rounded bg-overlay-2 px-2 py-0.5 text-13 text-muted"
                     title="Said maybe"
                   >
                     {name} ·

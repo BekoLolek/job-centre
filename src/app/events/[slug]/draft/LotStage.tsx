@@ -69,18 +69,18 @@ export default function LotStage({
     <>
       <Eyebrow className="flex flex-wrap items-center gap-2">
         {poolLabel(poolKind)}
-        <span className="text-dim/60">/</span>
+        <span className="text-dim">/</span>
         {spinning ? (
-          <span className="text-ember">{stageLabel(view.phase, Boolean(view.lot))}</span>
+          <span className="text-flare">{stageLabel(view.phase, Boolean(view.lot))}</span>
         ) : view.lot ? (
-          <span className="text-gold">{stageLabel(view.phase, true)}</span>
+          <span className="text-union">{stageLabel(view.phase, true)}</span>
         ) : (
           <span>{stageLabel(view.phase, false)}</span>
         )}
         {secondsLeft !== null && (
           <>
-            <span className="text-dim/60">/</span>
-            <span className={secondsLeft === 0 ? "text-ember" : "text-chalk"}>
+            <span className="text-dim">/</span>
+            <span className={secondsLeft === 0 ? "text-flare" : "text-chalk"}>
               {secondsLeft === 0 ? "Bidding closed" : `${secondsLeft}s left`}
             </span>
           </>
@@ -98,15 +98,15 @@ export default function LotStage({
         <Eyebrow className="mb-2">On the block</Eyebrow>
         <div
           key={onBlock ?? "none"}
-          className={`font-display text-[clamp(2rem,6vw,4rem)] leading-none ${
-            onBlock ? "stamp text-chalk" : "text-dim/60"
+          className={`font-display text-stage leading-none ${
+            onBlock ? "stamp text-chalk" : "text-dim"
           }`}
         >
           {spinning ? "…" : (onBlock ?? "—")}
         </div>
 
         {!view.lot && last && (
-          <p className="mt-3 text-sm text-muted">
+          <p className="mt-3 text-14 text-muted">
             {lotSentence(last, { players: view.players, teams: view.teams })}
           </p>
         )}

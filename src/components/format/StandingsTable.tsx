@@ -57,13 +57,13 @@ export default function StandingsTable({
             <TableRow
               key={row.id}
               className={cx(
-                qualify != null && index + 1 === qualify && "border-b-2 border-gold/40"
+                qualify != null && index + 1 === qualify && "border-b-2 border-union/40"
               )}
             >
               <TableCell numeric className="text-muted">
                 {index + 1}
               </TableCell>
-              <TableCell className={qualify != null && index < qualify ? "text-gold" : undefined}>
+              <TableCell className={qualify != null && index < qualify ? "text-union" : undefined}>
                 {row.name}
               </TableCell>
               <TableCell numeric align="right" className="text-muted">
@@ -86,7 +86,7 @@ export default function StandingsTable({
               <TableCell numeric align="right" className="text-muted">
                 {row.diff > 0 ? `+${row.diff}` : row.diff}
               </TableCell>
-              <TableCell numeric align="right" className="text-gold">
+              <TableCell numeric align="right" className="text-union">
                 {row.points}
               </TableCell>
             </TableRow>

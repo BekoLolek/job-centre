@@ -149,7 +149,7 @@ export default function EventsManager({
             ))}
           </Select>
 
-          <Button variant="gold" disabled={pending || !title.trim()} onClick={create}>
+          <Button variant="union" disabled={pending || !title.trim()} onClick={create}>
             {pending ? "Creating…" : "Create draft"}
           </Button>
         </div>
@@ -220,9 +220,9 @@ function ApplicationTotals({ counts }: { counts: Record<ApplicationStatus, numbe
 
   return (
     <>
-      <Badge tone="signal">{plural(total, "application")}</Badge>
-      {counts.pending > 0 && <Badge tone="gold">{counts.pending} awaiting review</Badge>}
-      {counts.declined > 0 && <Badge tone="ember">{counts.declined} declined</Badge>}
+      <Badge tone="success">{plural(total, "application")}</Badge>
+      {counts.pending > 0 && <Badge tone="union">{counts.pending} awaiting review</Badge>}
+      {counts.declined > 0 && <Badge tone="flare">{counts.declined} declined</Badge>}
       {counts.withdrawn > 0 && <Badge>{counts.withdrawn} withdrew</Badge>}
     </>
   );

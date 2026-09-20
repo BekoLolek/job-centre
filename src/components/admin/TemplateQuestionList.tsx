@@ -94,7 +94,7 @@ export default function TemplateQuestionList({
           application form.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
+        <ul className="divide-y divide-hair/60 rounded-lg border border-hair">
           {questions.map((question, index) => {
             const link = question.profileFieldKey
               ? profileFields.find(
@@ -108,9 +108,9 @@ export default function TemplateQuestionList({
                 key={`${question.key ?? question.label}-${index}`}
                 className="flex flex-wrap items-center gap-3 px-3 py-2.5"
               >
-                <span className="num w-6 shrink-0 text-xs text-muted">{index + 1}</span>
+                <span className="num w-6 shrink-0 text-12 text-muted">{index + 1}</span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm">{question.label}</span>
+                  <span className="block truncate text-14">{question.label}</span>
                   <span className="eyebrow mt-0.5 block">
                     {fieldTypeInfo(question.type).label}
                     {question.options && question.options.length > 0
@@ -118,10 +118,10 @@ export default function TemplateQuestionList({
                       : ""}
                   </span>
                 </span>
-                {question.required && <Badge tone="gold">Required</Badge>}
+                {question.required && <Badge tone="union">Required</Badge>}
                 {question.profileFieldKey && (
                   <Badge
-                    tone={link ? "signal" : "ember"}
+                    tone={link ? "success" : "flare"}
                     title={
                       link
                         ? `Prefilled from "${link.label}"${link.gameName ? ` (${link.gameName})` : " (everyone)"}`
@@ -154,7 +154,7 @@ export default function TemplateQuestionList({
                   >
                     Edit
                   </Button>
-                  <Button size="sm" variant="ember" onClick={() => remove(index)}>
+                  <Button size="sm" variant="flare" onClick={() => remove(index)}>
                     Remove
                   </Button>
                 </span>
@@ -167,12 +167,12 @@ export default function TemplateQuestionList({
       <div className="flex flex-wrap items-center gap-3">
         <Button
           size="sm"
-          variant="gold"
+          variant="union"
           onClick={() => setEditing({ index: -1, draft: emptyDraft() })}
         >
           Add question
         </Button>
-        <span className="text-xs text-muted">
+        <span className="text-12 text-muted">
           Removing one here changes nothing about any event already made from this template.
         </span>
       </div>
@@ -272,7 +272,7 @@ function QuestionDialog({
         <>
           <Button onClick={onClose}>Cancel</Button>
           <Button
-            variant="gold"
+            variant="union"
             disabled={problem !== null}
             onClick={() => state && onSave(draft, state.index)}
           >
@@ -303,7 +303,7 @@ function QuestionDialog({
               </ChoiceChip>
             ))}
           </ChoiceRow>
-          <p className="mt-2 text-xs text-muted">{info.hint}</p>
+          <p className="mt-2 text-12 text-muted">{info.hint}</p>
         </div>
 
         {info.needsOptions && (
@@ -339,7 +339,7 @@ function QuestionDialog({
             ))}
           </Select>
           {linkable.length === 0 && (
-            <p className="mt-2 text-xs text-muted">
+            <p className="mt-2 text-12 text-muted">
               This template&apos;s game has no profile questions to prefill from. Add some at{" "}
               <span className="font-mono">/admin/games</span>.
             </p>

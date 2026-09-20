@@ -59,7 +59,7 @@ export default function PoolRail({ view, busy, run }: PoolRailProps) {
           }
           busy={busy}
         />
-        <p className="mt-3 text-[11px] leading-relaxed text-muted">
+        <p className="mt-3 text-11 leading-relaxed text-muted">
           Only you can see these names. Switch the wheel above to Reserve once the main pool
           is done.
         </p>
@@ -70,7 +70,7 @@ export default function PoolRail({ view, busy, run }: PoolRailProps) {
           <Eyebrow as="h3" className="mb-2">
             Still short
           </Eyebrow>
-          <ul className="space-y-1 text-xs text-muted">
+          <ul className="space-y-1 text-12 text-muted">
             {view.completion.short.map((entry) => (
               <li key={entry.teamId}>
                 {view.teams.find((team) => team.id === entry.teamId)?.name ?? "A team"} ·{" "}

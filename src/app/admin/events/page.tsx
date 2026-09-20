@@ -63,8 +63,8 @@ export default async function AdminEventsPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Events</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">Events</h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <h1 className="font-display text-36 leading-none">Events</h1>
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Everything the community runs, drafts included. An event starts as a draft
               nobody can see; give it days, an application form and a capacity, then publish
               it when it is ready.
@@ -76,17 +76,17 @@ export default async function AdminEventsPage() {
             <StatTile
               label="Drafts"
               value={drafts}
-              valueClassName={drafts > 0 ? "text-gold" : "text-muted"}
+              valueClassName={drafts > 0 ? "text-union" : "text-muted"}
             />
             <StatTile
               label="Live"
               value={live}
-              valueClassName={live > 0 ? "text-ember" : "text-muted"}
+              valueClassName={live > 0 ? "text-flare" : "text-muted"}
             />
             <StatTile
               label="Applications"
               value={applications}
-              valueClassName={applications > 0 ? "text-signal" : "text-muted"}
+              valueClassName={applications > 0 ? "text-body" : "text-muted"}
             />
           </div>
         </header>
@@ -101,7 +101,7 @@ export default async function AdminEventsPage() {
           }))}
         />
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           Nothing on this page deletes an event. A cancelled event stays in the archive with
           its applications.
         </p>

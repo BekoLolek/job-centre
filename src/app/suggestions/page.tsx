@@ -35,8 +35,8 @@ export default async function SuggestionsPage() {
       <main className="mx-auto max-w-[900px] px-4 py-8 sm:px-6">
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · Suggestions</Eyebrow>
-          <h1 className="text-4xl">What should we run?</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">What should we run?</h1>
+          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
             Anything the community fancies playing. Vote on the ones you would turn up to —
             the count is what an organiser looks at when they are deciding what to put on
             next, so an idea with nobody behind it is genuinely useful information too.

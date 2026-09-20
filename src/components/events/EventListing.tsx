@@ -99,7 +99,7 @@ export default function EventListing({
       {shown.length === 0 ? (
         <Panel as="section" tone="wash" padding="lg">
           <Eyebrow className="mb-3">Nothing here</Eyebrow>
-          <p className="max-w-xl text-sm leading-relaxed text-muted">
+          <p className="max-w-xl text-14 leading-relaxed text-muted">
             {nothingAtAll
               ? "No events have been published yet. When an admin publishes one it appears here, and on the hub, straight away."
               : type
@@ -116,7 +116,7 @@ export default function EventListing({
         </Panel>
       ) : (
         <Section first tone="plain" className="pb-14 pt-2">
-          <p className="mb-1 text-[13px] text-muted">
+          <p className="mb-1 text-13 text-muted">
             {plural(shown.length, "event")} · {copy.order}
             {otherCount > 0 && (
               <>

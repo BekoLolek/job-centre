@@ -71,8 +71,14 @@ export type AttentionItem = {
   action: string;
   /** How many of whatever it is. Drives the ordering. */
   count: number;
-  /** `ember` is "the night is blocked on this"; `gold` is "do this next". */
-  tone: "ember" | "gold";
+  /**
+   * Whether the night is blocked on this or it is simply the next thing to
+   * do. It drives the sort below and the "Blocking" count on the dashboard,
+   * so it is a fact about the work, not about how the row is painted — it was
+   * typed as a colour name until a palette rename had to edit a comparator.
+   * `src/app/admin/page.tsx` maps it to a colour at the point it draws one.
+   */
+  urgency: "blocked" | "next";
   /** Null only for a failed announcement nobody could file under an event. */
   event: { id: string; title: string; slug: string; status: EventStatus } | null;
 };
@@ -185,7 +191,7 @@ export async function loadDashboard(
         href: editor("applicants"),
         action: "Decide them",
         count: waiting,
-        tone: "gold",
+        urgency: "next",
         event: at,
       });
     }
@@ -202,7 +208,7 @@ export async function loadDashboard(
         href: `/events/${event.slug}/draft`,
         action: "Open the room",
         count: open,
-        tone: "ember",
+        urgency: "blocked",
         event: at,
       });
     }
@@ -223,7 +229,7 @@ export async function loadDashboard(
                 href: editor("publish"),
                 action: "Publish it",
                 count: 1,
-                tone: "gold",
+                urgency: "next",
                 event: at,
               }
             : {
@@ -234,7 +240,7 @@ export async function loadDashboard(
                 href: editor("publish"),
                 action: "Fix them",
                 count: stopped.length,
-                tone: "gold",
+                urgency: "next",
                 event: at,
               }
         );
@@ -253,7 +259,7 @@ export async function loadDashboard(
         href: editor("captains"),
         action: "Choose them",
         count: captainless,
-        tone: "gold",
+        urgency: "next",
         event: at,
       });
     }
@@ -272,7 +278,7 @@ export async function loadDashboard(
           href: editor("results"),
           action: "Call them",
           count: board.needsWinner,
-          tone: "ember",
+          urgency: "blocked",
           event: at,
         });
       }
@@ -288,7 +294,7 @@ export async function loadDashboard(
           href: editor("schedule"),
           action: "Lay it out",
           count: board.unscheduled,
-          tone: "gold",
+          urgency: "next",
           event: at,
         });
       }
@@ -300,7 +306,7 @@ export async function loadDashboard(
   // Blocked first, then the biggest pile. Within an event the order the checks
   // were pushed in is already the order you would work through them.
   items.sort((a, b) => {
-    if (a.tone !== b.tone) return a.tone === "ember" ? -1 : 1;
+    if (a.urgency !== b.urgency) return a.urgency === "blocked" ? -1 : 1;
     return b.count - a.count;
   });
 
@@ -383,7 +389,7 @@ async function failedAnnouncements(
       href: event ? `/admin/audit?event=${event.id}` : "/admin/audit",
       action: "See why",
       count: failed,
-      tone: "gold",
+      urgency: "next",
       event: event
         ? { id: event.id, title: event.title, slug: event.slug, status: event.status }
         : null,

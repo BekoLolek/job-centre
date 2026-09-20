@@ -226,12 +226,12 @@ export default function QuestionsTab({
           <Badge>
             {questions.length}/{maxQuestions}
           </Badge>
-          {linked > 0 && <Badge tone="signal">{linked} prefilled from profiles</Badge>}
+          {linked > 0 && <Badge tone="success">{linked} prefilled from profiles</Badge>}
         </div>
 
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           Every question is a choice wherever it can be — a row of buttons, chips, a stepper,
-          a rank picker (§2). A question <span className="text-signal">linked</span> to a
+          a rank picker (§2). A question <span className="text-body">linked</span> to a
           profile field arrives already answered, which is what turns a returning player&apos;s
           application into: check, tap the days, submit.
         </p>
@@ -242,7 +242,7 @@ export default function QuestionsTab({
             answer the availability question if you have given it days.
           </EmptyState>
         ) : (
-          <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
+          <ul className="divide-y divide-hair/60 rounded-lg border border-hair">
             {questions.map((question, index) => {
               const answers = answersTo(question.id);
               const invalid = invalidatedBy(question);
@@ -251,24 +251,24 @@ export default function QuestionsTab({
 
               return (
                 <li key={question.key} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-                  <span className="num w-6 shrink-0 text-xs text-muted">{index + 1}</span>
+                  <span className="num w-6 shrink-0 text-12 text-muted">{index + 1}</span>
 
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm">{question.label}</span>
+                    <span className="block truncate text-14">{question.label}</span>
                     <span className="eyebrow mt-0.5 block truncate">
                       {fieldTypeInfo(question.type).label}
                       {question.options.length > 0 &&
                         ` · ${plural(question.options.length, "option")}`}
                       {link && ` · prefills from ${link.label}`}
                     </span>
-                    {problem && <span className="mt-1 block text-xs text-ember">{problem}</span>}
+                    {problem && <span className="mt-1 block text-12 text-flare">{problem}</span>}
                   </span>
 
-                  {question.profileFieldId && <Badge tone="signal">Prefilled</Badge>}
-                  {question.required && <Badge tone="gold">Required</Badge>}
-                  {!question.id && <Badge tone="gold">New</Badge>}
+                  {question.profileFieldId && <Badge tone="success">Prefilled</Badge>}
+                  {question.required && <Badge tone="union">Required</Badge>}
+                  {!question.id && <Badge tone="union">New</Badge>}
                   {answers > 0 && (
-                    <Badge tone={invalid > 0 ? "ember" : "default"}>
+                    <Badge tone={invalid > 0 ? "flare" : "default"}>
                       {invalid > 0
                         ? `${invalid}/${answers} answers at risk`
                         : plural(answers, "answer")}
@@ -297,7 +297,7 @@ export default function QuestionsTab({
                     </Button>
                     <Button
                       size="sm"
-                      variant="ember"
+                      variant="flare"
                       onClick={() =>
                         answers > 0 ? setDeleting(question) : remove(question.key)
                       }
@@ -312,7 +312,7 @@ export default function QuestionsTab({
         )}
 
         {dropping.length > 0 && (
-          <Alert tone="gold">
+          <Alert tone="union">
             {plural(dropping.length, "question")} will be deleted when you save, along with{" "}
             {plural(
               dropping.reduce((total, question) => total + answersTo(question.id), 0),
@@ -375,7 +375,7 @@ export default function QuestionsTab({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               onClick={() => deleting && remove(deleting.key)}
             >
               Remove it
@@ -384,7 +384,7 @@ export default function QuestionsTab({
         }
       >
         {deleting && (
-          <Alert tone="ember">
+          <Alert tone="flare">
             <span className="block font-medium">
               {plural(answersTo(deleting.id), "applicant")} answered this
             </span>
@@ -410,7 +410,7 @@ export default function QuestionsTab({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               disabled={state === "saving"}
               onClick={() => void commit()}
             >
@@ -419,7 +419,7 @@ export default function QuestionsTab({
           </>
         }
       >
-        <Alert tone="ember">
+        <Alert tone="flare">
           <span className="block font-medium">
             {plural(confirmLoss ?? 0, "answer")} will be removed
           </span>

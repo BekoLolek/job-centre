@@ -85,13 +85,13 @@ export default function LadderEditor({
       <div className="flex flex-wrap items-center gap-3">
         <Eyebrow>Rank ladder — lowest first</Eyebrow>
         <Badge>{plural(draft.length, "entry", "entries")}</Badge>
-        {dirty && <Badge tone="gold">Unsaved</Badge>}
+        {dirty && <Badge tone="union">Unsaved</Badge>}
       </div>
 
       {error && <Alert>{error}</Alert>}
 
       {confirmLoss && (
-        <Alert tone="ember">
+        <Alert tone="flare">
           <span className="block font-medium">
             {confirmLoss.answers === 1
               ? "1 stored answer names a rank you are removing"
@@ -104,7 +104,7 @@ export default function LadderEditor({
             cleared and they will be asked again.
           </span>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" variant="ember" disabled={busy} onClick={() => void save(true)}>
+            <Button size="sm" variant="flare" disabled={busy} onClick={() => void save(true)}>
               Save and clear them
             </Button>
             <Button size="sm" disabled={busy} onClick={() => setConfirmLoss(null)}>
@@ -120,11 +120,11 @@ export default function LadderEditor({
           ladder simply cannot be asked a rank question.
         </EmptyState>
       ) : (
-        <ol className="divide-y divide-hair/60 rounded-xl border border-hair">
+        <ol className="divide-y divide-hair/60 rounded-lg border border-hair">
           {draft.map((name, index) => (
             <li key={`${name}-${index}`} className="flex items-center gap-3 px-3 py-2">
-              <span className="num w-8 shrink-0 text-xs text-muted">{index + 1}</span>
-              <span className="min-w-0 flex-1 truncate text-sm">{name}</span>
+              <span className="num w-8 shrink-0 text-12 text-muted">{index + 1}</span>
+              <span className="min-w-0 flex-1 truncate text-14">{name}</span>
               <span className="flex shrink-0 items-center gap-1">
                 <Button
                   size="sm"
@@ -144,7 +144,7 @@ export default function LadderEditor({
                 </Button>
                 <Button
                   size="sm"
-                  variant="ember"
+                  variant="flare"
                   aria-label={`Remove ${name}`}
                   disabled={busy}
                   onClick={() => setDraft(draft.filter((_, at) => at !== index))}
@@ -179,7 +179,7 @@ export default function LadderEditor({
 
       {dirty && (
         <div className="flex flex-wrap items-center gap-2 border-t border-hair pt-3">
-          <Button size="sm" variant="gold" disabled={busy} onClick={() => void save(false)}>
+          <Button size="sm" variant="union" disabled={busy} onClick={() => void save(false)}>
             {busy ? "Saving…" : "Save ladder"}
           </Button>
           <Button

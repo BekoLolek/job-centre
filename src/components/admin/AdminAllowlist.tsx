@@ -73,7 +73,7 @@ export default function AdminAllowlist({
   return (
     <div className="space-y-5">
       {error && <Alert>{error}</Alert>}
-      {said && <Alert tone="signal">{said}</Alert>}
+      {said && <Alert tone="success">{said}</Alert>}
 
       {/* --- Add ---------------------------------------------------- */}
       <div className="flex flex-wrap items-end gap-3">
@@ -94,7 +94,7 @@ export default function AdminAllowlist({
           onChange={(input) => setNote(input.target.value)}
         />
         <Button
-          variant="gold"
+          variant="union"
           className="mb-1"
           disabled={busy !== null || discordId.trim().length === 0}
           onClick={() => void run("add", () => allowAdminAction({ discordId, note }))}
@@ -103,7 +103,7 @@ export default function AdminAllowlist({
         </Button>
       </div>
 
-      <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
+      <p className="max-w-2xl text-13 leading-relaxed text-muted">
         With Developer Mode on in Discord, right-click somebody and choose{" "}
         <span className="text-chalk">Copy User ID</span>. They do not need an account here
         yet — the flag is applied the first time they sign in.
@@ -111,12 +111,12 @@ export default function AdminAllowlist({
 
       {/* --- The list ------------------------------------------------ */}
       {rows.length === 0 ? (
-        <p className="text-[13px] text-muted">
+        <p className="text-13 text-muted">
           Nobody listed. Admins currently come from{" "}
           <code className="num text-dim">ADMIN_DISCORD_IDS</code> alone.
         </p>
       ) : (
-        <div className="overflow-hidden rounded-xl bg-panel">
+        <div className="overflow-hidden rounded-lg bg-panel">
           {[...allowed, ...barred].map((row) => (
             <Row
               key={row.discordId}
@@ -136,7 +136,7 @@ export default function AdminAllowlist({
       )}
 
       {unlisted.length > 0 && (
-        <Alert tone="gold">
+        <Alert tone="union">
           <span className="block font-medium">
             {plural(unlisted.length, "id")} in ADMIN_DISCORD_IDS not listed above
           </span>
@@ -176,24 +176,24 @@ function Row({
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-          <span className="text-[14px] text-chalk">
+          <span className="text-14 text-chalk">
             {row.account?.name ?? "Not signed in yet"}
           </span>
-          <code className="num text-[12px] text-dim">{row.discordId}</code>
+          <code className="num text-12 text-dim">{row.discordId}</code>
           {row.allowed ? (
-            <Badge tone="gold">Admin on sign-in</Badge>
+            <Badge tone="union">Admin on sign-in</Badge>
           ) : (
-            <Badge tone="ember">Barred</Badge>
+            <Badge tone="flare">Barred</Badge>
           )}
-          {row.account?.isAdmin && <Badge tone="signal">Admin now</Badge>}
+          {row.account?.isAdmin && <Badge tone="success">Admin now</Badge>}
           {inEnv && <Badge>Also in the deployment</Badge>}
         </div>
-        {row.note && <p className="mt-1 text-[12.5px] text-muted">{row.note}</p>}
+        {row.note && <p className="mt-1 text-13 text-muted">{row.note}</p>}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
         {row.allowed ? (
-          <Button size="sm" variant="ember" disabled={working} onClick={onBar}>
+          <Button size="sm" variant="flare" disabled={working} onClick={onBar}>
             {working ? "…" : "Bar"}
           </Button>
         ) : (

@@ -46,8 +46,8 @@ export default async function ArchivePage({
       <main className="mx-auto max-w-[1400px] space-y-6 px-4 py-8 sm:px-6">
         <header>
           <Eyebrow className="mb-2">Job Centre · Archive</Eyebrow>
-          <h1 className="text-4xl">What we have run</h1>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">What we have run</h1>
+          <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
             Every event that has already happened, most recent first. Nothing is ever
             deleted — each one keeps its page, its bracket and its results.
           </p>

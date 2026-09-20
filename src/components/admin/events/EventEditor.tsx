@@ -141,19 +141,19 @@ function EditorBody({
             <div className="mb-3 flex flex-wrap items-center gap-2">
               <EventStatusPill status={event.status} />
               <Badge>{eventTypeLabel(event.type)}</Badge>
-              {event.game && <Badge tone="gold">{event.game.name}</Badge>}
+              {event.game && <Badge tone="union">{event.game.name}</Badge>}
               {event.rankLadder.length > 0 && (
                 <Badge>{plural(event.rankLadder.length, "rank")}</Badge>
               )}
             </div>
 
-            <h1 className="text-3xl">{event.title}</h1>
+            <h1 className="text-30">{event.title}</h1>
             <Eyebrow className="mt-2">/events/{event.slug}</Eyebrow>
 
             <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
               <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
               <EventSeats seats={event.seats} />
-              <span className="num text-xs text-muted">
+              <span className="num text-12 text-muted">
                 {plural(event.days.length, "day")} · {plural(event.questions.length, "question")}
               </span>
             </div>
@@ -357,7 +357,7 @@ function RailLink({
         // No negative margin: the rail's rule is an inset shadow, so an
         // underline covers it from inside. See `TabNav.tsx`.
         "relative inline-flex shrink-0 items-center gap-2 whitespace-nowrap border-b-2",
-        "pb-2.5 pt-1 text-[13.5px] font-medium transition-colors",
+        "pb-2.5 pt-1 text-13 font-medium transition-colors",
         joined ? "px-3 first:pl-0" : "",
         current
           ? "border-union text-chalk"
@@ -370,7 +370,7 @@ function RailLink({
       {count !== undefined && (
         <span
           className={cx(
-            "num text-[12px] tabular-nums transition-colors",
+            "num text-12 tabular-nums transition-colors",
             current ? "text-muted" : "text-dim"
           )}
         >

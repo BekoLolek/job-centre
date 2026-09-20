@@ -15,8 +15,8 @@ import { cx } from "./cx";
 
 export type ChoiceChipProps = {
   selected?: boolean;
-  /** Renders the chip in gold rather than chalk when selected — for a primary answer. */
-  tone?: "default" | "gold";
+  /** Renders the chip in union blue rather than chalk when selected — for a primary answer. */
+  tone?: "default" | "union";
   /** Fills the available width, for a two-up yes/no row. */
   block?: boolean;
   className?: string;
@@ -25,7 +25,7 @@ export type ChoiceChipProps = {
 
 export default function ChoiceChip({
   selected = false,
-  tone = "gold",
+  tone = "union",
   block,
   className,
   children,
@@ -38,14 +38,14 @@ export default function ChoiceChip({
       className={cx(
         // A pill that fills when chosen. The outlined version read as a form
         // control; this reads as a choice, which is what it is.
-        "rounded-full px-3.5 py-2 text-sm transition-colors",
+        "rounded-full px-3.5 py-2 text-14 transition-colors",
         "disabled:cursor-not-allowed disabled:opacity-35",
         block && "flex-1",
         selected
-          ? tone === "gold"
+          ? tone === "union"
             ? "bg-union/20 text-hot"
             : "bg-chalk/15 text-hot"
-          : "bg-white/[0.05] text-chalk/70 hover:bg-white/[0.09] hover:text-hot",
+          : "bg-overlay-2 text-chalk/70 hover:bg-overlay-3 hover:text-hot",
         className
       )}
       {...rest}

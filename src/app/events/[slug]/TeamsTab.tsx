@@ -76,7 +76,7 @@ export default function TeamsTab({ board }: TeamsTabProps) {
         </div>
 
         {withoutCaptain > 0 && (
-          <p className="mt-4 border-t border-hair pt-3 text-xs text-muted">
+          <p className="mt-4 border-t border-hair pt-3 text-12 text-muted">
             {withoutCaptain === teams.length
               ? "Captains have not been chosen yet."
               : `${plural(withoutCaptain, "team")} still without a captain.`}
@@ -92,7 +92,7 @@ export default function TeamsTab({ board }: TeamsTabProps) {
         ))}
       </ul>
 
-      <p className="text-xs leading-relaxed text-muted">
+      <p className="text-12 leading-relaxed text-muted">
         Every price is what that player actually went for at the draft, and a captain costs
         nothing because they were never bid for. A team&apos;s remaining balance is worked out
         from the lots it won rather than stored, so it can never disagree with the roster above

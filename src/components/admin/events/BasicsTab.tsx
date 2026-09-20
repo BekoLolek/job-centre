@@ -195,7 +195,7 @@ export default function BasicsTab({
             />
           )}
 
-          <p className="mt-2 text-xs text-muted">
+          <p className="mt-2 text-12 text-muted">
             A type is a label, not a code branch (§8.1) — anything you type here is a valid
             type the moment you save it.
           </p>
@@ -263,7 +263,7 @@ export default function BasicsTab({
               touch();
             }}
           />
-          <p className="mt-2 text-xs leading-relaxed text-muted">
+          <p className="mt-2 text-12 leading-relaxed text-muted">
             Clear the box for an uncapped event. You can still accept somebody over the cap
             — the screen will say so rather than refusing.
           </p>
@@ -292,7 +292,7 @@ export default function BasicsTab({
               By approval
             </ChoiceChip>
           </ChoiceRow>
-          <p className="mt-2 text-xs leading-relaxed text-muted">
+          <p className="mt-2 text-12 leading-relaxed text-muted">
             {mode === "approval"
               ? "Every application lands awaiting your review under Applicants, holding no seat and no place in the queue, until you accept, queue or decline it."
               : "Applications take a seat the moment they arrive, and the cap decides what happens once the seats are gone."}
@@ -324,7 +324,7 @@ export default function BasicsTab({
                 Close when full
               </ChoiceChip>
             </ChoiceRow>
-            <p className="mt-2 text-xs leading-relaxed text-muted">
+            <p className="mt-2 text-12 leading-relaxed text-muted">
               {waitlist
                 ? "Applications past the cap join the waitlist and are promoted automatically when somebody withdraws (§14)."
                 : "Sign-ups close the moment the seats are gone, and a late applicant is told the event is full rather than queueing for nothing."}

@@ -166,7 +166,7 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
           {completeness.required > 0 && (
             <Eyebrow
               as="span"
-              className={completeness.complete ? "text-signal" : undefined}
+              className={completeness.complete ? "text-success" : undefined}
             >
               {completeness.answered}/{completeness.required} required
             </Eyebrow>
@@ -195,7 +195,7 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
               <div className="mb-3 flex flex-wrap items-baseline gap-2">
                 <span className="eyebrow text-chalk/70">{field.label}</span>
                 {field.required && !hasAnswer(values[field.id] ?? null) && (
-                  <Badge tone="gold">Needed</Badge>
+                  <Badge tone="union">Needed</Badge>
                 )}
               </div>
 
@@ -207,7 +207,7 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
               />
 
               {fieldErrors[field.id] && (
-                <p className="mt-2 text-xs text-ember">{fieldErrors[field.id]}</p>
+                <p className="mt-2 text-12 text-flare">{fieldErrors[field.id]}</p>
               )}
             </div>
           ))}
@@ -221,21 +221,21 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
 function SaveIndicator({ status }: { status: Status }) {
   if (status === "saving") {
     return (
-      <Eyebrow as="span" className="animate-pulse text-gold">
+      <Eyebrow as="span" className="animate-pulse text-union">
         Saving…
       </Eyebrow>
     );
   }
   if (status === "saved") {
     return (
-      <Eyebrow as="span" className="text-signal">
+      <Eyebrow as="span" className="text-success">
         ✓ Saved
       </Eyebrow>
     );
   }
   if (status === "error") {
     return (
-      <Eyebrow as="span" className="text-ember">
+      <Eyebrow as="span" className="text-flare">
         Not saved
       </Eyebrow>
     );

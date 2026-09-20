@@ -141,9 +141,9 @@ export function matchToneNote(
 const TONE_TEXT: Record<MatchTone, string> = {
   pending: "text-muted",
   done: "text-muted",
-  live: "text-ember",
-  decision: "text-ember",
-  void: "text-muted/70",
+  live: "text-flare",
+  decision: "text-flare",
+  void: "text-dim",
 };
 
 export function matchToneClass(tone: MatchTone): string {

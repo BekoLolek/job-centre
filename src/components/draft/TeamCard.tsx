@@ -26,7 +26,7 @@ export type TeamCardProps = {
   /** Draw the roster inside the card, with its empty slots. */
   showRoster?: boolean;
   hidePrices?: boolean;
-  /** Says "no captain yet" in gold rather than staying quiet about it. */
+  /** Says "no captain yet" in union blue rather than staying quiet about it. */
   warnNoCaptain?: boolean;
   /** Lit border — the team on the block, the team being edited. */
   active?: boolean;
@@ -53,11 +53,11 @@ export default function TeamCard({
   return (
     <Panel
       padding="sm"
-      className={cx("space-y-3", active && "border-gold/60", className)}
+      className={cx("space-y-3", active && "border-union/60", className)}
     >
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <h3 className="truncate font-display text-lg leading-tight">
+          <h3 className="truncate font-display text-20 leading-tight">
             {team.name}
           </h3>
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -67,7 +67,7 @@ export default function TeamCard({
                 © {playerName(players, team.captainUserId)}
               </span>
             ) : warnNoCaptain ? (
-              <Badge tone="gold">No captain</Badge>
+              <Badge tone="union">No captain</Badge>
             ) : null}
           </div>
         </div>
@@ -76,7 +76,7 @@ export default function TeamCard({
           <div className="shrink-0 text-right">
             <Eyebrow className="mb-0.5">Left</Eyebrow>
             <Money value={team.balance} size="xl" />
-            <div className="num mt-0.5 text-[10px] text-muted">
+            <div className="num mt-0.5 text-11 text-muted">
               {spent > 0
                 ? `${formatMoney(team.balanceStart)} − ${formatMoney(spent)} spent`
                 : `of ${formatMoney(team.balanceStart)}`}
@@ -86,17 +86,17 @@ export default function TeamCard({
       </div>
 
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-hair/60 pt-2">
-        <span className="num text-xs text-muted">
+        <span className="num text-12 text-muted">
           {team.roster.size}/{team.roster.target} on the roster
         </span>
         {team.roster.slotsLeft > 0 ? (
-          <span className="num text-xs text-signal">
+          <span className="num text-12 text-body">
             {team.roster.slotsLeft} to fill
           </span>
         ) : (
-          <span className="num text-xs text-gold">Full</span>
+          <span className="num text-12 text-union">Full</span>
         )}
-        {team.roster.overfilled && <Badge tone="ember">Over target</Badge>}
+        {team.roster.overfilled && <Badge tone="flare">Over target</Badge>}
       </div>
 
       {children}

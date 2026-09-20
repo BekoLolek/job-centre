@@ -32,7 +32,7 @@ import { modeLabel, seriesLabel } from "./labels";
 
 export type MatchCardProps = {
   match: ResolvedMatch;
-  /** Gold border — the grand final, or whatever is on right now. */
+  /** Union-blue border — the grand final, or whatever is on right now. */
   featured?: boolean;
   /** Hides the played-games list, for a dense bracket column. */
   compact?: boolean;
@@ -60,8 +60,8 @@ export default function MatchCard({
       as="article"
       padding="sm"
       className={cx(
-        featured && "border-gold/40",
-        match.status === "live" && "border-ember/40",
+        featured && "border-union/40",
+        match.status === "live" && "border-flare/40",
         match.skipped && "opacity-55",
         className
       )}
@@ -82,27 +82,27 @@ export default function MatchCard({
             — UTC on Vercel — for every reader on earth.
           */}
           {match.scheduledAt && (
-            <LocalTime at={match.scheduledAt} className="block text-[11px] text-muted" />
+            <LocalTime at={match.scheduledAt} className="block text-11 text-muted" />
           )}
           {match.finishedAt ? (
-            <div className="num text-[11px] text-muted">
+            <div className="num text-11 text-muted">
               ran to <LocalTime at={match.finishedAt} format="clock" />
               {match.durationMin !== null && ` · ${match.durationMin} min`}
             </div>
           ) : (
             match.durationMin !== null && (
-              <div className="num text-[11px] text-muted">{match.durationMin} min</div>
+              <div className="num text-11 text-muted">{match.durationMin} min</div>
             )
           )}
           {referees.length > 0 && (
-            <div className="max-w-[160px] truncate text-[11px] text-dim">
+            <div className="max-w-[160px] truncate text-11 text-dim">
               Referee: <span className="text-chalk/70">{referees.join(" · ")}</span>
             </div>
           )}
           {match.needsDecision ? (
-            <Eyebrow className="mt-1 text-ember">Needs a winner</Eyebrow>
+            <Eyebrow className="mt-1 text-flare">Needs a winner</Eyebrow>
           ) : match.status === "live" ? (
-            <Eyebrow className="mt-1 text-ember">In progress</Eyebrow>
+            <Eyebrow className="mt-1 text-flare">In progress</Eyebrow>
           ) : null}
         </div>
       </div>
@@ -123,7 +123,7 @@ export default function MatchCard({
       </div>
 
       {match.skipped && (
-        <p className="mt-3 border-t border-hair pt-3 text-[11px] text-muted">
+        <p className="mt-3 border-t border-hair pt-3 text-11 text-muted">
           Not needed — the grand final settled it.
         </p>
       )}
@@ -144,7 +144,7 @@ export default function MatchCard({
           {!compact && <Eyebrow className="mb-1.5 text-dim">Side and map</Eyebrow>}
           <ul className="space-y-1">
             {match.choices.map((choice) => (
-              <li key={choice.index} className="flex items-baseline gap-2 text-[11px]">
+              <li key={choice.index} className="flex items-baseline gap-2 text-11">
                 <Eyebrow as="span" className="shrink-0">
                   G{choice.index + 1}
                 </Eyebrow>
@@ -161,7 +161,7 @@ export default function MatchCard({
         <ul className="mt-3 space-y-1 border-t border-hair pt-3">
           {match.games.map((game, index) =>
             game.played ? (
-              <li key={index} className="text-[11px]">
+              <li key={index} className="text-11">
                 <div className="flex items-baseline gap-2">
                   <Eyebrow as="span" className="shrink-0">
                     G{index + 1}
@@ -185,7 +185,7 @@ export default function MatchCard({
       )}
 
       {!compact && played.length > 0 && match.bestOf === 1 && match.games[0]?.map && (
-        <p className="mt-3 border-t border-hair pt-3 text-[11px] text-muted">
+        <p className="mt-3 border-t border-hair pt-3 text-11 text-muted">
           {match.games[0].map}
         </p>
       )}
@@ -224,13 +224,13 @@ function TeamRow({
           dim
             ? "italic text-muted"
             : won
-              ? "font-display text-lg leading-tight text-gold"
+              ? "font-display text-20 leading-tight text-union"
               : "text-chalk"
         )}
       >
         {name}
       </span>
-      <span className={cx("num text-lg", won ? "text-gold" : "text-muted")}>
+      <span className={cx("num text-20", won ? "text-union" : "text-muted")}>
         {dim ? "–" : score}
       </span>
     </div>

@@ -33,7 +33,7 @@ export default function WatchPanel({ view, spinning, onBlock, signedIn }: WatchP
       <div className="mb-4 flex items-baseline justify-between">
         <Eyebrow as="span">Watching</Eyebrow>
         <Eyebrow as="span">
-          Bids in <span className="num text-gold">{submitted}</span>/{view.teams.length}
+          Bids in <span className="num text-union">{submitted}</span>/{view.teams.length}
         </Eyebrow>
       </div>
 
@@ -43,49 +43,49 @@ export default function WatchPanel({ view, spinning, onBlock, signedIn }: WatchP
             key={team.id}
             title={team.name}
             className={`h-1.5 flex-1 transition-colors ${
-              team.hasBid ? "bg-signal" : "bg-hair"
+              team.hasBid ? "bg-success" : "bg-hair"
             }`}
           />
         ))}
       </div>
 
       {view.lot && !spinning ? (
-        <p className="text-sm text-muted">
+        <p className="text-14 text-muted">
           Bidding is open on <span className="text-chalk">{onBlock ?? "a player"}</span>.{" "}
           {view.config.bidVisibility === "everyone"
             ? "Amounts are on the team cards as they come in."
             : "Amounts stay sealed until the lot is settled."}
         </p>
       ) : spinning ? (
-        <p className="text-sm text-muted">The wheel is running.</p>
+        <p className="text-14 text-muted">The wheel is running.</p>
       ) : lastAward && last?.id === lastAward.id ? (
         <div>
           <Eyebrow className="mb-2">Last sale</Eyebrow>
-          <div className="font-display text-3xl leading-none">
+          <div className="font-display text-30 leading-none">
             {playerName(view.players, lastAward.playerUserId)}{" "}
-            <span className="text-xl text-muted">
+            <span className="text-20 text-muted">
               → {view.teams.find((team) => team.id === lastAward.winnerTeamId)?.name ?? "—"}
             </span>
           </div>
-          <Money value={lastAward.price ?? 0} size="xl" className="mt-2 block text-2xl" />
+          <Money value={lastAward.price ?? 0} size="xl" className="mt-2 block text-24" />
         </div>
       ) : last ? (
-        <p className="text-sm text-muted">
+        <p className="text-14 text-muted">
           {lotSentence(last, { players: view.players, teams: view.teams })}
         </p>
       ) : (
-        <p className="text-sm text-muted">Waiting on the first spin.</p>
+        <p className="text-14 text-muted">Waiting on the first spin.</p>
       )}
 
       {view.you.inPool && (
-        <p className="mt-4 border-t border-hair/60 pt-3 text-xs text-muted">
+        <p className="mt-4 border-t border-hair/60 pt-3 text-12 text-muted">
           You are in this draft&rsquo;s {view.you.inPool === "reserve" ? "reserve" : "main"} pool
           — your name is on the wheel.
         </p>
       )}
 
       {!signedIn && (
-        <p className="mt-4 border-t border-hair/60 pt-3 text-xs text-muted">
+        <p className="mt-4 border-t border-hair/60 pt-3 text-12 text-muted">
           You are watching signed out. Signing in changes nothing here unless you are a
           captain in this draft.
         </p>

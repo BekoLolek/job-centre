@@ -77,7 +77,7 @@ export default function PublishTab({
           <EventStatusPill status={event.status} />
         </div>
 
-        <p className="text-sm">
+        <p className="text-14">
           <span className="text-chalk">{eventStatusLabel(event.status)}</span>
           <span className="text-muted"> — {eventStatusMeaning(event.status)}</span>
         </p>
@@ -85,7 +85,7 @@ export default function PublishTab({
         <EventStatusLine state={event.applicationsState} />
 
         {applicants.length > 0 && (
-          <p className="text-xs text-muted">
+          <p className="text-12 text-muted">
             {plural(applicants.length, "application")} so far
             {queue > 0 && `, ${plural(queue, "person", "people")} queueing`}.
           </p>
@@ -95,8 +95,8 @@ export default function PublishTab({
       {/* --- The checklist ------------------------------------------ */}
       <Panel as="section" padding="none">
         <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-          <h2 className="font-display text-xl leading-none">Readiness</h2>
-          <Badge tone={blocked.length > 0 ? "ember" : gaps.length > 0 ? "gold" : "signal"}>
+          <h2 className="font-display text-20 leading-none">Readiness</h2>
+          <Badge tone={blocked.length > 0 ? "flare" : gaps.length > 0 ? "union" : "success"}>
             {blocked.length > 0
               ? `${plural(blocked.length, "problem")}`
               : gaps.length > 0
@@ -111,19 +111,19 @@ export default function PublishTab({
               <span
                 aria-hidden
                 className={cx(
-                  "num mt-0.5 w-4 shrink-0 text-sm",
+                  "num mt-0.5 w-4 shrink-0 text-14",
                   check.level === "ok"
-                    ? "text-signal"
+                    ? "text-success"
                     : check.level === "warn"
-                      ? "text-gold"
-                      : "text-ember"
+                      ? "text-union"
+                      : "text-flare"
                 )}
               >
                 {check.level === "ok" ? "✓" : check.level === "warn" ? "!" : "✕"}
               </span>
               <span className="min-w-0">
-                <span className="block text-sm">{check.label}</span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-muted">
+                <span className="block text-14">{check.label}</span>
+                <span className="mt-0.5 block text-12 leading-relaxed text-muted">
                   {check.detail}
                 </span>
               </span>
@@ -136,7 +136,7 @@ export default function PublishTab({
       <Panel as="section" padding="none" className="space-y-4 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Publishing</Eyebrow>
 
-        <p className="text-sm leading-relaxed text-muted">
+        <p className="text-14 leading-relaxed text-muted">
           Publishing makes the event <span className="text-chalk/80">visible to members</span>{" "}
           and lets the signup window start to mean something. It does not open applications
           by itself: whether anyone can apply is worked out at read time from the status, the
@@ -144,7 +144,7 @@ export default function PublishTab({
           &ldquo;applications open&rdquo; switch anywhere on this page.
         </p>
 
-        <ul className="space-y-1 text-xs text-muted">
+        <ul className="space-y-1 text-12 text-muted">
           <li>
             · Signups open{" "}
             <span suppressHydrationWarning className="text-chalk/70">
@@ -172,7 +172,7 @@ export default function PublishTab({
         </ul>
 
         {done && event.status === "published" && (
-          <Alert tone="signal">
+          <Alert tone="success">
             Published. It is on the hub now, and /events/{event.slug} answers.
           </Alert>
         )}
@@ -182,19 +182,19 @@ export default function PublishTab({
         ) : (
           <div className="flex flex-wrap items-center gap-3">
             <Button
-              variant="gold"
+              variant="union"
               disabled={busy || blocked.length > 0}
               onClick={() => void publish()}
             >
               {busy ? "Publishing…" : "Publish this event"}
             </Button>
             {blocked.length > 0 && (
-              <span className="text-xs text-ember">
+              <span className="text-12 text-flare">
                 {blocked.map((check) => check.label).join(" · ")}
               </span>
             )}
             {blocked.length === 0 && gaps.length > 0 && (
-              <span className="text-xs text-muted">
+              <span className="text-12 text-muted">
                 {plural(gaps.length, "gap")} above — none of them stop you.
               </span>
             )}

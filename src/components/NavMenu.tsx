@@ -95,12 +95,12 @@ export default function NavMenu({
           aria-current={current ? "page" : undefined}
           className={cx(
             "block px-4 py-2.5 transition-colors",
-            current ? "bg-union/10 text-hot" : "text-chalk/85 hover:bg-white/[0.04] hover:text-hot"
+            current ? "bg-union/10 text-hot" : "text-chalk/85 hover:bg-overlay-1 hover:text-hot"
           )}
         >
-          <span className="block text-sm leading-tight">{item.label}</span>
+          <span className="block text-14 leading-tight">{item.label}</span>
           {item.hint && (
-            <span className="mt-0.5 block text-[11px] leading-tight text-muted">{item.hint}</span>
+            <span className="mt-0.5 block text-11 leading-tight text-muted">{item.hint}</span>
           )}
         </Link>
       );
@@ -115,7 +115,7 @@ export default function NavMenu({
         aria-haspopup="menu"
         className={cx(
           "flex items-center gap-2.5 rounded-full py-1 pl-1 pr-3 transition-colors",
-          open ? "bg-white/[0.06]" : "hover:bg-white/[0.04]"
+          open ? "bg-overlay-2" : "hover:bg-overlay-1"
         )}
       >
         <span className="relative">
@@ -132,7 +132,7 @@ export default function NavMenu({
             />
           )}
         </span>
-        <span className="hidden text-sm text-chalk/90 sm:block">{name}</span>
+        <span className="hidden text-14 text-chalk/90 sm:block">{name}</span>
         <svg
           viewBox="0 0 10 6"
           aria-hidden
@@ -148,14 +148,14 @@ export default function NavMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 z-50 mt-2 w-64 rounded-xl border border-hair bg-panel py-1.5 shadow-[0_18px_50px_-20px_rgba(0,0,0,0.9)]"
+          className="absolute right-0 z-50 mt-2 w-64 rounded-lg border border-hair bg-panel py-1.5 shadow-lift"
         >
           <div className="border-b border-hair px-4 pb-3 pt-2">
-            <p className="text-sm leading-tight text-chalk">{name}</p>
+            <p className="text-14 leading-tight text-chalk">{name}</p>
             {user.handle && (
               <Link
                 href={`/players/${user.handle}`}
-                className="num text-[11px] text-muted transition-colors hover:text-union"
+                className="num text-11 text-muted transition-colors hover:text-union"
               >
                 /players/{user.handle}
               </Link>
@@ -174,7 +174,7 @@ export default function NavMenu({
           <form action={signOut} className="border-t border-hair pt-1">
             <button
               type="submit"
-              className="block w-full px-4 py-2.5 text-left text-sm text-muted transition-colors hover:bg-white/[0.04] hover:text-flare"
+              className="block w-full px-4 py-2.5 text-left text-14 text-muted transition-colors hover:bg-overlay-1 hover:text-flare"
             >
               Sign out
             </button>

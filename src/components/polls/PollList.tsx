@@ -46,7 +46,7 @@ export default function PollList({
           {composing ? (
             <PollComposer onDone={() => setComposing(false)} />
           ) : (
-            <Button variant="gold" onClick={() => setComposing(true)}>
+            <Button variant="union" onClick={() => setComposing(true)}>
               Post a poll
             </Button>
           )}
@@ -54,7 +54,7 @@ export default function PollList({
       )}
 
       {polls.length === 0 ? (
-        <p className="text-[13px] text-muted">No polls yet.</p>
+        <p className="text-13 text-muted">No polls yet.</p>
       ) : (
         <div className="space-y-3">
           {polls.map((poll) => (
@@ -116,19 +116,19 @@ function PollCard({
   }
 
   return (
-    <section className="rounded-xl bg-panel px-5 py-4">
+    <section className="rounded-lg bg-panel px-5 py-4">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1">
-          <h3 className="text-[17px] text-chalk">{poll.question}</h3>
+          <h3 className="text-16 text-chalk">{poll.question}</h3>
           {poll.detail && (
-            <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-muted">
+            <p className="mt-1.5 max-w-2xl text-13 leading-relaxed text-muted">
               {poll.detail}
             </p>
           )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {poll.multiple && <Badge>Pick as many as you like</Badge>}
-          {poll.closed ? <Badge tone="ember">Closed</Badge> : <Badge tone="gold">Open</Badge>}
+          {poll.closed ? <Badge tone="flare">Closed</Badge> : <Badge tone="union">Open</Badge>}
         </div>
       </div>
 
@@ -154,9 +154,9 @@ function PollCard({
                     : "Sign in to vote"
               }
               className={cx(
-                "relative block w-full overflow-hidden rounded-lg px-3.5 py-2.5 text-left transition-colors",
-                mine ? "bg-union/[0.14]" : "bg-white/[0.03]",
-                signedIn && !poll.closed && "hover:bg-white/[0.06]",
+                "relative block w-full overflow-hidden rounded px-3.5 py-2.5 text-left transition-colors",
+                mine ? "bg-union/15" : "bg-overlay-1",
+                signedIn && !poll.closed && "hover:bg-overlay-2",
                 (!signedIn || poll.closed) && "cursor-default"
               )}
             >
@@ -165,15 +165,15 @@ function PollCard({
                 aria-hidden
                 className={cx(
                   "absolute inset-y-0 left-0 -z-0 transition-[width] duration-300",
-                  mine ? "bg-union/25" : "bg-white/[0.05]"
+                  mine ? "bg-union/25" : "bg-overlay-2"
                 )}
                 style={{ width: `${share}%` }}
               />
               <span className="relative flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <span className={cx("flex-1 text-[14px]", mine ? "text-chalk" : "text-body")}>
+                <span className={cx("flex-1 text-14", mine ? "text-chalk" : "text-body")}>
                   {option.label}
                 </span>
-                <span className="num shrink-0 text-[13px] text-muted">{count}</span>
+                <span className="num shrink-0 text-13 text-body">{count}</span>
               </span>
 
               {count > 0 && (
@@ -181,7 +181,7 @@ function PollCard({
                   {option.voters.map((voter) => (
                     <span
                       key={voter.id}
-                      className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[11.5px] text-muted"
+                      className="rounded bg-overlay-2 px-1.5 py-0.5 text-12 text-muted"
                     >
                       {voter.name}
                     </span>
@@ -193,7 +193,7 @@ function PollCard({
         })}
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] text-dim">
+      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-13 text-dim">
         <span>{plural(poll.voterCount, "person", "people")} voted</span>
         {poll.closesAt && (
           <span>
@@ -223,13 +223,13 @@ function PollCard({
             </>
           )}
           {poll.closed && (
-            <span className="text-[12.5px] text-dim">
+            <span className="text-13 text-dim">
               Closed polls cannot be edited — the result stands.
             </span>
           )}
           <Button
             size="sm"
-            variant="ember"
+            variant="flare"
             className="ml-auto"
             onClick={async () => {
               await deletePollAction(poll.id);
@@ -310,7 +310,7 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
   };
 
   return (
-    <section className="space-y-4 rounded-xl bg-panel px-5 py-4">
+    <section className="space-y-4 rounded-lg bg-panel px-5 py-4">
       {error && <Alert>{error}</Alert>}
 
       <Field
@@ -350,7 +350,7 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
             {options.length > 2 && (
               <Button
                 size="sm"
-                variant="ember"
+                variant="flare"
                 aria-label={`Remove option ${index + 1}`}
                 onClick={() =>
                   setOptions((current) => current.filter((_unused, at) => at !== index))
@@ -376,7 +376,7 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
             onChange={(input) => setMultiple(input.target.checked)}
             className="h-4 w-4 accent-union"
           />
-          <span className="text-[13.5px] text-body">Let people pick more than one</span>
+          <span className="text-13 text-body">Let people pick more than one</span>
         </label>
 
         <Field
@@ -388,14 +388,14 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
         />
       </div>
 
-      <p className="max-w-2xl text-[13px] leading-relaxed text-muted">
+      <p className="max-w-2xl text-13 leading-relaxed text-muted">
         You can change the question and the options while the poll is open. Once it closes
         nothing moves — a poll whose wording can change after the result is a poll that
         proves nothing. Leave the closing time blank to keep it open until you close it.
       </p>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Button variant="gold" disabled={busy} onClick={() => void save()}>
+        <Button variant="union" disabled={busy} onClick={() => void save()}>
           {busy ? "Saving…" : poll ? "Save changes" : "Post it"}
         </Button>
         <Button disabled={busy} onClick={onDone}>
@@ -410,14 +410,14 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
       >
         {confirm && (
           <div className="space-y-4">
-            <p className="text-sm leading-relaxed text-body">
+            <p className="text-14 leading-relaxed text-body">
               Removing {confirm.dropped.map((label) => `“${label}”`).join(", ")} throws away{" "}
               <span className="text-chalk">{plural(confirm.lostVotes, "vote")}</span>. Those
               people voted for something that will not exist any more, so there is nowhere to
               move their answer to — they would have to vote again.
             </p>
             <div className="flex flex-wrap gap-3">
-              <Button variant="ember" disabled={busy} onClick={() => void save(true)}>
+              <Button variant="flare" disabled={busy} onClick={() => void save(true)}>
                 Remove it and lose the votes
               </Button>
               <Button disabled={busy} onClick={() => setConfirm(null)}>

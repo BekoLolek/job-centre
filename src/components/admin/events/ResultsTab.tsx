@@ -271,7 +271,7 @@ export default function ResultsTab({
 
       {/* --- What the last save moved ------------------------------ */}
       {shifts !== null && (
-        <Alert tone={shifts.length > 0 ? "gold" : "signal"}>
+        <Alert tone={shifts.length > 0 ? "union" : "success"}>
           <div className="flex flex-wrap items-baseline justify-between gap-2">
             <span className="font-medium">
               {shifts.length === 0
@@ -287,7 +287,7 @@ export default function ResultsTab({
             </button>
           </div>
           {shifts.length > 0 && (
-            <ul className="mt-2 space-y-0.5 text-xs opacity-90">
+            <ul className="mt-2 space-y-0.5 text-12 opacity-90">
               {shifts.slice(0, 8).map((shift) => (
                 <li key={shift.slot} className="flex flex-wrap items-baseline gap-2">
                   <span>{shift.label}</span>
@@ -308,12 +308,12 @@ export default function ResultsTab({
 
       {/* --- Drawn series waiting on a decision --------------------- */}
       {undecided.length > 0 && (
-        <Panel as="section" padding="none" className="space-y-3 border-ember/40 border-t border-hair pt-12 first:border-t-0 first:pt-0">
+        <Panel as="section" padding="none" className="space-y-3 border-flare/40 border-t border-hair pt-12 first:border-t-0 first:pt-0">
           <div className="flex flex-wrap items-baseline gap-3">
-            <Eyebrow className="text-ember">Needs a winner</Eyebrow>
-            <Badge tone="ember">{undecided.length}</Badge>
+            <Eyebrow className="text-flare">Needs a winner</Eyebrow>
+            <Badge tone="flare">{undecided.length}</Badge>
           </div>
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             Every game is in and nobody is ahead. A drawn table game is a finished match worth
             a point each, but a drawn knockout series is not finished at all — somebody has to
             advance, and nothing after it resolves until you say who.
@@ -322,12 +322,12 @@ export default function ResultsTab({
             {undecided.map((match) => (
               <li
                 key={match.slot}
-                className="flex flex-wrap items-center gap-2 rounded-xl border border-hair p-2"
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-hair p-2"
               >
                 <Eyebrow as="span" className="w-40 shrink-0 truncate">
                   {match.displayLabel}
                 </Eyebrow>
-                <span className="num min-w-0 flex-1 truncate text-sm">
+                <span className="num min-w-0 flex-1 truncate text-14">
                   {match.nameA} {match.gamesWonA}–{match.gamesWonB} {match.nameB}
                 </span>
                 <Button
@@ -410,10 +410,10 @@ export default function ResultsTab({
                         <Eyebrow as="span" className="text-dim">
                           Day {block.day}
                         </Eyebrow>
-                        <span className="min-w-0 flex-1 truncate text-sm text-chalk/80">
+                        <span className="min-w-0 flex-1 truncate text-14 text-chalk/80">
                           {block.label}
                         </span>
-                        <span className="num text-[11px] text-muted">
+                        <span className="num text-11 text-muted">
                           {opens ? formatClock(opens) : "not scheduled"} · {hhmm(block.lengthMin)}
                         </span>
                       </div>
@@ -437,11 +437,11 @@ export default function ResultsTab({
               .map((stage) => (
               <div key={stage.id} className="space-y-4">
                 <div className="flex flex-wrap items-baseline gap-3">
-                  <h3 className="font-display text-2xl leading-none">
+                  <h3 className="font-display text-24 leading-none">
                     {stage.name}
                   </h3>
                   {stage.champion && (
-                    <Badge tone="gold">
+                    <Badge tone="union">
                       Champion ·{" "}
                       {board.teams.find((team) => team.id === stage.champion)?.name ?? "—"}
                     </Badge>
@@ -643,7 +643,7 @@ function MatchEditor({
           <span className="eyebrow mb-1 block">Start</span>
           <Field
             type="datetime-local"
-            className="py-1.5 text-[11px]"
+            className="py-1.5 text-11"
             value={form.scheduledAt}
             onChange={(input) => setForm({ ...form, scheduledAt: input.target.value })}
           />
@@ -652,7 +652,7 @@ function MatchEditor({
           <span className="eyebrow mb-1 block">Mins</span>
           <Field
             inputMode="numeric"
-            className="py-1.5 text-[11px]"
+            className="py-1.5 text-11"
             value={form.durationMin}
             onChange={(input) =>
               setForm({ ...form, durationMin: input.target.value.replace(/[^0-9]/g, "") })
@@ -662,12 +662,12 @@ function MatchEditor({
       </div>
 
       {/* --- The coin (§8.4) ----------------------------------- */}
-      <div className="rounded-xl border border-hair p-2">
+      <div className="rounded-lg border border-hair p-2">
         <div className="mb-1 flex items-baseline justify-between gap-2">
           <Eyebrow as="span">Coin</Eyebrow>
-          {started && <span className="text-[11px] text-dim">fixed</span>}
+          {started && <span className="text-11 text-dim">fixed</span>}
         </div>
-        <p className="text-[11px] leading-relaxed text-muted">
+        <p className="text-11 leading-relaxed text-muted">
           {first ? choiceLine(first) : "—"} in game 1. The two swap every game after it.
         </p>
         <div className="mt-1.5 flex gap-2">
@@ -689,7 +689,7 @@ function MatchEditor({
           </Button>
         </div>
         {started && (
-          <p className="mt-1.5 text-[11px] leading-relaxed text-dim">
+          <p className="mt-1.5 text-11 leading-relaxed text-dim">
             A game has been played under this coin. Clear the series first if it really was
             called wrongly.
           </p>
@@ -697,7 +697,7 @@ function MatchEditor({
       </div>
 
       {form.games.map((game, index) => (
-        <div key={index} className="rounded-xl border border-hair p-2">
+        <div key={index} className="rounded-lg border border-hair p-2">
           <div className="mb-1.5 flex items-center justify-between">
             <Eyebrow as="span">
               G{index + 1} · {modeLabel(match.games[index]?.mode ?? match.modes[index] ?? "")}
@@ -713,19 +713,19 @@ function MatchEditor({
           </div>
 
           {match.choices[index] && (
-            <p className="mb-1.5 text-[11px] leading-relaxed text-dim">
+            <p className="mb-1.5 text-11 leading-relaxed text-dim">
               {choiceLine(match.choices[index])}
             </p>
           )}
 
           <Field
-            className="mb-1.5 py-1.5 text-[11px]"
+            className="mb-1.5 py-1.5 text-11"
             placeholder="Map"
             value={game.map}
             onChange={(input) => patchGame(index, { map: input.target.value })}
           />
           <Field
-            className="mb-1.5 py-1.5 text-[11px]"
+            className="mb-1.5 py-1.5 text-11"
             placeholder="Referee"
             value={game.referee}
             onChange={(input) => patchGame(index, { referee: input.target.value })}
@@ -737,7 +737,7 @@ function MatchEditor({
             anybody writing it down.
           */}
           <Select
-            className="mb-1.5 py-1.5 text-[11px]"
+            className="mb-1.5 py-1.5 text-11"
             aria-label={`Side taken by ${match.choices[index]?.sideName ?? "the choosing team"}, game ${index + 1}`}
             value={game.sideChosen}
             onChange={(input) => patchGame(index, { sideChosen: input.target.value })}
@@ -752,7 +752,7 @@ function MatchEditor({
           <div className="flex items-center gap-2">
             <Field
               inputMode="numeric"
-              className="py-1.5 text-[11px]"
+              className="py-1.5 text-11"
               aria-label={`${match.nameA} score, game ${index + 1}`}
               value={game.scoreA}
               onChange={(input) => setScore(index, "scoreA", input.target.value)}
@@ -762,7 +762,7 @@ function MatchEditor({
             </Eyebrow>
             <Field
               inputMode="numeric"
-              className="py-1.5 text-[11px]"
+              className="py-1.5 text-11"
               aria-label={`${match.nameB} score, game ${index + 1}`}
               value={game.scoreB}
               onChange={(input) => setScore(index, "scoreB", input.target.value)}
@@ -773,10 +773,10 @@ function MatchEditor({
 
       <label className="block">
         <span className="eyebrow mb-1 block">
-          Winner override {match.needsDecision && <span className="text-ember">· needed</span>}
+          Winner override {match.needsDecision && <span className="text-flare">· needed</span>}
         </span>
         <Select
-          className="py-1.5 text-[11px]"
+          className="py-1.5 text-11"
           value={form.winnerOverride}
           onChange={(input) => setForm({ ...form, winnerOverride: input.target.value })}
         >
@@ -786,20 +786,20 @@ function MatchEditor({
         </Select>
       </label>
 
-      <p className="text-[11px] leading-relaxed text-muted">
+      <p className="text-11 leading-relaxed text-muted">
         {seriesLabel(match.bestOf)} · typing a score ticks the game off. Saving finishes the
         match once it is decided, and re-flows the rest of that day.
       </p>
 
       <div className="flex gap-2">
-        <Button variant="gold" className="flex-1 py-1.5" disabled={busy} onClick={save}>
+        <Button variant="union" className="flex-1 py-1.5" disabled={busy} onClick={save}>
           {busy ? "Saving…" : "Save"}
         </Button>
         <Button className="py-1.5" disabled={busy} onClick={onOpen}>
           Cancel
         </Button>
         <Button
-          variant="ember"
+          variant="flare"
           className="py-1.5"
           disabled={busy}
           onClick={() => {

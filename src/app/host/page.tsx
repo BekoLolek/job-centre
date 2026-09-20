@@ -35,8 +35,8 @@ export default async function HostPage() {
       <main className="mx-auto max-w-[860px] px-4 py-8 sm:px-6">
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · Hosting</Eyebrow>
-          <h1 className="text-4xl">Run an event</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">Run an event</h1>
+          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
             Anybody can propose one. An admin reads it, sets up the game and the sign-up
             questions, and then hands the event over — from that point it is yours: the
             format, the schedule, the applicants, the results, publishing it. Everything an
@@ -56,11 +56,11 @@ export default async function HostPage() {
                 <Link
                   key={event.id}
                   href={`/admin/events/${event.id}`}
-                  className="-mx-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg px-4 py-4 transition-colors hover:bg-white/[0.055]"
+                  className="-mx-4 flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded px-4 py-4 transition-colors hover:bg-overlay-2"
                 >
-                  <span className="text-[15px] text-chalk">{event.title}</span>
+                  <span className="text-16 text-chalk">{event.title}</span>
                   <Badge>{event.status}</Badge>
-                  <span className="num text-[12.5px] text-dim">/events/{event.slug}</span>
+                  <span className="num text-13 text-dim">/events/{event.slug}</span>
                 </Link>
               ))}
             </div>

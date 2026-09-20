@@ -26,7 +26,7 @@ export const metadata = {
   title: "Sign in · Job Centre Events",
 };
 
-type Explanation = { tone: "ember" | "gold"; title: string; body: string };
+type Explanation = { tone: "flare" | "union"; title: string; body: string };
 
 /**
  * What went wrong, in words a member can act on. Covers our own codes from
@@ -34,7 +34,7 @@ type Explanation = { tone: "ember" | "gold"; title: string; body: string };
  */
 const EXPLANATIONS: Record<string, Explanation> = {
   [SIGN_IN_ERRORS.notInGuild]: {
-    tone: "ember",
+    tone: "flare",
     title: "You're not in the Job Centre Discord server",
     body:
       "Your Discord account signed in fine, but membership of the Job Centre server is " +
@@ -42,7 +42,7 @@ const EXPLANATIONS: Record<string, Explanation> = {
       "for anything here separately.",
   },
   [SIGN_IN_ERRORS.gateMisconfigured]: {
-    tone: "gold",
+    tone: "union",
     title: "The guild check isn't pointed at a server yet",
     body:
       "Sign-in is restricted to one Discord server, but no server has been chosen. " +
@@ -50,7 +50,7 @@ const EXPLANATIONS: Record<string, Explanation> = {
       "not something you did.",
   },
   [SIGN_IN_ERRORS.guildLookupFailed]: {
-    tone: "ember",
+    tone: "flare",
     title: "Discord wouldn't tell us which servers you're in",
     body:
       "The membership check could not be completed — usually a temporary Discord " +
@@ -58,17 +58,17 @@ const EXPLANATIONS: Record<string, Explanation> = {
       "Try again in a moment and accept both permissions.",
   },
   [SIGN_IN_ERRORS.adminOnly]: {
-    tone: "gold",
+    tone: "union",
     title: "That page is admin-only",
     body: "You're signed in, but your account doesn't have the admin flag.",
   },
   AccessDenied: {
-    tone: "ember",
+    tone: "flare",
     title: "Sign-in was refused",
     body: "Your account isn't allowed in. If you've just joined the server, try again.",
   },
   Configuration: {
-    tone: "gold",
+    tone: "union",
     title: "Sign-in could not complete",
     body:
       "Auth.js reports a configuration error. It means one of two things, and the second " +
@@ -79,12 +79,12 @@ const EXPLANATIONS: Record<string, Explanation> = {
       "against the deployed database before touching the credentials.",
   },
   OAuthAccountNotLinked: {
-    tone: "gold",
+    tone: "union",
     title: "That account is already linked to someone else",
     body: "Sign in with the Discord account you used the first time.",
   },
   Verification: {
-    tone: "gold",
+    tone: "union",
     title: "That link has expired",
     body: "Start the sign-in again.",
   },
@@ -94,7 +94,7 @@ function explain(code: string | undefined): Explanation | null {
   if (!code) return null;
   return (
     EXPLANATIONS[code] ?? {
-      tone: "ember",
+      tone: "flare",
       title: "Sign-in didn't complete",
       body: `Discord sent back an unexpected result (${code}). Try again.`,
     }
@@ -130,9 +130,9 @@ export default async function SignInPage({
 
         <div className="relative">
           <h1 className="wordmark leading-[1.02] tracking-tight">
-            <span className="block text-[clamp(2rem,5.2vw,4.6rem)] rise">Job Centre</span>
+            <span className="block text-hero rise">Job Centre</span>
             <span
-              className="block text-[clamp(2rem,5.2vw,4.6rem)] text-union rise"
+              className="block text-hero text-union rise"
               style={{ animationDelay: "90ms" }}
             >
               EVENTS
@@ -148,7 +148,7 @@ export default async function SignInPage({
         </div>
 
         <Eyebrow className="flex items-center gap-3 rise" style={{ animationDelay: "260ms" }}>
-          <span className="inline-block h-2 w-2 rounded-full bg-signal live-dot" />
+          <span className="inline-block h-2 w-2 rounded-full bg-success live-dot" />
           Job Centre members only
         </Eyebrow>
 
@@ -159,9 +159,9 @@ export default async function SignInPage({
       <section className="flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-sm rise">
           <div className="lg:hidden mb-10">
-            <h1 className="font-display text-6xl leading-[0.85]">
+            <h1 className="font-display text-48 leading-[0.85]">
               JOB CENTRE
-              <span className="block text-gold">Events</span>
+              <span className="block text-union">Events</span>
             </h1>
           </div>
 
@@ -199,7 +199,7 @@ export default async function SignInPage({
 function NotConfigured({ missing }: { missing: string[] }) {
   return (
     <>
-      <Alert tone="gold" className="mb-6">
+      <Alert tone="union" className="mb-6">
         <span className="block font-medium">Discord sign-in is not configured yet</span>
         <span className="mt-1 block opacity-90">
           The site is running, but no Discord application has been set up, so there is
@@ -209,15 +209,15 @@ function NotConfigured({ missing }: { missing: string[] }) {
 
       <Panel padding="md" className="mb-6">
         <Eyebrow className="mb-3">Waiting on</Eyebrow>
-        <ul className="space-y-2 text-sm">
+        <ul className="space-y-2 text-14">
           {missing.map((name) => (
-            <li key={name} className="flex items-center gap-2 font-mono text-xs text-muted">
-              <span className="inline-block h-1.5 w-1.5 rounded-full bg-ember" />
+            <li key={name} className="flex items-center gap-2 font-mono text-12 text-muted">
+              <span className="inline-block h-1.5 w-1.5 rounded-full bg-flare" />
               {name}
             </li>
           ))}
         </ul>
-        <p className="mt-4 text-xs text-muted leading-relaxed">
+        <p className="mt-4 text-12 text-muted leading-relaxed">
           Create an application at discord.com/developers, register the redirect URI
           <span className="font-mono text-chalk/70"> /api/auth/callback/discord </span>
           for this host, then put the values in <span className="font-mono">.env.local</span>
@@ -229,7 +229,7 @@ function NotConfigured({ missing }: { missing: string[] }) {
         Back to the site
       </Button>
 
-      <p className="mt-8 text-xs text-muted leading-relaxed">
+      <p className="mt-8 text-12 text-muted leading-relaxed">
         Discord is the only way in. There are no passwords to hand out and none to lose.
       </p>
     </>
@@ -240,19 +240,19 @@ function NotConfigured({ missing }: { missing: string[] }) {
 function Ready({ startSignIn }: { startSignIn: () => Promise<void> }) {
   return (
     <>
-      <p className="mb-6 text-sm text-muted leading-relaxed">
+      <p className="mb-6 text-14 text-muted leading-relaxed">
         Sign in with the Discord account you use in the Job Centre server. You&apos;ll be
         asked to share your username, avatar and the list of servers you&apos;re in — the
         last one is how membership is checked, and nothing else is read.
       </p>
 
       <form action={startSignIn}>
-        <Button variant="gold" className="w-full">
+        <Button variant="union" className="w-full">
           Continue with Discord
         </Button>
       </form>
 
-      <p className="mt-8 text-xs text-muted leading-relaxed">
+      <p className="mt-8 text-12 text-muted leading-relaxed">
         Not in the server yet? Ask for an invite first — sign-in is restricted to members.
       </p>
     </>
@@ -277,14 +277,14 @@ function SignedIn({
           <div className="min-w-0">
             <div className="truncate font-medium">{name}</div>
             <div className="mt-1 flex items-center gap-2">
-              <Badge tone="signal">Signed in</Badge>
-              {isAdmin && <Badge tone="gold">Admin</Badge>}
+              <Badge tone="success">Signed in</Badge>
+              {isAdmin && <Badge tone="union">Admin</Badge>}
             </div>
           </div>
         </div>
       </Panel>
 
-      <Button href="/" variant="gold" className="mb-3 w-full">
+      <Button href="/" variant="union" className="mb-3 w-full">
         Continue
       </Button>
 

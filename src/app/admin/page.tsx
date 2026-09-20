@@ -43,7 +43,7 @@ export default async function AdminDashboardPage() {
   const admin = await requireAdmin();
 
   const [view, recent] = await Promise.all([loadDashboard(), listAudit({ limit: 6 })]);
-  const blocked = view.items.filter((item) => item.tone === "ember").length;
+  const blocked = view.items.filter((item) => item.urgency === "blocked").length;
 
   return (
     <div className="min-h-screen">
@@ -55,10 +55,10 @@ export default async function AdminDashboardPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Tonight</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">
+            <h1 className="font-display text-36 leading-none">
               What needs you
             </h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Everything below is worked out from the database as this page loaded, so a
               line disappears the moment you deal with it. Nothing here is a reminder
               somebody set.
@@ -69,17 +69,17 @@ export default async function AdminDashboardPage() {
             <StatTile
               label="Needs you"
               value={view.items.length}
-              valueClassName={view.items.length > 0 ? "text-gold" : "text-signal"}
+              valueClassName={view.items.length > 0 ? "text-union" : "text-body"}
             />
             <StatTile
               label="Blocking"
               value={blocked}
-              valueClassName={blocked > 0 ? "text-ember" : "text-muted"}
+              valueClassName={blocked > 0 ? "text-flare" : "text-muted"}
             />
             <StatTile
               label="Live"
               value={view.live.length}
-              valueClassName={view.live.length > 0 ? "text-ember" : "text-muted"}
+              valueClassName={view.live.length > 0 ? "text-flare" : "text-muted"}
             />
             <StatTile label="Active events" value={view.totals.events} />
           </div>
@@ -103,7 +103,7 @@ export default async function AdminDashboardPage() {
                   <Button href="/admin/events" size="sm">
                     All events
                   </Button>
-                  <Button href="/admin/events" size="sm" variant="gold">
+                  <Button href="/admin/events" size="sm" variant="union">
                     Create one
                   </Button>
                 </div>
@@ -118,7 +118,7 @@ export default async function AdminDashboardPage() {
                         <div className="mb-1 flex flex-wrap items-center gap-2">
                           <Link
                             href={`/admin/events/${item.event.id}`}
-                            className="text-xs text-muted hover:text-gold"
+                            className="text-12 text-muted hover:text-union"
                           >
                             {item.event.title}
                           </Link>
@@ -127,19 +127,19 @@ export default async function AdminDashboardPage() {
                       )}
                       <div
                         className={cx(
-                          "text-sm",
-                          item.tone === "ember" ? "text-ember" : "text-chalk"
+                          "text-14",
+                          item.urgency === "blocked" ? "text-flare" : "text-chalk"
                         )}
                       >
                         {item.label}
                       </div>
-                      <p className="mt-1 text-xs leading-relaxed text-muted">{item.detail}</p>
+                      <p className="mt-1 text-12 leading-relaxed text-muted">{item.detail}</p>
                     </div>
 
                     <Button
                       href={item.href}
                       size="sm"
-                      variant={item.tone === "ember" ? "gold" : undefined}
+                      variant={item.urgency === "blocked" ? "union" : undefined}
                     >
                       {item.action}
                     </Button>
@@ -156,7 +156,7 @@ export default async function AdminDashboardPage() {
               title={view.live.length > 0 ? "Running now" : "Coming up"}
               description="What is on, admin side. Each one links to the member's view of it as well."
               aside={
-                <Link href="/admin/events" className="text-xs text-muted hover:text-gold">
+                <Link href="/admin/events" className="text-12 text-muted hover:text-union">
                   All events →
                 </Link>
               }
@@ -190,7 +190,7 @@ export default async function AdminDashboardPage() {
                   <Link
                     key={event.id}
                     href={`/admin/events/${event.id}`}
-                    className="text-sm text-chalk hover:text-gold"
+                    className="text-14 text-chalk hover:text-union"
                   >
                     {event.title}
                   </Link>
@@ -205,7 +205,7 @@ export default async function AdminDashboardPage() {
             title="Last few changes"
             description="The tail of the audit log. Nothing here is ever edited or deleted."
             aside={
-              <Link href="/admin/audit" className="text-xs text-muted hover:text-gold">
+              <Link href="/admin/audit" className="text-12 text-muted hover:text-union">
                 Full log →
               </Link>
             }
@@ -221,8 +221,8 @@ export default async function AdminDashboardPage() {
               <ul className="divide-y divide-hair/60">
                 {recent.map((row) => (
                   <li key={row.id} className="flex flex-wrap items-baseline gap-x-3 py-3">
-                    <Badge tone={row.tone === "ember" ? "ember" : "default"}>{row.label}</Badge>
-                    <span className="min-w-0 flex-1 text-sm text-chalk">{row.summary}</span>
+                    <Badge tone={row.tone === "flare" ? "flare" : "default"}>{row.label}</Badge>
+                    <span className="min-w-0 flex-1 text-14 text-chalk">{row.summary}</span>
                     <span className="eyebrow shrink-0">{row.actor.name}</span>
                   </li>
                 ))}
@@ -231,7 +231,7 @@ export default async function AdminDashboardPage() {
           </Section>
         </div>
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           Signed in as {admin.displayName ?? admin.name ?? "an admin"}. A finished event
           never appears above — it is read-only, so nothing about it can need doing.
         </p>

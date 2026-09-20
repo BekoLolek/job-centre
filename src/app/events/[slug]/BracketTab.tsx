@@ -78,7 +78,7 @@ function Stage({
     <section className="space-y-6">
       <Panel padding="md">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2">
-          <h2 className="font-display text-2xl">
+          <h2 className="font-display text-24">
             {numbered ? `${numbered}. ` : ""}
             {stage.name}
           </h2>
@@ -91,8 +91,8 @@ function Stage({
           ))}
         </div>
 
-        <p className="mt-4 border-t border-hair pt-3 text-xs text-muted">
-          <span className="num text-gold">{played}</span> of{" "}
+        <p className="mt-4 border-t border-hair pt-3 text-12 text-muted">
+          <span className="num text-union">{played}</span> of{" "}
           {plural(stage.matches.length, "match", "matches")} played.
           {waiting > 0 &&
             " Slots that are still waiting show what they are waiting on rather than a team name."}

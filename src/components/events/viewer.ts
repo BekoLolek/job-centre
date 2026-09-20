@@ -50,7 +50,7 @@ export type ViewerAction = {
   href: string | null;
   /** One sentence under it. Always says *why*. */
   detail: string;
-  tone: "gold" | "signal" | "muted" | "ember";
+  tone: "union" | "success" | "muted" | "flare";
   /** True for the one action a viewer is being invited to take. */
   primary: boolean;
 };
@@ -101,7 +101,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: "You're in",
       href: "/me/events",
       detail: "You have a seat. Set your availability and confirm under My events.",
-      tone: "signal",
+      tone: "success",
       primary: false,
     };
   }
@@ -113,7 +113,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: place === null ? "You're in the queue" : `You're #${place} in the queue`,
       href: "/me/events",
       detail: "If somebody drops out you move up automatically — nothing to do but wait.",
-      tone: "gold",
+      tone: "union",
       primary: false,
     };
   }
@@ -124,7 +124,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: "Awaiting review",
       href: "/me/events",
       detail: "The organisers review every application to this event. You will hear either way.",
-      tone: "gold",
+      tone: "union",
       primary: false,
     };
   }
@@ -135,7 +135,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: "Application declined",
       href: null,
       detail: "An admin decided this one. Have a word with them if that looks wrong.",
-      tone: "ember",
+      tone: "flare",
       primary: false,
     };
   }
@@ -146,7 +146,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: applicationsPill(state).label,
       href: null,
       detail: state.message,
-      tone: state.reason === "cancelled" ? "ember" : "muted",
+      tone: state.reason === "cancelled" ? "flare" : "muted",
       primary: false,
     };
   }
@@ -159,7 +159,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       detail: state.willWaitlist
         ? "The seats are gone, but you can still join the waitlist once you're signed in."
         : "Applications are open. Sign in with Discord and it takes three taps.",
-      tone: "gold",
+      tone: "union",
       primary: true,
     };
   }
@@ -172,7 +172,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       // The sentence the gate itself wrote — "you need Platinum III, you are
       // Gold I" — said here rather than after a form has been filled in.
       detail: eligibility.enterReason,
-      tone: "ember",
+      tone: "flare",
       primary: false,
     };
   }
@@ -183,7 +183,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: state.willWaitlist ? "Apply again — waitlist" : "Apply again",
       href: applyHref,
       detail: "You withdrew from this one. Applying again puts you at the back of the queue.",
-      tone: "gold",
+      tone: "union",
       primary: true,
     };
   }
@@ -194,7 +194,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
       label: "Join the waitlist",
       href: applyHref,
       detail: state.message,
-      tone: "gold",
+      tone: "union",
       primary: true,
     };
   }
@@ -204,7 +204,7 @@ export function viewerAction(input: ViewerActionInput): ViewerAction {
     label: "Apply",
     href: applyHref,
     detail: state.message,
-    tone: "gold",
+    tone: "union",
     primary: true,
   };
 }

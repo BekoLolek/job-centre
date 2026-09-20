@@ -205,14 +205,14 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-[1500px] items-center gap-4 px-4 sm:px-6">
-          <Link href="/" className="wordmark text-base hover:text-hot">
+          <Link href="/" className="wordmark text-16 hover:text-hot">
             JOB CENTRE<span className="text-union"> DRAFT</span>
           </Link>
 
           <Eyebrow as="span" className="hidden items-center gap-2 sm:inline-flex">
             <span
               className={`inline-block h-1.5 w-1.5 rounded-full ${
-                offline ? "bg-ember" : "bg-signal live-dot"
+                offline ? "bg-flare" : "bg-success live-dot"
               }`}
             />
             {offline ? "Reconnecting" : "Live"}
@@ -236,7 +236,7 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
 
       <div className="mx-auto max-w-[1500px] space-y-2 px-4 pt-4 sm:px-6">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="font-display text-2xl leading-none">
+          <h1 className="font-display text-24 leading-none">
             {event.title}
           </h1>
           <Eyebrow as="span">
@@ -246,11 +246,11 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
           </Eyebrow>
         </div>
 
-        {error && <Alert tone="ember">{error}</Alert>}
-        {note && <Alert tone="signal">{note}</Alert>}
-        {completion && <Alert tone="gold">{completion}</Alert>}
+        {error && <Alert tone="flare">{error}</Alert>}
+        {note && <Alert tone="success">{note}</Alert>}
+        {completion && <Alert tone="union">{completion}</Alert>}
         {noCaptains && (
-          <Alert tone="gold">
+          <Alert tone="union">
             No team has a captain yet, so nobody can bid. An admin sets captains on the
             event&rsquo;s Teams tab.
           </Alert>
@@ -266,7 +266,7 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
             </EmptyState>
             {isAdmin && (
               <div className="mt-4">
-                <Button href={`/admin/events/${event.id}`} size="sm" variant="gold">
+                <Button href={`/admin/events/${event.id}`} size="sm" variant="union">
                   Set the draft up
                 </Button>
               </div>

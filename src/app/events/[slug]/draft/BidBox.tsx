@@ -113,12 +113,12 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
         <Eyebrow className="mb-3">Your bid is locked</Eyebrow>
         <div className="stamp leading-none">
           {me.bid !== null ? (
-            <Money value={me.bid} tone="signal" size="xl" className="text-5xl" />
+            <Money value={me.bid} tone="success" size="xl" className="text-48" />
           ) : (
-            <span className="font-display text-5xl text-signal">In</span>
+            <span className="font-display text-48 text-success">In</span>
           )}
         </div>
-        <p className="mt-4 text-sm text-muted">
+        <p className="mt-4 text-14 text-muted">
           {refusal?.message ??
             "Waiting on the other captains."}{" "}
           {view.config.bidVisibility === "admin_only"
@@ -140,7 +140,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
             Balance <Money value={me.balance} />
           </Eyebrow>
         </div>
-        <p className="text-sm text-muted">
+        <p className="text-14 text-muted">
           {spinning
             ? "The wheel is running — bidding opens the moment it stops."
             : "Bidding opens once the wheel stops on a player."}
@@ -162,10 +162,10 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
           </Eyebrow>
         </div>
         <div data-reason={refusal.reason}>
-          <Alert tone="ember">{refusal.message}</Alert>
+          <Alert tone="flare">{refusal.message}</Alert>
         </div>
         {refusal.reason === "roster_full" && (
-          <p className="mt-3 text-sm text-muted">
+          <p className="mt-3 text-14 text-muted">
             Your draft is done — {me.roster.size} of {me.roster.target} on the roster.
           </p>
         )}
@@ -189,7 +189,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
 
       <div className="flex gap-3">
         <Field
-          className="text-2xl"
+          className="text-24"
           inputMode="numeric"
           placeholder={String(standing?.opening ?? view.config.minBid)}
           value={amount}
@@ -199,7 +199,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
         />
         <Button
           type="submit"
-          variant="gold"
+          variant="union"
           className="px-8"
           disabled={busy || closed || amount.trim() === ""}
         >
@@ -213,19 +213,19 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
             Bid the maximum
           </Button>
         )}
-        {closed && <span className="text-xs text-ember">Bidding on this player has closed.</span>}
+        {closed && <span className="text-12 text-flare">Bidding on this player has closed.</span>}
       </div>
 
       {/* An open-bidding floor, in the server's words: "the bid is 250, so the
           next one has to be at least 260". Not an error — a target. */}
       {refusal && !closed && (
-        <p className="mt-3 text-xs text-gold" data-reason={refusal.reason}>
+        <p className="mt-3 text-12 text-union" data-reason={refusal.reason}>
           {refusal.message}
         </p>
       )}
 
       {error && (
-        <p className="mt-3 text-xs text-ember" data-reason={reason ?? "unknown"} role="alert">
+        <p className="mt-3 text-12 text-flare" data-reason={reason ?? "unknown"} role="alert">
           {error}
         </p>
       )}
@@ -247,9 +247,9 @@ function Ceiling({
     <div className={above ? "mb-4" : "mt-4"}>
       <div className="flex flex-wrap items-baseline gap-2">
         <Eyebrow as="span">You can bid up to</Eyebrow>
-        <Money value={maxBid ?? 0} size="xl" tone={maxBid === 0 ? "muted" : "gold"} />
+        <Money value={maxBid ?? 0} size="xl" tone={maxBid === 0 ? "muted" : "union"} />
       </div>
-      <p className="mt-1 text-xs leading-relaxed text-muted">{standing.ceiling}</p>
+      <p className="mt-1 text-12 leading-relaxed text-muted">{standing.ceiling}</p>
     </div>
   );
 }

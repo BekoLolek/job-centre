@@ -41,7 +41,7 @@ describe("event status", () => {
     }
   });
 
-  it("gives published the gold 'open' tone, since it is the actionable one", () => {
+  it("gives published the union-blue 'open' tone, since it is the actionable one", () => {
     expect(eventStatusTone("published")).toBe("open");
     expect(eventStatusTone("draft")).toBe("draft");
     expect(eventStatusTone("live")).toBe("live");
@@ -161,9 +161,9 @@ describe("availability", () => {
   });
 
   it("tones them so the column can be read without reading it", () => {
-    expect(availabilityTone("yes")).toBe("text-signal");
-    expect(availabilityTone("maybe")).toBe("text-gold");
-    expect(availabilityTone("no")).toBe("text-ember");
+    expect(availabilityTone("yes")).toBe("text-success");
+    expect(availabilityTone("maybe")).toBe("text-union");
+    expect(availabilityTone("no")).toBe("text-flare");
     expect(availabilityTone(null)).toBe("text-muted");
   });
 });

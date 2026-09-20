@@ -51,7 +51,7 @@ export default function BlockList({
   const days = [...new Set(blocks.map((block) => block.day))].sort((x, y) => x - y);
 
   return (
-    <div className={cx("rounded-xl border border-hair", className)}>
+    <div className={cx("rounded-lg border border-hair", className)}>
       {days.map((day) => {
         const inDay = blocks.filter((block) => block.day === day);
         const opens = inDay[0]?.startsAt ?? null;
@@ -69,7 +69,7 @@ export default function BlockList({
                     {formatClock(opens)} – {formatClock(closes)}
                   </span>
                 )}
-                <span className="num text-gold">{hhmm(dayMinutes[day - 1] ?? 0)}</span>
+                <span className="num text-union">{hhmm(dayMinutes[day - 1] ?? 0)}</span>
               </Eyebrow>
             </div>
 
@@ -78,10 +78,10 @@ export default function BlockList({
                 <li
                   key={block.index}
                   className={cx(
-                    "flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair/50 px-3 py-1.5 text-[11px] last:border-0",
+                    "flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair/50 px-3 py-1.5 text-11 last:border-0",
                     highlightSlot &&
                       block.slots.includes(highlightSlot) &&
-                      "bg-gold/5 text-gold"
+                      "bg-union/5 text-union"
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate text-chalk/80">{block.label}</span>
@@ -109,7 +109,7 @@ export function dayTotalsText(dayMinutes: number[]): ReactNode {
   return dayMinutes.map((minutes, index) => (
     <span key={index}>
       {index > 0 && " · "}
-      Day {index + 1} <span className="num text-gold">{hhmm(minutes)}</span>
+      Day {index + 1} <span className="num text-union">{hhmm(minutes)}</span>
     </span>
   ));
 }

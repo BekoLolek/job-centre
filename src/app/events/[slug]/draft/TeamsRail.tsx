@@ -34,7 +34,7 @@ export default function TeamsRail({ view }: TeamsRailProps) {
       <div className="flex items-baseline justify-between">
         <Eyebrow as="h2">Teams</Eyebrow>
         {lotOpen && (
-          <Eyebrow as="span" className={view.lot?.allBidsIn ? "text-signal" : undefined}>
+          <Eyebrow as="span" className={view.lot?.allBidsIn ? "text-success" : undefined}>
             {view.lot?.allBidsIn
               ? "All bids in"
               : `${view.lot?.bidCount ?? 0} of ${view.teams.length} bid`}
@@ -55,12 +55,12 @@ export default function TeamsRail({ view }: TeamsRailProps) {
                 active={mine || (lotOpen && team.hasBid)}
               >
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                  {mine && <Badge tone="gold">You</Badge>}
+                  {mine && <Badge tone="union">You</Badge>}
 
                   {lotOpen &&
                     (team.hasBid ? (
                       <span className="flex items-baseline gap-1.5">
-                        <Badge tone="signal">✓ Bid in</Badge>
+                        <Badge tone="success">✓ Bid in</Badge>
                         {team.bid !== null && <Money value={team.bid} size="lg" />}
                       </span>
                     ) : (
@@ -72,7 +72,7 @@ export default function TeamsRail({ view }: TeamsRailProps) {
                       value={team.maxBid}
                       tone="muted"
                       size="sm"
-                      prefix={<span className="mr-1 text-[11px]">Max </span>}
+                      prefix={<span className="mr-1 text-11">Max </span>}
                     />
                   )}
                 </div>
@@ -87,7 +87,7 @@ export default function TeamsRail({ view }: TeamsRailProps) {
           <Eyebrow as="h3">Lots</Eyebrow>
           {view.history.length > 0 && (
             <Eyebrow as="span">
-              <span className="num text-gold">{sold.length}</span> sold ·{" "}
+              <span className="num text-union">{sold.length}</span> sold ·{" "}
               <Money value={spent} size="sm" /> spent
             </Eyebrow>
           )}
@@ -114,15 +114,15 @@ export default function TeamsRail({ view }: TeamsRailProps) {
                 </span>
               );
               return (
-                <li key={lot.id} className="text-xs leading-snug">
+                <li key={lot.id} className="text-12 leading-snug">
                   {href ? (
-                    <Link href={href} className="hover:text-gold">
+                    <Link href={href} className="hover:text-union">
                       {name}
                     </Link>
                   ) : (
                     name
                   )}{" "}
-                  <span className={line.tone === "ember" ? "text-ember" : "text-muted"}>
+                  <span className={line.tone === "flare" ? "text-flare" : "text-muted"}>
                     {line.outcome}
                   </span>
                   {line.price !== null && (
@@ -141,7 +141,7 @@ export default function TeamsRail({ view }: TeamsRailProps) {
       {view.you.inPool && (
         <Panel padding="sm">
           <Eyebrow className="mb-1">You</Eyebrow>
-          <p className="text-xs text-muted">
+          <p className="text-12 text-muted">
             {playerName(view.players, view.you.userId, "You")} — in the{" "}
             {view.you.inPool === "reserve" ? "reserve" : "main"} pool, waiting to come up.
           </p>

@@ -12,7 +12,7 @@ export type EmptyStateProps = {
 
 export default function EmptyState({ size = "md", className, children }: EmptyStateProps) {
   return (
-    <p className={cx(size === "sm" ? "text-xs" : "text-sm", "text-muted", className)}>
+    <p className={cx(size === "sm" ? "text-12" : "text-14", "text-muted", className)}>
       {children}
     </p>
   );

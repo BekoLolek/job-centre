@@ -48,7 +48,7 @@ const POOL_WORD: Record<DraftPoolKind, string> = {
   reserve: "reserve pool",
 };
 
-export type LotTone = "gold" | "muted" | "ember";
+export type LotTone = "union" | "muted" | "flare";
 
 export type LotLine = {
   player: string;
@@ -75,7 +75,7 @@ export function lotLine(lot: SettledLot, ctx: LotContext): LotLine {
       return {
         player,
         outcome: `→ ${teamNameFor(ctx.teams, lot.winnerTeamId)}`,
-        tone: "gold",
+        tone: "union",
         price: lot.price ?? 0,
       };
     case "reserved":
@@ -83,7 +83,7 @@ export function lotLine(lot: SettledLot, ctx: LotContext): LotLine {
     case "discarded":
       return { player, outcome: "→ taken off the list", tone: "muted", price: null };
     case "voided":
-      return { player, outcome: "→ undone", tone: "ember", price: null };
+      return { player, outcome: "→ undone", tone: "flare", price: null };
     default:
       return { player, outcome: "→ on the block", tone: "muted", price: null };
   }

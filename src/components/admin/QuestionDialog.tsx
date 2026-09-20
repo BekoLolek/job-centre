@@ -144,7 +144,7 @@ export default function QuestionDialog({
           </Button>
           <Button
             size="sm"
-            variant="gold"
+            variant="union"
             disabled={busy || !label.trim()}
             onClick={() => void save(false)}
           >
@@ -156,7 +156,7 @@ export default function QuestionDialog({
       {error && <Alert>{error}</Alert>}
 
       {confirmLoss !== null && (
-        <Alert tone="ember">
+        <Alert tone="flare">
           <span className="block font-medium">
             This change clears {plural(confirmLoss, "stored answer")}
           </span>
@@ -165,7 +165,7 @@ export default function QuestionDialog({
             answers would be removed. Nothing has been changed yet.
           </span>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" variant="ember" onClick={() => void save(true)} disabled={busy}>
+            <Button size="sm" variant="flare" onClick={() => void save(true)} disabled={busy}>
               Clear them and save
             </Button>
             <Button size="sm" onClick={() => setConfirmLoss(null)} disabled={busy}>
@@ -200,15 +200,15 @@ export default function QuestionDialog({
             </ChoiceChip>
           ))}
         </ChoiceRow>
-        <p className="mt-2 text-xs text-muted">{info.hint}</p>
+        <p className="mt-2 text-12 text-muted">{info.hint}</p>
         {type === "text" && (
-          <p className="mt-1 text-xs text-gold/80">
+          <p className="mt-1 text-12 text-union">
             Free text is the last resort — a member has to type it in every time and nothing
             can validate it. Use it only where a list genuinely cannot be written down.
           </p>
         )}
         {type === "rank" && rankLadder.length === 0 && (
-          <p className="mt-1 text-xs text-ember">
+          <p className="mt-1 text-12 text-flare">
             This game has no rank ladder yet, so a rank question would have nothing to
             offer. Add the ranks first.
           </p>
@@ -235,7 +235,7 @@ export default function QuestionDialog({
             Required
           </ChoiceChip>
         </ChoiceRow>
-        <p className="mt-2 text-xs text-muted">
+        <p className="mt-2 text-12 text-muted">
           Required questions are counted on the member&apos;s profile and will gate event
           applications later. They never stop someone saving a half-finished profile.
         </p>
@@ -243,7 +243,7 @@ export default function QuestionDialog({
 
       <Panel padding="sm" className="bg-ink/40">
         <Eyebrow className="mb-3">What the member sees</Eyebrow>
-        <div className="mb-2 text-sm text-chalk/80">{previewField.label}</div>
+        <div className="mb-2 text-14 text-chalk/80">{previewField.label}</div>
         <FieldControl
           field={previewField}
           value={previewValue}

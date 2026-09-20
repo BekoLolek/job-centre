@@ -44,10 +44,10 @@ export default async function AdminTemplatesPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Templates</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">
+            <h1 className="font-display text-36 leading-none">
               Event templates
             </h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               A starting point for an event: its type, its game, its format settings and
               its whole application form, filled in already. The quickest way to make one
               is to point at an event that went well and say &ldquo;like that&rdquo;.
@@ -59,14 +59,14 @@ export default async function AdminTemplatesPage() {
             <StatTile
               label="Events made"
               value={produced}
-              valueClassName={produced > 0 ? "text-signal" : "text-muted"}
+              valueClassName={produced > 0 ? "text-body" : "text-muted"}
             />
           </div>
         </header>
 
         <TemplatesManager view={view} />
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           A template is copied into an event and then forgotten, so editing one never
           touches an event already taking applications. Nothing here deletes a template —
           deactivating takes it out of the create-event picker and leaves everything else.

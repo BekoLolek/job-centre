@@ -66,7 +66,7 @@ describe("lotLine", () => {
     expect(line.player).toBe("Ash");
     expect(line.outcome).toBe("→ Rivals Red");
     expect(line.price).toBe(250);
-    expect(line.tone).toBe("gold");
+    expect(line.tone).toBe("union");
   });
 
   it("never repeats the price of a voided lot — the row would still read as a sale", () => {
@@ -74,7 +74,7 @@ describe("lotLine", () => {
     const line = lotLine(lot({ status: "voided", voidedAt: 2000 }), ctx);
     expect(line.outcome).toBe("→ undone");
     expect(line.price).toBeNull();
-    expect(line.tone).toBe("ember");
+    expect(line.tone).toBe("flare");
   });
 
   it("distinguishes held over from taken off the list", () => {

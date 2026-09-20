@@ -43,25 +43,25 @@ export default function EventRow({ event, href, meta, trailing, className }: Eve
         // The whole row lights up, not just the title. A list where only the
         // words react tells you the words are the target; a row that shades
         // tells you the row is, which is true — the title link covers it.
-        "group flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded-lg px-4 py-6",
-        "-mx-4 transition-colors hover:bg-white/[0.055] sm:flex-nowrap",
+        "group flex flex-wrap items-baseline gap-x-6 gap-y-2 rounded px-4 py-6",
+        "-mx-4 transition-colors hover:bg-overlay-2 sm:flex-nowrap",
         className
       )}
     >
       <div className="min-w-0 flex-1">
         <Link href={href} className="block">
-          <h3 className="truncate font-display text-[19px] leading-tight text-chalk transition-colors group-hover:text-hot">
+          <h3 className="truncate font-display text-20 leading-tight text-chalk transition-colors group-hover:text-hot">
             {event.title}
           </h3>
         </Link>
 
-        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[13px] text-muted">
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-13 text-muted">
           <span>{eventTypeLabel(event.type)}</span>
-          <span aria-hidden className="text-dim/60">·</span>
+          <span aria-hidden className="text-dim">·</span>
           <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
           {live > 0 && (
             <>
-              <span aria-hidden className="text-dim/60">·</span>
+              <span aria-hidden className="text-dim">·</span>
               <span className="num">{plural(live, "application")}</span>
             </>
           )}

@@ -50,7 +50,7 @@ export default function Stepper({
         aria-label="Decrease"
         disabled={disabled || atFloor}
         onClick={() => nudge(-step)}
-        className="btn w-12 justify-center border-r-0 text-base"
+        className="btn w-12 justify-center border-r-0 text-16"
       >
         −
       </button>
@@ -79,7 +79,7 @@ export default function Stepper({
         aria-label="Increase"
         disabled={disabled || atCeiling}
         onClick={() => nudge(step)}
-        className="btn w-12 justify-center border-l-0 text-base"
+        className="btn w-12 justify-center border-l-0 text-16"
       >
         +
       </button>

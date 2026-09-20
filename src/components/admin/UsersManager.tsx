@@ -104,7 +104,7 @@ export default function UsersManager({
         description="What the environment variable still does, and who it currently names."
         className="rise"
       >
-        <p className="text-sm leading-relaxed text-muted">
+        <p className="text-14 leading-relaxed text-muted">
           <code className="font-mono text-chalk">ADMIN_DISCORD_IDS</code> grants the admin
           flag on <strong className="text-chalk">every sign-in</strong>, and only ever
           grants it. Revoking somebody named there works — and then comes back the next
@@ -116,11 +116,11 @@ export default function UsersManager({
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Eyebrow as="span">On the allowlist</Eyebrow>
           {allowlisted.length === 0 && view.pendingAllowlist.length === 0 ? (
-            <span className="text-xs text-muted">Nobody — the variable is empty.</span>
+            <span className="text-12 text-muted">Nobody — the variable is empty.</span>
           ) : (
             <>
               {allowlisted.map((row) => (
-                <Badge key={row.id} tone="gold">
+                <Badge key={row.id} tone="union">
                   {row.displayName}
                 </Badge>
               ))}
@@ -247,21 +247,21 @@ function MemberRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate font-display text-lg leading-none">
+          <span className="truncate font-display text-20 leading-none">
             {member.displayName}
           </span>
-          {member.isAdmin && <Badge tone="gold">Admin</Badge>}
+          {member.isAdmin && <Badge tone="union">Admin</Badge>}
           {isSelf && <Badge>You</Badge>}
           {member.fromAllowlist && (
             <Badge
-              tone="signal"
+              tone="success"
               title="Named in ADMIN_DISCORD_IDS — the flag is re-granted on every sign-in"
             >
               Allowlisted
             </Badge>
           )}
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-12 text-muted">
           {member.handle ? (
             <Link href={`/players/${member.handle}`} className="link font-mono">
               @{member.handle}
@@ -285,7 +285,7 @@ function MemberRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
-        <Badge tone={member.eventsPlayed > 0 ? "signal" : "default"}>
+        <Badge tone={member.eventsPlayed > 0 ? "success" : "default"}>
           {plural(member.eventsPlayed, "event")}
         </Badge>
         <Button size="sm" disabled={busy} onClick={onNotes}>
@@ -295,7 +295,7 @@ function MemberRow({
           <span className="flex items-center gap-2">
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               disabled={busy || refusal !== null}
               title={refusal ?? undefined}
               onClick={onRevoke}
@@ -304,17 +304,17 @@ function MemberRow({
             </Button>
           </span>
         ) : (
-          <Button size="sm" variant="gold" disabled={busy} onClick={onGrant}>
+          <Button size="sm" variant="union" disabled={busy} onClick={onGrant}>
             Make admin
           </Button>
         )}
       </div>
 
       {member.isAdmin && refusal && (
-        <p className={cx("w-full text-xs leading-relaxed text-ember")}>{refusal}</p>
+        <p className={cx("w-full text-12 leading-relaxed text-flare")}>{refusal}</p>
       )}
       {member.isAdmin && !refusal && member.fromAllowlist && (
-        <p className="w-full text-xs leading-relaxed text-muted">
+        <p className="w-full text-12 leading-relaxed text-muted">
           Revoking works, but ADMIN_DISCORD_IDS re-grants it the next time they sign in.
         </p>
       )}
@@ -394,7 +394,7 @@ function NotesDialog({
       footer={
         <>
           <Button onClick={onClose}>Close</Button>
-          <Button variant="gold" disabled={pending || !body.trim()} onClick={save}>
+          <Button variant="union" disabled={pending || !body.trim()} onClick={save}>
             Add note
           </Button>
         </>
@@ -421,9 +421,9 @@ function NotesDialog({
             </EmptyState>
           )}
           {notes?.map((note) => (
-            <article key={note.id} className="rounded-xl border border-hair bg-raised/40 p-3">
-              <p className="whitespace-pre-wrap text-sm leading-relaxed">{note.body}</p>
-              <p className="mt-2 text-xs text-muted">
+            <article key={note.id} className="rounded-lg border border-hair bg-raised/40 p-3">
+              <p className="whitespace-pre-wrap text-14 leading-relaxed">{note.body}</p>
+              <p className="mt-2 text-12 text-muted">
                 {note.authorName ?? "Somebody"}
                 {" · "}
                 <LocalTime at={new Date(note.createdAt).toISOString()} format="when" />

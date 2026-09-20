@@ -106,7 +106,7 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
               }
             }}
           />
-          <Button variant="gold" disabled={pending || !newName.trim()} onClick={addGame}>
+          <Button variant="union" disabled={pending || !newName.trim()} onClick={addGame}>
             Add game
           </Button>
         </div>
@@ -120,7 +120,7 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
         aside={
           <div className="flex flex-wrap items-center gap-2">
             <Badge>{plural(view.globalFields.length, "question")}</Badge>
-            <Badge tone={view.globalAnswers > 0 ? "signal" : "default"}>
+            <Badge tone={view.globalAnswers > 0 ? "success" : "default"}>
               {plural(view.globalAnswers, "answer")}
             </Badge>
           </div>
@@ -144,7 +144,7 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
         aside={<Badge>{plural(view.games.length, "game")}</Badge>}
       >
         {view.games.length === 0 ? (
-          <p className="py-6 text-sm text-muted">
+          <p className="py-6 text-14 text-muted">
             No games yet. Add one above — that is all it takes for it to start appearing on
             profiles.
           </p>
@@ -210,9 +210,9 @@ function GameCard({
           className="flex min-w-0 items-center gap-3 text-left"
           aria-expanded={open}
         >
-          <span className="font-mono text-xs text-muted">{open ? "▾" : "▸"}</span>
+          <span className="font-mono text-12 text-muted">{open ? "▾" : "▸"}</span>
           <span className="min-w-0">
-            <span className="block truncate font-display text-xl leading-none">
+            <span className="block truncate font-display text-20 leading-none">
               {game.name}
             </span>
             <span className="eyebrow mt-1 block">{game.key}</span>
@@ -225,7 +225,7 @@ function GameCard({
         />
         <Badge>{plural(game.fields.length, "question")}</Badge>
         {game.rankLadder.length > 0 && <Badge>{plural(game.rankLadder.length, "rank")}</Badge>}
-        <Badge tone={game.answers > 0 ? "signal" : "default"}>
+        <Badge tone={game.answers > 0 ? "success" : "default"}>
           {plural(game.answers, "answer")}
         </Badge>
 
@@ -330,14 +330,14 @@ function GameSettings({
 
       <div className="border-t border-hair pt-4">
         <Eyebrow className="mb-2">Visibility</Eyebrow>
-        <p className="mb-3 text-xs leading-relaxed text-muted">
+        <p className="mb-3 text-12 leading-relaxed text-muted">
           {game.isActive
             ? "Active: this section shows on every member's profile."
             : "Hidden: members do not see this section. Every answer is still stored and comes back the moment it is switched on."}
         </p>
         <Button
           size="sm"
-          variant={game.isActive ? "ember" : "gold"}
+          variant={game.isActive ? "flare" : "union"}
           disabled={busy}
           onClick={() => onSetActive(!game.isActive)}
         >
@@ -347,7 +347,7 @@ function GameSettings({
 
       <div className="border-t border-hair pt-4">
         <Eyebrow className="mb-2">Deleting</Eyebrow>
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           There is deliberately no delete. Deactivating does everything deleting would,
           without taking {plural(game.answers, "stored answer")} with it — and nothing on
           this site is allowed to erase history.

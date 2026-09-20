@@ -65,11 +65,11 @@ export default function SaveRow({
   // happened to; only the button moved.
   const said =
     state === "saved" ? (
-      <Eyebrow as="span" className="text-signal">
+      <Eyebrow as="span" className="text-success">
         {note ?? "Saved"}
       </Eyebrow>
     ) : state === "error" ? (
-      <Eyebrow as="span" className="text-ember">
+      <Eyebrow as="span" className="text-flare">
         Not saved
       </Eyebrow>
     ) : null;
@@ -105,12 +105,12 @@ export function InlineSaveRow({
       {children}
       <span className="ml-auto flex items-center gap-3">
         {note && state === "saved" && (
-          <Eyebrow as="span" className="text-signal">
+          <Eyebrow as="span" className="text-success">
             {note}
           </Eyebrow>
         )}
         <Button
-          variant="gold"
+          variant="union"
           size="sm"
           disabled={disabled || state === "saving"}
           onClick={onSave}

@@ -66,7 +66,7 @@ export default function EventStatusControls({
   };
 
   const cancelButton = (
-    <Button size="sm" variant="ember" disabled={busy} onClick={cancel}>
+    <Button size="sm" variant="flare" disabled={busy} onClick={cancel}>
       Cancel
     </Button>
   );
@@ -76,7 +76,7 @@ export default function EventStatusControls({
     status === "draft" ? (
       <Button
         size="sm"
-        variant="gold"
+        variant="union"
         disabled={busy}
         onClick={() => run(() => publishEventAction(eventId))}
       >
@@ -87,14 +87,14 @@ export default function EventStatusControls({
         <Button size="sm" disabled={busy} onClick={() => move("draft")}>
           Unpublish
         </Button>
-        <Button size="sm" variant="gold" disabled={busy} onClick={() => move("live")}>
+        <Button size="sm" variant="union" disabled={busy} onClick={() => move("live")}>
           Mark running
         </Button>
         {cancelButton}
       </>
     ) : status === "live" ? (
       <>
-        <Button size="sm" variant="gold" disabled={busy} onClick={() => move("complete")}>
+        <Button size="sm" variant="union" disabled={busy} onClick={() => move("complete")}>
           Mark complete
         </Button>
         {cancelButton}
@@ -117,7 +117,7 @@ export default function EventStatusControls({
        */
       onClick={(event) => event.stopPropagation()}
     >
-      {error && <span className="text-[12px] text-ember">{error}</span>}
+      {error && <span className="text-12 text-flare">{error}</span>}
       {buttons}
     </span>
   );

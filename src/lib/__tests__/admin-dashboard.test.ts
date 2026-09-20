@@ -148,7 +148,7 @@ describe("a lot on the block", () => {
     unwrap(await openLot(event.id, { userId: player }, db));
 
     const [item] = (await itemsFor(event.id)).filter((row) => row.kind === "lot_open");
-    expect(item.tone).toBe("ember");
+    expect(item.urgency).toBe("blocked");
     const [row] = await db.select({ slug: events.slug }).from(events).where(eq(events.id, event.id));
     expect(item.href).toBe(`/events/${row.slug}/draft`);
   });
@@ -277,10 +277,10 @@ describe("a finished event", () => {
 describe("the ordering", () => {
   it("puts what is blocking the night above what is merely due", async () => {
     const view = await loadDashboard({}, db);
-    const tones = view.items.map((item) => item.tone);
-    const lastEmber = tones.lastIndexOf("ember");
-    const firstGold = tones.indexOf("gold");
-    if (lastEmber !== -1 && firstGold !== -1) expect(lastEmber).toBeLessThan(firstGold);
+    const urgencies = view.items.map((item) => item.urgency);
+    const lastBlocked = urgencies.lastIndexOf("blocked");
+    const firstNext = urgencies.indexOf("next");
+    if (lastBlocked !== -1 && firstNext !== -1) expect(lastBlocked).toBeLessThan(firstNext);
   });
 
   it("gives every line a link and a word for the button", async () => {

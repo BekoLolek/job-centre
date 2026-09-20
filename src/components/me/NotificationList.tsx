@@ -64,7 +64,7 @@ export default function NotificationList({
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
-          <Badge tone={unread > 0 ? "gold" : undefined}>
+          <Badge tone={unread > 0 ? "union" : undefined}>
             {unread > 0 ? `${plural(unread, "unread")}` : "All caught up"}
           </Badge>
           {unread > 0 && (
@@ -113,11 +113,11 @@ function Row({ row, onRead }: { row: Notification; onRead: () => void }) {
         )}
       />
       <div className="min-w-0 flex-1">
-        <p className={cx("text-[14.5px]", unread ? "text-chalk" : "text-body")}>{row.title}</p>
+        <p className={cx("text-14", unread ? "text-chalk" : "text-body")}>{row.title}</p>
         {row.body && (
-          <p className="mt-0.5 max-w-2xl text-[13px] leading-relaxed text-muted">{row.body}</p>
+          <p className="mt-0.5 max-w-2xl text-13 leading-relaxed text-muted">{row.body}</p>
         )}
-        <p className="mt-1 text-[12px] text-dim">
+        <p className="mt-1 text-12 text-dim">
           <LocalTime at={row.createdAt.toISOString()} />
         </p>
       </div>
@@ -130,7 +130,7 @@ function Row({ row, onRead }: { row: Notification; onRead: () => void }) {
         <Link
           href={row.href}
           onClick={onRead}
-          className="-mx-3 flex min-w-0 flex-1 rounded-lg px-3 py-1 transition-colors hover:bg-white/[0.04]"
+          className="-mx-3 flex min-w-0 flex-1 rounded px-3 py-1 transition-colors hover:bg-overlay-1"
         >
           {body}
         </Link>
@@ -194,8 +194,8 @@ function Prefs({
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-[20px] text-chalk">What you hear about</h2>
-        <p className="mt-1.5 max-w-2xl text-[13.5px] leading-relaxed text-muted">
+        <h2 className="text-20 text-chalk">What you hear about</h2>
+        <p className="mt-1.5 max-w-2xl text-13 leading-relaxed text-muted">
           Everything is on here and off on Discord to start with. A dot on this page is
           something you find when you come looking; a direct message arrives whether you
           wanted it or not, which is not a thing to opt somebody into on their behalf.
@@ -220,7 +220,7 @@ function Prefs({
         </Alert>
       )}
 
-      <div className="overflow-hidden rounded-xl bg-panel">
+      <div className="overflow-hidden rounded-lg bg-panel">
         <div className="flex items-center gap-4 border-b border-hair px-5 py-2.5">
           <span className="eyebrow flex-1">Notification</span>
           <span className="eyebrow w-[4.5rem] text-center">Here</span>
@@ -236,10 +236,10 @@ function Prefs({
             >
               <div className="min-w-[12rem] flex-1">
                 <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-[14px] text-chalk">{spec.label}</span>
+                  <span className="text-14 text-chalk">{spec.label}</span>
                   <Badge>{spec.audience}</Badge>
                 </div>
-                <p className="mt-0.5 max-w-xl text-[12.5px] leading-relaxed text-muted">
+                <p className="mt-0.5 max-w-xl text-13 leading-relaxed text-muted">
                   {spec.blurb}
                 </p>
               </div>
@@ -247,7 +247,7 @@ function Prefs({
               <div className="w-[4.5rem] text-center">
                 {spec.fixed ? (
                   <span
-                    className="text-[12px] text-dim"
+                    className="text-12 text-dim"
                     title="This is the reply to something you asked for, so it cannot be switched off."
                   >
                     Always

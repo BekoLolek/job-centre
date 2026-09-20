@@ -33,8 +33,8 @@ export default async function PollsPage() {
       <main className="mx-auto max-w-[860px] px-4 py-8 sm:px-6">
         <header className="mb-2">
           <Eyebrow className="mb-2">Job Centre · Polls</Eyebrow>
-          <h1 className="text-4xl">Polls</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">Polls</h1>
+          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
             Open, like Discord&rsquo;s: the counts are public and so is who voted for what.
             That is deliberate — a poll about which night suits is answered far better by
             &ldquo;Thursday: Ada, Bo, Cy&rdquo; than by &ldquo;Thursday: 3&rdquo;, because the

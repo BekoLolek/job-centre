@@ -78,13 +78,13 @@ export default function Disclosure({
           <span
             className={cx(
               "shrink-0 font-medium text-chalk transition-colors group-hover:text-hot",
-              size === "sm" ? "text-[13px]" : "text-[14px]"
+              size === "sm" ? "text-13" : "text-14"
             )}
           >
             {title}
           </span>
           {summary && (
-            <span className="min-w-0 truncate text-[12.5px] text-dim">{summary}</span>
+            <span className="min-w-0 truncate text-13 text-dim">{summary}</span>
           )}
         </button>
         {aside && <div className="shrink-0">{aside}</div>}

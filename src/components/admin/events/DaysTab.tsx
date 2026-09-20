@@ -206,10 +206,10 @@ export default function DaysTab({
             add one if you want to ask people which nights they can make.
           </EmptyState>
         ) : (
-          <ul className="divide-y divide-hair/60 rounded-xl border border-hair">
+          <ul className="divide-y divide-hair/60 rounded-lg border border-hair">
             {days.map((day, index) => (
               <li key={day.key} className="flex flex-wrap items-end gap-3 p-3">
-                <span className="num w-10 shrink-0 self-center text-xs text-muted">
+                <span className="num w-10 shrink-0 self-center text-12 text-muted">
                   Day {index + 1}
                 </span>
 
@@ -249,7 +249,7 @@ export default function DaysTab({
                   </Button>
                   <Button
                     size="sm"
-                    variant="ember"
+                    variant="flare"
                     aria-label={`Remove day ${index + 1}`}
                     onClick={() => remove(day.key)}
                   >
@@ -258,7 +258,7 @@ export default function DaysTab({
                 </span>
 
                 {day.id === undefined && (
-                  <Badge tone="gold" className="self-center">
+                  <Badge tone="union" className="self-center">
                     New
                   </Badge>
                 )}
@@ -268,7 +268,7 @@ export default function DaysTab({
         )}
 
         {dropping.length > 0 && (
-          <Alert tone="gold">
+          <Alert tone="union">
             <span className="block font-medium">
               {plural(dropping.length, "day")} will be deleted when you save
             </span>
@@ -288,7 +288,7 @@ export default function DaysTab({
           <Button size="sm" disabled={days.length >= maxDays} onClick={add}>
             + Add a day
           </Button>
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             Reordering keeps every answer — a day carries its identity with it.
           </span>
         </SaveRow>
@@ -308,7 +308,7 @@ export default function DaysTab({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               disabled={state === "saving"}
               onClick={() => void commit()}
             >
@@ -319,7 +319,7 @@ export default function DaysTab({
       >
         {impact && (
           <>
-            <Alert tone="ember">
+            <Alert tone="flare">
               <span className="block font-medium">
                 {plural(impact.clearedAvailability, "answer")} from{" "}
                 {plural(impact.affectedApplicants, "applicant")}
@@ -331,17 +331,17 @@ export default function DaysTab({
               </span>
             </Alert>
 
-            <ul className="space-y-1 text-sm">
+            <ul className="space-y-1 text-14">
               {impact.removed.map((day) => (
                 <li key={day.id} className="flex items-baseline gap-2">
-                  <span className="num text-xs text-muted">Day {day.dayIndex + 1}</span>
+                  <span className="num text-12 text-muted">Day {day.dayIndex + 1}</span>
                   <span>{day.label ?? "No label"}</span>
                 </li>
               ))}
             </ul>
 
             {impact.moved.length > 0 && (
-              <p className="text-xs leading-relaxed text-muted">
+              <p className="text-12 leading-relaxed text-muted">
                 {plural(impact.moved.length, "other day")} also{" "}
                 {impact.moved.length === 1 ? "moves" : "move"} position. That part costs
                 nothing — those days keep their answers.

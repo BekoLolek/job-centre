@@ -147,11 +147,11 @@ export default async function MePage() {
             <Avatar name={name} size="lg" />
             <div className="min-w-0">
               <Eyebrow className="mb-1">Signed in</Eyebrow>
-              <h1 className="font-display text-4xl leading-none">{name}</h1>
+              <h1 className="font-display text-36 leading-none">{name}</h1>
               <p className="mt-2 flex flex-wrap items-center gap-2">
-                {user.isAdmin && <Badge tone="gold">Admin</Badge>}
+                {user.isAdmin && <Badge tone="union">Admin</Badge>}
                 {handle && (
-                  <Link href={`/players/${handle}`} className="text-xs text-muted hover:text-gold">
+                  <Link href={`/players/${handle}`} className="text-12 text-muted hover:text-union">
                     Your public profile → /players/{handle}
                   </Link>
                 )}
@@ -162,12 +162,12 @@ export default async function MePage() {
               <StatTile
                 label="Live applications"
                 value={live.length}
-                valueClassName={live.length > 0 ? "text-signal" : "text-muted"}
+                valueClassName={live.length > 0 ? "text-body" : "text-muted"}
               />
               <StatTile
                 label="To do"
                 value={todos.length}
-                valueClassName={todos.length > 0 ? "text-gold" : "text-muted"}
+                valueClassName={todos.length > 0 ? "text-union" : "text-muted"}
               />
             </div>
           </div>
@@ -196,8 +196,8 @@ export default async function MePage() {
                     <EventStatusPill status={nextEvent.status} />
                   </div>
 
-                  <h3 className="font-display text-3xl leading-none">
-                    <Link href={`/events/${nextEvent.slug}`} className="hover:text-gold">
+                  <h3 className="font-display text-30 leading-none">
+                    <Link href={`/events/${nextEvent.slug}`} className="hover:text-union">
                       {nextEvent.title}
                     </Link>
                   </h3>
@@ -215,7 +215,7 @@ export default async function MePage() {
                       value={<Countdown to={nextEvent.startsAt} passed="Under way" />}
                     />
                   )}
-                  <Button href="/me/events" variant="gold" size="sm">
+                  <Button href="/me/events" variant="union" size="sm">
                     Manage it
                   </Button>
                 </div>
@@ -255,8 +255,8 @@ export default async function MePage() {
                     className="flex flex-wrap items-center gap-4 py-5"
                   >
                     <div className="min-w-0">
-                      <div className="text-sm text-chalk">{todo.label}</div>
-                      <p className="mt-1 text-xs leading-relaxed text-muted">{todo.detail}</p>
+                      <div className="text-14 text-chalk">{todo.label}</div>
+                      <p className="mt-1 text-12 leading-relaxed text-muted">{todo.detail}</p>
                     </div>
                     <Button href={todo.href} size="sm" className="ml-auto">
                       {todo.action}
@@ -274,7 +274,7 @@ export default async function MePage() {
               title="Taking applications"
               description="Open right now, and you have not applied to any of these yet."
               aside={
-                <Link href="/events" className="text-xs text-muted hover:text-gold">
+                <Link href="/events" className="text-12 text-muted hover:text-union">
                   All events →
                 </Link>
               }

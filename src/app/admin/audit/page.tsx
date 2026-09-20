@@ -73,8 +73,8 @@ export default async function AdminAuditPage({
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Audit</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">Audit log</h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <h1 className="font-display text-36 leading-none">Audit log</h1>
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Every status change, application decision, captain and team change, draft
               award and void, result edit and settings change — with the name of whoever
               made it. Nothing here is ever edited or deleted.
@@ -103,8 +103,8 @@ export default async function AdminAuditPage({
             <Link
               href="/admin/audit"
               className={cx(
-                "btn border px-2 py-1 text-xs",
-                filter === null ? "border-gold/50 bg-gold/10 text-gold" : "border-hair text-muted"
+                "btn border px-2 py-1 text-12",
+                filter === null ? "border-union/50 bg-union-tint-10 text-union" : "border-hair text-muted"
               )}
             >
               Everything
@@ -114,9 +114,9 @@ export default async function AdminAuditPage({
                 key={event.id}
                 href={`/admin/audit?event=${event.id}`}
                 className={cx(
-                  "btn border px-2 py-1 text-xs",
+                  "btn border px-2 py-1 text-12",
                   filter === event.id
-                    ? "border-gold/50 bg-gold/10 text-gold"
+                    ? "border-union/50 bg-union-tint-10 text-union"
                     : "border-hair text-muted"
                 )}
               >
@@ -140,12 +140,12 @@ export default async function AdminAuditPage({
                 <li key={row.id} className="py-3">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <Badge
-                      tone={row.tone === "ember" ? "ember" : row.tone === "gold" ? "gold" : "default"}
+                      tone={row.tone === "flare" ? "flare" : row.tone === "union" ? "union" : "default"}
                     >
                       {row.label}
                     </Badge>
 
-                    <span className="min-w-0 flex-1 text-sm leading-relaxed text-chalk">
+                    <span className="min-w-0 flex-1 text-14 leading-relaxed text-chalk">
                       {row.summary}
                     </span>
 
@@ -154,12 +154,12 @@ export default async function AdminAuditPage({
                     </span>
                   </div>
 
-                  <div className="mt-1 flex flex-wrap items-baseline gap-x-3 text-xs text-muted">
+                  <div className="mt-1 flex flex-wrap items-baseline gap-x-3 text-12 text-muted">
                     <span>
                       {row.actor.handle ? (
                         <Link
                           href={`/players/${row.actor.handle}`}
-                          className="hover:text-gold"
+                          className="hover:text-union"
                         >
                           {row.actor.name}
                         </Link>
@@ -170,7 +170,7 @@ export default async function AdminAuditPage({
                     {row.event && (
                       <Link
                         href={`/admin/events/${row.event.id}`}
-                        className="hover:text-gold"
+                        className="hover:text-union"
                       >
                         {row.event.title}
                       </Link>
@@ -193,7 +193,7 @@ export default async function AdminAuditPage({
           )}
         </Section>
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           <ZoneNote /> The log is append-only: there is no code anywhere that updates or
           deletes a line.
         </p>

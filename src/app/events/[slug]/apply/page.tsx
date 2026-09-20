@@ -106,8 +106,8 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
       <AppHeader section="Events" />
 
       <main className="mx-auto max-w-[900px] space-y-5 px-4 py-8 sm:px-6">
-        <nav className="text-xs text-muted">
-          <Link href={`/events/${event.slug}`} className="hover:text-gold">
+        <nav className="text-12 text-muted">
+          <Link href={`/events/${event.slug}`} className="hover:text-union">
             ← {event.title}
           </Link>
         </nav>
@@ -120,11 +120,11 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
                 <EventStatusPill status={event.status} />
                 <ApplicationsPill state={form.state} />
                 <Badge>{eventTypeLabel(event.type)}</Badge>
-                {event.game && <Badge tone="gold">{event.game.name}</Badge>}
+                {event.game && <Badge tone="union">{event.game.name}</Badge>}
               </div>
 
               <Eyebrow className="mb-2">Applying to</Eyebrow>
-              <h1 className="font-display text-4xl leading-none">
+              <h1 className="font-display text-36 leading-none">
                 {event.title}
               </h1>
 
@@ -146,23 +146,23 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
 
         {/* --- The entry rule, said before anything is filled in ------ */}
         {event.minRankToEnter && (
-          <Panel as="section" className={blocked ? "border-ember/50" : undefined}>
+          <Panel as="section" className={blocked ? "border-flare/50" : undefined}>
             <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
               <Eyebrow>Entry requirement</Eyebrow>
-              <span className="text-sm">
-                <span className="text-gold">{event.minRankToEnter}</span> or above
+              <span className="text-14">
+                <span className="text-union">{event.minRankToEnter}</span> or above
               </span>
-              <span className="text-sm text-muted">
+              <span className="text-14 text-muted">
                 Your recorded rank:{" "}
-                <span className={blocked ? "text-ember" : "text-signal"}>
+                <span className={blocked ? "text-flare" : "text-success"}>
                   {form.rank ?? "not set"}
                 </span>
               </span>
-              <span className={blocked ? "ml-auto text-ember" : "ml-auto text-signal"}>
+              <span className={blocked ? "ml-auto text-flare" : "ml-auto text-success"}>
                 {blocked ? "✕ Below the bar" : "✓ You clear it"}
               </span>
             </div>
-            <p className="mt-3 border-t border-hair pt-3 text-xs leading-relaxed text-muted">
+            <p className="mt-3 border-t border-hair pt-3 text-12 leading-relaxed text-muted">
               {form.eligibility.enterCheck.message}
             </p>
           </Panel>
@@ -171,13 +171,13 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
         {/* --- Why they cannot apply, if they cannot ------------------ */}
         {declined ? (
           <Panel as="section">
-            <Eyebrow className="mb-3 text-ember">
+            <Eyebrow className="mb-3 text-flare">
               {applicationStatusLabel("declined")}
             </Eyebrow>
-            <h2 className="font-display text-3xl leading-none">
+            <h2 className="font-display text-30 leading-none">
               This one was declined
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               An admin decided against this application, so it cannot be re-submitted here.
               Have a word with them in Discord if that looks wrong — they can accept you
               from the applicant list at any time.
@@ -190,15 +190,15 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
         ) : closedBecause ? (
           <Panel as="section">
             <Eyebrow className="mb-3">Not taking applications</Eyebrow>
-            <h2 className="font-display text-3xl leading-none">
+            <h2 className="font-display text-30 leading-none">
               {closedBecause.toUpperCase()}
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Nothing you can do from here. Everything currently taking applications is on
               the events page.
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
-              <Button href="/events" variant="gold">
+              <Button href="/events" variant="union">
                 What&apos;s open
               </Button>
               <Button href={`/events/${event.slug}`}>Back to the event</Button>
@@ -206,19 +206,19 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
           </Panel>
         ) : blocked ? (
           <Panel as="section">
-            <Eyebrow className="mb-3 text-ember">You cannot apply to this one yet</Eyebrow>
-            <h2 className="font-display text-3xl leading-none">
+            <Eyebrow className="mb-3 text-flare">You cannot apply to this one yet</Eyebrow>
+            <h2 className="font-display text-30 leading-none">
               {form.eligibility.enterCheck.reason === "no_rank"
                 ? "Your rank isn't set"
                 : "Below the entry rank"}
             </h2>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               {form.eligibility.enterReason} Rank is a two-tap picker on your profile and it
               is remembered, so this is a one-time job rather than something to retype every
               event.
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
-              <Button href="/me/profile" variant="gold">
+              <Button href="/me/profile" variant="union">
                 Update my profile
               </Button>
               <Button href={`/events/${event.slug}`}>Back to the event</Button>
@@ -227,7 +227,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
         ) : (
           <>
             {application?.status === "withdrawn" && (
-              <Alert tone="gold">
+              <Alert tone="union">
                 <span className="block font-medium">You withdrew from this one before</span>
                 <span className="mt-1 block opacity-90">
                   {mode === "approval"
@@ -238,7 +238,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
             )}
 
             {willWaitlist && (
-              <Alert tone="gold">
+              <Alert tone="union">
                 <span className="block font-medium">Every seat is taken</span>
                 <span className="mt-1 block opacity-90">
                   You can still apply — it joins the waitlist, and everybody moves up

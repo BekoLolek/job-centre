@@ -7,7 +7,7 @@ export type FieldShellProps = {
   label?: ReactNode;
   /** Quiet helper text under the control. */
   hint?: ReactNode;
-  /** Validation message, rendered under the hint in ember. */
+  /** Validation message, rendered under the hint in flare red. */
   error?: ReactNode;
   /** Extra classes on the wrapping `<label>` (the control itself takes `className`). */
   wrapperClassName?: string;
@@ -31,7 +31,7 @@ export default function FieldShell({
       )}
       {children}
       {hint !== undefined && <span className="eyebrow block mt-1 text-dim">{hint}</span>}
-      {error !== undefined && <span className="block mt-1 text-xs text-ember">{error}</span>}
+      {error !== undefined && <span className="block mt-1 text-12 text-flare">{error}</span>}
     </label>
   );
 }

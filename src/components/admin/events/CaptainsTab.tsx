@@ -148,15 +148,15 @@ export default function CaptainsTab({
       {/* --- The rule that changes every other number --------------- */}
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>A captain fills a roster slot</Eyebrow>
-        <p className="text-sm leading-relaxed">
+        <p className="text-14 leading-relaxed">
           A captain is on their team from the moment you choose them — a roster row costing{" "}
-          <span className="num text-gold">0</span> — and they{" "}
+          <span className="num text-union">0</span> — and they{" "}
           <span className="text-chalk">never enter the draft pool</span>. With a roster target
-          of <span className="num text-gold">{config.rosterTarget}</span>, each team drafts{" "}
-          <span className="num text-gold">{Math.max(0, config.rosterTarget - 1)}</span> more
+          of <span className="num text-union">{config.rosterTarget}</span>, each team drafts{" "}
+          <span className="num text-union">{Math.max(0, config.rosterTarget - 1)}</span> more
           {config.rosterTarget - 1 === 1 ? " player" : " players"}.
         </p>
-        <p className="text-xs text-muted">
+        <p className="text-12 text-muted">
           Settled in plan §13 and recorded in §14. Choosing a captain takes them out of the
           pool automatically; clearing one puts the slot back but does not put them back in
           the pool — reseed it on the Draft tab.
@@ -167,7 +167,7 @@ export default function CaptainsTab({
             label="Captains chosen"
             value={`${chosen}/${data.teams.length}`}
             valueClassName={
-              data.teams.length > 0 && chosen === data.teams.length ? "text-signal" : "text-gold"
+              data.teams.length > 0 && chosen === data.teams.length ? "text-success" : "text-union"
             }
           />
           <StatTile label="Accepted applicants" value={accepted.length} />
@@ -256,8 +256,8 @@ export default function CaptainsTab({
                       {row && (
                         <p
                           className={cx(
-                            "text-xs leading-relaxed",
-                            row.eligibility.canCaptain ? "text-muted" : "text-gold"
+                            "text-12 leading-relaxed",
+                            row.eligibility.canCaptain ? "text-muted" : "text-union"
                           )}
                         >
                           {row.eligibility.captainReason}
@@ -265,7 +265,7 @@ export default function CaptainsTab({
                       )}
 
                       {pending && (
-                        <p className="eyebrow text-gold">
+                        <p className="eyebrow text-union">
                           {pick === null ? "Captaincy cleared" : "Not saved yet"}
                         </p>
                       )}
@@ -311,7 +311,7 @@ export default function CaptainsTab({
             onSave={attemptSave}
             label="Save captains"
           >
-            <span className="text-xs text-muted">
+            <span className="text-12 text-muted">
               Saved in one write, so two captains can swap teams without either blocking the
               other.
             </span>
@@ -323,7 +323,7 @@ export default function CaptainsTab({
       {applicants.length > accepted.length && (
         <Panel as="section" padding="none" className="space-y-2 border-t border-hair pt-12 first:border-t-0 first:pt-0">
           <Eyebrow>Not on the list</Eyebrow>
-          <p className="text-sm text-muted">
+          <p className="text-14 text-muted">
             {plural(applicants.length - accepted.length, "applicant")} cannot be picked here
             because they have not been accepted. That gate is not overridable from this tab
             on purpose — accept them on the{" "}
@@ -351,7 +351,7 @@ export default function CaptainsTab({
             </Button>
             <Button
               size="sm"
-              variant="gold"
+              variant="union"
               disabled={state === "saving"}
               onClick={() => void commit()}
             >
@@ -362,7 +362,7 @@ export default function CaptainsTab({
       >
         {override && (
           <>
-            <Alert tone="gold">
+            <Alert tone="union">
               This event asks for {event.minRankToCaptain ?? "a minimum rank"} to captain.
               Nothing stops you — sometimes you want the Gold player who is filling in for a
               mate — but it should be a decision, not a mis-click.
@@ -370,12 +370,12 @@ export default function CaptainsTab({
 
             <ul className="space-y-2">
               {override.map((row) => (
-                <li key={row.id} className="rounded-xl border border-hair p-3">
+                <li key={row.id} className="rounded-lg border border-hair p-3">
                   <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-sm text-chalk">{nameOf(row)}</span>
+                    <span className="text-14 text-chalk">{nameOf(row)}</span>
                     <Badge>{row.rank ?? "No rank recorded"}</Badge>
                   </div>
-                  <p className="mt-1 text-xs text-gold/90">{row.eligibility.captainReason}</p>
+                  <p className="mt-1 text-12 text-union">{row.eligibility.captainReason}</p>
                 </li>
               ))}
             </ul>

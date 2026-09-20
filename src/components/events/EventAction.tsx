@@ -21,10 +21,10 @@ export type EventActionProps = {
 };
 
 const TONE: Record<ViewerAction["tone"], string> = {
-  gold: "text-gold",
-  signal: "text-signal",
+  union: "text-union",
+  success: "text-success",
   muted: "text-muted",
-  ember: "text-ember",
+  flare: "text-flare",
 };
 
 export default function EventAction({ action, size = "md", className }: EventActionProps) {
@@ -34,7 +34,7 @@ export default function EventAction({ action, size = "md", className }: EventAct
         <Button
           href={action.href}
           size={size === "sm" ? "sm" : "md"}
-          variant={action.primary ? "gold" : "default"}
+          variant={action.primary ? "union" : "default"}
         >
           {action.label}
         </Button>
@@ -42,7 +42,7 @@ export default function EventAction({ action, size = "md", className }: EventAct
         <p
           className={cx(
             "font-display",
-            size === "sm" ? "text-lg" : "text-2xl",
+            size === "sm" ? "text-20" : "text-24",
             TONE[action.tone]
           )}
         >
@@ -50,7 +50,7 @@ export default function EventAction({ action, size = "md", className }: EventAct
         </p>
       )}
 
-      <p className={cx("text-xs leading-relaxed", action.href ? "text-muted" : TONE[action.tone])}>
+      <p className={cx("text-12 leading-relaxed", action.href ? "text-muted" : TONE[action.tone])}>
         {action.detail}
       </p>
     </div>

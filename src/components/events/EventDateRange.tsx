@@ -56,7 +56,7 @@ export default function EventDateRange({
       // server's zone stays on screen. See the note above.
       key={mounted ? "local" : "ssr"}
       suppressHydrationWarning
-      className={cx("num text-xs", text ? "text-chalk/80" : "text-muted", className)}
+      className={cx("num text-12", text ? "text-chalk/80" : "text-muted", className)}
     >
       {text ?? fallback}
     </span>

@@ -37,7 +37,7 @@ export default function HeaderLink({
       href={href}
       aria-current={current ? "page" : undefined}
       className={cx(
-        "relative py-1 text-sm transition-colors",
+        "relative py-1 text-14 transition-colors",
         current ? "text-hot" : "text-muted hover:text-chalk"
       )}
     >

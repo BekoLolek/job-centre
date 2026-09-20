@@ -50,7 +50,7 @@ export default function EventCard({
       {event.bannerUrl && (
         <div
           aria-hidden
-          className="mb-4 h-20 w-full rounded-xl bg-raised bg-cover bg-center"
+          className="mb-4 h-20 w-full rounded-lg bg-raised bg-cover bg-center"
           style={{ backgroundImage: `url(${JSON.stringify(event.bannerUrl)})` }}
         />
       )}
@@ -64,7 +64,7 @@ export default function EventCard({
         </div>
 
         <div>
-          <h3 className="font-display text-xl leading-tight transition-colors group-hover:text-hot">
+          <h3 className="font-display text-20 leading-tight transition-colors group-hover:text-hot">
             {event.title}
           </h3>
           <Eyebrow className="mt-1">{event.slug}</Eyebrow>
@@ -74,7 +74,7 @@ export default function EventCard({
 
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <EventSeats seats={event.seats} />
-          <span className="num text-xs text-muted">
+          <span className="num text-12 text-muted">
             {plural(event.seats.accepted + event.seats.waitlisted, "live application")}
           </span>
         </div>
@@ -91,8 +91,8 @@ export default function EventCard({
       className={cx(
         // Same rule as `EventRow`: the whole box is the target, so the whole
         // box reacts. Only lit when it goes somewhere.
-        "group rounded-lg transition-colors",
-        href && "-m-3 p-3 hover:bg-white/[0.055]",
+        "group rounded transition-colors",
+        href && "-m-3 p-3 hover:bg-overlay-2",
         className
       )}
     >

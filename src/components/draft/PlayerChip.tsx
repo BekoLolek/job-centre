@@ -51,18 +51,18 @@ export default function PlayerChip({
       )}
     >
       {index !== undefined && (
-        <span className="num w-6 shrink-0 text-right text-[10px] text-muted">{index}</span>
+        <span className="num w-6 shrink-0 text-right text-11 text-muted">{index}</span>
       )}
 
       <Avatar name={name} size="sm" />
 
       <span className="min-w-0 flex-1">
         {href ? (
-          <Link href={href} className="block truncate text-sm leading-tight hover:text-gold">
+          <Link href={href} className="block truncate text-14 leading-tight hover:text-union">
             {name}
           </Link>
         ) : (
-          <span className="block truncate text-sm leading-tight">{name}</span>
+          <span className="block truncate text-14 leading-tight">{name}</span>
         )}
         {meta && <span className="eyebrow block truncate">{meta}</span>}
       </span>

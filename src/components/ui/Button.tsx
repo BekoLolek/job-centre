@@ -6,15 +6,15 @@ import { cx } from "./cx";
 
 /** Use for every clickable `.btn` — pass `href` to get the same chrome as a next/link. */
 
-/** `gold` is the primary/commit action, `ember` the destructive one. */
-export type ButtonVariant = "default" | "gold" | "ember";
+/** `union` is the primary/commit action, `flare` the destructive one. */
+export type ButtonVariant = "default" | "union" | "flare";
 /** `md` keeps the padding baked into `.btn`; `sm` is the compact header/inline size. */
 export type ButtonSize = "sm" | "md";
 
 const VARIANT: Record<ButtonVariant, string> = {
   default: "",
-  gold: "btn-gold",
-  ember: "btn-ember",
+  union: "btn-union",
+  flare: "btn-flare",
 };
 
 const SIZE: Record<ButtonSize, string> = {

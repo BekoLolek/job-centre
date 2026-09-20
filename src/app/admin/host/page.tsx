@@ -29,8 +29,8 @@ export default async function AdminHostPage() {
       <main className="mx-auto max-w-[1000px] px-4 py-8 sm:px-6">
         <header className="mb-2">
           <Eyebrow className="mb-2">Admin · Hosting</Eyebrow>
-          <h1 className="text-4xl">Who wants to run something</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">Who wants to run something</h1>
+          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
             Approving one creates a draft event and hands it to them: from that point they can
             do everything to that one event that you can, and nothing at all to any other.
             They cannot reach the rest of the admin area.

@@ -26,16 +26,16 @@ export function seatsText(seats: CapacityState): string {
 
 export default function EventSeats({ seats, size = "sm", className }: EventSeatsProps) {
   const tone = seats.overCapacity
-    ? "text-ember"
+    ? "text-flare"
     : seats.full
-      ? "text-gold"
+      ? "text-union"
       : "text-chalk/80";
 
   return (
     <span
       className={cx(
         "num inline-flex flex-wrap items-baseline gap-x-2",
-        size === "sm" ? "text-xs" : "text-sm",
+        size === "sm" ? "text-12" : "text-14",
         className
       )}
     >
@@ -46,7 +46,7 @@ export default function EventSeats({ seats, size = "sm", className }: EventSeats
       )}
 
       {seats.overCapacity && (
-        <span className="text-ember">
+        <span className="text-flare">
           · {seats.accepted - (seats.capacity ?? 0)} over
         </span>
       )}

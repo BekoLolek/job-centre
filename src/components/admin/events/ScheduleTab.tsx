@@ -420,7 +420,7 @@ export default function ScheduleTab({
         </div>
 
         {staleOverrides && (
-          <Alert tone="gold">
+          <Alert tone="union">
             <span className="block font-medium">The day overrides no longer fit the plan</span>
             <span className="mt-1 block opacity-90">
               There {blocks.length === 1 ? "is" : "are"} now {plural(blocks.length, "block")}{" "}
@@ -435,7 +435,7 @@ export default function ScheduleTab({
           dayMinutes={totals}
           renderAction={(block) => (
             <Select
-              className="px-2 py-0.5 text-[11px]"
+              className="px-2 py-0.5 text-11"
               aria-label={`Day for ${block.label}`}
               value={String(block.day)}
               onChange={(input) => {
@@ -464,14 +464,14 @@ export default function ScheduleTab({
           }}>
             Balance the days automatically
           </Button>
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             {blockDays === null
               ? `Blocks are split into ${plural(days, "day")} so the longest day is as short as it can be — they cannot be reordered, so the only choice is where the cuts go.`
               : "Following your overrides. A block with no override stays with the one before it."}
           </span>
         </div>
 
-        <p className="text-xs leading-relaxed text-muted">
+        <p className="text-12 leading-relaxed text-muted">
           Matches inside a block run in parallel and share a start time, so a block lasts as
           long as its slowest series — {hhmm(Math.max(0, ...blocks.map((b) => b.lengthMin)))}{" "}
           at the worst here. Once a block is complete the rest of that day re-flows from when
@@ -488,13 +488,13 @@ export default function ScheduleTab({
         >
           <Button
             size="sm"
-            variant="gold"
+            variant="union"
             disabled={busy || !anyStart}
             onClick={() => void fill()}
           >
             {busy ? "Filling…" : "Fill start times"}
           </Button>
-          <span className="text-xs text-muted">
+          <span className="text-12 text-muted">
             Filling also saves these settings. A day left blank is skipped rather than
             guessed at, and a match that has already been played keeps the slot it ran in.
           </span>

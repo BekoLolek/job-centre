@@ -31,7 +31,7 @@ import { type BracketSection, bracketSections, widestColumn } from "./columns";
 
 export type BracketCanvasProps = {
   matches: ResolvedMatch[];
-  /** Ringed in gold. The stage's champion slot, normally. */
+  /** Ringed in union blue. The stage's champion slot, normally. */
   featuredSlot?: string | null;
   /** Rendered under each card — the admin's editor, on the admin's screen. */
   renderExtra?: (match: ResolvedMatch) => ReactNode;

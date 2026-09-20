@@ -86,9 +86,9 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
 type Tab = "overview" | "who" | "teams" | "schedule" | "bracket" | "results";
 
-/** Gold for the winner, then down to muted. Fourth and below share the last one. */
+/** Union blue for the winner, then down to muted. Fourth and below share the last one. */
 const PODIUM_TONE: Record<number, string> = {
-  1: "text-gold",
+  1: "text-union",
   2: "text-chalk",
   3: "text-chalk/80",
 };
@@ -165,20 +165,20 @@ export default async function EventPage({
       <AppHeader section="Events" />
 
       <main className="mx-auto max-w-[1100px] space-y-6 px-4 py-8 sm:px-6">
-        <nav className="text-xs text-muted">
-          <Link href="/events" className="hover:text-gold">
+        <nav className="text-12 text-muted">
+          <Link href="/events" className="hover:text-union">
             ← All events
           </Link>
         </nav>
 
         {event.status === "draft" && (
-          <Alert tone="gold">
+          <Alert tone="union">
             <span className="block font-medium">This event is still a draft</span>
             <span className="mt-1 block opacity-90">
               {eventStatusMeaning("draft")} Publish it from{" "}
               <Link
                 href={`/admin/events/${event.id}`}
-                className="text-gold underline underline-offset-4"
+                className="text-union underline underline-offset-4"
               >
                 the editor
               </Link>
@@ -203,16 +203,16 @@ export default async function EventPage({
                 <EventStatusPill status={event.status} />
                 <ApplicationsPill state={event.applicationsState} />
                 <Badge>{eventTypeLabel(event.type)}</Badge>
-                {event.game && <Badge tone="gold">{event.game.name}</Badge>}
+                {event.game && <Badge tone="union">{event.game.name}</Badge>}
               </div>
 
-              <h1 className="font-display text-5xl leading-[0.9]">{event.title}</h1>
+              <h1 className="font-display text-48 leading-[0.9]">{event.title}</h1>
 
               <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
                 <EventDateRange
                   startsAt={event.startsAt}
                   endsAt={event.endsAt}
-                  className="text-sm"
+                  className="text-14"
                 />
                 <EventSeats seats={event.seats} size="md" />
               </div>
@@ -241,7 +241,7 @@ export default async function EventPage({
               {board.teams.length > 0 && (
                 <div>
                   <Eyebrow className="mb-2">The draft</Eyebrow>
-                  <Button href={`/events/${event.slug}/draft`} variant="gold" size="sm">
+                  <Button href={`/events/${event.slug}/draft`} variant="union" size="sm">
                     Watch the draft room
                   </Button>
                 </div>
@@ -271,7 +271,7 @@ export default async function EventPage({
 
         {/* --- Tabs, only when there is more than one --------------- */}
         {tabs.length > 1 && (
-          <div className="flex flex-wrap rounded-xl border border-hair">
+          <div className="flex flex-wrap rounded-lg border border-hair">
             {tabs.map((entry) => (
               <Link
                 key={entry.value}
@@ -282,7 +282,7 @@ export default async function EventPage({
                 }
                 className={cx(
                   "btn border-0",
-                  tab === entry.value ? "bg-gold/10 text-gold" : "bg-transparent text-muted"
+                  tab === entry.value ? "bg-union-tint-10 text-union" : "bg-transparent text-muted"
                 )}
               >
                 {entry.label}
@@ -311,10 +311,10 @@ export default async function EventPage({
                 {accepted.map((row) => (
                   <li
                     key={row.id}
-                    className="flex items-center gap-3 rounded-xl border border-hair bg-raised px-3 py-2"
+                    className="flex items-center gap-3 rounded-lg border border-hair bg-raised px-3 py-2"
                   >
                     <Avatar name={row.member.displayName ?? "Member"} size="sm" />
-                    <span className="min-w-0 truncate text-sm">
+                    <span className="min-w-0 truncate text-14">
                       {row.member.displayName ?? "Unknown member"}
                     </span>
                   </li>
@@ -323,7 +323,7 @@ export default async function EventPage({
             )}
 
             {queued.length > 0 && (
-              <p className="mt-5 border-t border-hair pt-4 text-xs text-muted">
+              <p className="mt-5 border-t border-hair pt-4 text-12 text-muted">
                 {plural(queued.length, "person", "people")} waiting in the queue. Places are
                 first come, and everyone moves up automatically when a seat frees.
               </p>
@@ -371,7 +371,7 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
         <Panel as="section">
           <Eyebrow className="mb-3">What this is</Eyebrow>
           {event.description ? (
-            <p className="whitespace-pre-line text-sm leading-relaxed text-chalk/85">
+            <p className="whitespace-pre-line text-14 leading-relaxed text-chalk/85">
               {event.description}
             </p>
           ) : (
@@ -396,19 +396,19 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
                   key={question.id}
                   className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair/60 pb-2 last:border-0"
                 >
-                  <span className="text-sm">{question.label}</span>
+                  <span className="text-14">{question.label}</span>
                   <span className="eyebrow">{fieldTypeInfo(question.type).label}</span>
-                  {question.required && <Badge tone="gold">Required</Badge>}
+                  {question.required && <Badge tone="union">Required</Badge>}
                   {question.profileFieldId && (
-                    <span className="ml-auto text-xs text-signal">
+                    <span className="ml-auto text-12 text-body">
                       Already on your profile
                     </span>
                   )}
                 </li>
               ))}
             </ul>
-            <p className="mt-4 text-xs leading-relaxed text-muted">
-              Anything marked <span className="text-signal">already on your profile</span>{" "}
+            <p className="mt-4 text-12 leading-relaxed text-muted">
+              Anything marked <span className="text-body">already on your profile</span>{" "}
               arrives filled in — you confirm it rather than typing it again.
             </p>
           </Panel>
@@ -419,7 +419,7 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
         <Panel as="section">
           <Eyebrow className="mb-4">Getting in</Eyebrow>
 
-          <dl className="space-y-4 text-sm">
+          <dl className="space-y-4 text-14">
             <Line label="Seats">
               <EventSeats seats={event.seats} />
             </Line>
@@ -437,21 +437,21 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
             </Line>
             {event.minRankToEnter && (
               <Line label="Minimum rank">
-                <span className="text-gold">{event.minRankToEnter}</span>
+                <span className="text-union">{event.minRankToEnter}</span>
               </Line>
             )}
             {event.minRankToCaptain && (
               <Line label="To captain">
-                <span className="text-gold">{event.minRankToCaptain}</span>
+                <span className="text-union">{event.minRankToCaptain}</span>
               </Line>
             )}
           </dl>
 
           {event.minRankToEnter && (
-            <p className="mt-5 border-t border-hair pt-4 text-xs leading-relaxed text-muted">
+            <p className="mt-5 border-t border-hair pt-4 text-12 leading-relaxed text-muted">
               Rank comes from your profile, so it is checked before you fill anything in. If
               yours has moved,{" "}
-              <Link href="/me/profile" className="text-gold underline underline-offset-4">
+              <Link href="/me/profile" className="text-union underline underline-offset-4">
                 update it first
               </Link>
               .
@@ -461,7 +461,7 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
 
         <Panel as="section">
           <Eyebrow className="mb-3">Status</Eyebrow>
-          <p className="text-xs leading-relaxed text-muted">
+          <p className="text-12 leading-relaxed text-muted">
             {eventStatusMeaning(event.status)}
           </p>
           <div className="mt-4">

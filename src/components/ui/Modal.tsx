@@ -81,7 +81,7 @@ export default function Modal({
       >
         <div className="border-b border-hair p-5">
           {eyebrow && <Eyebrow className="mb-2">{eyebrow}</Eyebrow>}
-          <h2 className="font-display text-xl leading-tight">{title}</h2>
+          <h2 className="font-display text-20 leading-tight">{title}</h2>
         </div>
 
         <div className="space-y-4 p-5">{children}</div>

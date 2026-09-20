@@ -50,8 +50,8 @@ export default async function AdminAvailabilityPage({
       <main className="mx-auto max-w-[1200px] px-4 py-8 sm:px-6">
         <header className="mb-2">
           <Eyebrow className="mb-2">Admin · Availability</Eyebrow>
-          <h1 className="text-4xl">When everyone is free</h1>
-          <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+          <h1 className="text-36">When everyone is free</h1>
+          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
             The weekly pattern every member set on their profile, stacked up. Darker means more
             people. Point at a slot to see exactly who — and remember a maybe counts for half,
             so a dark cell full of maybes is not the same as a dark cell full of yeses.

@@ -29,43 +29,157 @@
 
 :root {
   /*
-   * Ground and surfaces. Neutral, with the faintest blue cast left in so the
-   * page is not literally grey. Surfaces exist for things that genuinely float
-   * — menus, dialogs, popovers. A region of a page is not a surface.
+   * The palette, and the only place it is written down.
+   *
+   * Every colour is stored once, as space-separated RGB channels, so the same
+   * number serves both plain CSS (through the `--x` alias under each group) and
+   * Tailwind's alpha modifiers: `bg-union/15` compiles to
+   * `rgb(var(--union-rgb) / 0.15)`. `tailwind.config.ts` reads these channels
+   * and holds no colour of its own, so the two cannot drift.
    */
-  --ink: #0a0b0e;
-  --panel: #101216;
-  --raised: #181a1f;
-  --hair: #23252b;
 
   /*
-   * The type ladder. Four steps, neutral, each measured on the ground:
-   * chalk 18:1, body 12:1, muted 7.3:1, dim 4.9:1. Dim is the floor — nothing
-   * on the site sits below AA, including 11px labels.
+   * Ground and surfaces, darkest first. Neutral, with the faintest blue cast
+   * left in so the page is not literally grey. Surfaces exist for things that
+   * genuinely float — menus, dialogs, popovers. A region of a page is not a
+   * surface.
+   *
+   * `sunken` is for an inset control (a field). `raised-hi` and `edge*` are the
+   * hover states of `raised` and `hair`; they used to be loose hex inside the
+   * component rules below.
    */
-  --chalk: #f4f5f7;
-  --body: #c9ccd3;
-  --muted: #9aa0a9;
-  --dim: #7c8089;
+  --ink-rgb: 10 11 14;
+  --sunken-rgb: 14 16 19;
+  --panel-rgb: 16 18 22;
+  --raised-rgb: 24 26 31;
+  --raised-hi-rgb: 31 34 40;
+  --hair-rgb: 35 37 43;
+  --hair-hi-rgb: 42 45 51;
+  --edge-rgb: 46 49 56;
+  --edge-hi-rgb: 58 62 70;
 
-  /* The flag, and the only hue on the page. */
-  --union-blue: #4d7fff;
-  --union-deep: #1c4fdb;
-  --union-red: #ff2d4f;
-  --hot: #ffffff;
+  --ink: rgb(var(--ink-rgb));
+  --sunken: rgb(var(--sunken-rgb));
+  --panel: rgb(var(--panel-rgb));
+  --raised: rgb(var(--raised-rgb));
+  --raised-hi: rgb(var(--raised-hi-rgb));
+  --hair: rgb(var(--hair-rgb));
+  --hair-hi: rgb(var(--hair-hi-rgb));
+  --edge: rgb(var(--edge-rgb));
+  --edge-hi: rgb(var(--edge-hi-rgb));
 
-  /* Names forty components still use. */
-  --gold: var(--union-blue);
-  --ember: var(--union-red);
-  --signal: var(--body);
+  /*
+   * The type ladder. Four steps, neutral, each measured on `raised` — the
+   * brightest surface any of them can land on, and therefore the only ground
+   * worth quoting: chalk 16.0:1, body 10.8:1, muted 6.6:1, dim 4.8:1. On the
+   * page itself they are 18.0, 12.2, 7.5 and 5.4.
+   *
+   * Dim is the floor, and it is #82868f rather than the #7c8089 it was for four
+   * passes. #7c8089 measured 5.0:1 on the ground and was signed off on that
+   * number, but it is 4.4:1 on `raised`, so the token was only safe as long as
+   * nobody put quiet text inside a raised box. Nothing did, which is worse than
+   * it sounds: the failure was one component away at all times and the palette
+   * gave no sign of it. The step is now measured where it is weakest.
+   */
+  --chalk-rgb: 244 245 247;
+  --body-rgb: 201 204 211;
+  --muted-rgb: 154 160 169;
+  --dim-rgb: 130 134 143;
 
-  /* One radius for controls, one for surfaces. There is no third. */
+  --chalk: rgb(var(--chalk-rgb));
+  --body: rgb(var(--body-rgb));
+  --muted: rgb(var(--muted-rgb));
+  --dim: rgb(var(--dim-rgb));
+
+  /*
+   * The flag. Blue is interactive and current, red is live and destructive.
+   * `-deep` fills a primary button, `-hi` is its hover, `-pale` and `-soft` are
+   * the lightened forms the gradients and the destructive button text need in
+   * order to clear AA on the ground.
+   */
+  --union-rgb: 77 127 255;
+  --union-deep-rgb: 28 79 219;
+  --union-hi-rgb: 42 94 232;
+  --union-pale-rgb: 169 196 255;
+  --flare-rgb: 255 45 79;
+  --flare-deep-rgb: 194 16 47;
+  --flare-pale-rgb: 255 107 128;
+  --flare-soft-rgb: 255 128 147;
+  --flare-soft-hi-rgb: 255 154 169;
+  --hot-rgb: 255 255 255;
+
+  --union: rgb(var(--union-rgb));
+  --union-deep: rgb(var(--union-deep-rgb));
+  --union-hi: rgb(var(--union-hi-rgb));
+  --union-pale: rgb(var(--union-pale-rgb));
+  --flare: rgb(var(--flare-rgb));
+  --flare-deep: rgb(var(--flare-deep-rgb));
+  --flare-pale: rgb(var(--flare-pale-rgb));
+  --flare-soft: rgb(var(--flare-soft-rgb));
+  --flare-soft-hi: rgb(var(--flare-soft-hi-rgb));
+  --hot: rgb(var(--hot-rgb));
+
+  /*
+   * Success. The third semantic colour, and new: "saved", "confirmed", "bid in"
+   * and "published" used to be painted in body grey under the name `signal`,
+   * which is not a state anyone can read. 9.9:1 on the ground.
+   */
+  --success-rgb: 63 207 142;
+
+  /*
+   * The chip fills — a badge, a status pill, an alert, a selected filter.
+   *
+   * Each is its hue over the ground, frozen. Written as `bg-union/15` the fill
+   * got lighter as the surface under it got lighter while the blue text on it
+   * did not, so one `<Badge tone="union">` measured 4.65:1 on the page, 4.35:1
+   * inside a panel and 3.98:1 inside a raised box — a component that passed or
+   * failed depending on where somebody put it. Opaque, the ratio is the same
+   * everywhere.
+   *
+   * Two strengths, because the source had two and they do not look alike: a
+   * badge and a status pill were 15%, an alert and a selected filter 10%. The
+   * name carries the percentage rather than a word, because `-soft` already
+   * means "a lighter version of this hue" in `--flare-soft`, and a weaker fill
+   * is not that.
+   *
+   * Each token is that percentage composited over `--ink` and rounded, so on
+   * the page ground the pixels are exactly what they were before. The guard
+   * recomputes all six from the hue and fails if one goes stale.
+   *
+   *   tint-10   union 4.93   flare 5.01   success 8.54
+   *   tint-15   union 4.67   flare 4.75   success 7.79
+   *
+   * A hue wash may still be written as an alpha, and may carry text of its own
+   * hue, provided the pair clears AA on every ground — `bg-union/5 text-union`
+   * on the schedule and the block list is 4.54:1 at worst and stays as it is.
+   * The guard measures the pair either way; it does not care which form it is
+   * written in, only what it computes to.
+   */
+  --union-tint-10-rgb: 17 23 38;
+  --flare-tint-10-rgb: 35 14 21;
+  --success-tint-10-rgb: 15 31 27;
+
+  --union-tint-15-rgb: 20 28 50;
+  --flare-tint-15-rgb: 47 16 24;
+  --success-tint-15-rgb: 18 40 33;
+
+  /*
+   * The overlay scale. Three steps of white over the ground: a hover wash, a
+   * resting tint, a pressed/selected fill. There were six ad-hoc values before,
+   * and nobody could see the difference between 0.05 and 0.055.
+   */
+  --overlay-1: rgb(255 255 255 / 0.04);
+  --overlay-2: rgb(255 255 255 / 0.055);
+  --overlay-3: rgb(255 255 255 / 0.09);
+
+  /*
+   * One radius for controls, one for surfaces, and a pill for badges and dots.
+   * There is no fourth. `tailwind.config.ts` maps `rounded`, `rounded-lg` and
+   * `rounded-full` onto exactly these.
+   */
   --r: 6px;
   --r-lg: 12px;
-
-  /* Kept as aliases so nothing that referenced the old scale breaks. */
-  --r-sm: var(--r);
-  --r-md: var(--r);
+  --r-full: 9999px;
 
   /*
    * Tells the browser to draw its own furniture dark: native select menus,
@@ -179,7 +293,7 @@ h1 {
 }
 
 ::selection {
-  background: rgba(77, 127, 255, 0.3);
+  background: rgb(var(--union-rgb) / 0.3);
   color: var(--hot);
 }
 
@@ -202,9 +316,9 @@ h1 {
 .roundel {
   background: radial-gradient(
     circle,
-    var(--union-red) 0 28%,
+    var(--flare) 0 28%,
     var(--hot) 28% 52%,
-    var(--union-blue) 52% 78%,
+    var(--union) 52% 78%,
     transparent 78%
   );
 }
@@ -212,8 +326,8 @@ h1 {
 .hatch {
   background-image: repeating-linear-gradient(
     -45deg,
-    rgba(255, 255, 255, 0.045) 0px,
-    rgba(255, 255, 255, 0.045) 1px,
+    rgb(var(--hot-rgb) / 0.045) 0px,
+    rgb(var(--hot-rgb) / 0.045) 1px,
     transparent 1px,
     transparent 7px
   );
@@ -247,13 +361,13 @@ h1 {
 }
 
 .btn:hover:not(:disabled) {
-  background: #1f2228;
-  border-color: #2e3138;
+  background: var(--raised-hi);
+  border-color: var(--edge);
   color: var(--chalk);
 }
 
 .btn:focus-visible {
-  outline: 2px solid var(--union-blue);
+  outline: 2px solid var(--union);
   outline-offset: 1px;
 }
 
@@ -263,30 +377,30 @@ h1 {
 }
 
 /* Primary. One per screen, ideally. */
-.btn-gold {
+.btn-union {
   background: var(--union-deep);
   border-color: var(--union-deep);
   color: var(--hot);
   font-weight: 500;
 }
 
-.btn-gold:hover:not(:disabled) {
-  background: #2a5ee8;
-  border-color: #2a5ee8;
+.btn-union:hover:not(:disabled) {
+  background: var(--union-hi);
+  border-color: var(--union-hi);
   color: var(--hot);
 }
 
 /* Destructive. Quiet until you hover it, then unmistakable. */
-.btn-ember {
+.btn-flare {
   background: transparent;
   border-color: var(--hair);
-  color: #ff8093;
+  color: var(--flare-soft);
 }
 
-.btn-ember:hover:not(:disabled) {
-  background: rgba(255, 45, 79, 0.09);
-  border-color: rgba(255, 45, 79, 0.45);
-  color: #ff9aa9;
+.btn-flare:hover:not(:disabled) {
+  background: rgb(var(--flare-rgb) / 0.09);
+  border-color: rgb(var(--flare-rgb) / 0.45);
+  color: var(--flare-soft-hi);
 }
 
 /*
@@ -295,7 +409,7 @@ h1 {
  * borderless field is a guessing game.
  */
 .field {
-  background: #0e1013;
+  background: var(--sunken);
   border: 1px solid var(--hair);
   border-radius: var(--r);
   color: var(--chalk);
@@ -309,12 +423,12 @@ h1 {
 }
 
 .field:hover:not(:focus) {
-  border-color: #2e3138;
+  border-color: var(--edge);
 }
 
 .field:focus {
-  border-color: var(--union-blue);
-  box-shadow: 0 0 0 3px rgba(77, 127, 255, 0.16);
+  border-color: var(--union);
+  box-shadow: 0 0 0 3px rgb(var(--union-rgb) / 0.16);
 }
 
 .field::placeholder {
@@ -387,15 +501,15 @@ h1 {
 .seam-bloom {
   background-image: linear-gradient(
     90deg,
-    #1c4fdb 0%,
-    #4d7fff 12%,
-    #f4f5f7 25%,
-    #ff2d4f 38%,
-    #c2102f 50%,
-    #ff2d4f 62%,
-    #f4f5f7 75%,
-    #4d7fff 88%,
-    #1c4fdb 100%
+    var(--union-deep) 0%,
+    var(--union) 12%,
+    var(--chalk) 25%,
+    var(--flare) 38%,
+    var(--flare-deep) 50%,
+    var(--flare) 62%,
+    var(--chalk) 75%,
+    var(--union) 88%,
+    var(--union-deep) 100%
   );
   background-size: 200% 100%;
   background-repeat: repeat-x;
@@ -426,7 +540,7 @@ h1 {
   position: absolute;
   inset: 0 auto 0 0;
   width: 18%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
+  background: linear-gradient(90deg, transparent, rgb(var(--hot-rgb) / 0.95), transparent);
   animation: seam-sweep 9s cubic-bezier(0.45, 0, 0.2, 1) infinite;
 }
 
@@ -461,13 +575,13 @@ h1 {
 .wordmark-accent {
   background-image: linear-gradient(
     90deg,
-    #4d7fff 0%,
-    #a9c4ff 18%,
-    #f4f5f7 34%,
-    #ff6b80 52%,
-    #f4f5f7 70%,
-    #a9c4ff 86%,
-    #4d7fff 100%
+    var(--union) 0%,
+    var(--union-pale) 18%,
+    var(--chalk) 34%,
+    var(--flare-pale) 52%,
+    var(--chalk) 70%,
+    var(--union-pale) 86%,
+    var(--union) 100%
   );
   background-size: 200% 100%;
   background-repeat: repeat-x;
@@ -480,7 +594,7 @@ h1 {
 @supports not ((background-clip: text) or (-webkit-background-clip: text)) {
   .wordmark-accent {
     background-image: none;
-    color: var(--union-blue);
+    color: var(--union);
   }
 }
 
@@ -505,13 +619,13 @@ h1 {
 
 @keyframes pulse-ring {
   0% {
-    box-shadow: 0 0 0 0 rgba(255, 45, 79, 0.55);
+    box-shadow: 0 0 0 0 rgb(var(--flare-rgb) / 0.55);
   }
   70% {
-    box-shadow: 0 0 0 8px rgba(255, 45, 79, 0);
+    box-shadow: 0 0 0 8px rgb(var(--flare-rgb) / 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(255, 45, 79, 0);
+    box-shadow: 0 0 0 0 rgb(var(--flare-rgb) / 0);
   }
 }
 
@@ -607,11 +721,11 @@ h1 {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2a2d33;
+  background: var(--hair-hi);
   border: 3px solid var(--ink);
-  border-radius: 99px;
+  border-radius: var(--r-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3e46;
+  background: var(--edge-hi);
 }

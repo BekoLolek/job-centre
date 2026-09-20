@@ -71,11 +71,11 @@ export default function ScheduleTab({ matches, dayBySlot, days }: ScheduleTabPro
         </div>
 
         {next ? (
-          <div className="mt-4 border border-gold/40 bg-gold/5 p-4">
+          <div className="mt-4 border border-union/40 bg-union/5 p-4">
             <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <Eyebrow
                 as="span"
-                className={next.needsDecision ? "text-ember" : "text-gold"}
+                className={next.needsDecision ? "text-flare" : "text-union"}
               >
                 {/* A stalled series is at the front of the queue because it is
                     blocking, not because it is about to be played. */}
@@ -87,11 +87,11 @@ export default function ScheduleTab({ matches, dayBySlot, days }: ScheduleTabPro
               </Eyebrow>
               <LocalTime
                 at={next.scheduledAt}
-                className="text-xs text-chalk/80"
+                className="text-12 text-chalk/80"
                 fallback="Time to be confirmed"
               />
             </div>
-            <p className="mt-2 text-lg">
+            <p className="mt-2 text-20">
               {next.nameA} <span className="text-muted">vs</span> {next.nameB}
             </p>
             <Eyebrow className="mt-1 text-dim">
@@ -99,7 +99,7 @@ export default function ScheduleTab({ matches, dayBySlot, days }: ScheduleTabPro
             </Eyebrow>
           </div>
         ) : (
-          <p className="mt-4 text-sm text-muted">
+          <p className="mt-4 text-14 text-muted">
             Every match is in. Waiting on the last result to settle.
           </p>
         )}
@@ -112,7 +112,7 @@ export default function ScheduleTab({ matches, dayBySlot, days }: ScheduleTabPro
       {undated.length > 0 && (
         <Panel as="section">
           <Eyebrow className="mb-1">Not scheduled yet</Eyebrow>
-          <p className="mb-4 text-xs text-muted">
+          <p className="mb-4 text-12 text-muted">
             {plural(undated.length, "match", "matches")} without a time. They take one as soon as
             the day in front of them is laid out.
           </p>
@@ -141,7 +141,7 @@ function DayPanel({
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-hair px-5 py-4">
         <div className="flex flex-wrap items-baseline gap-3">
           {total > 1 && <Eyebrow as="h3">Day {day.day}</Eyebrow>}
-          <LocalTime at={day.startsAt} format="day" className="text-sm text-chalk" />
+          <LocalTime at={day.startsAt} format="day" className="text-14 text-chalk" />
         </div>
         <Eyebrow as="span">
           {plural(day.matches.length, "match", "matches")} · from{" "}
@@ -173,17 +173,17 @@ function MatchRow({ match, highlighted }: { match: ResolvedMatch; highlighted?: 
     <li
       className={cx(
         "-mx-5 flex flex-wrap items-baseline gap-x-4 gap-y-1 px-5 py-3",
-        highlighted && "bg-gold/5"
+        highlighted && "bg-union/5"
       )}
     >
       <LocalTime
         at={match.scheduledAt}
         format="clock"
         fallback="--:--"
-        className={cx("w-14 shrink-0 text-sm", highlighted ? "text-gold" : "text-chalk/80")}
+        className={cx("w-14 shrink-0 text-14", highlighted ? "text-union" : "text-chalk/80")}
       />
 
-      <span className="min-w-0 flex-1 basis-56 text-sm">
+      <span className="min-w-0 flex-1 basis-56 text-14">
         <span className={match.teamAId ? undefined : "italic text-muted"}>{match.nameA}</span>
         <span className="text-muted"> vs </span>
         <span className={match.teamBId ? undefined : "italic text-muted"}>{match.nameB}</span>
@@ -216,13 +216,13 @@ function PlannedDays({ days }: { days: ScheduleDayRow[] }) {
           {days.map((day) => (
             <li
               key={day.id}
-              className="flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-xl border border-hair bg-raised px-4 py-3"
+              className="flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg border border-hair bg-raised px-4 py-3"
             >
               <span className="eyebrow">Day {day.dayIndex + 1}</span>
-              <span className="text-sm">{day.label ?? `Day ${day.dayIndex + 1}`}</span>
+              <span className="text-14">{day.label ?? `Day ${day.dayIndex + 1}`}</span>
               <LocalTime
                 at={day.startsAt}
-                className="ml-auto text-xs"
+                className="ml-auto text-12"
                 fallback="Time to be confirmed"
               />
             </li>
@@ -230,7 +230,7 @@ function PlannedDays({ days }: { days: ScheduleDayRow[] }) {
         </ol>
       )}
 
-      <p className="mt-4 text-xs text-muted">
+      <p className="mt-4 text-12 text-muted">
         The match-by-match running order appears here once the bracket has been drawn and given
         start times.
       </p>

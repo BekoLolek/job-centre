@@ -62,14 +62,14 @@ export default function AnnouncementSettings({
       title="Discord announcements"
       description="Which moments get posted into the channel. They all save together, because the setting is one row."
       aside={
-        <Eyebrow as="span" className={configured ? "text-signal" : "text-muted"}>
+        <Eyebrow as="span" className={configured ? "text-success" : "text-muted"}>
           {configured ? "Webhook configured" : "No webhook — nothing will post"}
         </Eyebrow>
       }
       className="space-y-5"
     >
       {!configured && (
-        <Alert tone="gold">
+        <Alert tone="union">
           No webhook is set, so every switch below is inert. Get one from{" "}
           <strong>Server Settings → Integrations → Webhooks → New Webhook</strong> in
           Discord, pick the channel, copy the URL, and paste it under{" "}
@@ -87,13 +87,13 @@ export default function AnnouncementSettings({
             <div className="min-w-0 flex-1">
               <div
                 className={cx(
-                  "text-sm",
+                  "text-14",
                   value[spec.kind] ? "text-chalk" : "text-muted"
                 )}
               >
                 {spec.label}
               </div>
-              <p className="mt-1 text-xs leading-relaxed text-muted">{spec.detail}</p>
+              <p className="mt-1 text-12 leading-relaxed text-muted">{spec.detail}</p>
             </div>
 
             <Toggle
@@ -113,13 +113,13 @@ export default function AnnouncementSettings({
         ))}
       </ul>
 
-      {error && <Alert tone="ember">{error}</Alert>}
+      {error && <Alert tone="flare">{error}</Alert>}
 
       <div className="flex flex-wrap items-center gap-3 border-t border-hair pt-4">
-        <Button variant="gold" size="sm" onClick={save} disabled={pending || !dirty}>
+        <Button variant="union" size="sm" onClick={save} disabled={pending || !dirty}>
           {pending ? "Saving…" : "Save"}
         </Button>
-        {note && !dirty && <Eyebrow as="span" className="text-signal">{note}</Eyebrow>}
+        {note && !dirty && <Eyebrow as="span" className="text-success">{note}</Eyebrow>}
         {dirty && <Eyebrow as="span">Unsaved</Eyebrow>}
       </div>
     </Section>

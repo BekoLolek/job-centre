@@ -73,7 +73,7 @@ export default function ResultsTab({ matches, dayBySlot }: ResultsTabProps) {
           <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-hair px-5 py-4">
             <div className="flex flex-wrap items-baseline gap-3">
               {days.length > 1 && <Eyebrow as="h3">Day {day.day}</Eyebrow>}
-              <LocalTime at={day.startsAt} format="day" className="text-sm text-chalk" />
+              <LocalTime at={day.startsAt} format="day" className="text-14 text-chalk" />
             </div>
             <Eyebrow as="span">{plural(day.matches.length, "match", "matches")}</Eyebrow>
           </div>
@@ -129,7 +129,7 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
         <Eyebrow as="span" className="text-dim">
           {match.displayLabel} · {seriesLabel(match.bestOf)}
         </Eyebrow>
-        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-[11px] text-muted">
+        <span className="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-11 text-muted">
           {match.scheduledAt && <LocalTime at={match.scheduledAt} />}
           {match.finishedAt && (
             <span className="num">
@@ -138,7 +138,7 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
             </span>
           )}
           {!decided && (
-            <Eyebrow as="span" className="text-ember">
+            <Eyebrow as="span" className="text-flare">
               {matchStatusLabel(match)}
             </Eyebrow>
           )}
@@ -146,18 +146,18 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
       </div>
 
       <div className="mt-2 flex items-baseline gap-3">
-        <span className={cx("min-w-0 flex-1 truncate", aWon ? "text-gold" : "text-chalk/85")}>
+        <span className={cx("min-w-0 flex-1 truncate", aWon ? "text-union" : "text-chalk/85")}>
           {match.nameA}
         </span>
-        <span className="num shrink-0 text-lg">
-          <span className={aWon ? "text-gold" : "text-muted"}>{score.a}</span>
+        <span className="num shrink-0 text-20">
+          <span className={aWon ? "text-union" : "text-muted"}>{score.a}</span>
           <span className="text-muted">–</span>
-          <span className={bWon ? "text-gold" : "text-muted"}>{score.b}</span>
+          <span className={bWon ? "text-union" : "text-muted"}>{score.b}</span>
         </span>
         <span
           className={cx(
             "min-w-0 flex-1 truncate text-right",
-            bWon ? "text-gold" : "text-chalk/85"
+            bWon ? "text-union" : "text-chalk/85"
           )}
         >
           {match.nameB}
@@ -170,7 +170,7 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
             game.played ? (
               <li
                 key={index}
-                className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[11px]"
+                className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-11"
               >
                 <Eyebrow as="span" className="w-6 shrink-0">
                   G{index + 1}
@@ -198,7 +198,7 @@ function ResultRow({ match }: { match: ResolvedMatch }) {
       )}
 
       {games.length === 0 && referees.length > 0 && (
-        <p className="mt-2 text-[11px] text-muted">Referee: {referees.join(" · ")}</p>
+        <p className="mt-2 text-11 text-muted">Referee: {referees.join(" · ")}</p>
       )}
     </li>
   );

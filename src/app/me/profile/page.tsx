@@ -77,18 +77,18 @@ export default async function ProfilePage() {
                 className="h-[72px] w-[72px] shrink-0 rounded-full border border-hair"
               />
             ) : (
-              <Avatar name={name} size="lg" className="h-16 w-16 text-base" />
+              <Avatar name={name} size="lg" className="h-16 w-16 text-16" />
             )}
 
             <div className="min-w-0">
               <Eyebrow className="mb-1">Your Discord identity</Eyebrow>
-              <h1 className="font-display text-4xl leading-none">{name}</h1>
-              <p className="mt-2 text-xs text-muted">
+              <h1 className="font-display text-36 leading-none">{name}</h1>
+              <p className="mt-2 text-12 text-muted">
                 Member since {memberSince}
                 {user.isAdmin && (
                   <>
                     {" · "}
-                    <Badge tone="gold">Admin</Badge>
+                    <Badge tone="union">Admin</Badge>
                   </>
                 )}
               </p>
@@ -99,12 +99,12 @@ export default async function ProfilePage() {
                 className="ml-auto text-right"
                 label="Answered"
                 value={`${answered}/${required}`}
-                valueClassName={answered === required ? "text-signal" : "text-gold"}
+                valueClassName={answered === required ? "text-success" : "text-union"}
               />
             )}
           </div>
 
-          <p className="mt-5 border-t border-hair pt-4 text-xs leading-relaxed text-muted">
+          <p className="mt-5 border-t border-hair pt-4 text-12 leading-relaxed text-muted">
             Your name and avatar come from Discord and refresh every time you sign in, so
             there is nothing to edit here. Everything below is yours, saved as you tap it,
             and it pre-fills the application form for every event — you should never have
@@ -128,11 +128,11 @@ export default async function ProfilePage() {
             title="Nothing to fill in yet"
             description="No games have any questions attached yet, so there is nothing to answer."
           >
-            <p className="text-sm leading-relaxed text-muted">
+            <p className="text-14 leading-relaxed text-muted">
               {user.isAdmin ? (
                 <>
                   You are an admin — add a game and its questions under{" "}
-                  <a href="/admin/games" className="text-gold underline underline-offset-4">
+                  <a href="/admin/games" className="text-union underline underline-offset-4">
                     Admin → Games
                   </a>
                   , and they will appear here straight away.
@@ -145,7 +145,7 @@ export default async function ProfilePage() {
         ) : (
           <div>
             {profile.untouched && (
-              <Alert tone="gold" className="mb-2">
+              <Alert tone="union" className="mb-2">
                 <span className="block font-medium">You haven&apos;t answered anything yet</span>
                 <span className="mt-1 block opacity-90">
                   Tap your way through the sections below — every answer saves on its own,
@@ -161,7 +161,7 @@ export default async function ProfilePage() {
           </div>
         )}
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           Answers are stored per game, so a Jackbox night never asks for your Rivals rank.
         </p>
       </main>

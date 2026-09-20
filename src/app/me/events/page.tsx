@@ -136,8 +136,8 @@ export default async function MyEventsPage({
             <Eyebrow className="mb-2">
               {user.displayName ?? user.name ?? "Member"} · Applications
             </Eyebrow>
-            <h1 className="font-display text-4xl leading-none">My events</h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <h1 className="font-display text-36 leading-none">My events</h1>
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Everything you have applied to. Availability and the &quot;still coming?&quot;
               answer save the moment you tap them — there is no submit button on this page.
             </p>
@@ -148,12 +148,12 @@ export default async function MyEventsPage({
               <StatTile
                 label="Seats"
                 value={accepted}
-                valueClassName={accepted > 0 ? "text-signal" : "text-muted"}
+                valueClassName={accepted > 0 ? "text-body" : "text-muted"}
               />
               <StatTile
                 label="Queueing"
                 value={queued}
-                valueClassName={queued > 0 ? "text-gold" : "text-muted"}
+                valueClassName={queued > 0 ? "text-union" : "text-muted"}
               />
               <StatTile label="Applications" value={rows.length} />
             </div>
@@ -162,7 +162,7 @@ export default async function MyEventsPage({
 
         {/* --- Just withdrew: what it cost, if anything ---------------- */}
         {gone && (
-          <Alert tone="signal">
+          <Alert tone="success">
             <span className="block font-medium">
               You have withdrawn from {gone.title}
             </span>
@@ -184,7 +184,7 @@ export default async function MyEventsPage({
               title="Application submitted"
               description={`Where you stand on ${landed.title} right now.`}
             >
-              <h2 className="font-display text-4xl leading-none">
+              <h2 className="font-display text-36 leading-none">
                 {landed.status === "pending"
                   ? "Awaiting review"
                   : landed.status === "waitlisted"
@@ -193,7 +193,7 @@ export default async function MyEventsPage({
                       : `You're #${landed.waitlistPosition} in the queue`
                     : "You're in"}
               </h2>
-              <p className="mt-3 max-w-2xl text-sm leading-relaxed text-muted">
+              <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
                 {landed.status === "pending"
                   ? "This event is by approval, so the organisers read every application. You will hear either way; until then you can change your availability or withdraw."
                   : landed.status === "waitlisted"
@@ -210,14 +210,14 @@ export default async function MyEventsPage({
               title="Nothing yet"
               description="Apply to an event and it lands here with its status, your place in any queue, and the days you said you could make."
             >
-              <h2 className="font-display text-3xl leading-none">
+              <h2 className="font-display text-30 leading-none">
                 YOU HAVEN&apos;T APPLIED TO ANYTHING
               </h2>
-              <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+              <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
                 Fill in your profile first and the application itself is three taps.
               </p>
               <div className="mt-5 flex flex-wrap gap-2">
-                <Button href="/events" variant="gold">
+                <Button href="/events" variant="union">
                   What&apos;s on
                 </Button>
                 <Button href="/me/profile">My profile</Button>
@@ -233,7 +233,7 @@ export default async function MyEventsPage({
                   description="Seats and queue places you still hold. Availability and the “still coming?” answer save the moment you tap them."
                 >
                   {unanswered > 0 && (
-                    <p className="pb-4 text-xs text-gold">
+                    <p className="pb-4 text-12 text-union">
                       {plural(unanswered, "event")} still waiting on your availability — the
                       day chips below are one tap each.
                     </p>
@@ -265,10 +265,10 @@ export default async function MyEventsPage({
           )}
         </div>
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           Nothing here is ever deleted. A withdrawn application keeps its answers, so
           applying again is still three taps —{" "}
-          <Link href="/events" className="text-gold underline underline-offset-4">
+          <Link href="/events" className="text-union underline underline-offset-4">
             see what else is on
           </Link>
           .

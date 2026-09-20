@@ -3,31 +3,31 @@ import { cx } from "@/components/ui";
 import { formatMoney } from "./money";
 
 /**
- * A money figure — tabular numerals, gold by default, one component.
+ * A money figure — tabular numerals, union blue by default, one component.
  *
- * Gold is the plan's money colour (§5) and every balance on the current board
- * is already `num text-gold`; this is that pairing given a name so the room and
+ * Union blue is the plan's money colour (§5) and every balance on the current board
+ * is already `num text-union`; this is that pairing given a name so the room and
  * the setup screens cannot drift apart on it. `tone` exists because a *spent*
  * figure and a *remaining* figure both want the mono numerals and only one of
  * them wants to look like money you still have.
  */
 
-export type MoneyTone = "gold" | "chalk" | "muted" | "ember" | "signal";
+export type MoneyTone = "union" | "chalk" | "muted" | "flare" | "success";
 export type MoneySize = "sm" | "md" | "lg" | "xl";
 
 const TONE: Record<MoneyTone, string> = {
-  gold: "text-gold",
+  union: "text-union",
   chalk: "text-chalk",
   muted: "text-muted",
-  ember: "text-ember",
-  signal: "text-signal",
+  flare: "text-flare",
+  success: "text-success",
 };
 
 const SIZE: Record<MoneySize, string> = {
-  sm: "text-xs",
-  md: "text-sm",
-  lg: "text-base",
-  xl: "font-display text-2xl leading-none",
+  sm: "text-12",
+  md: "text-14",
+  lg: "text-16",
+  xl: "font-display text-24 leading-none",
 };
 
 export type MoneyProps = {
@@ -43,7 +43,7 @@ export type MoneyProps = {
 
 export default function Money({
   value,
-  tone = "gold",
+  tone = "union",
   size = "md",
   prefix,
   suffix,
@@ -53,7 +53,7 @@ export default function Money({
     <span className={cx("num whitespace-nowrap", SIZE[size], TONE[tone], className)}>
       {prefix}
       {formatMoney(value)}
-      {suffix && <span className="ml-1 text-[10px] text-muted">{suffix}</span>}
+      {suffix && <span className="ml-1 text-11 text-muted">{suffix}</span>}
     </span>
   );
 }

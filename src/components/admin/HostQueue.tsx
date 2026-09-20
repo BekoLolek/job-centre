@@ -52,17 +52,17 @@ export default function HostQueue({ applications }: { applications: HostApplicat
                 key={application.id}
                 className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-3"
               >
-                <span className="text-[14px] text-body">{application.title}</span>
-                <Badge tone={application.status === "approved" ? "signal" : "ember"}>
+                <span className="text-14 text-body">{application.title}</span>
+                <Badge tone={application.status === "approved" ? "success" : "flare"}>
                   {application.status}
                 </Badge>
-                <span className="text-[12.5px] text-dim">
+                <span className="text-13 text-dim">
                   {application.by?.name ?? "somebody"} · {application.gameName}
                 </span>
                 {application.eventId && (
                   <Link
                     href={`/admin/events/${application.eventId}`}
-                    className="text-[12.5px] text-union underline underline-offset-4"
+                    className="text-13 text-union underline underline-offset-4"
                   >
                     the event
                   </Link>
@@ -107,37 +107,37 @@ function Card({ application }: { application: HostApplication }) {
   };
 
   return (
-    <section className="rounded-xl bg-panel px-5 py-4">
+    <section className="rounded-lg bg-panel px-5 py-4">
       {error && <Alert className="mb-3">{error}</Alert>}
 
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="text-[17px] text-chalk">{application.title}</h3>
-        <Badge tone="gold">{application.gameName}</Badge>
+        <h3 className="text-16 text-chalk">{application.title}</h3>
+        <Badge tone="union">{application.gameName}</Badge>
         {application.gameId ? (
-          <Badge tone="signal">Game already set up</Badge>
+          <Badge tone="success">Game already set up</Badge>
         ) : (
-          <Badge tone="ember">Game not in the catalogue</Badge>
+          <Badge tone="flare">Game not in the catalogue</Badge>
         )}
       </div>
 
-      <p className="mt-1 text-[12.5px] text-dim">
+      <p className="mt-1 text-13 text-dim">
         {application.by?.name ?? "Somebody"}
         {application.expectedPlayers ? ` · ${plural(application.expectedPlayers, "player")}` : ""}
         {application.format ? ` · ${application.format}` : ""}
         {application.proposedWhen ? ` · ${application.proposedWhen}` : ""}
       </p>
 
-      <p className="mt-3 max-w-2xl whitespace-pre-wrap text-[13.5px] leading-relaxed text-body">
+      <p className="mt-3 max-w-2xl whitespace-pre-wrap text-13 leading-relaxed text-body">
         {application.summary}
       </p>
 
       {/* The part the admin has to act on before approving. */}
-      <div className="mt-4 rounded-lg bg-white/[0.03] px-4 py-3">
+      <div className="mt-4 rounded bg-overlay-1 px-4 py-3">
         <span className="eyebrow">What they need from each player</span>
-        <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-[13.5px] leading-relaxed text-chalk">
+        <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-13 leading-relaxed text-chalk">
           {application.playerInfoNeeded}
         </p>
-        <p className="mt-2 text-[12.5px] leading-relaxed text-dim">
+        <p className="mt-2 text-13 leading-relaxed text-dim">
           Turn this into the event&rsquo;s questions after approving — Setup → Questions on the
           event, and{" "}
           <Link href="/admin/games" className="text-union underline underline-offset-4">
@@ -157,20 +157,20 @@ function Card({ application }: { application: HostApplication }) {
         />
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            variant="gold"
+            variant="union"
             disabled={busy !== null}
             onClick={() => void run("approve")}
           >
             {busy === "approve" ? "Approving…" : "Approve and create the event"}
           </Button>
           <Button
-            variant="ember"
+            variant="flare"
             disabled={busy !== null}
             onClick={() => void run("decline")}
           >
             {busy === "decline" ? "Declining…" : "Decline"}
           </Button>
-          <span className={cx("text-[12.5px] text-dim")}>
+          <span className={cx("text-13 text-dim")}>
             Approving makes a draft event and hands it to them. It does not publish anything.
           </span>
         </div>

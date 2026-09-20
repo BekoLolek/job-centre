@@ -172,7 +172,7 @@ export default function ApplicantsTab({
       {error && <Alert>{error}</Alert>}
 
       {overCapacity && (
-        <Alert tone="gold">
+        <Alert tone="union">
           This event is over its capacity of {event.seats.capacity}. That is allowed — an
           override is the point of §8.3 — but nothing will stop you doing it again, so it is
           worth being deliberate.
@@ -180,7 +180,7 @@ export default function ApplicantsTab({
       )}
 
       {offer && (
-        <Alert tone="signal">
+        <Alert tone="success">
           <span className="block font-medium">
             {plural(offer.seatsLeft, "seat")} free ·{" "}
             {plural(event.seats.waitlisted, "person", "people")} queueing
@@ -190,7 +190,7 @@ export default function ApplicantsTab({
             Nobody has been moved.
           </span>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" variant="gold" onClick={() => void takeOffer()}>
+            <Button size="sm" variant="union" onClick={() => void takeOffer()}>
               Promote {offer.name}
             </Button>
             <Button size="sm" onClick={() => setOffer(null)}>
@@ -207,7 +207,7 @@ export default function ApplicantsTab({
             label="Seats left"
             value={event.seats.seatsLeft === null ? "∞" : event.seats.seatsLeft}
             valueClassName={
-              event.seats.seatsLeft === 0 ? "text-gold" : "text-signal"
+              event.seats.seatsLeft === 0 ? "text-union" : "text-body"
             }
           />
           <StatTile
@@ -221,13 +221,13 @@ export default function ApplicantsTab({
           <StatTile
             label="In the queue"
             value={event.seats.waitlisted}
-            valueClassName={event.seats.waitlisted > 0 ? "text-gold" : "text-muted"}
+            valueClassName={event.seats.waitlisted > 0 ? "text-union" : "text-muted"}
           />
           {entryMode(event.config) === "approval" && (
             <StatTile
               label="Awaiting review"
               value={counts.get("pending") ?? 0}
-              valueClassName={(counts.get("pending") ?? 0) > 0 ? "text-gold" : "text-muted"}
+              valueClassName={(counts.get("pending") ?? 0) > 0 ? "text-union" : "text-muted"}
             />
           )}
           <StatTile label="Applications" value={applicants.length} />
@@ -344,10 +344,10 @@ function ApplicantRow({
             aria-expanded={open}
             className="flex min-w-0 items-center gap-2 text-left"
           >
-            <span className="font-mono text-xs text-muted">{open ? "▾" : "▸"}</span>
+            <span className="font-mono text-12 text-muted">{open ? "▾" : "▸"}</span>
             <Avatar name={name} size="sm" />
             <span className="min-w-0">
-              <span className="block truncate text-sm">{name}</span>
+              <span className="block truncate text-14">{name}</span>
               {row.waitlistPosition !== null && (
                 <span className="eyebrow block">Queue #{row.waitlistPosition}</span>
               )}
@@ -363,11 +363,11 @@ function ApplicantRow({
         </TableCell>
 
         <TableCell>
-          <span className="block text-sm">{row.rank ?? "—"}</span>
+          <span className="block text-14">{row.rank ?? "—"}</span>
           <span
             className={cx(
               "eyebrow block",
-              row.eligibility.canEnter ? "text-muted" : "text-ember"
+              row.eligibility.canEnter ? "text-muted" : "text-flare"
             )}
           >
             {row.eligibility.canEnter
@@ -378,7 +378,7 @@ function ApplicantRow({
           </span>
         </TableCell>
 
-        <TableCell numeric className="text-xs text-muted" suppressHydrationWarning>
+        <TableCell numeric className="text-12 text-muted" suppressHydrationWarning>
           {whenText(row.submittedAt) ?? "—"}
         </TableCell>
 
@@ -408,7 +408,7 @@ function ApplicantRow({
             </Button>
             <Button
               size="sm"
-              variant="ember"
+              variant="flare"
               disabled={busy || row.status === "declined"}
               onClick={() => onDecide("declined")}
             >
@@ -497,9 +497,9 @@ function ApplicantDetail({
               <div key={question.id} className="flex flex-wrap gap-x-3 border-b border-hair/40 pb-2">
                 <dt className="eyebrow min-w-[9rem] flex-1 text-chalk/70">
                   {question.label}
-                  {question.required && <span className="text-gold"> *</span>}
+                  {question.required && <span className="text-union"> *</span>}
                 </dt>
-                <dd className="min-w-0 flex-[2] text-sm">
+                <dd className="min-w-0 flex-[2] text-14">
                   {formatAnswer(
                     {
                       type: question.type,
@@ -517,19 +517,19 @@ function ApplicantDetail({
 
         <div className="border-t border-hair pt-3">
           <Eyebrow className="mb-1">Eligibility</Eyebrow>
-          <p className={cx("text-xs", row.eligibility.canEnter ? "text-muted" : "text-ember")}>
+          <p className={cx("text-12", row.eligibility.canEnter ? "text-muted" : "text-flare")}>
             {row.eligibility.enterReason}
           </p>
           <p
             className={cx(
-              "mt-1 text-xs",
-              row.eligibility.canCaptain ? "text-muted" : "text-gold/80"
+              "mt-1 text-12",
+              row.eligibility.canCaptain ? "text-muted" : "text-union"
             )}
           >
             {row.eligibility.captainReason}
           </p>
           {!row.eligibility.canEnter && (
-            <p className="mt-2 text-xs text-muted">
+            <p className="mt-2 text-12 text-muted">
               Accept still works. §8.3 is explicit that gates are guidance and an override
               must exist.
             </p>
@@ -549,7 +549,7 @@ function ApplicantDetail({
             <div className="space-y-2">
               {event.days.map((day, index) => (
                 <div key={day.id} className="flex flex-wrap items-center gap-2">
-                  <span className="min-w-[9rem] text-xs">
+                  <span className="min-w-[9rem] text-12">
                     <span className="num text-muted">Day {index + 1}</span>{" "}
                     <span suppressHydrationWarning className="text-chalk/70">
                       {day.label ?? whenText(day.startsAt) ?? "No date"}
@@ -574,7 +574,7 @@ function ApplicantDetail({
                   </ChoiceRow>
                 </div>
               ))}
-              <p className="text-xs text-muted">
+              <p className="text-12 text-muted">
                 Theirs to answer, but yours to correct — “he messaged me, he can make
                 Saturday after all”. Tapping the lit chip clears it again.
               </p>
@@ -599,12 +599,12 @@ function ApplicantDetail({
               {savingNote ? "Saving…" : "Save note"}
             </Button>
             {savedNote && (
-              <Eyebrow as="span" className="text-signal">
+              <Eyebrow as="span" className="text-success">
                 ✓ Saved
               </Eyebrow>
             )}
             {row.confirmation && (
-              <Badge tone={row.confirmation === "in" ? "signal" : "ember"}>
+              <Badge tone={row.confirmation === "in" ? "success" : "flare"}>
                 Confirmed {row.confirmation}
               </Badge>
             )}

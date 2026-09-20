@@ -48,11 +48,11 @@ type ItemVisualProps = {
 function ItemBody({ label, count, dot, current, size }: ItemVisualProps) {
   return (
     <>
-      <span className={cx(size === "sm" ? "text-[13px]" : "text-[13.5px]")}>{label}</span>
+      <span className={cx(size === "sm" ? "text-13" : "text-13")}>{label}</span>
       {count !== undefined && (
         <span
           className={cx(
-            "num text-[12px] tabular-nums transition-colors",
+            "num text-12 tabular-nums transition-colors",
             current ? "text-muted" : "text-dim"
           )}
         >

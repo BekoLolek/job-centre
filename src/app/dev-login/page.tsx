@@ -48,11 +48,11 @@ export default async function DevLoginPage({
     <main className="mx-auto flex min-h-screen max-w-lg items-center px-4 py-16">
       <div className="w-full space-y-5 rise">
         <Eyebrow>Development only</Eyebrow>
-        <h1 className="font-display text-4xl leading-none">
+        <h1 className="font-display text-36 leading-none">
           Development sign-in
         </h1>
 
-        <Alert tone="ember">
+        <Alert tone="flare">
           <span className="block font-medium">This is not a real sign-in</span>
           <span className="mt-1 block opacity-90">
             There is no Discord application configured yet, so this mints a session for a
@@ -64,17 +64,17 @@ export default async function DevLoginPage({
 
         <Panel padding="md">
           <Eyebrow className="mb-3">Who you will be</Eyebrow>
-          <dl className="space-y-2 text-sm">
+          <dl className="space-y-2 text-14">
             <Row label="Discord id">
-              <span className="font-mono text-xs">{config.discordId}</span>
+              <span className="font-mono text-12">{config.discordId}</span>
               {config.discordId === DEV_LOGIN_DISCORD_ID && (
-                <span className="ml-2 text-xs text-muted">(obviously fake by design)</span>
+                <span className="ml-2 text-12 text-muted">(obviously fake by design)</span>
               )}
             </Row>
             <Row label="Name">{config.displayName}</Row>
             <Row label="Admin">
               {config.isAdmin ? (
-                <Badge tone="gold">Yes — DEV_LOGIN_ADMIN=1</Badge>
+                <Badge tone="union">Yes — DEV_LOGIN_ADMIN=1</Badge>
               ) : (
                 <Badge>No — set DEV_LOGIN_ADMIN=1 for /admin/games</Badge>
               )}
@@ -85,7 +85,7 @@ export default async function DevLoginPage({
         {user ? (
           <Panel padding="md">
             <Eyebrow className="mb-3">Already signed in</Eyebrow>
-            <p className="mb-4 text-sm text-muted">
+            <p className="mb-4 text-14 text-muted">
               You are signed in as <span className="text-chalk">{user.displayName}</span>
               {user.isAdmin ? " (admin)" : " (not an admin)"}. Signing in again picks up a
               changed <code>DEV_LOGIN_ADMIN</code>.
@@ -93,12 +93,12 @@ export default async function DevLoginPage({
             <div className="flex flex-wrap gap-2">
               <form action={devSignInAction}>
                 <input type="hidden" name="to" value={to} />
-                <Button variant="gold" size="sm">
+                <Button variant="union" size="sm">
                   Sign in again
                 </Button>
               </form>
               <form action={devSignOutAction}>
-                <Button variant="ember" size="sm">
+                <Button variant="flare" size="sm">
                   End dev session
                 </Button>
               </form>
@@ -110,7 +110,7 @@ export default async function DevLoginPage({
         ) : (
           <form action={devSignInAction} className="flex flex-wrap items-center gap-3">
             <input type="hidden" name="to" value={to} />
-            <Button variant="gold">Sign in as the development user</Button>
+            <Button variant="union">Sign in as the development user</Button>
             <span className="eyebrow">Lands on {to}</span>
           </form>
         )}

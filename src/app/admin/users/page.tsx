@@ -58,8 +58,8 @@ export default async function AdminUsersPage() {
         <header className="flex flex-wrap items-end gap-6">
           <div>
             <Eyebrow className="mb-2">Admin · Members</Eyebrow>
-            <h1 className="font-display text-4xl leading-none">Members</h1>
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
+            <h1 className="font-display text-36 leading-none">Members</h1>
+            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               Everyone who has ever signed in. Grant and revoke the admin flag here rather
               than by editing an environment variable and redeploying, and keep private
               notes about a member that nothing public ever shows.
@@ -71,7 +71,7 @@ export default async function AdminUsersPage() {
             <StatTile
               label="Admins"
               value={view.admins}
-              valueClassName={view.admins > 1 ? "text-gold" : "text-ember"}
+              valueClassName={view.admins > 1 ? "text-union" : "text-flare"}
             />
             <StatTile label="Signed in" value={`${seen}/${view.total}`} />
           </div>
@@ -90,7 +90,7 @@ export default async function AdminUsersPage() {
           <UsersManager view={view} currentUserId={admin.id} />
         </Section>
 
-        <p className="pb-4 text-center text-xs text-muted">
+        <p className="pb-4 text-center text-12 text-muted">
           Nothing on this page deletes a member. Notes are append-only, like the audit log —
           a note is a record of what somebody thought at the time.
         </p>
