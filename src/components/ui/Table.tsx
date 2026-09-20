@@ -3,10 +3,12 @@ import { cx } from "./cx";
 
 /** Use for any data grid that should read like the standings table. Wrap in a Panel. */
 
-export type TableAlign = "left" | "right";
+/** `right` for figures, `center` for a column of switches or marks. */
+export type TableAlign = "left" | "center" | "right";
 
 const ALIGN: Record<TableAlign, string> = {
   left: "text-left",
+  center: "text-center",
   right: "text-right",
 };
 

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Alert, Badge, Button, Field, Select, cx } from "@/components/ui";
+import { Alert, Badge, Button, Field, Panel, Select } from "@/components/ui";
 import type { HostApplication } from "@/lib/hosting";
 import {
   applyToHostAction,
@@ -179,7 +179,7 @@ export default function HostApplyForm({
             />
           </div>
 
-          <div className="rounded-lg bg-panel px-5 py-4">
+          <Panel tone="wash" padding="sm">
             <Field
               label="What do you need to know about each player?"
               placeholder="Their in-game name, and whether they own the DLC."
@@ -192,7 +192,7 @@ export default function HostApplyForm({
               own — whatever you would otherwise have to ask forty people individually. An
               admin turns it into the form before handing the event over.
             </p>
-          </div>
+          </Panel>
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
@@ -227,11 +227,10 @@ function MineRow({
   onWithdraw: () => void;
 }) {
   return (
-    <div
-      className={cx(
-        "rounded-lg bg-panel px-5 py-4",
-        application.status === "withdrawn" && "opacity-60"
-      )}
+    <Panel
+      tone="wash"
+      padding="sm"
+      className={application.status === "withdrawn" ? "opacity-60" : undefined}
     >
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="text-16 text-chalk">{application.title}</span>
@@ -265,6 +264,6 @@ function MineRow({
           </Button>
         </div>
       )}
-    </div>
+    </Panel>
   );
 }

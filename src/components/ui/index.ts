@@ -16,6 +16,9 @@ export type { BadgeProps, BadgeTone } from "./Badge";
 export { default as Button } from "./Button";
 export type { ButtonSize, ButtonVariant } from "./Button";
 
+export { default as Checkbox } from "./Checkbox";
+export type { CheckboxProps } from "./Checkbox";
+
 export { default as ChoiceChip, ChoiceRow } from "./ChoiceChip";
 export type { ChoiceChipProps } from "./ChoiceChip";
 

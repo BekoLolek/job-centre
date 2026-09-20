@@ -3,7 +3,23 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Alert, Badge, Button, EmptyState, cx, plural } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  EmptyState,
+  Panel,
+  Section,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeadCell,
+  TableRow,
+  cx,
+  plural,
+} from "@/components/ui";
 import LocalTime from "@/components/format/LocalTime";
 import type { NotificationKind } from "@/db/schema";
 import type { Notification } from "@/lib/notifications";
@@ -59,8 +75,8 @@ export default function NotificationList({
   };
 
   return (
-    <div className="space-y-8">
-      {error && <Alert>{error}</Alert>}
+    <div>
+      {error && <Alert className="mb-8">{error}</Alert>}
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -150,6 +166,13 @@ function Row({ row, onRead }: { row: Notification; onRead: () => void }) {
 /* The switches                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The two switch columns, which are the same width for the same reason: wide
+ * enough for the word "Discord" at eyebrow size, and no wider, so the rest of
+ * the row goes to the label. Change it once.
+ */
+const SWITCH_COL = "w-[4.5rem]";
+
 function Prefs({
   prefs,
   discordAvailable,
@@ -192,92 +215,98 @@ function Prefs({
   };
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-20 text-chalk">What you hear about</h2>
-        <p className="mt-1.5 max-w-2xl text-13 leading-relaxed text-muted">
-          Everything is on here and off on Discord to start with. A dot on this page is
-          something you find when you come looking; a direct message arrives whether you
-          wanted it or not, which is not a thing to opt somebody into on their behalf.
-        </p>
+    <Section
+      title="What you hear about"
+      description="Everything is on here and off on Discord to start with. A dot on this page is something you find when you come looking; a direct message arrives whether you wanted it or not, which is not a thing to opt somebody into on their behalf."
+    >
+      <div className="space-y-4">
+        {!discordAvailable && (
+          <Alert>
+            <span className="block font-medium">Direct messages are not switched on</span>
+            <span className="mt-1 block opacity-90">
+              They need a Discord bot, which is a different thing from the webhook the site
+              already posts announcements with — there is no way to send a DM through a
+              webhook. Until an admin adds one, the Discord column here does nothing.
+            </span>
+          </Alert>
+        )}
+
+        {discordAvailable && !hasDiscordAccount && (
+          <Alert>
+            Your account has no Discord id on it, so there is nowhere to send a direct
+            message. Signing in through Discord once fixes that.
+          </Alert>
+        )}
+
+        {/*
+         * No `min-w-` on the table, unlike the standings and the applicants
+         * grid. Those are wide by nature — a column per day, a column per
+         * result — and scrolling one sideways on a phone is the honest answer.
+         * This is three columns, two of them 72px switches, and the third
+         * wraps: it fits a 375px screen with room to spare, and making
+         * somebody scroll sideways to reach a row of switches would be worse
+         * than the stacked list it replaced. The `overflow-x-auto` stays as
+         * the safety net it is everywhere else, and never fires at this width.
+         */}
+        <Panel tone="wash" padding="none" className="overflow-x-auto overflow-y-hidden">
+          <Table>
+            <TableHead>
+              <TableHeadCell>Notification</TableHeadCell>
+              <TableHeadCell align="center" className={SWITCH_COL}>
+                Here
+              </TableHeadCell>
+              <TableHeadCell align="center" className={SWITCH_COL}>
+                Discord
+              </TableHeadCell>
+            </TableHead>
+            <TableBody>
+              {prefs.map((spec) => {
+                const channels = state.get(spec.kind) ?? spec.channels;
+                return (
+                  <TableRow key={spec.kind}>
+                    <TableCell>
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-14 text-chalk">{spec.label}</span>
+                        <Badge>{spec.audience}</Badge>
+                      </div>
+                      <p className="mt-0.5 max-w-xl text-13 leading-relaxed text-muted">
+                        {spec.blurb}
+                      </p>
+                    </TableCell>
+
+                    <TableCell align="center" className={SWITCH_COL}>
+                      {spec.fixed ? (
+                        <span
+                          className="text-12 text-dim"
+                          title="This is the reply to something you asked for, so it cannot be switched off."
+                        >
+                          Always
+                        </span>
+                      ) : (
+                        <Checkbox
+                          aria-label={`${spec.label} here`}
+                          checked={channels.inApp}
+                          disabled={busy === spec.kind}
+                          onChange={(value) => void flip(spec.kind, "inApp", value)}
+                        />
+                      )}
+                    </TableCell>
+
+                    <TableCell align="center" className={SWITCH_COL}>
+                      <Checkbox
+                        aria-label={`${spec.label} on Discord`}
+                        checked={channels.discord}
+                        disabled={busy === spec.kind || !discordAvailable}
+                        onChange={(value) => void flip(spec.kind, "discord", value)}
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </Panel>
       </div>
-
-      {!discordAvailable && (
-        <Alert>
-          <span className="block font-medium">Direct messages are not switched on</span>
-          <span className="mt-1 block opacity-90">
-            They need a Discord bot, which is a different thing from the webhook the site
-            already posts announcements with — there is no way to send a DM through a
-            webhook. Until an admin adds one, the Discord column here does nothing.
-          </span>
-        </Alert>
-      )}
-
-      {discordAvailable && !hasDiscordAccount && (
-        <Alert>
-          Your account has no Discord id on it, so there is nowhere to send a direct message.
-          Signing in through Discord once fixes that.
-        </Alert>
-      )}
-
-      <div className="overflow-hidden rounded-lg bg-panel">
-        <div className="flex items-center gap-4 border-b border-hair px-5 py-2.5">
-          <span className="eyebrow flex-1">Notification</span>
-          <span className="eyebrow w-[4.5rem] text-center">Here</span>
-          <span className="eyebrow w-[4.5rem] text-center">Discord</span>
-        </div>
-
-        {prefs.map((spec) => {
-          const channels = state.get(spec.kind) ?? spec.channels;
-          return (
-            <div
-              key={spec.kind}
-              className="flex flex-wrap items-center gap-4 border-t border-hair px-5 py-3.5 first:border-t-0"
-            >
-              <div className="min-w-[12rem] flex-1">
-                <div className="flex flex-wrap items-baseline gap-2">
-                  <span className="text-14 text-chalk">{spec.label}</span>
-                  <Badge>{spec.audience}</Badge>
-                </div>
-                <p className="mt-0.5 max-w-xl text-13 leading-relaxed text-muted">
-                  {spec.blurb}
-                </p>
-              </div>
-
-              <div className="w-[4.5rem] text-center">
-                {spec.fixed ? (
-                  <span
-                    className="text-12 text-dim"
-                    title="This is the reply to something you asked for, so it cannot be switched off."
-                  >
-                    Always
-                  </span>
-                ) : (
-                  <input
-                    type="checkbox"
-                    aria-label={`${spec.label} here`}
-                    className="h-4 w-4 accent-union"
-                    checked={channels.inApp}
-                    disabled={busy === spec.kind}
-                    onChange={(input) => void flip(spec.kind, "inApp", input.target.checked)}
-                  />
-                )}
-              </div>
-
-              <div className="w-[4.5rem] text-center">
-                <input
-                  type="checkbox"
-                  aria-label={`${spec.label} on Discord`}
-                  className="h-4 w-4 accent-union"
-                  checked={channels.discord}
-                  disabled={busy === spec.kind || !discordAvailable}
-                  onChange={(input) => void flip(spec.kind, "discord", input.target.checked)}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    </Section>
   );
 }

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Badge, Button, Field, cx, plural } from "@/components/ui";
+import { Alert, Badge, Button, EmptyState, Field, Panel, Select, cx, plural } from "@/components/ui";
 import type { SuggestionStatus } from "@/db/schema";
 import type { Suggestion, SuggestionVote } from "@/lib/suggestions";
 import {
@@ -113,7 +113,7 @@ export default function SuggestionBox({
 
       {/* --- Add one -------------------------------------------------- */}
       {signedIn ? (
-        <div className="space-y-3 rounded-lg bg-panel px-5 py-4">
+        <Panel tone="wash" padding="sm" className="space-y-3">
           <div className="flex flex-wrap items-end gap-3">
             <Field
               label="What should we run?"
@@ -151,7 +151,7 @@ export default function SuggestionBox({
               Yours counts as the first vote.
             </span>
           </div>
-        </div>
+        </Panel>
       ) : (
         <Alert>
           Anyone can read this list. Sign in to add a suggestion or to vote on one.
@@ -160,9 +160,7 @@ export default function SuggestionBox({
 
       {/* --- The list ------------------------------------------------- */}
       {rows.length === 0 ? (
-        <p className="text-13 text-muted">
-          Nothing suggested yet. The first one is the hardest.
-        </p>
+        <EmptyState>Nothing suggested yet. The first one is the hardest.</EmptyState>
       ) : (
         <div className="divide-y divide-hair/60">
           {rows.map((row) => (
@@ -280,8 +278,9 @@ function Row({
         {(canRemove || isAdmin) && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {isAdmin && (
-              <select
-                className="field w-auto py-1 text-13"
+              <Select
+                className="w-auto py-1 text-13"
+                aria-label="Status"
                 value={row.status}
                 onChange={(input) => onMark(input.target.value as SuggestionStatus)}
               >
@@ -290,7 +289,7 @@ function Row({
                     {STATUS_LABEL[status]}
                   </option>
                 ))}
-              </select>
+              </Select>
             )}
             {canRemove && (
               <Button size="sm" variant="flare" onClick={onRemove}>

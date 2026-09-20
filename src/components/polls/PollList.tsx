@@ -2,7 +2,19 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Badge, Button, Field, Modal, cx, plural } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  EmptyState,
+  Eyebrow,
+  Field,
+  Modal,
+  Panel,
+  cx,
+  plural,
+} from "@/components/ui";
 import LocalTime from "@/components/format/LocalTime";
 import type { Poll } from "@/lib/polls";
 import {
@@ -54,7 +66,7 @@ export default function PollList({
       )}
 
       {polls.length === 0 ? (
-        <p className="text-13 text-muted">No polls yet.</p>
+        <EmptyState>No polls yet.</EmptyState>
       ) : (
         <div className="space-y-3">
           {polls.map((poll) => (
@@ -116,7 +128,7 @@ function PollCard({
   }
 
   return (
-    <section className="rounded-lg bg-panel px-5 py-4">
+    <Panel as="section" tone="wash" padding="sm">
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1">
           <h3 className="text-16 text-chalk">{poll.question}</h3>
@@ -179,12 +191,7 @@ function PollCard({
               {count > 0 && (
                 <span className="relative mt-1.5 flex flex-wrap gap-1">
                   {option.voters.map((voter) => (
-                    <span
-                      key={voter.id}
-                      className="rounded bg-overlay-2 px-1.5 py-0.5 text-12 text-muted"
-                    >
-                      {voter.name}
-                    </span>
+                    <Badge key={voter.id}>{voter.name}</Badge>
                   ))}
                 </span>
               )}
@@ -240,7 +247,7 @@ function PollCard({
           </Button>
         </div>
       )}
-    </section>
+    </Panel>
   );
 }
 
@@ -310,7 +317,7 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
   };
 
   return (
-    <section className="space-y-4 rounded-lg bg-panel px-5 py-4">
+    <Panel as="section" tone="wash" padding="sm" className="space-y-4">
       {error && <Alert>{error}</Alert>}
 
       <Field
@@ -329,7 +336,7 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
       />
 
       <div className="space-y-2">
-        <span className="eyebrow">Options</span>
+        <Eyebrow as="span">Options</Eyebrow>
         {options.map((option, index) => (
           <div key={index} className="flex items-center gap-2">
             <Field
@@ -369,15 +376,12 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
       </div>
 
       <div className="flex flex-wrap items-end gap-4">
-        <label className="flex cursor-pointer items-center gap-2 pb-1">
-          <input
-            type="checkbox"
-            checked={multiple}
-            onChange={(input) => setMultiple(input.target.checked)}
-            className="h-4 w-4 accent-union"
-          />
-          <span className="text-13 text-body">Let people pick more than one</span>
-        </label>
+        <Checkbox
+          label="Let people pick more than one"
+          checked={multiple}
+          onChange={setMultiple}
+          className="pb-1"
+        />
 
         <Field
           label="Closes"
@@ -427,7 +431,7 @@ function PollComposer({ poll, onDone }: { poll?: Poll; onDone: () => void }) {
           </div>
         )}
       </Modal>
-    </section>
+    </Panel>
   );
 }
 

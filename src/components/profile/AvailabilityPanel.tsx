@@ -1,7 +1,17 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Alert, Badge, Button, Field, Icon, Select, cx, plural } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  ChoiceChip,
+  Field,
+  Icon,
+  Panel,
+  Select,
+  plural,
+} from "@/components/ui";
 import {
   type AvailabilityAnswer,
   type AvailabilityException,
@@ -244,7 +254,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
       </div>
 
       {/* --- The week ------------------------------------------------ */}
-      <div className="overflow-hidden rounded-lg bg-panel">
+      <Panel tone="wash" padding="none" className="overflow-hidden">
         {DAYS.map((label, weekday) => {
           const mode = modeFor(weekday);
           const windows = rulesFor(weekday);
@@ -255,16 +265,27 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
             >
               <span className="w-[6.5rem] shrink-0 pt-2 text-14 text-chalk">{label}</span>
 
-              <Select
-                aria-label={`${label} availability`}
-                value={mode}
-                wrapperClassName="w-[11rem] shrink-0"
-                onChange={(input) => setMode(weekday, input.target.value as DayMode)}
-              >
-                <option value="none">Not free</option>
-                <option value="all">Free all day</option>
-                <option value="times">Free at these times</option>
-              </Select>
+              {/*
+               * The sizing goes on a wrapper, not on the control. This Select
+               * has no label, hint or error, so FieldShell hands back the bare
+               * `<select>` and drops `wrapperClassName` on the floor — which is
+               * why this dropdown had been rendering full-width. Moving the
+               * classes to `className` does not fix it either: `.field` sets
+               * `width: 100%` and is defined after `@tailwind utilities` at the
+               * same specificity, so it beats any `w-*` utility on the element
+               * itself. A wrapper the field can fill is the one thing that works.
+               */}
+              <div className="w-[11rem] shrink-0">
+                <Select
+                  aria-label={`${label} availability`}
+                  value={mode}
+                  onChange={(input) => setMode(weekday, input.target.value as DayMode)}
+                >
+                  <option value="none">Not free</option>
+                  <option value="all">Free all day</option>
+                  <option value="times">Free at these times</option>
+                </Select>
+              </div>
 
               {mode === "times" && (
                 <div className="min-w-0 flex-1 space-y-2">
@@ -314,7 +335,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
             </div>
           );
         })}
-      </div>
+      </Panel>
 
       {/* --- Odd days ------------------------------------------------ */}
       <div className="space-y-3">
@@ -331,7 +352,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
         </div>
 
         {draft.exceptions.length > 0 && (
-          <div className="overflow-hidden rounded-lg bg-panel">
+          <Panel tone="wash" padding="none" className="overflow-hidden">
             {draft.exceptions.map((exception, index) => (
               <div
                 key={index}
@@ -398,7 +419,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
                 </Button>
               </div>
             ))}
-          </div>
+          </Panel>
         )}
 
         <Button size="sm" onClick={addException}>
@@ -436,9 +457,9 @@ function TimeSelect({
 }) {
   const steps = useMemo(() => clockSteps(min, max), [min, max]);
   return (
-    <select
+    <Select
       aria-label={label}
-      className="field w-auto py-1.5 text-13"
+      className="w-auto py-1.5 text-13"
       value={value}
       onChange={(input) => onChange(Number(input.target.value))}
     >
@@ -450,7 +471,7 @@ function TimeSelect({
           {clockWithDay(minute)}
         </option>
       ))}
-    </select>
+    </Select>
   );
 }
 
@@ -463,16 +484,9 @@ function MaybeToggle({
   onChange: (state: "yes" | "maybe") => void;
 }) {
   return (
-    <button
-      type="button"
-      aria-pressed={state === "maybe"}
+    <ChoiceChip
+      selected={state === "maybe"}
       onClick={() => onChange(state === "maybe" ? "yes" : "maybe")}
-      className={cx(
-        "rounded px-2.5 py-1.5 text-13 font-medium transition-colors",
-        state === "maybe"
-          ? "bg-union-tint-15 text-union"
-          : "bg-overlay-2 text-muted hover:text-chalk"
-      )}
       title={
         state === "maybe"
           ? "Marked as a maybe — click to make it definite"
@@ -480,6 +494,6 @@ function MaybeToggle({
       }
     >
       {state === "maybe" ? "Maybe" : "Definite"}
-    </button>
+    </ChoiceChip>
   );
 }
