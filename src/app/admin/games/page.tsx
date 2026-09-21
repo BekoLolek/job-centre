@@ -39,7 +39,7 @@ export default async function AdminGamesPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 

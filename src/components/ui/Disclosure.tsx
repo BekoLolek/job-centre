@@ -104,7 +104,19 @@ export default function Disclosure({
   );
 }
 
-function Chevron({ open }: { open: boolean }) {
+/**
+ * The fold mark: a chevron that turns as the thing it belongs to opens.
+ *
+ * Exported because it is not only this component's. Any control that opens
+ * something in place wants the same mark at the same size turning the same way
+ * — the standings table's rows are one — and a second copy of six lines of SVG
+ * is a second thing to forget when the angle or the weight changes.
+ *
+ * Always `aria-hidden`: the control it sits in carries `aria-expanded`, which is
+ * what a screen reader announces. An arrow announced beside it would be the
+ * same fact twice, in worse words.
+ */
+export function Chevron({ open }: { open: boolean }) {
   return (
     <svg
       viewBox="0 0 10 10"

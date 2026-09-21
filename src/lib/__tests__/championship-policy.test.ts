@@ -5,6 +5,8 @@ import {
   DEFAULT_POINTS_TABLE,
   duplicateMemberIn,
   scoreChampionship,
+  scoringRulesText,
+  usesOwnTable,
 } from "@/lib/championship-policy";
 
 /**
@@ -509,5 +511,58 @@ describe("correcting a placement", () => {
     expect(scored.map((row) => row.userId)).toEqual(["ann"]);
 
     expect(scoreChampionship(SCORING, [event({})])).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The rules, in the words the page prints                            */
+/* ------------------------------------------------------------------ */
+
+describe("the scoring rules in words", () => {
+  it("always states the tie rule, because the page has to say it", () => {
+    const lines = scoringRulesText({ participationPoints: 0, countBest: null });
+    expect(lines.some((line) => /most firsts/.test(line))).toBe(true);
+  });
+
+  it("says what taking part is worth, and mentions best-N only when it is set", () => {
+    expect(scoringRulesText({ participationPoints: 2, countBest: null })).toEqual([
+      "Taking part is worth 2, and so is any finish past the end of the table.",
+      "Level on points is settled by most firsts, then most seconds, and so on. Players still level after that are shown level.",
+    ]);
+    expect(scoringRulesText({ participationPoints: 0, countBest: 6 }).at(-1)).toBe(
+      "Only each player's best 6 results count towards their total."
+    );
+  });
+});
+
+/*
+ * R-177's one question, asked where both the arithmetic and the page ask it.
+ * A stored `[]` means "use the season's", and the page's "Own points table"
+ * badge has to agree with the table the points were actually worked out from.
+ */
+describe("whether an event scores off its own table", () => {
+  it("is no for nothing stored, and no for an empty table", () => {
+    expect(usesOwnTable(null)).toBe(false);
+    expect(usesOwnTable(undefined)).toBe(false);
+    expect(usesOwnTable([])).toBe(false);
+  });
+
+  it("is yes for a table with any rows in it", () => {
+    expect(usesOwnTable([5])).toBe(true);
+    expect(usesOwnTable([0])).toBe(true);
+  });
+
+  it("is the same answer the scoring acts on", () => {
+    const own = [100];
+    const scored = scoreChampionship(SCORING, [
+      event({
+        pointsTable: own,
+        placements: [{ position: 1, subject: member("ann") }],
+        participants: ["ann"],
+      }),
+    ]);
+
+    expect(usesOwnTable(own)).toBe(true);
+    expect(scored[0].points).toBe(100);
   });
 });

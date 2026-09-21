@@ -55,7 +55,7 @@ export default async function AdminEventsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 

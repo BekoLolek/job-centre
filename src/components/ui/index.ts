@@ -22,7 +22,7 @@ export type { CheckboxProps } from "./Checkbox";
 export { default as ChoiceChip, ChoiceRow } from "./ChoiceChip";
 export type { ChoiceChipProps } from "./ChoiceChip";
 
-export { default as Disclosure, DisclosureGroup } from "./Disclosure";
+export { default as Disclosure, Chevron, DisclosureGroup } from "./Disclosure";
 export type { DisclosureProps } from "./Disclosure";
 
 export { default as EmptyState } from "./EmptyState";

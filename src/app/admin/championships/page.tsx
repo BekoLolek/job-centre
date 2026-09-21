@@ -13,6 +13,7 @@ import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import { EmptyState, Eyebrow, Page, Section, SectionList, StatTile, StatusPill } from "@/components/ui";
+import { seasonMonths } from "@/lib/championship-policy";
 import { listChampionships } from "@/lib/championships";
 import { requireAdmin } from "@/lib/session-guards";
 import NewChampionship from "./NewChampionship";
@@ -30,20 +31,6 @@ const PILL = {
   closed: { tone: "complete", label: "Finished" },
 } as const;
 
-/** "March 2026 to November 2026", or nothing while the months are undecided. */
-function months(from: string | null, to: string | null): string | null {
-  const month = (value: string) =>
-    new Date(`${value}T00:00:00Z`).toLocaleDateString("en-GB", {
-      month: "long",
-      year: "numeric",
-      timeZone: "UTC",
-    });
-  if (from && to) return `${month(from)} to ${month(to)}`;
-  if (from) return `From ${month(from)}`;
-  if (to) return `Until ${month(to)}`;
-  return null;
-}
-
 export default async function AdminChampionshipsPage() {
   await requireAdmin();
   const seasons = await listChampionships();
@@ -53,7 +40,7 @@ export default async function AdminChampionshipsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 
@@ -91,7 +78,7 @@ export default async function AdminChampionshipsPage() {
               <ul className="divide-y divide-hair">
                 {seasons.map((season) => {
                   const pill = PILL[season.status];
-                  const when = months(season.runsFrom, season.runsTo);
+                  const when = seasonMonths(season.runsFrom, season.runsTo);
                   return (
                     <li key={season.id}>
                       <Link

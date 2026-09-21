@@ -48,7 +48,7 @@ export default async function AdminDashboardPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 

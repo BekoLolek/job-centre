@@ -161,6 +161,16 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] It still asserts a real reopen (a row written before the close is read after it)
 - **Depends on:** none. Do it before the suite is used as a release gate at Gate 3.
 
+### Task 44: Cite the one-championship-per-event rule correctly (found in Task 42 review)
+
+- **Serves:** the docs themselves (no requirement - that is the point)
+- **Files:** `src/lib/championships.ts:358`, `src/lib/championships.ts:772`, `src/db/schema.ts:2016`, `src/components/admin/events/ChampionshipTab.tsx:48`, `src/db/__tests__/championship-constraints.test.ts:10`, `src/lib/__tests__/championship-events.test.ts:281`, `docs/use-cases.md:1140`
+- **Do:** seven places cite **R-196** for "an event belongs to at most one championship" (the unique index `championship_events_event_uniq`). R-196 is the scoring-rules requirement and has nothing to do with it. The rule genuinely has no numbered requirement - it lives in `docs/requirements.md:319` under Constraints, and the behaviour is `UC-32 1a`. Replace the citation in all seven with `UC-32 1a` and a pointer to the constraint. Comment and doc text only; no behaviour changes.
+- **Acceptance criteria:**
+  - [ ] `grep -rn "R-196" src/ docs/` returns only the scoring-rules uses
+  - [ ] The test suite is untouched and still green (nothing but comments moved)
+- **Depends on:** none.
+
 ## I. Championship (R-171 to R-198)
 
 Added 2026-09-20. A season of two to four events a month across different games, with one

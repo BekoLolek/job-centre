@@ -42,7 +42,7 @@ export default async function AdminSettingsPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 

@@ -165,6 +165,16 @@ export async function handleOf(
 }
 
 /**
+ * What a member with no name of any kind is called.
+ *
+ * Exported because the fallback is part of the answer these two reads give, and
+ * a caller building a row by hand needs the same word: three modules had each
+ * typed this string out beside a comment saying it was `displayNamesFor`'s, and
+ * a rename would have left two of them saying something else.
+ */
+export const UNKNOWN_PLAYER = "Unknown player";
+
+/**
  * Display names for a handful of ids.
  *
  * The audit log's summaries are written once and never rebuilt, so they need
@@ -186,7 +196,59 @@ export async function displayNamesFor(
     .where(inArray(users.id, ids));
 
   return new Map(
-    rows.map((row) => [row.id, row.displayName ?? row.name ?? "Unknown player"])
+    rows.map((row) => [row.id, row.displayName ?? row.name ?? UNKNOWN_PLAYER])
+  );
+}
+
+/** Who a member is, wherever a list of them is drawn: the name, the link and the face. */
+export type PlayerIdentity = {
+  name: string;
+  /** Their `/players/[handle]` segment, or null while they have never been given one. */
+  handle: string | null;
+  avatarUrl: string | null;
+};
+
+/**
+ * {@link displayNamesFor}, for the callers that also need the face and the link.
+ *
+ * The championship standings had their own copy of this read — the same
+ * `inArray`, the same `displayName ?? name ?? UNKNOWN_PLAYER`, two extra columns
+ * — which meant the rule for what somebody is *called* lived in two places and
+ * only one of them was anybody's idea of where it lived. It is the same
+ * question with a wider answer, so it is the same module.
+ *
+ * Note it does **not** assign a handle: `ensureHandles` is the only writer, and
+ * a standings table that silently minted handles for forty people would be a
+ * write on a read path nobody asked for. A member without one simply is not a
+ * link.
+ */
+export async function profilesFor(
+  userIds: readonly (string | null | undefined)[],
+  database: Database = defaultDb
+): Promise<Map<string, PlayerIdentity>> {
+  const ids = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+  if (ids.length === 0) return new Map();
+
+  const rows = await database
+    .select({
+      id: users.id,
+      displayName: users.displayName,
+      name: users.name,
+      handle: users.handle,
+      avatarUrl: users.avatarUrl,
+    })
+    .from(users)
+    .where(inArray(users.id, ids));
+
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        name: row.displayName ?? row.name ?? UNKNOWN_PLAYER,
+        handle: row.handle,
+        avatarUrl: row.avatarUrl,
+      },
+    ])
   );
 }
 

@@ -751,8 +751,31 @@ export async function listCountingEvents(
   championshipId: string,
   database: Database = defaultDb
 ): Promise<CountingEvent[]> {
-  return database
+  const bySeason = await listCountingEventsIn([championshipId], database);
+  return bySeason.get(championshipId) ?? [];
+}
+
+/**
+ * {@link listCountingEvents} for several seasons at once, in one read.
+ *
+ * The public page's "Past seasons" footer needs this for every finished season
+ * there has ever been, and one read per season to fill in a list of names is a
+ * round trip per row of a footer.
+ *
+ * Every id asked about gets an entry, empty when nothing counts towards it, so
+ * a caller can list a season with no events without a second lookup.
+ */
+export async function listCountingEventsIn(
+  championshipIds: readonly string[],
+  database: Database = defaultDb
+): Promise<Map<string, CountingEvent[]>> {
+  const ids = [...new Set(championshipIds)];
+  const out = new Map<string, CountingEvent[]>(ids.map((id) => [id, []]));
+  if (ids.length === 0) return out;
+
+  const rows = await database
     .select({
+      championshipId: championshipEvents.championshipId,
       id: championshipEvents.id,
       eventId: championshipEvents.eventId,
       title: events.title,
@@ -761,8 +784,11 @@ export async function listCountingEvents(
     })
     .from(championshipEvents)
     .innerJoin(events, eq(events.id, championshipEvents.eventId))
-    .where(eq(championshipEvents.championshipId, championshipId))
+    .where(inArray(championshipEvents.championshipId, ids))
     .orderBy(asc(events.title));
+
+  for (const { championshipId, ...row } of rows) out.get(championshipId)?.push(row);
+  return out;
 }
 
 /**

@@ -24,7 +24,7 @@
  * total.
  */
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
   type Database,
   applications,
@@ -45,12 +45,13 @@ import {
 } from "./championship-policy";
 import {
   type ChampionshipResult,
+  type CountingEvent,
   type EventChampionship,
   NOT_COUNTING,
   championshipOfEvent,
   fail,
 } from "./championships";
-import { displayNamesFor } from "./players";
+import { UNKNOWN_PLAYER, displayNamesFor } from "./players";
 
 /* ------------------------------------------------------------------ */
 /* Shapes                                                             */
@@ -108,9 +109,6 @@ export type RecordedResult = {
   placements: RecordedPlacement[];
 };
 
-/** `displayNamesFor`'s own fallback, restated where a name is built by hand. */
-const UNKNOWN = "Unknown player";
-
 const NOT_IN_EVENT =
   "One of those places is for somebody who did not take part in this event.";
 
@@ -138,55 +136,97 @@ export async function eventParticipants(
   eventId: string,
   database: Database = defaultDb
 ): Promise<EventParticipants> {
-  const teamRows = await database
-    .select({ id: teams.id, name: teams.name })
-    .from(teams)
-    .where(eq(teams.eventId, eventId))
-    .orderBy(asc(teams.sort), asc(teams.createdAt));
+  const byEvent = await participantsFor([eventId], database);
+  return byEvent.get(eventId) ?? EMPTY_PARTICIPANTS;
+}
 
-  if (teamRows.length > 0) {
-    const roster = await database
-      .select({ teamId: teamMembers.teamId, userId: teamMembers.userId })
+/** What an event nobody entered has: no teams, and nobody in them. */
+const EMPTY_PARTICIPANTS: EventParticipants = { teamed: false, rows: [] };
+
+/**
+ * {@link eventParticipants} for a list of events, in a fixed number of reads.
+ *
+ * The singular is a call to this one, so which of the two lists wins is decided
+ * in a single place. The plural exists because the public championship page
+ * asks the question for every event of every finished season at once
+ * (`finishedSeasons`), and asking one event at a time made a footer cost
+ * hundreds of round trips.
+ *
+ * Three reads whatever the length of the list, with the grouping done in
+ * memory — the same trade `seasonEvents` makes, for the same reason: this is
+ * tens of rows, not thousands.
+ */
+export async function participantsFor(
+  eventIds: readonly string[],
+  database: Database = defaultDb
+): Promise<Map<string, EventParticipants>> {
+  const ids = [...new Set(eventIds)];
+  const out = new Map<string, EventParticipants>();
+  if (ids.length === 0) return out;
+
+  const [teamRows, roster, accepted] = await Promise.all([
+    database
+      .select({ id: teams.id, eventId: teams.eventId, name: teams.name })
+      .from(teams)
+      .where(inArray(teams.eventId, ids))
+      .orderBy(asc(teams.sort), asc(teams.createdAt)),
+    database
+      .select({
+        teamId: teamMembers.teamId,
+        eventId: teamMembers.eventId,
+        userId: teamMembers.userId,
+      })
       .from(teamMembers)
-      .where(eq(teamMembers.eventId, eventId))
+      .where(inArray(teamMembers.eventId, ids))
       // The captain fills a roster slot (§14), so they are an ordinary row
       // here and lead the list they are on.
-      .orderBy(desc(teamMembers.isCaptain), asc(teamMembers.acquiredAt));
-
-    const names = await displayNamesFor(
-      roster.map((row) => row.userId),
-      database
-    );
-
-    return {
-      teamed: true,
-      rows: teamRows.map((team) => ({
-        id: team.id,
-        name: team.name,
-        members: roster
-          .filter((row) => row.teamId === team.id)
-          .map((row) => ({ userId: row.userId, name: names.get(row.userId) ?? UNKNOWN })),
-      })),
-    };
-  }
-
-  const accepted = await database
-    .select({ userId: applications.userId })
-    .from(applications)
-    .where(and(eq(applications.eventId, eventId), eq(applications.status, "accepted")));
+      .orderBy(desc(teamMembers.isCaptain), asc(teamMembers.acquiredAt)),
+    database
+      .select({ eventId: applications.eventId, userId: applications.userId })
+      .from(applications)
+      .where(
+        and(inArray(applications.eventId, ids), eq(applications.status, "accepted"))
+      ),
+  ]);
 
   const names = await displayNamesFor(
-    accepted.map((row) => row.userId),
+    [...roster.map((row) => row.userId), ...accepted.map((row) => row.userId)],
     database
   );
 
-  const rows = accepted.map((row) => {
-    const name = names.get(row.userId) ?? UNKNOWN;
-    return { id: row.userId, name, members: [{ userId: row.userId, name }] };
-  });
-  rows.sort((x, y) => x.name.localeCompare(y.name));
+  for (const eventId of ids) {
+    const eventTeams = teamRows.filter((row) => row.eventId === eventId);
 
-  return { teamed: false, rows };
+    if (eventTeams.length > 0) {
+      const eventRoster = roster.filter((row) => row.eventId === eventId);
+      out.set(eventId, {
+        teamed: true,
+        rows: eventTeams.map((team) => ({
+          id: team.id,
+          name: team.name,
+          members: eventRoster
+            .filter((row) => row.teamId === team.id)
+            .map((row) => ({
+              userId: row.userId,
+              name: names.get(row.userId) ?? UNKNOWN_PLAYER,
+            })),
+        })),
+      });
+      continue;
+    }
+
+    const rows = accepted
+      .filter((row) => row.eventId === eventId)
+      .map((row) => {
+        const name = names.get(row.userId) ?? UNKNOWN_PLAYER;
+        return { id: row.userId, name, members: [{ userId: row.userId, name }] };
+      });
+    rows.sort((x, y) => x.name.localeCompare(y.name));
+
+    out.set(eventId, { teamed: false, rows });
+  }
+
+  return out;
 }
 
 /** The order recorded for one event, best finish first. */
@@ -194,8 +234,28 @@ export async function listPlacements(
   eventId: string,
   database: Database = defaultDb
 ): Promise<RecordedPlacement[]> {
+  const byEvent = await placementsFor([eventId], database);
+  return byEvent.get(eventId) ?? [];
+}
+
+/**
+ * {@link listPlacements} for a list of events, in one read.
+ *
+ * Every id asked about gets an entry, empty when nothing has been recorded on
+ * it: "no order yet" and "not asked about" are different answers, and the line
+ * between a counted event and one still to come is drawn on the first of them.
+ */
+export async function placementsFor(
+  eventIds: readonly string[],
+  database: Database = defaultDb
+): Promise<Map<string, RecordedPlacement[]>> {
+  const ids = [...new Set(eventIds)];
+  const out = new Map<string, RecordedPlacement[]>(ids.map((id) => [id, []]));
+  if (ids.length === 0) return out;
+
   const rows = await database
     .select({
+      eventId: championshipEvents.eventId,
       position: championshipPlacements.position,
       userId: championshipPlacements.userId,
       teamId: championshipPlacements.teamId,
@@ -210,16 +270,20 @@ export async function listPlacements(
     )
     .leftJoin(teams, eq(teams.id, championshipPlacements.teamId))
     .leftJoin(users, eq(users.id, championshipPlacements.userId))
-    .where(eq(championshipEvents.eventId, eventId))
+    .where(inArray(championshipEvents.eventId, ids))
     .orderBy(asc(championshipPlacements.position));
 
-  // `championship_placements_one_subject` guarantees exactly one of the two.
-  return rows.map((row) => ({
-    id: row.teamId ?? row.userId ?? "",
-    position: row.position,
-    kind: row.teamId ? ("team" as const) : ("member" as const),
-    name: row.teamName ?? row.displayName ?? row.userName ?? UNKNOWN,
-  }));
+  for (const row of rows) {
+    // `championship_placements_one_subject` guarantees exactly one of the two.
+    out.get(row.eventId)?.push({
+      id: row.teamId ?? row.userId ?? "",
+      position: row.position,
+      kind: row.teamId ? ("team" as const) : ("member" as const),
+      name: row.teamName ?? row.displayName ?? row.userName ?? UNKNOWN_PLAYER,
+    });
+  }
+
+  return out;
 }
 
 /**
@@ -233,23 +297,86 @@ export async function listPlacements(
  * public season page (Task 42) reads a season by calling this once per
  * counting event and handing the list to `scoreChampionship`.
  *
+ * {@link scoringInputsFor} is that same mapping over many events at once. Both
+ * end at {@link countingEventInput}, which is the one function that knows the
+ * shape — "exactly one of it" is a statement about that function, not about how
+ * many ways there are to read the rows it is given.
+ *
  * The participant list is what UC-33 3b rides on: everybody who took part and
  * is in no placement scores the taking-part points.
+ *
+ * `places` is for the caller that has already read the order and is about to
+ * need it for something else. The public page prints who won each night beside
+ * the standings it scored them into, and reading the same rows twice — once
+ * here, once for the winners — is a query per counted event for nothing.
+ * Passing them in is not a second opinion about the order: it is the same rows,
+ * on their way to both uses.
  */
 export async function scoringInputFor(
   eventId: string,
-  database: Database = defaultDb
+  database: Database = defaultDb,
+  places?: readonly RecordedPlacement[]
 ): Promise<CountingEventInput | null> {
   const counting = await championshipOfEvent(eventId, database);
   if (!counting) return null;
 
-  const [participants, places] = await Promise.all([
+  const [participants, order] = await Promise.all([
     eventParticipants(eventId, database),
-    listPlacements(eventId, database),
+    places ?? listPlacements(eventId, database),
   ]);
 
+  return countingEventInput(counting, participants, order);
+}
+
+/**
+ * {@link scoringInputFor} for a whole set of counting events — one season's, or
+ * every finished season's at once — in a fixed number of reads.
+ *
+ * Takes the counting rows rather than event ids because the caller that wants
+ * many of these has already read them: that is how it knows which events they
+ * are, and re-reading them here would be the same row fetched twice with a
+ * chance of disagreeing about the weight in between.
+ *
+ * An event with nothing recorded on it still gets an entry, with an empty
+ * `placements`. Whether that means "has not counted yet" is the caller's to
+ * decide, and `seasonPage` is where it is decided.
+ */
+export async function scoringInputsFor(
+  counting: readonly CountingEvent[],
+  database: Database = defaultDb
+): Promise<Map<string, CountingEventInput>> {
+  const eventIds = counting.map((row) => row.eventId);
+  const [participants, places] = await Promise.all([
+    participantsFor(eventIds, database),
+    placementsFor(eventIds, database),
+  ]);
+
+  return new Map(
+    counting.map((row) => [
+      row.eventId,
+      countingEventInput(
+        row,
+        participants.get(row.eventId) ?? EMPTY_PARTICIPANTS,
+        places.get(row.eventId) ?? []
+      ),
+    ])
+  );
+}
+
+/**
+ * The mapping itself: one counting row, who took part in it and what was
+ * recorded on it, as the five fields the arithmetic takes.
+ *
+ * Pure, and the only place that shape is written down — see the note on
+ * {@link scoringInputFor} for why there must be exactly one of it.
+ */
+function countingEventInput(
+  counting: Pick<CountingEvent, "eventId" | "weight" | "pointsTable">,
+  participants: EventParticipants,
+  places: readonly RecordedPlacement[]
+): CountingEventInput {
   return {
-    id: eventId,
+    id: counting.eventId,
     weight: counting.weight,
     pointsTable: counting.pointsTable,
     placements: subjectsFor(participants, places),
@@ -350,14 +477,14 @@ export async function setPlacements(
 
     // Kept rather than returned at once, so a member doubled through a team is
     // named by `duplicateMemberIn` below in preference to the row's own name.
-    if (seen.has(entry.id) && doubled === null) doubled = row?.name ?? UNKNOWN;
+    if (seen.has(entry.id) && doubled === null) doubled = row?.name ?? UNKNOWN_PLAYER;
     seen.add(entry.id);
 
     entries.push({
       id: entry.id,
       position: entry.position,
       kind,
-      name: row?.name ?? already?.name ?? UNKNOWN,
+      name: row?.name ?? already?.name ?? UNKNOWN_PLAYER,
     });
   }
 
@@ -370,7 +497,7 @@ export async function setPlacements(
   const twice = duplicateMemberIn(subjectsFor(participants, entries));
   if (twice) {
     const names = await displayNamesFor([twice], database);
-    return fail(twiceIn(names.get(twice) ?? UNKNOWN));
+    return fail(twiceIn(names.get(twice) ?? UNKNOWN_PLAYER));
   }
   // The one duplicate it cannot see: a team with nobody on it puts no member
   // into the order at all.

@@ -36,7 +36,7 @@ export default async function AdminTemplatesPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 

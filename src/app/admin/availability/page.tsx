@@ -45,7 +45,7 @@ export default async function AdminAvailabilityPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader />
+      <AppHeader admin />
 
       <Page>
         <header className="mb-2">

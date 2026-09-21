@@ -21,11 +21,29 @@ import { cx } from "@/components/ui";
  * still the events page, and matching exactly left nothing lit the moment
  * somebody used the kind filter.
  */
+/**
+ * How loud an item is when it is not the current page.
+ *
+ * `strong` is for the one destination that is meant to sit above the list —
+ * the championship (R-194). It changes the resting state only: the brightest
+ * step of the type ladder at the next weight up, against the others' muted
+ * regular. Nothing about the current-page treatment moves, because a row where
+ * "you are here" is said two different ways is a row that says it once badly.
+ */
+export type HeaderLinkTone = "default" | "strong";
+
+const REST: Record<HeaderLinkTone, string> = {
+  default: "text-muted hover:text-chalk",
+  strong: "font-medium text-chalk hover:text-hot",
+};
+
 export default function HeaderLink({
   href,
+  tone = "default",
   children,
 }: {
   href: string;
+  tone?: HeaderLinkTone;
   children: ReactNode;
 }) {
   const pathname = usePathname() ?? "";
@@ -38,7 +56,7 @@ export default function HeaderLink({
       aria-current={current ? "page" : undefined}
       className={cx(
         "relative py-1 text-14 transition-colors",
-        current ? "text-hot" : "text-muted hover:text-chalk"
+        current ? "text-hot" : REST[tone]
       )}
     >
       {children}

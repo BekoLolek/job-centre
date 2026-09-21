@@ -24,7 +24,7 @@ export default async function AdminHostPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader />
+      <AppHeader admin />
 
       <Page>
         <header className="mb-2">

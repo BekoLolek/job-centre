@@ -41,7 +41,7 @@ export default async function AdminChampionshipPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 

@@ -19,8 +19,15 @@ import SiteNav from "./SiteNav";
 export default function AppHeader({
   /** Extra controls, left of the account menu. */
   children,
+  /**
+   * Set on `/admin` pages. The site links are not drawn there whatever this
+   * says — `SiteNavLinks` decides that from the path — so this only saves the
+   * question being asked. See `SiteNav`.
+   */
+  admin,
 }: {
   children?: ReactNode;
+  admin?: boolean;
 }) {
   return (
     <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
@@ -40,7 +47,7 @@ export default function AppHeader({
 
         {/* Renders nothing under `/admin`, where `children` is the section
             nav and the bar has no room for both. See `SiteNav`. */}
-        <SiteNav />
+        <SiteNav admin={admin} />
 
         {/*
           `min-w-0` is the backstop. A flex item defaults to `min-width: auto`,

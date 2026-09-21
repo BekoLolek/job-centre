@@ -66,7 +66,7 @@ export default async function AdminAuditPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader>
+      <AppHeader admin>
         <AdminNav />
       </AppHeader>
 

@@ -170,12 +170,33 @@ export function duplicateMemberIn(placements: readonly PlacementInput[]): string
   return null;
 }
 
+/**
+ * Whether a counting event scores off its own points table rather than the
+ * season's (R-177).
+ *
+ * A length test rather than a null test, and that is the decision: a stored `[]`
+ * means "use the season's". `resultsForEvent` below is the only place that
+ * *acts* on the answer, and the public page has to *say* it — `SeasonEvent.ownTable`
+ * marks the night in the events list — so the two were writing the same
+ * expression in two modules. A reader checking a marked night's points against
+ * the printed table is the reader R-177 is written for, and the mark and the
+ * arithmetic disagreeing is precisely the way to fail them.
+ *
+ * Narrowing rather than a plain boolean so the one caller that needs the table
+ * itself gets it without a second null check saying the same thing again.
+ */
+export function usesOwnTable(
+  pointsTable: number[] | null | undefined
+): pointsTable is number[] {
+  return (pointsTable?.length ?? 0) > 0;
+}
+
 /** Every member's result in one counting event, keyed by member. */
 function resultsForEvent(
   event: CountingEventInput,
   scoring: ChampionshipScoring
 ): Map<string, SeasonResult> {
-  const table = event.pointsTable?.length ? event.pointsTable : scoring.pointsTable;
+  const table = usesOwnTable(event.pointsTable) ? event.pointsTable : scoring.pointsTable;
   const out = new Map<string, SeasonResult>();
 
   for (const placement of event.placements) {
@@ -554,4 +575,71 @@ export function scoringRulesProblem(rules: {
   }
 
   return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* The season in words                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * "March 2026 to November 2026" — the months a season runs, as a reader sees
+ * them.
+ *
+ * Safe to format on the server, unlike every other date on this site: a
+ * season's ends are `date` columns pinned to the first of the month
+ * (`championships_months_are_first`), not instants, so "March 2026" means the
+ * same thing in every timezone there is. Hence the explicit UTC — reading a
+ * date-only string in the deployment's zone is what would turn the 1st of March
+ * into the 28th of February for anybody west of Greenwich.
+ *
+ * Here rather than beside either page because both print it: the public season
+ * header (UC-34 1) and the admin list (UC-31 2). Two copies of this are two
+ * chances for one of them to drop the `timeZone` and start printing a month
+ * that is off by one for half the readers.
+ */
+export function seasonMonths(from: string | null, to: string | null): string | null {
+  if (from && to) return `${month(from)} to ${month(to)}`;
+  if (from) return `From ${month(from)}`;
+  if (to) return `Until ${month(to)}`;
+  return null;
+}
+
+function month(value: string): string {
+  return new Date(`${value}T00:00:00Z`).toLocaleDateString("en-GB", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * How this season scores, as the sentences the page prints (UC-34 2a, 2d).
+ *
+ * Here rather than in the page because they are statements about the rules, not
+ * about the layout: the tie rule is `compareStandings`'s, best-N is
+ * `applyCountBest`'s, and the taking-part line is `placementValue`'s
+ * fall-through. A page that retyped them would be a fourth place for those
+ * rules to be written down, and the first to go stale.
+ *
+ * Here rather than in `./championship-season` for the same reason the rest of
+ * this file is: it is pure, it needs no database handle, and `ScoringRules.tsx`
+ * wanting three sentences should not drag `@/db` and `drizzle-orm` into the
+ * module graph behind them.
+ */
+export function scoringRulesText(season: {
+  participationPoints: number;
+  countBest: number | null;
+}): string[] {
+  const lines = [
+    season.participationPoints > 0
+      ? `Taking part is worth ${season.participationPoints}, and so is any finish past the end of the table.`
+      : "Finishing outside the table is worth nothing, and so is taking part.",
+    "Level on points is settled by most firsts, then most seconds, and so on. Players still level after that are shown level.",
+  ];
+  if (season.countBest !== null) {
+    lines.push(
+      `Only each player's best ${season.countBest} results count towards their total.`
+    );
+  }
+  return lines;
 }
