@@ -71,6 +71,7 @@ import {
   removeCountingEvent,
   setCountingEvent,
 } from "@/lib/championships";
+import { type PlacementEntry, setPlacements } from "@/lib/championship-results";
 import { recordAudit } from "@/lib/audit";
 import {
   notifyApplicationDecided,
@@ -628,6 +629,51 @@ export async function removeEventFromChampionshipAction(
   });
 
   refreshSeason(eventId, result.data.season.id);
+  return { ok: true, data: null };
+}
+
+/**
+ * Record where everyone finished in this event's season (UC-33 3-4, 4a).
+ *
+ * `requireEventManager` again, and that is the whole reason this action lives
+ * beside the other three rather than under `/admin/championships`: UC-33's
+ * actor is a Manager, and the person who knows the finishing order is whoever
+ * ran the event. The season is still an admin's object — nothing here changes
+ * what it is worth, only where this one event's players came.
+ *
+ * Deliberately **not** gated on the event's own status. UC-33 1b: a complete
+ * event may still have its championship result recorded, because the result
+ * belongs to the season rather than to the event's own record — which stays
+ * locked (UC-09 6b). A finished *season* is the refusal that does apply, and
+ * `setPlacements` makes it.
+ *
+ * There is nothing to re-score afterwards. A standing is
+ * `scoreChampionship` over the rows that are there, so the correction *is* the
+ * write, and every screen that reads the season is already correct.
+ */
+export async function saveEventPlacementsAction(
+  eventId: string,
+  order: PlacementEntry[]
+): Promise<ChampionshipResult<null>> {
+  const admin = await requireEventManager(eventId);
+
+  const result = await setPlacements(eventId, order);
+  if (!result.ok) return result;
+
+  const { counting, placements } = result.data;
+  await recordAudit({
+    action: "championship.result",
+    actor: admin,
+    eventId,
+    subject: counting.season.id,
+    summary:
+      placements.length === 0
+        ? `Cleared the finishing order for "${counting.title}" in "${counting.season.name}".`
+        : `Recorded where everyone finished in "${counting.title}" for "${counting.season.name}".`,
+    detail: { championship: counting.season.id, placed: placements.length },
+  });
+
+  refreshSeason(eventId, counting.season.id);
   return { ok: true, data: null };
 }
 

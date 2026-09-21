@@ -27,6 +27,7 @@ import type {
 } from "@/components/admin/events/types";
 import { loadAdminGames } from "@/lib/admin-games";
 import { championshipOfEvent, championshipsToAddTo } from "@/lib/championships";
+import { eventParticipants, listPlacements } from "@/lib/championship-results";
 import {
   getDiscardedPlayers,
   getDraftConfig,
@@ -108,7 +109,19 @@ export default async function AdminEventPage({
     championshipsToAddTo(manager),
   ]);
 
-  const championship: ChampionshipTabData = { counting, seasons };
+  /*
+   * UC-33 2. Only for an event that is in a season: there is no finishing
+   * order to record for one that counts towards nothing, and these two reads
+   * would be two queries on every event editor for nothing. `eventParticipants`
+   * decides teams-or-applicants, not this page.
+   */
+  const result = counting
+    ? await Promise.all([eventParticipants(event.id), listPlacements(event.id)]).then(
+        ([participants, placements]) => ({ participants, placements })
+      )
+    : null;
+
+  const championship: ChampionshipTabData = { counting, seasons, result };
 
   // What a question on this event may prefill from: its game's profile fields
   // plus the global ones. A field belonging to another game would prefill an

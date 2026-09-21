@@ -233,40 +233,28 @@ describe("input the arithmetic cannot represent", () => {
 describe("duplicateMemberIn", () => {
   it("names a member who appears twice, directly and through a team", () => {
     expect(
-      duplicateMemberIn(
-        event({
-          placements: [
-            { position: 1, subject: team("reds", "ann", "bob") },
-            { position: 2, subject: member("ann") },
-          ],
-        })
-      )
+      duplicateMemberIn([
+        { position: 1, subject: team("reds", "ann", "bob") },
+        { position: 2, subject: member("ann") },
+      ])
     ).toBe("ann");
   });
 
   it("names a member who is on two placed teams", () => {
     expect(
-      duplicateMemberIn(
-        event({
-          placements: [
-            { position: 1, subject: team("reds", "ann") },
-            { position: 2, subject: team("blues", "ann") },
-          ],
-        })
-      )
+      duplicateMemberIn([
+        { position: 1, subject: team("reds", "ann") },
+        { position: 2, subject: team("blues", "ann") },
+      ])
     ).toBe("ann");
   });
 
   it("is happy with an order in which everybody appears once", () => {
     expect(
-      duplicateMemberIn(
-        event({
-          placements: [
-            { position: 1, subject: team("reds", "ann", "bob") },
-            { position: 2, subject: member("cat") },
-          ],
-        })
-      )
+      duplicateMemberIn([
+        { position: 1, subject: team("reds", "ann", "bob") },
+        { position: 2, subject: member("cat") },
+      ])
     ).toBeNull();
   });
 });

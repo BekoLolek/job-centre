@@ -27,6 +27,7 @@ import {
   removeEventFromChampionshipAction,
   saveEventChampionshipAction,
 } from "@/app/admin/events/actions";
+import PlacementEditor from "./PlacementEditor";
 import SaveRow, { type SaveState } from "./SaveRow";
 import type { ChampionshipTabData } from "./types";
 
@@ -58,6 +59,15 @@ import type { ChampionshipTabData } from "./types";
  * unpublished seasons that is not theirs, not knowing what their own event is
  * in.
  *
+ * ## The result lives here too (UC-33)
+ *
+ * {@link PlacementEditor} is on this panel rather than on the season's screen
+ * for the same reason the weight is: the manager who has just run the event is
+ * already in this editor, one step from the results they have been typing all
+ * night — and `/admin/championships/[id]` is `requireAdmin`, so a host could
+ * not reach a result they are the only person who knows. UC-33 1 says "the
+ * manager opens the event's result", and this is the event.
+ *
  * ## Add and remove happen at once; the weight is saved
  *
  * Adding and removing are single decisions with nothing to type, so they land
@@ -76,7 +86,7 @@ export default function ChampionshipTab({
   return (
     <div className="space-y-6">
       {data.counting ? (
-        <Counting eventId={eventId} counting={data.counting} />
+        <Counting eventId={eventId} counting={data.counting} result={data.result} />
       ) : (
         <NotCounting eventId={eventId} seasons={data.seasons} />
       )}
@@ -176,7 +186,15 @@ function numberFrom(raw: string): number {
   return Number.isFinite(value) ? value : Number.NaN;
 }
 
-function Counting({ eventId, counting }: { eventId: string; counting: EventChampionship }) {
+function Counting({
+  eventId,
+  counting,
+  result,
+}: {
+  eventId: string;
+  counting: EventChampionship;
+  result: ChampionshipTabData["result"];
+}) {
   const router = useRouter();
   const [busy, start] = useTransition();
   const [state, setState] = useState<SaveState>("idle");
@@ -379,6 +397,15 @@ function Counting({ eventId, counting }: { eventId: string; counting: EventChamp
           label="Save what it is worth"
         />
       </Panel>
+
+      {result && (
+        <PlacementEditor
+          eventId={eventId}
+          counting={counting}
+          participants={result.participants}
+          placements={result.placements}
+        />
+      )}
 
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12">
         <Eyebrow>Take it out of the season</Eyebrow>

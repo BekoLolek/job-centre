@@ -4,6 +4,8 @@ import { type Database, events } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { loadDashboard } from "@/lib/admin-dashboard";
 import { recordAudit } from "@/lib/audit";
+import { addCountingEvent, createChampionship } from "@/lib/championships";
+import { setPlacements } from "@/lib/championship-results";
 import { openLot, setCaptains, setDraftPool, setTeams } from "@/lib/draft";
 import {
   applyToEvent,
@@ -271,6 +273,38 @@ describe("a finished event", () => {
 
     await db.update(events).set({ status: "complete" }).where(eq(events.id, event.id));
     expect(await itemsFor(event.id)).toEqual([]);
+  });
+});
+
+describe("a championship result nobody has recorded", () => {
+  it("appears for an event that has been played, and goes once the order is in", async () => {
+    // UC-33 5. The one item that deliberately looks past the active statuses:
+    // the event whose result is most obviously missing is the one that
+    // finished last night, and recording it is allowed on a complete event
+    // (UC-33 1b) because the result belongs to the season, not to the event.
+    counter += 1;
+    const event = unwrap(
+      await createEvent({ ...PUBLISHABLE, title: `Season night ${counter}` }, db)
+    );
+    unwrap(await publishEvent(event.id, db));
+    const player = await makeUser(db, { displayName: `Racer ${counter}` });
+    unwrap(await applyToEvent(event.id, player, {}, db));
+
+    const season = unwrap(await createChampionship({ name: `Dashboard season ${counter}` }, db));
+    unwrap(await addCountingEvent(season.id, event.id, db));
+    await db.update(events).set({ status: "complete" }).where(eq(events.id, event.id));
+
+    const [item] = (await itemsFor(event.id)).filter(
+      (row) => row.kind === "championship_result"
+    );
+    expect(item.href).toBe(`/admin/events/${event.id}?tab=championship`);
+    expect(item.detail).toContain(season.name);
+
+    unwrap(await setPlacements(event.id, [{ id: player, position: 1 }], db));
+
+    expect(
+      (await itemsFor(event.id)).filter((row) => row.kind === "championship_result")
+    ).toEqual([]);
   });
 });
 

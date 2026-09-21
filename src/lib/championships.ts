@@ -6,6 +6,15 @@
  * published, and the two guards on the points table. This module reads, writes
  * and refuses, and it is where the lock is actually *applied*.
  *
+ * **Where everyone finished is `./championship-results`**, not here. A season
+ * and its counting events are an admin's objects, argued about on
+ * `/admin/championships`; one event's finishing order is a *host's*, typed on
+ * their own event the night it was played, and it moves whenever teams,
+ * applications or placements do. Two reasons to change, two modules. That one
+ * imports this one — `championshipOfEvent`, {@link fail} and
+ * {@link NOT_COUNTING} — and nothing here asks about a place, so the
+ * dependency runs one way.
+ *
  * ## The lock is asked for on every write, not remembered
  *
  * Every mutation below re-reads the row and asks
@@ -52,6 +61,7 @@ import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   type ChampionshipStatusValue,
   type Database,
+  type EventStatus,
   championshipEvents,
   championshipPlacements,
   championships,
@@ -92,7 +102,8 @@ export type ChampionshipResult<T = null> =
   | { ok: true; data: T }
   | { ok: false; error: string; unscored?: UnscoredEvent[] };
 
-function fail(error: string, unscored?: UnscoredEvent[]): ChampionshipResult<never> {
+/** Exported for `./championship-results`, which returns the same refusals. */
+export function fail(error: string, unscored?: UnscoredEvent[]): ChampionshipResult<never> {
   return unscored ? { ok: false, error, unscored } : { ok: false, error };
 }
 
@@ -200,6 +211,68 @@ export async function unscoredCountingEvents(
   return counting
     .filter((row) => !hasResult.has(row.id))
     .map((row) => ({ eventId: row.eventId, title: row.title }));
+}
+
+/** A counting event still waiting for a finishing order, wherever it lives. */
+export type UnscoredResult = UnscoredEvent & {
+  slug: string;
+  eventStatus: EventStatus;
+  seasonId: string;
+  seasonName: string;
+};
+
+/**
+ * The same question as {@link unscoredCountingEvents}, asked across every
+ * season at once — the admin home's line (UC-33 5).
+ *
+ * **Only events that have been played.** UC-33's precondition is that the
+ * event has taken place, so a draft or a published event three weeks away is
+ * not missing anything yet, and a cancelled one never will be. `complete` is
+ * the ordinary case and is the whole reason this exists: the event whose
+ * result is most conspicuously missing is the one that finished last night,
+ * and recording it then is expressly allowed (UC-33 1b).
+ *
+ * A finished season is left out on the same reasoning as
+ * `championshipsToAddTo`: it refuses the write, so listing it would be listing
+ * a refusal.
+ */
+export async function unscoredResults(
+  database: Database = defaultDb
+): Promise<UnscoredResult[]> {
+  const counting = await database
+    .select({
+      id: championshipEvents.id,
+      eventId: championshipEvents.eventId,
+      title: events.title,
+      slug: events.slug,
+      eventStatus: events.status,
+      seasonId: championships.id,
+      seasonName: championships.name,
+    })
+    .from(championshipEvents)
+    .innerJoin(events, eq(events.id, championshipEvents.eventId))
+    .innerJoin(championships, eq(championships.id, championshipEvents.championshipId))
+    .where(
+      and(ne(championships.status, "closed"), inArray(events.status, ["live", "complete"]))
+    )
+    .orderBy(asc(events.title));
+
+  if (counting.length === 0) return [];
+
+  const scored = await database
+    .select({ id: championshipPlacements.championshipEventId })
+    .from(championshipPlacements)
+    .where(
+      inArray(
+        championshipPlacements.championshipEventId,
+        counting.map((row) => row.id)
+      )
+    );
+
+  const hasResult = new Set(scored.map((row) => row.id));
+  return counting
+    .filter((row) => !hasResult.has(row.id))
+    .map(({ id: _countingId, ...row }) => row);
 }
 
 /* ------------------------------------------------------------------ */
@@ -603,7 +676,7 @@ export type CountingEventFields = {
 };
 
 /** Asked by everything keyed on an event rather than on a counting row. */
-const NOT_COUNTING = "This event does not count towards a championship.";
+export const NOT_COUNTING = "This event does not count towards a championship.";
 
 /** UC-32 1a: refuse, and name the season that already has it. */
 function alreadyCounting(name: string): string {
@@ -957,6 +1030,7 @@ export async function removeCountingEvent(
   if (!removed) return fail(CHANGED);
   return { ok: true, data: current };
 }
+
 
 /** `["a", "b", "c"]` → `"a, b and c"`. */
 function andList(items: string[]): string {

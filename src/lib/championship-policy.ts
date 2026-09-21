@@ -153,10 +153,15 @@ function membersOf(subject: PlacementSubject): string[] {
  * UC-33 3c: the editor rejects such an order rather than saving it. The
  * database cannot state this rule itself — team membership changes after the
  * fact — which is why it lives here and why scoring stays total without it.
+ *
+ * Takes the places alone rather than the whole `CountingEventInput`: a
+ * duplicate is a fact about who is in the order, and the weight, the table and
+ * the participant list have nothing to say about it. The caller that only
+ * wants this answer should not have to assemble the other four fields to ask.
  */
-export function duplicateMemberIn(event: CountingEventInput): string | null {
+export function duplicateMemberIn(placements: readonly PlacementInput[]): string | null {
   const seen = new Set<string>();
-  for (const placement of event.placements) {
+  for (const placement of placements) {
     for (const userId of membersOf(placement.subject)) {
       if (seen.has(userId)) return userId;
       seen.add(userId);
@@ -459,6 +464,27 @@ export function weightProblem(weight: number): string | null {
   return Number.isInteger(weight) && weight > 0
     ? null
     : "The weight has to be a whole number of 1 or more.";
+}
+
+/**
+ * The one thing wrong with a typed finishing place, as a sentence, or `null`
+ * (UC-33 3).
+ *
+ * Here rather than beside the write for the reason `weightProblem` is: the
+ * editor is a client component and cannot import a module that pulls in the
+ * database, so a copy of this predicate over there is a copy that decides
+ * whether Save is enabled — and drift then shows up as a button that disagrees
+ * with the server about the same number.
+ *
+ * `championship_placements_position_positive` says the ≥ 1 half in the column.
+ * Whole numbers are this module's, for the reason `assertScorable` gives:
+ * `counts[0.5]` is a property rather than an element, so a fractional place is
+ * silently lost from the tiebreak.
+ */
+export function positionProblem(position: number): string | null {
+  return Number.isInteger(position) && position >= 1
+    ? null
+    : "A finishing place has to be a whole number of 1 or more.";
 }
 
 /**

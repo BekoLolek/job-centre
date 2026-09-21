@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { type Database, auditLog, championships, events } from "@/db";
+import { type Database, applications, auditLog, championships, events } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { addHost } from "@/lib/hosting";
 
@@ -42,8 +42,10 @@ const {
   addEventToChampionshipAction,
   removeEventFromChampionshipAction,
   saveEventChampionshipAction,
+  saveEventPlacementsAction,
 } = await import("../actions");
 const { championshipOfEvent } = await import("@/lib/championships");
+const { listPlacements } = await import("@/lib/championship-results");
 
 let handle: TestDatabase;
 let db: Database;
@@ -197,5 +199,87 @@ describe("a season that has been closed", () => {
       error: "This championship is finished - reopen it to change it",
     });
     expect(await auditFor(eventId, "championship.event.changed")).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-33 — recording where everyone finished                          */
+/* ------------------------------------------------------------------ */
+
+/** An accepted applicant on this event, so there is somebody to place. */
+async function anApplicant(eventId: string, displayName: string): Promise<string> {
+  const userId = await makeUser(db, { displayName });
+  await db.insert(applications).values({ eventId, userId, status: "accepted" });
+  return userId;
+}
+
+describe("a host recording their own event's result", () => {
+  it("saves the order and logs who did it", async () => {
+    // UC-33 3-4. The actor is a Manager, which is why this action is
+    // authorised on the event rather than on the season.
+    const seasonId = await aSeason();
+    const eventId = await anEvent("Result night");
+    expect((await addEventToChampionshipAction(eventId, seasonId)).ok).toBe(true);
+    const winner = await anApplicant(eventId, "Winning Winnie");
+
+    const result = await saveEventPlacementsAction(eventId, [
+      { id: winner, position: 1 },
+    ]);
+
+    expect(result).toEqual({ ok: true, data: null });
+    expect(await listPlacements(eventId, db)).toEqual([
+      { id: winner, position: 1, kind: "member", name: "Winning Winnie" },
+    ]);
+    const lines = await auditFor(eventId, "championship.result");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].actorUserId).toBe(hostId);
+    expect(lines[0].summary).toContain("Result night");
+  });
+
+  it("records it for a complete event, because the result belongs to the season", async () => {
+    // UC-33 1b. The event's own record stays locked (UC-09 6b); this is not
+    // part of it, so the usual finished-event wall does not apply.
+    const seasonId = await aSeason();
+    const eventId = await anEvent("Finished night");
+    expect((await addEventToChampionshipAction(eventId, seasonId)).ok).toBe(true);
+    const winner = await anApplicant(eventId, "Late Larry");
+    await db.update(events).set({ status: "complete" }).where(eq(events.id, eventId));
+
+    const result = await saveEventPlacementsAction(eventId, [
+      { id: winner, position: 1 },
+    ]);
+
+    expect(result).toEqual({ ok: true, data: null });
+    expect(await listPlacements(eventId, db)).toHaveLength(1);
+  });
+
+  it("logs nothing when the order is refused", async () => {
+    // UC-33 3d. A refusal must leave no trace of a write that never happened.
+    const seasonId = await aSeason();
+    const eventId = await anEvent();
+    expect((await addEventToChampionshipAction(eventId, seasonId)).ok).toBe(true);
+    const stranger = await makeUser(db, { displayName: "Never Played" });
+
+    const result = await saveEventPlacementsAction(eventId, [
+      { id: stranger, position: 1 },
+    ]);
+
+    expect(result.ok).toBe(false);
+    expect(await listPlacements(eventId, db)).toEqual([]);
+    expect(await auditFor(eventId, "championship.result")).toEqual([]);
+  });
+});
+
+describe("somebody who does not manage the event, recording its result", () => {
+  it("is redirected, and nothing is written or logged", async () => {
+    // The guard runs before anything else, so the event need not even be in a
+    // season for this to be the answer.
+    const eventId = await anEvent("Not yours", false);
+    state.userId = strangerId;
+
+    const attempt = saveEventPlacementsAction(eventId, []);
+
+    await expect(attempt).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(await auditFor(eventId, "championship.result")).toEqual([]);
   });
 });

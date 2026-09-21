@@ -103,6 +103,7 @@ export const AUDIT_ACTIONS = {
   "championship.event.added": "Event counts towards a championship",
   "championship.event.changed": "Counting event changed",
   "championship.event.removed": "Event stopped counting",
+  "championship.result": "Championship result recorded",
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

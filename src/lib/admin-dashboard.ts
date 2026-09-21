@@ -20,8 +20,11 @@
  * unfinished one always can, including a draft nobody else can see, which is
  * precisely where "ready to publish" lives.
  *
- * The one exception is a failed Discord announcement, which is listed whatever
- * state its event is in — see `failedAnnouncements`.
+ * There are two exceptions, and both are listed whatever state their event is
+ * in: a failed Discord announcement (see `failedAnnouncements`) and a
+ * championship result nobody has recorded (see `missingResults`). The second
+ * is the more pointed one — the event it belongs to is usually *complete*,
+ * which is exactly the status the rule above excludes.
  *
  * ## Nothing here decides a rule
  *
@@ -41,6 +44,7 @@ import {
   teams,
 } from "@/db";
 import { blockers, readiness } from "@/components/admin/events/readiness";
+import { unscoredResults } from "./championships";
 import { type EventDetail, type EventSummary, getEventById, listEvents } from "./events";
 import { type FormatView, formatFor, matchIdsFor } from "./format";
 
@@ -55,7 +59,8 @@ export type AttentionKind =
   | "lot_open"
   | "needs_winner"
   | "unscheduled"
-  | "announcements";
+  | "announcements"
+  | "championship_result";
 
 export type AttentionItem = {
   /** Stable across renders, so React and a test can both name a row. */
@@ -301,6 +306,7 @@ export async function loadDashboard(
     }
   }
 
+  items.push(...(await missingResults(database)));
   items.push(...(await failedAnnouncements(all, database)));
 
   // Blocked first, then the biggest pile. Within an event the order the checks
@@ -395,6 +401,40 @@ async function failedAnnouncements(
         : null,
     };
   });
+}
+
+/**
+ * Counting events with no finishing order recorded (UC-33 5).
+ *
+ * One line per event rather than per season, because the screen that fixes it
+ * is the event's own Championship panel — which is also the only screen a host
+ * who is not an admin can reach. Recording a result is deliberately allowed on
+ * a complete event (UC-33 1b), so this is one of the two items that look past
+ * the active statuses. Which events count as played is `unscoredResults`'s
+ * rule and stays there, like every other rule this module only counts.
+ *
+ * Not blocking: an unscored event holds up closing the season (UC-35 1a), not
+ * the night.
+ */
+async function missingResults(database: Database): Promise<AttentionItem[]> {
+  const rows = await unscoredResults(database);
+
+  return rows.map((row) => ({
+    key: `${row.eventId}:championship`,
+    kind: "championship_result",
+    label: "No championship result yet",
+    detail: `It counts towards ${row.seasonName} and nobody has said where everyone finished, so it pays nothing and the season cannot be closed.`,
+    href: `/admin/events/${row.eventId}?tab=championship`,
+    action: "Record it",
+    count: 1,
+    urgency: "next",
+    event: {
+      id: row.eventId,
+      title: row.title,
+      slug: row.slug,
+      status: row.eventStatus,
+    },
+  }));
 }
 
 function tally(ids: readonly string[]): Map<string, number> {

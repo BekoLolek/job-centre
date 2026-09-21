@@ -4,6 +4,10 @@ import type {
   ProfileFieldOption,
   ProfileFieldType,
 } from "@/db/schema";
+import type {
+  EventParticipants,
+  RecordedPlacement,
+} from "@/lib/championship-results";
 import type { EventChampionship } from "@/lib/championships";
 import type { DraftConfig } from "@/lib/draft-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
@@ -83,10 +87,19 @@ export type DraftTabData = {
  * `seasons` is what may be *offered* to whoever is reading, which is
  * `championshipsToAddTo`'s rule: never a finished season, and hidden ones for
  * admins only (UC-31 2).
+ *
+ * `result` is UC-33's half: who took part, and where they finished. Null for
+ * the same reason and in the same case as `counting` — an event in no season
+ * has no finishing order to record — so the panel never has to ask whether one
+ * of the two is present without the other.
  */
 export type ChampionshipTabData = {
   counting: EventChampionship | null;
   seasons: { id: string; name: string; status: ChampionshipStatusValue }[];
+  result: {
+    participants: EventParticipants;
+    placements: RecordedPlacement[];
+  } | null;
 };
 
 /**

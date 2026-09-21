@@ -24,6 +24,7 @@ import {
   removeCountingEvent,
   setCountingEvent,
 } from "@/lib/championships";
+import { scoringInputFor } from "@/lib/championship-results";
 
 /*
  * UC-32 — which events count, and for how much — against a real in-memory
@@ -89,33 +90,21 @@ async function place(eventId: string, position: number): Promise<string> {
  * The season's standings, worked out from what is stored — nothing else.
  *
  * The counting events and their weights come from the write layer under test;
- * the places come straight off the table Task 41 will fill. Task 42's public
- * page will assemble the same two reads, which is exactly why removing an event
- * needs no re-scoring step: there is no total to correct.
+ * the places come off `scoringInputFor`, which is the one mapping from stored
+ * rows to what scoring takes. Reading them any other way here would let this
+ * file keep passing while the mapping the standings are really built from
+ * drifted underneath it. Task 42's public page makes the same two reads, which
+ * is exactly why removing an event needs no re-scoring step: there is no total
+ * to correct.
  */
 async function standings(championshipId: string): Promise<ChampionshipStanding[]> {
   const season = await getChampionship(championshipId, db);
   if (!season) throw new Error("no such season");
 
   const counting = await listCountingEvents(championshipId, db);
-  const inputs: CountingEventInput[] = await Promise.all(
-    counting.map(async (row) => {
-      const places = await db
-        .select()
-        .from(championshipPlacements)
-        .where(eq(championshipPlacements.championshipEventId, row.id));
-      return {
-        id: row.eventId,
-        weight: row.weight,
-        pointsTable: row.pointsTable,
-        placements: places.map((row) => ({
-          position: row.position,
-          subject: { kind: "member" as const, userId: row.userId ?? "" },
-        })),
-        participants: [],
-      };
-    })
-  );
+  const inputs = (
+    await Promise.all(counting.map((row) => scoringInputFor(row.eventId, db)))
+  ).filter((input): input is CountingEventInput => input !== null);
 
   return scoreChampionship(
     {
