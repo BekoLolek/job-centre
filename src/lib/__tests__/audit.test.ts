@@ -9,6 +9,7 @@ import {
   countAudit,
   listAudit,
   recordAudit,
+  resolveAuditFilter,
 } from "@/lib/audit";
 import { createEvent } from "@/lib/events";
 
@@ -188,5 +189,51 @@ describe("reading", () => {
     await recordAudit({ action: "event.status", summary: "one" }, db);
     expect(await listAudit({ limit: -5 }, db)).toHaveLength(1);
     expect(await listAudit({ limit: 100_000 }, db)).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The event filter — R-110 / UC-27 3                                 */
+/* ------------------------------------------------------------------ */
+
+describe("resolveAuditFilter", () => {
+  const known = [
+    { id: "11111111-1111-1111-1111-111111111111", title: "Summer Cup" },
+    { id: "22222222-2222-2222-2222-222222222222", title: "Winter Cup" },
+  ];
+
+  it("reads no parameter as the whole log", () => {
+    expect(resolveAuditFilter(undefined, known)).toEqual({ kind: "all" });
+    expect(resolveAuditFilter(null, known)).toEqual({ kind: "all" });
+    expect(resolveAuditFilter("", known)).toEqual({ kind: "all" });
+    expect(resolveAuditFilter("   ", known)).toEqual({ kind: "all" });
+  });
+
+  it("names the event when the id is one", () => {
+    expect(resolveAuditFilter(known[1].id, known)).toEqual({ kind: "event", event: known[1] });
+  });
+
+  it("says an unknown id is unknown rather than falling back to everything", () => {
+    // The whole point of the type. This used to come back as "no filter", so
+    // a stale link produced every line on the site under a heading that said
+    // "Everything" — and the first few of them read as that event's.
+    expect(resolveAuditFilter("not-a-uuid", known)).toEqual({
+      kind: "unknown",
+      raw: "not-a-uuid",
+    });
+    expect(resolveAuditFilter("33333333-3333-3333-3333-333333333333", known)).toMatchObject({
+      kind: "unknown",
+    });
+  });
+
+  it("says unknown when there are no events at all", () => {
+    expect(resolveAuditFilter(known[0].id, [])).toMatchObject({ kind: "unknown" });
+  });
+
+  it("takes the first of a repeated parameter, as the page's reader does", () => {
+    expect(resolveAuditFilter([known[0].id, known[1].id], known)).toEqual({
+      kind: "event",
+      event: known[0],
+    });
   });
 });

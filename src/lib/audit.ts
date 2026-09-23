@@ -82,6 +82,7 @@ export const AUDIT_ACTIONS = {
   "poll.created": "Poll posted",
   "poll.updated": "Poll changed",
   "poll.closed": "Poll closed",
+  "poll.deleted": "Poll deleted",
   "host.applied": "Host application sent",
   "host.approved": "Host application approved",
   "host.declined": "Host application declined",
@@ -89,6 +90,7 @@ export const AUDIT_ACTIONS = {
   "announcement.failed": "Announcement failed",
   "user.admin.granted": "Admin granted",
   "user.admin.revoked": "Admin revoked",
+  "user.sessions.ended": "Sessions ended",
   "user.note": "Note added",
   "template.created": "Template created",
   "template.updated": "Template changed",
@@ -122,9 +124,13 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   "format.generated",
   "format.stages",
   "announcement.failed",
+  // The poll goes and every vote on it goes with it, by cascade.
+  "poll.deleted",
   // Taking the admin flag away is the one line on this log that changes who can
   // read the log, so it gets the colour that says "look at this one".
   "user.admin.revoked",
+  // Somebody was signed out of every device they had open (UC-02 4a).
+  "user.sessions.ended",
   "template.deactivated",
   // It takes a season's results away with it: the places recorded in that event
   // go by the cascade, and the standings re-score without them.
@@ -303,6 +309,56 @@ export async function listAudit(
       event: eventById.get(row.eventId ?? "") ?? null,
     };
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* The event filter                                                   */
+/* ------------------------------------------------------------------ */
+
+/** As much of an event as the filter needs to name one. */
+export type AuditFilterEvent = { id: string; title: string };
+
+/**
+ * What `?event=` on `/admin/audit` turned out to mean (R-110 / UC-27 3).
+ *
+ * Three answers, and the third is the one this type exists for.
+ */
+export type AuditFilter =
+  | { kind: "all" }
+  | { kind: "event"; event: AuditFilterEvent }
+  | { kind: "unknown"; raw: string };
+
+/**
+ * Read `?event=` against the events that exist.
+ *
+ * The page used to do this inline, as `events.some(…) ? raw : null` — an id
+ * that matched nothing fell back to "everything", with a comment arguing that
+ * a stale bookmark is likelier than an event with no entries, so showing the
+ * whole log is the kinder answer.
+ *
+ * It is not, and the browser proves it: `/admin/audit?event=not-a-uuid` shows
+ * every line on the site under a heading that says "Everything", with nothing
+ * anywhere to say that a filter was asked for and dropped. This is the log
+ * disputes are settled from. An admin who follows a link to one event's
+ * history and is silently handed all of them reads the first few lines as that
+ * event's, and they are not. Saying "that filter does not name an event" costs
+ * one sentence and cannot be misread.
+ *
+ * A blank or absent parameter is `all`, which is the ordinary state of the page
+ * and not an error.
+ *
+ * Pure, and takes the events rather than reading them, so the three outcomes
+ * are testable without a request or a database.
+ */
+export function resolveAuditFilter(
+  raw: string | string[] | null | undefined,
+  events: readonly AuditFilterEvent[]
+): AuditFilter {
+  const wanted = (Array.isArray(raw) ? raw[0] : raw)?.trim() ?? "";
+  if (!wanted) return { kind: "all" };
+
+  const event = events.find((row) => row.id === wanted);
+  return event ? { kind: "event", event } : { kind: "unknown", raw: wanted };
 }
 
 /** How many lines the log holds, optionally for one event. */
