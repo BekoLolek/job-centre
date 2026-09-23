@@ -9,6 +9,30 @@ import { applyMigrations } from "@/db/migrate";
 import { DEFAULT_POINTS_TABLE } from "@/lib/championship-policy";
 import { type TestDatabase, freshDatabase, tableNames } from "./helpers";
 
+/**
+ * The budget for a test that stands up a WASM Postgres of its own.
+ *
+ * Sized from a measurement rather than from a guess about contention, which is
+ * what `vitest.config.ts` buys by giving this file a project of its own with
+ * `fileParallelism: false`. It runs alone, after the parallel groups, so its
+ * solo cost is its real cost: measured here at 10.5s for the reopen below, and
+ * 6.8s and 4.7s for the two that boot a second PGlite, on a machine that was
+ * busy with other work at the time. 30s is roughly three times the worst of
+ * those — room for a slower machine or a cold cache, and still short enough
+ * that a test which has genuinely hung says so rather than sitting there.
+ *
+ * The number it replaces was 60s, set at twice a 9.4s solo cost on the
+ * assumption that the parallel pool would not cost more than that. It cost
+ * seven times as much: the reopen test needed 64.5s under a full run, because
+ * it is doing filesystem work on Windows while a dozen workers boot their own
+ * WASM Postgres around it. Betting on a contention factor is what the project
+ * split removes; this number no longer has to cover one.
+ *
+ * One constant rather than three literals, so the next person who measures the
+ * boot cost changes it in one place.
+ */
+const PGLITE_BOOT_BUDGET_MS = 30_000;
+
 let ctx: TestDatabase;
 
 beforeAll(async () => {
@@ -133,9 +157,9 @@ describe("migrations", () => {
     );
     await client.close();
     // Booting a second WASM Postgres and replaying every migration into it is
-    // seconds of work on its own, and more so with a dozen workers doing the
-    // same thing at once. The sibling test below already allows for that.
-  }, 30_000);
+    // seconds of work even with the machine to itself — which this file now
+    // has, and which is what makes the budget above a measured number.
+  }, PGLITE_BOOT_BUDGET_MS);
 });
 
 describe("driver selection", () => {
@@ -173,9 +197,17 @@ describe("the file-backed local database", () => {
       expect(rows[0].name).toBe("Persisted");
       await (second as unknown as { $client: PGlite }).$client.close();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      /*
+       * Retries, because this runs on Windows. `close()` resolves when PGlite
+       * has let go of its data directory, but the OS can still be holding the
+       * handles a moment longer — an antivirus or indexer that opened the
+       * files behind us is enough — and `rmSync` then throws EBUSY or EPERM
+       * from a `finally` block, failing a test whose assertions all passed.
+       * `force` does not cover that: it only forgives a path that is missing.
+       */
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
     }
-  }, 30_000);
+  }, PGLITE_BOOT_BUDGET_MS);
 });
 
 describe("the Phase 5 migration", () => {
@@ -229,5 +261,5 @@ describe("the Phase 5 migration", () => {
     ).rejects.toThrow();
 
     await client.close();
-  }, 30_000);
+  }, PGLITE_BOOT_BUDGET_MS);
 });
