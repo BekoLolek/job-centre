@@ -171,6 +171,37 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] The test suite is untouched and still green (nothing but comments moved)
 - **Depends on:** none.
 
+### Task 49: Two admins can still hand one event to two hosts (found in Task 23)
+
+- **Serves:** R-86 / UC-21 5a
+- **Files:** `src/db/schema.ts` (+ migration on `event_hosts`), `src/lib/hosting.ts`, tests
+- **Do:** Task 23 made `approveHostApplication` re-read the event inside its transaction and refuse one somebody else already hosts, which closes the ordinary case. It is still a read-then-insert: two admins approving two different applications onto the same event in the same instant can both pass the read. The database should refuse the second - a unique constraint on `event_hosts.event_id`. That needs its own duplicate-row decision against production rows nobody has inspected (an event with two host rows today must be resolved before the constraint can be created, the same way Task 23's 0018 had to withdraw duplicate pending applications), which is why it was not folded into that task.
+- **Acceptance criteria:**
+  - [ ] Two simultaneous approvals onto one event: exactly one wins, proven with the sequencing helpers
+  - [ ] The migration states what it does with an event that already has two hosts, and why
+  - [ ] `requireEventManager` still admits the one host it kept
+- **Depends on:** Task 23.
+
+### Task 48: The audit filter pays for seat counts it throws away (found in Task 28 review)
+
+- **Serves:** R-110 / UC-27 3
+- **Files:** `src/lib/events.ts`, `src/app/admin/audit/page.tsx`
+- **Do:** `/admin/audit` calls `listEvents()` to fill its `<select>` and to resolve the filter, but `listEvents` groups a count over the whole `applications` table to build seat summaries the dropdown discards. The page is `force-dynamic`, so that runs on every render, including the unknown-filter branch that reads no rows at all. Add a narrow `listEventOptions()` returning `{id, title}` and call that instead.
+- **Acceptance criteria:**
+  - [ ] `/admin/audit` no longer reads `applications`
+  - [ ] The filter still lists every event, and an unknown id still says so
+- **Depends on:** nothing, but it edits `src/lib/events.ts`, so it must not run beside a task that owns that file.
+
+### Task 47: The question dialog still says answers will be cleared (found in Task 14)
+
+- **Serves:** R-10 / UC-03 5a
+- **Files:** `src/components/admin/QuestionDialog.tsx`, `src/components/admin/QuestionList.tsx`
+- **Do:** Task 14 made retiring a question keep every answer, and made editing one stop stranding them - but those two files were outside its scope, so `QuestionDialog`'s confirmation still warns that answers "will be cleared". It now means the opposite of what happens. Rewrite the copy, and move the retire control onto the question row where it belongs, instead of the separate panel Task 14 had to put it in.
+- **Acceptance criteria:**
+  - [ ] No copy in the admin games screens claims an answer is destroyed by retiring or editing a question
+  - [ ] Retire and restore are reachable from the question row
+- **Depends on:** Task 14.
+
 ### Task 45: A decided series stops listing games nobody will play (found in the browser sweep)
 
 - **Serves:** R-79 / the bracket and results pages

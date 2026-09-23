@@ -1137,7 +1137,7 @@ A season of two to four events a month across different games, with one running 
 - **4a.** Taking part worth more than last place in the table - System rejects for the same reason.
 
 **Notes**
-- An event belongs to at most one championship (R-196), enforced when it is added.
+- An event belongs to at most one championship (a Constraint in `requirements.md`, not a numbered requirement; UC-32 1a), enforced when it is added.
 
 ---
 
