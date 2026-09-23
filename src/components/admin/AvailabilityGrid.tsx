@@ -5,7 +5,7 @@ import { Badge, Button, EmptyState, cx, plural } from "@/components/ui";
 import {
   type PersonAvailability,
   type SlotTally,
-  SLOT_MINUTES,
+  clockAt,
   tallyWeek,
   weekDays,
 } from "@/lib/availability-resolve";
@@ -18,6 +18,7 @@ import {
   localZone,
   todayIn,
   weekStart,
+  zonedToInstant,
 } from "@/lib/zoned-time";
 
 /**
@@ -49,6 +50,23 @@ import {
  * Maybes are counted at half weight and drawn in the same hue. Splitting them
  * into a second colour turns a heatmap into something you have to consult a
  * key for, and the hover list says exactly who is a maybe anyway.
+ *
+ * ## Clock-change weeks (UC-07 4a)
+ *
+ * `tallyWeek` cuts each day's slots from *instants*, so the twice-a-year week
+ * has one column that is genuinely a different length from its neighbours: two
+ * slots shorter in spring, two longer in autumn. Nothing here pads that back
+ * to a rectangle. A spring column simply runs out — the rows past its end are
+ * drawn as gaps, because those half-hours do not exist and offering the admin
+ * a cell to point at would be offering a time nobody can play at. An autumn
+ * column runs on past the others, because that hour really is there and losing
+ * it was the old bug.
+ *
+ * Every cell is therefore labelled from its own instant rather than from its
+ * row (`clockAt`), which is the only labelling that survives a day where the
+ * row number and the clock have parted company. The gutter down the left is
+ * the ordinary week's clock — it matches six columns exactly and the seventh
+ * for most of its length — and the column that changes says so under its date.
  */
 
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -90,7 +108,39 @@ export default function AvailabilityGrid({
     [people, days, window, zone]
   );
 
-  const rows = grid[0]?.length ?? 0;
+  /*
+   * As many rows as the longest day needs. On an ordinary week every column is
+   * the same length and this is that length; on a clock-change week it is the
+   * long day's, and the short day's column stops short of it.
+   */
+  const rows = useMemo(
+    () => grid.reduce((longest, column) => Math.max(longest, column.length), 0),
+    [grid]
+  );
+
+  /** The instant midnight opens on the week's first day, for the "+1" marker. */
+  const midnight = useMemo(
+    () => zonedToInstant(days[0], 1440, zone).getTime(),
+    [days, zone]
+  );
+
+  /** The gutter's clock for a row: the first column that reaches that far. */
+  const labelAt = (row: number): string => {
+    const slot = grid.find((column) => column[row])?.[row];
+    if (!slot) return "";
+    return slot.from >= midnight ? `${clockAt(slot.from, zone)} +1` : clockAt(slot.from, zone);
+  };
+
+  /*
+   * A day whose column is a different length from the rest of the week is the
+   * day the clocks go. Saying so is cheaper than leaving an admin to wonder
+   * why one column has a hole in it, or an extra hour on the end.
+   */
+  const usual = useMemo(() => {
+    const counts = new Map<number, number>();
+    for (const column of grid) counts.set(column.length, (counts.get(column.length) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0;
+  }, [grid]);
   const best = useMemo(() => {
     let top = 0;
     for (const column of grid) {
@@ -192,24 +242,39 @@ export default function AvailabilityGrid({
                     {DAY_LABELS[index]}
                   </div>
                   <div className="num text-11 text-dim">{day.day}</div>
+                  {grid[index] && grid[index].length !== usual && (
+                    <div className="text-11 text-dim">clocks change</div>
+                  )}
                 </div>
               );
             })}
 
             {Array.from({ length: rows }, (_unused, slot) => {
-              const minute = window.startMinute + slot * SLOT_MINUTES;
+              const label = labelAt(slot);
               // Label the hours only; a label on every half hour is a wall of
               // numbers you stop reading after the third one.
-              const onTheHour = minute % 60 === 0;
+              // "14:00" and "00:00 +1" are on the hour; "14:30" is not.
+              const onTheHour = label.slice(3, 5) === "00";
               return [
                 <div
                   key={`t-${slot}`}
                   className="num pr-2 text-right text-11 leading-[1.6rem] text-dim"
                 >
-                  {onTheHour ? clockWithDay(minute) : ""}
+                  {onTheHour ? label : ""}
                 </div>,
-                ...days.map((day, dayIndex) => {
+                ...days.map((_day, dayIndex) => {
                   const cell = grid[dayIndex][slot];
+                  // The half hour that the clocks skipped. Not a cell with
+                  // nobody in it — a time that did not happen.
+                  if (!cell) {
+                    return (
+                      <div
+                        key={`${dayIndex}-${slot}`}
+                        aria-hidden
+                        className="h-[1.6rem] w-full rounded border border-dashed border-hair/60"
+                      />
+                    );
+                  }
                   const isHovered =
                     hovered?.day === dayIndex && hovered?.slot === slot;
                   return (
@@ -220,7 +285,7 @@ export default function AvailabilityGrid({
                       onFocus={() => setHovered({ day: dayIndex, slot })}
                       onMouseLeave={() => setHovered(null)}
                       onBlur={() => setHovered(null)}
-                      aria-label={`${DAY_LABELS[dayIndex]} ${clockWithDay(minute)}: ${
+                      aria-label={`${DAY_LABELS[dayIndex]} ${clockAt(cell.from, zone)}: ${
                         cell.yes.length
                       } free${cell.maybe.length > 0 ? `, ${cell.maybe.length} maybe` : ""}`}
                       className={cx(
@@ -252,10 +317,11 @@ export default function AvailabilityGrid({
         ) : (
           <div className="space-y-2">
             <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              {/* Both ends read off the slot's own instants, so the panel
+                  tells the truth on the day the clocks go too. */}
               <span className="text-14 text-chalk">
                 {DAY_LABELS[hovered!.day]} {days[hovered!.day].day}{" "}
-                {clockOf(window.startMinute + hovered!.slot * SLOT_MINUTES)} –{" "}
-                {clockOf(window.startMinute + (hovered!.slot + 1) * SLOT_MINUTES)}
+                {clockAt(active.from, zone)} – {clockAt(active.to, zone)}
               </span>
               <Badge tone={active.yes.length > 0 ? "union" : undefined}>
                 {plural(active.yes.length, "free")}

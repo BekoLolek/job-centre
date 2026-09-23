@@ -16,8 +16,11 @@ import {
   type AvailabilityAnswer,
   type AvailabilityException,
   type AvailabilityRule,
+  LATEST_MINUTE,
+  rangeRefusal,
+  weekdayName,
 } from "@/lib/availability-resolve";
-import { clockSteps, clockWithDay, localZone } from "@/lib/zoned-time";
+import { clockSteps, clockWithDay, formatDate, localZone, todayIn } from "@/lib/zoned-time";
 import { saveAvailabilityAction } from "@/app/me/availability-actions";
 
 /**
@@ -46,6 +49,20 @@ import { saveAvailabilityAction } from "@/app/me/availability-actions";
  * as a yes and somebody is disappointed, or as nothing and the slot looks
  * emptier than it is. The grid keeps the two apart.
  *
+ * ## What happens when a range is backwards (UC-06 7b)
+ *
+ * It is shown, by name, and the save is held. This panel used to shunt the end
+ * forward the instant it landed before the start: pick 22:00 as a start on a
+ * window ending at 21:00 and the end silently became 22:30. That wrote a time
+ * the member never chose, and it hid the mis-click that caused it — the row
+ * looked fine afterwards, so there was nothing to notice and nothing to undo.
+ *
+ * The check is `rangeRefusal`, the same function the server refuses with, so
+ * the sentence on screen is the sentence the action would have returned.
+ * Overlaps are the opposite case and are left entirely alone here: the server
+ * merges them (7d) and merging loses nothing, so there is nothing to warn
+ * about.
+ *
  * ## The zone
  *
  * Captured from the browser and stored with the answer, because a weekly
@@ -57,7 +74,7 @@ import { saveAvailabilityAction } from "@/app/me/availability-actions";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /** 05:00 the next morning is as late as a window may run. */
-const LATEST = 1740;
+const LATEST = LATEST_MINUTE;
 const ALL_DAY = { startMinute: 0, endMinute: 1440 };
 
 type DayMode = "none" | "all" | "times";
@@ -86,6 +103,34 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
   );
 
   const zone = initial.timezone ?? localZone();
+
+  /*
+   * Dates the member already had when the page loaded. A stored date that has
+   * since been and gone is history rather than something they are adding, and
+   * the server takes the same view — so it does not hold the save hostage.
+   */
+  const stored = useMemo(
+    () => new Set(initial.exceptions.map((exception) => exception.date)),
+    [initial.exceptions]
+  );
+
+  /** Every range the server would refuse, named (UC-06 7b, 7c). */
+  const problems = useMemo(() => {
+    const today = formatDate(todayIn(zone));
+    const found: string[] = [];
+    for (const rule of draft.rules) {
+      const bad = rangeRefusal(weekdayName(rule.weekday), rule.startMinute, rule.endMinute);
+      if (bad) found.push(bad);
+    }
+    for (const exception of draft.exceptions) {
+      if (exception.date < today && !stored.has(exception.date)) {
+        found.push(`${exception.date} has already been — pick a date from today on.`);
+      }
+      const bad = rangeRefusal(exception.date, exception.startMinute, exception.endMinute);
+      if (bad) found.push(bad);
+    }
+    return found;
+  }, [draft, stored, zone]);
 
   const rulesFor = (weekday: number) =>
     draft.rules.filter((rule) => rule.weekday === weekday);
@@ -138,13 +183,10 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
         if (rule.weekday !== weekday) return rule;
         seen += 1;
         if (seen !== index) return rule;
-        const next = { ...rule, ...change };
-        // Dragging the start past the end is a slip, not an instruction. Push
-        // the end along rather than refusing the click.
-        if (next.endMinute <= next.startMinute) {
-          next.endMinute = Math.min(next.startMinute + 30, LATEST);
-        }
-        return next;
+        // Stored exactly as chosen. Dragging the start past the end is a
+        // slip, and `problems` below says so by name — moving the end to
+        // cover it up is how the slip used to survive into the database.
+        return { ...rule, ...change };
       }),
     });
   };
@@ -195,11 +237,7 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
       ...draft,
       exceptions: draft.exceptions.map((exception, at) => {
         if (at !== index) return exception;
-        const next = { ...exception, ...change };
-        if (next.endMinute <= next.startMinute) {
-          next.endMinute = Math.min(next.startMinute + 30, LATEST);
-        }
-        return next;
+        return { ...exception, ...change };
       }),
     });
   };
@@ -242,6 +280,22 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
   return (
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
+
+      {problems.length > 0 && (
+        <Alert tone="flare">
+          <span className="block font-medium">
+            {problems.length === 1 ? "One range is wrong" : `${problems.length} ranges are wrong`}
+          </span>
+          <ul className="mt-1 space-y-0.5 opacity-90">
+            {problems.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+          <span className="mt-2 block opacity-90">
+            Nothing is saved until they are fixed.
+          </span>
+        </Alert>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <Badge tone={days > 0 ? "union" : undefined}>
@@ -291,17 +345,22 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
                 <div className="min-w-0 flex-1 space-y-2">
                   {windows.map((window, index) => (
                     <div key={index} className="flex flex-wrap items-center gap-2">
+                      {/*
+                        Both lists run the whole day. Hiding the times that
+                        would make this range backwards is the same repair as
+                        moving the end, one step earlier: it makes the wrong
+                        choice unreachable instead of answerable, and a member
+                        who meant to move the start first then cannot.
+                      */}
                       <TimeSelect
                         label={`${label} window ${index + 1} start`}
                         value={window.startMinute}
-                        max={LATEST - 30}
                         onChange={(minute) => patchWindow(weekday, index, { startMinute: minute })}
                       />
                       <span className="text-dim">–</span>
                       <TimeSelect
                         label={`${label} window ${index + 1} end`}
                         value={window.endMinute}
-                        min={window.startMinute + 30}
                         onChange={(minute) => patchWindow(weekday, index, { endMinute: minute })}
                       />
                       <MaybeToggle
@@ -386,14 +445,12 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
                     <TimeSelect
                       label="From"
                       value={exception.startMinute}
-                      max={LATEST - 30}
                       onChange={(minute) => patchException(index, { startMinute: minute })}
                     />
                     <span className="text-dim">–</span>
                     <TimeSelect
                       label="To"
                       value={exception.endMinute}
-                      min={exception.startMinute + 30}
                       onChange={(minute) => patchException(index, { endMinute: minute })}
                     />
                   </div>
@@ -428,7 +485,11 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
       </div>
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
-        <Button variant="union" disabled={busy || !dirty} onClick={() => void save()}>
+        <Button
+          variant="union"
+          disabled={busy || !dirty || problems.length > 0}
+          onClick={() => void save()}
+        >
           {busy ? "Saving…" : "Save availability"}
         </Button>
         {note && !dirty && <span className="text-13 text-success">{note}</span>}

@@ -7,14 +7,17 @@ import {
   db as defaultDb,
   users,
 } from "@/db";
-import { type PlainDate, addDays, formatDate, parseDate } from "./zoned-time";
+import { type PlainDate, addDays, formatDate, parseDate, todayIn } from "./zoned-time";
 import {
   type AvailabilityAnswer,
   type AvailabilityException,
   type AvailabilityRule,
   type PersonAvailability,
+  mergeExceptions,
   mergeRules,
+  rangeRefusal,
   weekDays,
+  weekdayName,
 } from "./availability-resolve";
 
 /*
@@ -160,16 +163,33 @@ const MAX_RULES = 60;
 const MAX_EXCEPTIONS = 120;
 
 /**
- * Replace one person's whole answer.
+ * Replace one person's whole answer (UC-06 7, 7b, 7c, 7d).
  *
- * Validation refuses rather than repairs. A window that ends before it starts
- * is a bug in the caller, and silently swapping the ends would hide it while
- * writing something the member never said.
+ * Three rules, and which of them repairs and which refuses is the point:
+ *
+ *  - **Overlapping ranges merge** (7d, the approved amendment to 7b in
+ *    `docs/plan.md`). Merging loses nothing: every minute the member claimed
+ *    is still claimed after it.
+ *  - **A range that ends before it starts is refused, by name** (7b). There is
+ *    no repair that keeps what they said — moving either end writes a time
+ *    they did not type — so nothing is saved and the message identifies the
+ *    one row that is wrong.
+ *  - **A date in the past is refused** (7c), unless the member already has
+ *    that date stored. An override for a date that has been and gone cannot
+ *    change any future week, and the form loads what is stored: refusing those
+ *    too would mean a member who booked a holiday last year could never save
+ *    anything again until they hunted down a row they had forgotten. So the
+ *    rule is about what is being *added*, which is what step 6 is about.
+ *
+ * `now` is a parameter so that "the past" is testable. The day it is compared
+ * against is the member's own — the zone they are writing in, the zone the
+ * dates mean something in — and not the server's.
  */
 export async function setAvailability(
   userId: string,
   input: AvailabilityAnswer,
-  database: Database = defaultDb
+  database: Database = defaultDb,
+  now: Date = new Date()
 ): Promise<SaveResult> {
   if (input.rules.length > MAX_RULES) {
     return { ok: false, error: `That is more than ${MAX_RULES} weekly windows.` };
@@ -178,24 +198,39 @@ export async function setAvailability(
     return { ok: false, error: `That is more than ${MAX_EXCEPTIONS} dates.` };
   }
 
+  const zone = (input.timezone ?? "").trim();
+  if (zone && !isZone(zone)) return { ok: false, error: "That is not a timezone." };
+
   for (const rule of input.rules) {
     if (!Number.isInteger(rule.weekday) || rule.weekday < 0 || rule.weekday > 6) {
       return { ok: false, error: "That is not a day of the week." };
     }
-    const bad = windowRefusal(rule.startMinute, rule.endMinute);
+    const bad = rangeRefusal(weekdayName(rule.weekday), rule.startMinute, rule.endMinute);
     if (bad) return { ok: false, error: bad };
   }
+
+  // The dates this member already has, read before anything is validated:
+  // a stored past date is history, not something they are adding now.
+  const already = new Set(
+    (
+      await database
+        .select({ onDate: availabilityExceptions.onDate })
+        .from(availabilityExceptions)
+        .where(eq(availabilityExceptions.userId, userId))
+    ).map((row) => row.onDate)
+  );
+  const today = formatDate(todayIn(zone || "UTC", now));
 
   for (const exception of input.exceptions) {
     if (!parseDate(exception.date)) {
       return { ok: false, error: `"${exception.date}" is not a date.` };
     }
-    const bad = windowRefusal(exception.startMinute, exception.endMinute);
+    if (exception.date < today && !already.has(exception.date)) {
+      return { ok: false, error: `${exception.date} has already been — pick a date from today on.` };
+    }
+    const bad = rangeRefusal(exception.date, exception.startMinute, exception.endMinute);
     if (bad) return { ok: false, error: bad };
   }
-
-  const zone = (input.timezone ?? "").trim();
-  if (zone && !isZone(zone)) return { ok: false, error: "That is not a timezone." };
 
   return database.transaction(async (tx) => {
     if (zone) await tx.update(users).set({ timezone: zone }).where(eq(users.id, userId));
@@ -216,9 +251,10 @@ export async function setAvailability(
       );
     }
 
-    if (input.exceptions.length > 0) {
+    const dates = mergeExceptions(input.exceptions);
+    if (dates.length > 0) {
       await tx.insert(availabilityExceptions).values(
-        input.exceptions.map((exception) => ({
+        dates.map((exception) => ({
           userId,
           onDate: exception.date,
           startMinute: exception.startMinute,
@@ -229,15 +265,8 @@ export async function setAvailability(
       );
     }
 
-    return { ok: true as const, data: { rules: merged.length, exceptions: input.exceptions.length } };
+    return { ok: true as const, data: { rules: merged.length, exceptions: dates.length } };
   });
-}
-
-function windowRefusal(start: number, end: number): string | null {
-  if (!Number.isInteger(start) || !Number.isInteger(end)) return "That is not a time.";
-  if (start < 0 || end > 1740) return "Times run from midnight to 05:00 the next day.";
-  if (end <= start) return "A window has to end after it starts.";
-  return null;
 }
 
 function isZone(zone: string): boolean {

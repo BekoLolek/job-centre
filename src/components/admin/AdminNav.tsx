@@ -7,10 +7,15 @@ import { cx } from "@/components/ui";
 /**
  * The admin area's own navigation, sat in the top bar next to the session links.
  *
- * Eight sections as text links on the ground rather than eight bordered
- * buttons: side by side, boxes read as one object and the bar stops looking
- * like navigation at all. Only the current section is lit, and it carries a
+ * Ten sections as text links on the ground rather than ten bordered buttons:
+ * side by side, boxes read as one object and the bar stops looking like
+ * navigation at all. Only the current section is lit, and it carries a
  * hairline under it.
+ *
+ * Availability (UC-07 1) and the host queue are here because they were not,
+ * and the account menu had them: a page an admin is told to "open" in a use
+ * case has to be reachable from the bar that lists the admin area, or the use
+ * case starts with a step nobody can take.
  *
  * Every one of these also lives in the account menu, which is where they are
  * reachable from on a narrow screen — this row hides below `lg` rather than
@@ -21,10 +26,17 @@ import { cx } from "@/components/ui";
  * link here and would otherwise light permanently. It gets an exact match.
  */
 
-const SECTIONS = [
+/**
+ * Exported so the list itself can be tested: which pages the admin area admits
+ * to having is a fact about the product (UC-07 1), and it is the one part of
+ * this component that has nothing to do with rendering.
+ */
+export const ADMIN_SECTIONS = [
   { href: "/admin", label: "Tonight", exact: true },
   { href: "/admin/events", label: "Events" },
   { href: "/admin/championships", label: "Seasons" },
+  { href: "/admin/availability", label: "Availability" },
+  { href: "/admin/host", label: "Hosts" },
   { href: "/admin/templates", label: "Templates" },
   { href: "/admin/games", label: "Games" },
   { href: "/admin/users", label: "Members" },
@@ -52,7 +64,7 @@ export default function AdminNav({ className }: { className?: string }) {
       )}
       aria-label="Admin sections"
     >
-      {SECTIONS.map((section) => {
+      {ADMIN_SECTIONS.map((section) => {
         const active =
           "exact" in section && section.exact
             ? pathname === section.href
