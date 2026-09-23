@@ -44,6 +44,7 @@ import {
   cx,
 } from "@/components/ui";
 import { completionSentence, playerName } from "@/components/draft";
+import { tieNotice } from "@/lib/draft-policy";
 import type { DraftPoolKind } from "@/db/schema";
 import AdminConsole from "./AdminConsole";
 import BidBox from "./BidBox";
@@ -207,6 +208,16 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
         : (view.mainPool ?? []);
 
   const completion = completionSentence(view);
+  /*
+   * UC-16 6b: "System shows the room that it was a tie."
+   *
+   * Here rather than in the console, because "the room" is everybody — the
+   * watcher who cannot see a single amount most of all, since without this the
+   * draft simply appears to stop. `tieNotice` builds the sentence from the two
+   * public facts the payload carries (`tied` and the team ids) and never from
+   * the amount, which only an admin's payload has at all.
+   */
+  const tie = tieNotice(view.lot, view.teams);
   const noTeams = view.teams.length === 0;
   const noCaptains = !noTeams && view.teams.every((team) => team.captainUserId === null);
 
@@ -259,6 +270,7 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
 
         {error && <Alert tone="flare">{error}</Alert>}
         {note && <Alert tone="success">{note}</Alert>}
+        {tie && !spinning && <Alert tone="flare">{tie}</Alert>}
         {completion && <Alert tone="union">{completion}</Alert>}
         {noCaptains && (
           <Alert tone="union">

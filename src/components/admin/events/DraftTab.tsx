@@ -213,6 +213,22 @@ export default function DraftTab({
   const router = useRouter();
   const { players, teams, started } = data;
 
+  /*
+   * UC-16 1a: the rules are fixed from the moment the first lot opens.
+   *
+   * `started` is "a lot has been awarded", which is a *later* moment than the
+   * one the rule turns on — so this screen locks a little late, and between the
+   * first spin and the first award `setDraftConfig` is the thing that refuses.
+   * That is the right way round for a disagreement of this kind: the server is
+   * the authority, the refusal it gives names the settings that would have
+   * moved, and the screen is never more permissive than the server *after* the
+   * award that everyone can see. Closing the gap properly means this tab being
+   * told whether a lot has ever opened, which is a change to what the page
+   * reads rather than to this component.
+   */
+  const rulesLocked = started;
+  const lockedReason = "The draft has started, so its rules are fixed (UC-16 1a).";
+
   /* --- Configuration ------------------------------------------- */
 
   const [form, setForm] = useState<DraftConfig>(data.config);
@@ -371,13 +387,15 @@ export default function DraftTab({
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
 
-      {started && (
+      {rulesLocked && (
         <Alert tone="union">
-          <span className="block font-medium">This draft has already awarded players</span>
+          <span className="block font-medium">This draft has started, so its rules are fixed</span>
           <span className="mt-1 block opacity-90">
-            The roster size can go up but not down, and changing the default balance no
-            longer rewrites what teams started with — moving the starting line mid-draft
-            would silently rewrite what everyone can still afford.
+            Every setting below locked when the first player went up on the wheel. Captains
+            have been bidding against a minimum, a timer and a roster size they could see,
+            and moving any of them now would change what every bid already placed was
+            worth. The pools are fixed for the same reason — during the draft, hold a
+            player over from the room instead, so it happens where everyone can see it.
           </span>
         </Alert>
       )}
@@ -392,6 +410,7 @@ export default function DraftTab({
             choices={BALANCE_MODES}
             value={form.balanceMode}
             onChange={(value) => set("balanceMode", value)}
+            disabled={rulesLocked}
           />
           <Number_
             label={form.balanceMode === "uniform" ? "Everyone starts on" : "Default balance"}
@@ -399,6 +418,7 @@ export default function DraftTab({
             min={0}
             max={1_000_000}
             step={50}
+            disabled={rulesLocked}
             onChange={(value) => set("defaultBalance", value ?? 0)}
             hint={
               form.balanceMode === "uniform"
@@ -421,6 +441,7 @@ export default function DraftTab({
             choices={BIDDING_MODES}
             value={form.biddingMode}
             onChange={(value) => set("biddingMode", value)}
+            disabled={rulesLocked}
           />
           <Options
             label="Who sees the amounts, live"
@@ -428,6 +449,7 @@ export default function DraftTab({
             value={form.bidVisibility}
             onChange={(value) => set("bidVisibility", value)}
             forced={visibilityForced}
+            disabled={rulesLocked}
           />
           <Number_
             label="Minimum bid"
@@ -435,6 +457,7 @@ export default function DraftTab({
             min={0}
             max={1_000_000}
             step={10}
+            disabled={rulesLocked}
             onChange={(value) => set("minBid", value ?? 0)}
             hint="Zero is today's behaviour — a captain can claim an unwanted player for nothing."
           />
@@ -444,7 +467,7 @@ export default function DraftTab({
             min={1}
             max={1_000}
             onChange={(value) => set("minIncrement", value ?? 1)}
-            disabled={form.biddingMode !== "open"}
+            disabled={rulesLocked || form.biddingMode !== "open"}
             hint={
               form.biddingMode === "open"
                 ? "How far above the standing bid a raise has to go."
@@ -458,6 +481,7 @@ export default function DraftTab({
             label="Bid timer"
             value={form.bidTimerSeconds !== null}
             onChange={(on) => set("bidTimerSeconds", on ? 60 : null)}
+            disabled={rulesLocked}
             onLabel="Timed"
             offLabel="No timer"
             hint="No timer is how the draft runs today — the admin closes a lot when the room is ready."
@@ -470,6 +494,7 @@ export default function DraftTab({
               max={600}
               step={5}
               suffix="seconds"
+              disabled={rulesLocked}
               onChange={(value) => set("bidTimerSeconds", value ?? 60)}
             />
           )}
@@ -486,6 +511,7 @@ export default function DraftTab({
             value={form.rosterTarget}
             min={started ? data.config.rosterTarget : 1}
             max={20}
+            disabled={rulesLocked}
             onChange={(value) => set("rosterTarget", value ?? 1)}
             hint={`Including the captain (§14), so each team drafts ${Math.max(
               0,
@@ -496,6 +522,7 @@ export default function DraftTab({
             label="Must fill your roster"
             value={form.mustFillRoster}
             onChange={(value) => set("mustFillRoster", value)}
+            disabled={rulesLocked}
             onLabel="Protected"
             offLabel="Spend freely"
             hint="§9's blind-bid protection: a captain has to keep back enough to buy somebody for every slot they have left."
@@ -515,11 +542,13 @@ export default function DraftTab({
             choices={SELECTION_MODES}
             value={form.selectionMode}
             onChange={(value) => set("selectionMode", value)}
+            disabled={rulesLocked}
           />
           <Switch
             label="Reserve pool"
             value={form.reserveEnabled}
             onChange={(value) => set("reserveEnabled", value)}
+            disabled={rulesLocked}
             hint="The second wheel: names that went for nothing first time round get another chance once the money is spent."
           />
           {form.reserveEnabled && (
@@ -529,8 +558,13 @@ export default function DraftTab({
               min={1}
               max={10}
               suffix={form.reserveRounds === null ? "unlimited" : "rounds"}
+              disabled={rulesLocked}
               onChange={(value) => set("reserveRounds", value)}
-              hint="Clear the box for unlimited."
+              hint={
+                form.reserveRounds === null
+                  ? "How many times a held-over player comes back round. Clear the box for unlimited, which is how the draft runs today."
+                  : `A held-over player goes up ${form.reserveRounds === 1 ? "once more" : `up to ${form.reserveRounds} more times`} and is then out of the draft. Clear the box for unlimited.`
+              }
             />
           )}
         </div>
@@ -538,6 +572,8 @@ export default function DraftTab({
         <SaveRow
           state={state}
           note={note}
+          disabled={rulesLocked}
+          reason={lockedReason}
           onSave={() => void saveConfig()}
           label="Save draft rules"
         >
@@ -603,14 +639,15 @@ export default function DraftTab({
           </Button>
           <Button
             size="sm"
-            disabled={poolBusy !== null || pool.reserve.length === 0}
+            disabled={poolBusy !== null || pool.reserve.length === 0 || rulesLocked}
             onClick={resetToMain}
           >
             Everyone back to the main pool
           </Button>
           <span className="text-12 text-muted">
-            Seeding keeps anybody already held over in the reserve pool, and never adds a
-            captain or a player who has been bought.
+            {rulesLocked
+              ? "The draft has started, so the pools are fixed (UC-16 E6a). Hold a player over from the draft room instead — that way it appears in the history."
+              : "Seeding keeps anybody already held over in the reserve pool, and never adds a captain or a player who has been bought."}
           </span>
         </div>
 
@@ -624,7 +661,7 @@ export default function DraftTab({
             busy={poolBusy}
             empty="Nothing in the main pool. Seed it from the accepted applicants above."
             action={
-              config.reserveEnabled
+              config.reserveEnabled && !rulesLocked
                 ? {
                     label: "Hold over →",
                     onClick: (userId) => movePlayer(userId, "reserve"),
@@ -647,7 +684,7 @@ export default function DraftTab({
             dimmed={!config.reserveEnabled}
             empty="Nobody held over."
             action={
-              config.reserveEnabled
+              config.reserveEnabled && !rulesLocked
                 ? {
                     label: "← Back to main",
                     onClick: (userId) => movePlayer(userId, "main"),

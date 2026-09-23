@@ -30,7 +30,7 @@
  *
  * And **a tie is never broken here**. Two equal top bids are a fact about the
  * lot, not a problem to be solved with a coin flip nobody saw; `resolveLot`
- * reports it and an admin decides.
+ * reports it and an admin decides (UC-16 6b).
  */
 
 import type {
@@ -96,6 +96,69 @@ export const DEFAULT_DRAFT_CONFIG: DraftConfig = {
   mustFillRoster: true,
   bidVisibility: "admin_only",
 };
+
+/**
+ * Every key of `DraftConfig` that is a **rule** rather than a note.
+ *
+ * All of them, as it happens — R-64 lists balances, selection, bidding mode,
+ * visibility, reserve pool and roster size, and R-143 to R-146 add the timer,
+ * the comeback count, the minimum bid and the must-fill switch. The list is
+ * written out rather than derived from `Object.keys` so that adding a field to
+ * `DraftConfig` is a deliberate decision about whether it locks, not a silent
+ * one: UC-16 1a refuses *rule* changes once the first lot has opened, and a new
+ * key that quietly joined the lock would be a surprise in both directions.
+ */
+export const DRAFT_RULE_KEYS = [
+  "balanceMode",
+  "defaultBalance",
+  "biddingMode",
+  "minBid",
+  "minIncrement",
+  "bidTimerSeconds",
+  "selectionMode",
+  "reserveEnabled",
+  "reserveRounds",
+  "rosterTarget",
+  "mustFillRoster",
+  "bidVisibility",
+] as const satisfies ReadonlyArray<keyof DraftConfig>;
+
+/**
+ * Which rules a save would actually change — UC-16 1a's question, asked of two
+ * *normalised* configs.
+ *
+ * Normalised matters: the admin screen posts the whole form back every time, so
+ * "did anything change" cannot be "was a key present". A re-save of the rules
+ * exactly as they stand is a no-op and must not be refused, or an admin who
+ * opens the tab mid-draft and presses Save out of habit is told the draft is
+ * broken.
+ */
+export function changedRules(
+  current: DraftConfig,
+  next: DraftConfig
+): Array<keyof DraftConfig> {
+  return DRAFT_RULE_KEYS.filter((key) => current[key] !== next[key]);
+}
+
+/**
+ * How many more times a reserved player may be put up — R-144, UC-16 E2.
+ *
+ * `used` is how many lots they have already been put up for *from the reserve
+ * pool*; the lot that sent them there in the first place came from the main
+ * wheel and is not a comeback. A null `reserveRounds` is unlimited, which is
+ * how the draft ran before the setting was read at all, so an event that never
+ * touches it keeps today's behaviour.
+ */
+export function reserveComebacksLeft(used: number, config: DraftConfig): number | null {
+  if (config.reserveRounds === null) return null;
+  return Math.max(0, config.reserveRounds - Math.max(0, used));
+}
+
+/** May a reserved player come round again, having already had `used` turns? */
+export function mayComeBackAgain(used: number, config: DraftConfig): boolean {
+  const left = reserveComebacksLeft(used, config);
+  return left === null || left > 0;
+}
 
 /** Teams per event, per §8.1's "2–8". */
 export const MIN_TEAMS = 2;
@@ -530,13 +593,63 @@ export function resolveLot(bids: readonly BidView[]): LotResolution {
   };
 }
 
-/** Has every team that still *can* bid done so? The admin's "all in" light. */
+/**
+ * The teams an admin may hand this lot to — UC-16 6 and 6b.
+ *
+ * One name when there is a highest bid, every tied name when there is not, and
+ * none at all when nobody bid. The list is short on purpose: "award it to the
+ * highest bid" is a rule, not a default the console happens to offer, and the
+ * only discretion the use case gives a manager is *which* of the tied teams
+ * takes the player.
+ */
+export function awardableTeamIds(resolution: LotResolution): string[] {
+  switch (resolution.kind) {
+    case "none":
+      return [];
+    case "winner":
+      return [resolution.teamId];
+    case "tie":
+      return [...resolution.teamIds];
+  }
+}
+
+/**
+ * Has every team that still *can* bid done so? The admin's "all in" light
+ * (R-149 / UC-16 E7).
+ *
+ * "Can bid" is three things, and leaving any of them out makes the light a
+ * liar in the one direction that matters — it never comes on, so the manager
+ * waits for a bid that is never coming:
+ *
+ *  - **Somebody has to be able to place it.** A team with no captain has
+ *    nobody who may bid (UC-17's precondition), so the lot is not waiting on
+ *    it. This was the bug: a draft whose teams are not all captained yet — the
+ *    ordinary state of the first few minutes — never showed "all in".
+ *  - **A slot has to be free**, or `canPlaceBid` refuses with `roster_full`.
+ *  - **The minimum has to be reachable.** A team whose must-fill reserve
+ *    leaves them under the event's minimum bid is refused with
+ *    `cannot_afford_minimum` however much they want to bid, so they are not
+ *    holding the lot up either.
+ *
+ * False when no team can bid at all, rather than vacuously true: "everybody
+ * has bid" said of nobody is not a thing to tell a manager about to close a
+ * lot.
+ */
 export function allBidsIn(
-  teams: ReadonlyArray<{ id: string; roster: RosterState }>,
-  bids: readonly BidView[]
+  teams: ReadonlyArray<{
+    id: string;
+    captainUserId: string | null;
+    roster: RosterState;
+    maxBid: number;
+  }>,
+  bids: readonly BidView[],
+  config: DraftConfig
 ): boolean {
   const bidders = new Set(bids.map((bid) => bid.teamId));
-  const eligible = teams.filter((team) => team.roster.slotsLeft > 0);
+  const eligible = teams.filter(
+    (team) =>
+      team.captainUserId !== null && team.roster.slotsLeft > 0 && team.maxBid >= config.minBid
+  );
   if (eligible.length === 0) return false;
   return eligible.every((team) => bidders.has(team.id));
 }
@@ -696,6 +809,15 @@ export type DraftView = {
     /** How many teams have bid. Public; the amounts are not. */
     bidCount: number;
     allBidsIn: boolean;
+    /**
+     * UC-16 6b: the top bid is shared, so nothing is decided until the manager
+     * picks. Public — *that* it is tied is the room's business, the amount is
+     * not — and the pair below says which teams, for the same reason `hasBid`
+     * is public while `bid` is not.
+     */
+    tied: boolean;
+    /** The tied teams, named but not priced. Empty when there is no tie. */
+    tiedTeamIds: string[];
     /** Admin only while the lot is live: who is winning, or that it is tied. */
     resolution: LotResolution | null;
   } | null;
@@ -725,6 +847,33 @@ export type DraftView = {
     maxBid: number | null;
   };
 };
+
+/**
+ * What the room is told about a tie — UC-16 6b's "System shows the room that
+ * it was a tie", in one sentence, with no amount in it.
+ *
+ * Null when there is no tie, so the caller renders nothing rather than an
+ * empty banner. It lives here beside the rule instead of in the room's copy
+ * because it is the one sentence on the page that must never grow a number:
+ * written where the components are, the next person to make it more helpful
+ * would reach for `resolution.amount` and quietly undo the redaction above.
+ */
+export function tieNotice(
+  lot: { tied: boolean; tiedTeamIds: readonly string[] } | null,
+  teams: ReadonlyArray<{ id: string; name: string }>
+): string | null {
+  if (!lot || !lot.tied) return null;
+
+  const names = lot.tiedTeamIds.map(
+    (id) => teams.find((team) => team.id === id)?.name ?? "a team"
+  );
+  const who =
+    names.length > 1
+      ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
+      : (names[0] ?? "Two teams");
+
+  return `${who} have bid the same. Nothing is settled until the manager picks one of them.`;
+}
 
 /** Is the wheel still turning at `now`? */
 export function spinning(spin: DraftSpin | null, now: number): boolean {
@@ -763,6 +912,11 @@ function seesAmount(viewer: DraftViewer, teamId: string, config: DraftConfig): b
  *  - a **captain** sees their own amount and nobody else's;
  *  - a **player** and an **observer** see no amounts at all;
  *  - *that* a team has bid is public to everyone — only the number is secret;
+ *  - *that* the top bid is tied is public too, with the tied teams named and
+ *    the amount withheld from anyone `seesAmount` would withhold it from
+ *    (UC-16 6b: "System shows the room that it was a tie" — it does not say
+ *    what the tie was worth, and a room told the amount would know every tied
+ *    captain's sealed bid);
  *  - once a lot settles, the **winning amount is public**, permanently, under
  *    every visibility setting, because a draft whose prices are secret
  *    afterwards is not a draft anyone would run;
@@ -806,6 +960,18 @@ export function redactDraft(snapshot: DraftSnapshot, viewer: DraftViewer): Draft
 
   const lot = snapshot.lot;
   const stillSpinning = lot ? spinning(lot.spin, snapshot.now) : false;
+  /*
+   * Resolved once and shared. The admin gets the whole thing, including the
+   * amount; everyone else gets the two public facts taken off it. Computing it
+   * twice would invite the two answers to drift apart, which is the one way a
+   * redaction goes wrong without anybody noticing.
+   *
+   * Withheld entirely mid-spin: a lot whose player has not been revealed has
+   * no bids on it, and a tie announced before the name is not a thing that can
+   * have happened.
+   */
+  const resolution = lot && !stillSpinning ? resolveLot(lot.bids) : null;
+  const tied = resolution?.kind === "tie" ? resolution : null;
 
   return {
     now: snapshot.now,
@@ -822,8 +988,10 @@ export function redactDraft(snapshot: DraftSnapshot, viewer: DraftViewer): Draft
           spin: lot.spin,
           endsAt: lot.endsAt,
           bidCount: lot.bids.length,
-          allBidsIn: allBidsIn(snapshot.teams, lot.bids),
-          resolution: isAdmin ? resolveLot(lot.bids) : null,
+          allBidsIn: allBidsIn(snapshot.teams, lot.bids, config),
+          tied: tied !== null,
+          tiedTeamIds: tied ? [...tied.teamIds] : [],
+          resolution: isAdmin ? resolution : null,
         }
       : null,
     history: snapshot.history,

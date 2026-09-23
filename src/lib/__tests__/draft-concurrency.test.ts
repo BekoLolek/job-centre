@@ -300,7 +300,19 @@ describe("awardLot under concurrency", () => {
     const fixture = await draftReady(2, 1);
     const [a, b] = fixture.teamIds;
     const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.members[2] }, db));
-    unwrap(await placeBid(lot.id, a, 100, {}, db));
+    /*
+     * A tie, so that the *rules* leave both awards open and only the lock can
+     * decide between them.
+     *
+     * The bids used to be 100 and 200, which since UC-16 6 landed means the
+     * lower one is refused for being lower — a real refusal, but not this
+     * file's. The race would then have been "proved" by a check that would
+     * have fired with no concurrency at all. Two managers reaching for the
+     * award button at the same moment is *most* likely on a tie (6b), which is
+     * the one lot where the decision is genuinely theirs, so that is the lot
+     * this races.
+     */
+    unwrap(await placeBid(lot.id, a, 200, {}, db));
     unwrap(await placeBid(lot.id, b, 200, {}, db));
 
     const results = await Promise.all([

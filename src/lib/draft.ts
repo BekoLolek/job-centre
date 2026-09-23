@@ -82,11 +82,16 @@ import {
   MAX_TEAMS,
   SPIN_DURATION_MS,
   SPIN_TURNS,
+  awardableTeamIds,
   balanceFor,
+  bidsCloseAt,
   canPlaceBid,
+  changedRules,
   draftComplete,
   draftConfigFrom,
   maxBidFor,
+  mayComeBackAgain,
+  reserveComebacksLeft,
   redactDraft,
   resolveLot,
   rosterState,
@@ -219,6 +224,42 @@ function asLotViews(rows: readonly DraftLot[]): AwardedLotView[] {
     winnerTeamId: row.winnerTeamId,
     price: row.price,
   }));
+}
+
+/**
+ * Has a lot ever been opened for this event? — UC-16 1a and E6a's moment.
+ *
+ * "Ever", not "is one open now" and not "has one been awarded": a lot that was
+ * opened and then cancelled still happened in front of the room, and the
+ * refusal is about the room having seen the rules it was bidding under. A
+ * voided row counts for exactly that reason.
+ */
+async function draftHasBegun(database: Database, eventId: string): Promise<boolean> {
+  const [row] = await database
+    .select({ id: draftLots.id })
+    .from(draftLots)
+    .where(eq(draftLots.eventId, eventId))
+    .limit(1);
+  return row !== undefined;
+}
+
+/**
+ * How many times this player has been put up *from the reserve pool* — the
+ * count R-144 caps.
+ *
+ * Voided lots do not count. An undo is the admin saying the lot did not
+ * happen, and a comeback the room never had should not be one the player has
+ * spent.
+ */
+function reserveTurnsUsed(lots: readonly DraftLot[], userId: string): number {
+  let used = 0;
+  for (const lot of lots) {
+    if (lot.playerUserId !== userId) continue;
+    if (lot.fromKind !== "reserve") continue;
+    if (lot.status === "voided") continue;
+    used += 1;
+  }
+  return used;
 }
 
 /** The next `sort` at the back of one pool. */
@@ -656,6 +697,28 @@ export async function setCaptains(
 /* Configuration                                                      */
 /* ------------------------------------------------------------------ */
 
+/**
+ * The rules in the admin's words, for the refusal UC-16 1a produces.
+ *
+ * A message naming `bidTimerSeconds` is a message written for whoever wrote
+ * the schema. These are the labels the Draft tab puts on the same controls, so
+ * the sentence points at something the reader can see on their screen.
+ */
+const RULE_LABELS: Record<keyof DraftConfig, string> = {
+  balanceMode: "the balance mode",
+  defaultBalance: "the starting balance",
+  biddingMode: "sealed or open bidding",
+  minBid: "the minimum bid",
+  minIncrement: "the bid increment",
+  bidTimerSeconds: "the bid timer",
+  selectionMode: "who goes up next",
+  reserveEnabled: "the reserve pool",
+  reserveRounds: "the reserve rounds",
+  rosterTarget: "the roster size",
+  mustFillRoster: "the roster-fill protection",
+  bidVisibility: "who sees bids",
+};
+
 export type SetDraftConfigResult = {
   config: DraftConfig;
   /** Teams whose starting balance the change rewrote. */
@@ -679,6 +742,21 @@ export async function getDraftConfig(
  * that disagree is not a state worth being able to reach. It refuses to do so
  * **once a lot has been awarded**, since moving the starting line mid-draft
  * would silently rewrite what every team can still afford.
+ *
+ * ## The rules lock when the first lot opens (UC-16 1a)
+ *
+ * Not when the first lot is *awarded*, which is where the refusals above stop,
+ * and not when the draft is created. The moment a name goes up on the wheel,
+ * captains are deciding what to offer against a published set of rules — a
+ * minimum bid, a timer, a must-fill switch, a roster size — and every one of
+ * those changes what a bid means. Moving them underneath a live room is not a
+ * correction, it is a different draft.
+ *
+ * So every key of `DraftConfig` is frozen from the first `openLot`, and the
+ * refusal names the settings that would have moved rather than saying no in
+ * general. A save that changes nothing still goes through: the admin screen
+ * posts the whole form back, and refusing an identical re-save would tell an
+ * admin the draft is broken when they have done nothing at all.
  */
 export async function setDraftConfig(
   eventId: string,
@@ -705,6 +783,18 @@ export async function setDraftConfig(
     if (started && next.rosterTarget < current.rosterTarget) {
       return fail(
         "The draft has already awarded players, so the roster size cannot be lowered now."
+      );
+    }
+
+    // UC-16 1a. Checked after the sentence above so that the commonest mistake
+    // — reaching for the roster size mid-draft — still gets the answer that
+    // says what is wrong with *that* rather than a list.
+    const moved = changedRules(current, next);
+    if (moved.length > 0 && (await draftHasBegun(tx, eventId))) {
+      return fail(
+        `The draft has already started, so its rules are fixed. ${moved
+          .map((key) => RULE_LABELS[key])
+          .join(", ")} cannot change now — captains have been bidding under the ones on the board.`
       );
     }
 
@@ -897,6 +987,17 @@ export async function getDraftPool(
  *
  * A no-op when the player is already in that pool. Refuses anyone who has
  * already been drafted, since their place is a roster row, not a pool entry.
+ *
+ * ## "Before the draft" is meant literally (R-148 / UC-16 E6a)
+ *
+ * R-148 is the manager moving players between the pools *before the draft*, and
+ * E6a says the same move after the first lot has opened is refused. That is not
+ * bureaucracy: the wheel everyone is looking at is the main pool, the reserve
+ * pool is the promise that the cheap names come round again, and silently
+ * moving somebody between the two mid-draft changes who is still for sale
+ * without a lot to show for it. During the draft there is a way to do this that
+ * leaves a trace — put them up and hold them over (`moveToReserve`), which is
+ * UC-16 6a and appears in the history.
  */
 export async function setPoolKind(
   eventId: string,
@@ -927,6 +1028,11 @@ export async function setPoolKind(
     }
 
     if (entry.kind !== kind) {
+      if (await draftHasBegun(tx, eventId)) {
+        return fail(
+          "The draft has started, so the pools are fixed. Put them up and hold them over to the reserve pool instead — that way the room sees it."
+        );
+      }
       await tx
         .update(draftPoolEntries)
         .set({ kind, sort: nextSort(entries, kind) })
@@ -976,6 +1082,20 @@ function defaultPick(length: number): number {
  * Only one lot may be open per event. That is checked here *and* enforced by a
  * partial unique index, because two admins clicking spin at the same moment is
  * a race no screen can see.
+ *
+ * ## Two refusals the wheel used not to have
+ *
+ * **Every roster full** (UC-16 8). The draft ends when the rosters are full or
+ * the pool is empty; opening a lot once every seat is taken puts a name on the
+ * board that nobody may bid on — `canPlaceBid` refuses every captain with
+ * `roster_full` — and the only way out is to cancel it. `draftComplete` already
+ * knows the answer, so the wheel asks it before it turns.
+ *
+ * **The reserve pool's comeback limit** (R-144 / UC-16 E2). A player who has
+ * had their configured number of turns on the second wheel is out of the draft,
+ * so they are not a candidate for it. Named explicitly they get a sentence
+ * saying so; left to the wheel they are simply not on it, which is what the
+ * room sees too.
  */
 export async function openLot(
   eventId: string,
@@ -999,19 +1119,54 @@ export async function openLot(
     const main = pool.filter((entry) => entry.kind === "main");
     const reserve = pool.filter((entry) => entry.kind === "reserve");
 
+    // UC-16 8: the draft is over when every roster is full, so there is nothing
+    // to put up. Asked of the real rosters rather than of a counter, because a
+    // voided award frees a seat and the count would not know.
+    const teamRows = await readTeams(tx, eventId);
+    const memberViews = asMemberViews(await readMembers(tx, eventId));
+    const completion = draftComplete(
+      { main: main.length, reserve: reserve.length },
+      teamRows.map((team) => ({
+        id: team.id,
+        members: memberViews.filter((member) => member.teamId === team.id),
+      })),
+      config
+    );
+    if (completion.reason === "rosters_full" || completion.reason === "both") {
+      return fail("Every roster is full, so there is nobody left to bid on them.");
+    }
+
     const kind: DraftPoolKind =
       input.kind ?? (main.length > 0 ? "main" : config.reserveEnabled ? "reserve" : "main");
     if (kind === "reserve" && !config.reserveEnabled) {
       return fail("The reserve pool is switched off for this event.");
     }
 
-    const candidates = kind === "main" ? main : reserve;
-    if (candidates.length === 0) return fail("That pool is empty.");
-
+    // R-144: on the reserve wheel, anybody out of comebacks is out of the draft
+    // and off the wheel. The main wheel is untouched — the limit counts turns
+    // taken *from* the reserve pool, and a first appearance is not one.
+    const lotsSoFar = kind === "reserve" ? await readLots(tx, eventId) : [];
+    const candidates = (kind === "main" ? main : reserve).filter(
+      (entry) =>
+        kind === "main" || mayComeBackAgain(reserveTurnsUsed(lotsSoFar, entry.userId), config)
+    );
     let index: number;
     if (input.userId) {
+      // Asked before "is the pool empty", so a named player who is out of
+      // comebacks is told *that* rather than that the wheel has run out —
+      // which is the same sentence for two quite different situations.
       index = candidates.findIndex((entry) => entry.userId === input.userId);
-      if (index === -1) return fail("That player is not in that pool.");
+      if (index === -1) {
+        const spent =
+          kind === "reserve" && reserve.some((entry) => entry.userId === input.userId);
+        return fail(
+          spent
+            ? `That player has already come back ${config.reserveRounds === 1 ? "once" : `${config.reserveRounds} times`}, which is all this draft allows.`
+            : "That player is not in that pool."
+        );
+      }
+    } else if (candidates.length === 0) {
+      return fail("That pool is empty.");
     } else if (config.selectionMode === "fixed_order") {
       index = 0;
     } else if (config.selectionMode === "admin_pick") {
@@ -1170,6 +1325,45 @@ export async function clearBid(
   });
 }
 
+/**
+ * Take **every** bid off the open lot — the other half of R-147, UC-16 E5.
+ *
+ * One statement inside one transaction rather than a loop of `clearBid` calls.
+ * A loop is a sequence of separate transactions, so a bid placed between two of
+ * them survives a command whose whole point is that none do, and the room is
+ * left with one bid on a lot the manager believes is clear. The same lock the
+ * rest of this module takes is what makes "all of them" mean all of them.
+ *
+ * The count comes back so the console can say what happened: "3 bids cleared"
+ * and "there was nothing to clear" are different pieces of news, and a manager
+ * who pressed the button by mistake wants to be told which.
+ */
+export async function clearBids(
+  lotId: string,
+  database: Database = defaultDb
+): Promise<DraftResult<{ cleared: number }>> {
+  return database.transaction(async (tx) => {
+    const [peek] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
+    if (!peek) return fail("That lot no longer exists.");
+
+    const event = await lockEvent(tx, peek.eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
+    if (!lot) return fail("That lot no longer exists.");
+    if (lot.status !== "open") return fail("That lot has already settled.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
+
+    const removed = await tx
+      .delete(draftBids)
+      .where(eq(draftBids.lotId, lotId))
+      .returning({ id: draftBids.id });
+
+    return withData({ cleared: removed.length });
+  });
+}
+
 export type AwardLotResult = {
   lot: DraftLot;
   member: TeamMember;
@@ -1185,6 +1379,20 @@ export type AwardLotResult = {
  * again, so the amount on the record is always one a captain actually offered.
  * Breaking a tie is therefore naming the team, which is exactly what
  * `resolveLot` asks an admin to do.
+ *
+ * ## And only to the highest (UC-16 6)
+ *
+ * "Awards it to the highest bid" is the use case's step 7, not a default. Until
+ * now the only check was that the named team had bid *at all*, so a mis-aimed
+ * click on a console listing every bidder sold a player to the team that
+ * offered least — for their own lower bid, in front of a room that had watched
+ * somebody else win. `awardableTeamIds` is the same answer the console uses to
+ * decide which buttons to offer, asked again here because the console is not
+ * the authority and a stale payload is one click behind the bids.
+ *
+ * The exception is the only one UC-16 gives: on a tie (6b) every tied team is
+ * awardable and the manager picks. That is discretion between equal offers, not
+ * discretion about the price.
  *
  * Deducting exactly once is not enforced by arithmetic here — nothing is
  * decremented. The lot *is* the deduction, and `balanceFor` sums the awarded
@@ -1222,6 +1430,16 @@ export async function awardLot(
     const bids = await readBids(tx, lotId);
     const bid = bids.find((row) => row.teamId === teamId);
     if (!bid) return fail(`${team.name} has not bid on this player.`);
+
+    // Read inside the lock with the bids, so a raise that landed while the
+    // console was rendering is counted rather than argued with.
+    const resolution = resolveLot(bids.map((row) => ({ teamId: row.teamId, amount: row.amount })));
+    if (!awardableTeamIds(resolution).includes(teamId)) {
+      const top = resolution.kind === "none" ? 0 : resolution.amount;
+      return fail(
+        `${team.name} bid ${bid.amount}, and ${top} is the highest bid on this lot. A lot goes to the highest bid — clear the others first if that is not what you want.`
+      );
+    }
 
     const config = await readConfig(tx, lot.eventId);
     const members = await readMembers(tx, lot.eventId);
@@ -1324,18 +1542,43 @@ export async function discardLot(
   });
 }
 
+export type MoveToReserveResult = {
+  lot: DraftLot;
+  /**
+   * False when this was the player's last allowed turn: the lot is recorded as
+   * `reserved` either way, but they do not go back into the pool.
+   */
+  returnedToPool: boolean;
+  /** How many more turns they have after this one. Null is unlimited. */
+  comebacksLeft: number | null;
+};
+
 /**
  * Send the player round again later.
  *
  * They go to the back of the reserve pool rather than out of the draft, which
  * is the point of the second wheel: the names that went for nothing the first
  * time get another chance once the money is spent.
+ *
+ * ## How many times is a setting, not an assumption (R-144 / UC-16 E2)
+ *
+ * This used to refuse outright when the lot already came *from* the reserve
+ * pool — "that player is already in the reserve pool" — which made "comes back
+ * exactly once" a fact of the code. R-144 replaces that assumption with a
+ * number the manager sets, and a number that can be two is a number this has to
+ * be able to act on, so the refusal is now the count rather than the pool.
+ *
+ * When the turns run out the lot is still `reserved` — that is what the manager
+ * did, and rewriting it as a discard would put words in their mouth — but the
+ * player does not go back on the wheel. E2's "then is out of the draft", said
+ * in the only way the pool can say it. The result says which happened so the
+ * console can tell the room.
  */
 export async function moveToReserve(
   lotId: string,
   options: { closedBy?: string | null; now?: Date } = {},
   database: Database = defaultDb
-): Promise<DraftResult<DraftLot>> {
+): Promise<DraftResult<MoveToReserveResult>> {
   const now = options.now ?? new Date();
 
   return database.transaction(async (tx) => {
@@ -1352,7 +1595,21 @@ export async function moveToReserve(
 
     const config = await readConfig(tx, lot.eventId);
     if (!config.reserveEnabled) return fail("The reserve pool is switched off for this event.");
-    if (lot.fromKind === "reserve") return fail("That player is already in the reserve pool.");
+
+    /*
+     * Counted *including this lot*, which is the whole arithmetic of E2.
+     *
+     * A lot drawn from the main wheel is the player's nought-th turn on the
+     * reserve one, so holding them over sends them for turn number one. A lot
+     * already drawn from the reserve pool was turn number `used`, and holding
+     * them over again asks for turn `used + 1`. So the question at this point
+     * is always "do they have a turn left after the one they have just had",
+     * and `used` already counts the lot in front of us because `readLots`
+     * includes it.
+     */
+    const used = reserveTurnsUsed(await readLots(tx, lot.eventId), lot.playerUserId);
+    const returnedToPool = mayComeBackAgain(used, config);
+    const left = returnedToPool ? reserveComebacksLeft(used, config) : 0;
 
     const [closed] = await tx
       .update(draftLots)
@@ -1361,21 +1618,34 @@ export async function moveToReserve(
       .returning();
     if (!closed) return fail("That lot settled while you were looking at it.");
 
-    const pool = await readPool(tx, lot.eventId);
-    await tx
-      .insert(draftPoolEntries)
-      .values({
-        eventId: lot.eventId,
-        userId: lot.playerUserId,
-        kind: "reserve",
-        sort: nextSort(pool, "reserve"),
-      })
-      .onConflictDoUpdate({
-        target: [draftPoolEntries.eventId, draftPoolEntries.userId],
-        set: { kind: "reserve", sort: nextSort(pool, "reserve") },
-      });
+    if (returnedToPool) {
+      const pool = await readPool(tx, lot.eventId);
+      await tx
+        .insert(draftPoolEntries)
+        .values({
+          eventId: lot.eventId,
+          userId: lot.playerUserId,
+          kind: "reserve",
+          sort: nextSort(pool, "reserve"),
+        })
+        .onConflictDoUpdate({
+          target: [draftPoolEntries.eventId, draftPoolEntries.userId],
+          set: { kind: "reserve", sort: nextSort(pool, "reserve") },
+        });
+    } else {
+      // Out of the draft. The pool entry goes, so the counts the room and
+      // `draftComplete` read stay honest about who is still for sale.
+      await tx
+        .delete(draftPoolEntries)
+        .where(
+          and(
+            eq(draftPoolEntries.eventId, lot.eventId),
+            eq(draftPoolEntries.userId, lot.playerUserId)
+          )
+        );
+    }
 
-    return withData(closed);
+    return withData({ lot: closed, returnedToPool, comebacksLeft: left });
   });
 }
 
@@ -1424,60 +1694,135 @@ export async function voidLot(
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
-    const refunded = lot.status === "awarded" ? (lot.price ?? 0) : null;
-
-    if (lot.status === "awarded") {
-      await tx.delete(teamMembers).where(eq(teamMembers.lotId, lotId));
-    }
-
-    let returnedTo: DraftPoolKind | null = null;
-    if (lot.status === "awarded" || lot.status === "discarded" || lot.status === "reserved") {
-      const pool = await readPool(tx, lot.eventId);
-      returnedTo = lot.fromKind;
-      await tx
-        .insert(draftPoolEntries)
-        .values({
-          eventId: lot.eventId,
-          userId: lot.playerUserId,
-          kind: returnedTo,
-          sort: nextSort(pool, returnedTo),
-        })
-        .onConflictDoUpdate({
-          target: [draftPoolEntries.eventId, draftPoolEntries.userId],
-          set: { kind: returnedTo, sort: nextSort(pool, returnedTo) },
-        });
-    }
-
-    const [voided] = await tx
-      .update(draftLots)
-      .set({ status: "voided", voidedAt: now, voidedBy: options.voidedBy ?? null })
-      .where(and(eq(draftLots.id, lotId), ne(draftLots.status, "voided")))
-      .returning();
-    if (!voided) return fail("That lot was voided while you were looking at it.");
-
-    return withData({ lot: voided, refunded, returnedTo });
+    return voidLotIn(tx, lot, now, options.voidedBy ?? null);
   });
 }
 
 /**
- * Undo the most recent lot — the admin's one-button undo.
+ * The undo itself, with the event already locked and the lot already read.
  *
- * "Most recent" is by the moment it opened, so a run of lots unwinds in the
- * order it was drafted however long each one took to settle.
+ * Shared by `voidLot` and `voidLastLot` so that the one-button undo can choose
+ * its target inside the same transaction that voids it. Everything it touches
+ * is in `lot.eventId`, so a caller that locked a different event would be
+ * authorising on an id beside the row it writes — which is why the lot is
+ * passed in rather than an id, and why neither caller re-resolves it.
+ */
+async function voidLotIn(
+  tx: Database,
+  lot: DraftLot,
+  now: Date,
+  voidedBy: string | null
+): Promise<DraftResult<VoidLotResult>> {
+  const refunded = lot.status === "awarded" ? (lot.price ?? 0) : null;
+
+  if (lot.status === "awarded") {
+    await tx.delete(teamMembers).where(eq(teamMembers.lotId, lot.id));
+  }
+
+  let returnedTo: DraftPoolKind | null = null;
+  if (lot.status === "awarded" || lot.status === "discarded" || lot.status === "reserved") {
+    const pool = await readPool(tx, lot.eventId);
+    returnedTo = lot.fromKind;
+    await tx
+      .insert(draftPoolEntries)
+      .values({
+        eventId: lot.eventId,
+        userId: lot.playerUserId,
+        kind: returnedTo,
+        sort: nextSort(pool, returnedTo),
+      })
+      .onConflictDoUpdate({
+        target: [draftPoolEntries.eventId, draftPoolEntries.userId],
+        set: { kind: returnedTo, sort: nextSort(pool, returnedTo) },
+      });
+  }
+
+  const [voided] = await tx
+    .update(draftLots)
+    .set({ status: "voided", voidedAt: now, voidedBy })
+    .where(and(eq(draftLots.id, lot.id), ne(draftLots.status, "voided")))
+    .returning();
+  if (!voided) return fail("That lot was voided while you were looking at it.");
+
+  return withData({ lot: voided, refunded, returnedTo });
+}
+
+/**
+ * Undo the most recent lot — the admin's one-button undo (UC-16 7a).
+ *
+ * ## Which lot, and why the question is not as easy as it looks
+ *
+ * An **open** lot wins, because it is newer than anything settled and undoing
+ * it is the room's "cancel": nothing has been paid, so nothing is given back.
+ * Otherwise it is the most recently *settled* lot, and the key is `closedAt`
+ * rather than `openedAt`. Those agree while lots run one at a time, which they
+ * do — but `closedAt` is the moment the thing being undone actually happened,
+ * and an undo aimed by when a lot *started* is aimed at the wrong fact. Where
+ * two lots settled in the same instant an `awarded` one wins, because 7a is
+ * about undoing an award and a discard is the cheaper mistake to leave standing.
+ *
+ * ## The target is chosen inside the lock, not before it
+ *
+ * This is the bug worth naming, because it is invisible from the outside. The
+ * old version read "the last lot" on the default handle and *then* called
+ * `voidLot`, which opened its own transaction and took the event's row lock —
+ * so between choosing and voiding, a second manager could award another lot.
+ * The undo then reversed the award before last: money back to the wrong team,
+ * the wrong player returned to the pool, and a history that reads as if the
+ * newest award is still standing. Two managers on a draft console is not an
+ * exotic setup; it is what a laptop and a phone look like.
+ *
+ * So the whole of it — lock the event, pick the target, void it — happens in
+ * one transaction, which is the same rule `placeBid` and `awardLot` follow and
+ * for the same reason. `voidLot`'s body is shared rather than copied.
  */
 export async function voidLastLot(
   eventId: string,
   options: { voidedBy?: string | null; now?: Date } = {},
   database: Database = defaultDb
 ): Promise<DraftResult<VoidLotResult>> {
-  const [last] = await database
-    .select()
-    .from(draftLots)
-    .where(and(eq(draftLots.eventId, eventId), ne(draftLots.status, "voided")))
-    .orderBy(desc(draftLots.openedAt), desc(draftLots.id))
-    .limit(1);
-  if (!last) return fail("There is nothing to undo.");
-  return voidLot(last.id, options, database);
+  const now = options.now ?? new Date();
+
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
+
+    const candidates = await tx
+      .select()
+      .from(draftLots)
+      .where(and(eq(draftLots.eventId, eventId), ne(draftLots.status, "voided")));
+
+    const last = mostRecentUndoable(candidates);
+    if (!last) return fail("There is nothing to undo.");
+
+    return voidLotIn(tx, last, now, options.voidedBy ?? null);
+  });
+}
+
+/**
+ * The lot an undo lands on, given every lot that has not already been undone.
+ *
+ * Picked in JavaScript rather than in `order by` so the three rules above can
+ * be written as the three rules they are, and so the awarded-beats-discarded
+ * tiebreak does not have to be spelled as a `case` expression.
+ */
+function mostRecentUndoable(lots: readonly DraftLot[]): DraftLot | null {
+  let best: DraftLot | null = null;
+  for (const lot of lots) {
+    if (best === null || undoRank(lot) > undoRank(best)) best = lot;
+  }
+  return best;
+}
+
+/** Bigger is newer. An open lot sorts above every settled one. */
+function undoRank(lot: DraftLot): number {
+  if (lot.status === "open") return Number.MAX_SAFE_INTEGER;
+  const settled = (lot.closedAt ?? lot.openedAt).getTime();
+  // A half-millisecond nudge, so an award edges out a discard that settled in
+  // the same instant without being able to overtake anything genuinely later.
+  return settled * 2 + (lot.status === "awarded" ? 1 : 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1658,10 +2003,21 @@ export async function getDraftSnapshot(
           amount: bid.amount,
           placedAt: bid.placedAt.getTime(),
         })),
+        /*
+         * `bidsCloseAt`, not `openedAt + timer` — R-143 / UC-16 E1.
+         *
+         * The two disagree by the length of the spin, and the room believed the
+         * wrong one: the countdown started the moment the lot opened while the
+         * server's `biddingOpen` starts it when the wheel stops. On a 20 second
+         * timer that is a clock running out six and a half seconds early, so a
+         * captain watched it hit zero and stopped bidding while the server was
+         * still taking bids. The policy owns the answer; this asks it.
+         */
         endsAt:
-          config.bidTimerSeconds === null
-            ? null
-            : openRow.openedAt.getTime() + config.bidTimerSeconds * 1000,
+          bidsCloseAt(
+            { status: openRow.status, openedAt: openRow.openedAt, spin: openRow.spin, bids: [] },
+            config
+          )?.getTime() ?? null,
       }
     : null;
 

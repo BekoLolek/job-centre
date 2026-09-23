@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
-import { type Database, draftLots, users } from "@/db";
-import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { and, eq } from "drizzle-orm";
+import { type Database, auditLog, draftLots, users } from "@/db";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeHost, makeUser } from "@/db/__tests__/helpers";
 import {
   awardLot,
   getDraftSnapshot,
@@ -13,7 +13,6 @@ import {
   viewerFor,
 } from "@/lib/draft";
 import { applyToEvent, createEvent, publishEvent } from "@/lib/events";
-import { addHost } from "@/lib/hosting";
 
 /*
  * A host running their own event's draft room, against an in-memory Postgres.
@@ -73,7 +72,7 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
 
 let counter = 0;
 
-type DraftEvent = { eventId: string; alpha: string; players: string[] };
+type DraftEvent = { eventId: string; alpha: string; bravo: string; players: string[] };
 
 /**
  * A published event with two captained teams and six players in the main pool.
@@ -107,7 +106,12 @@ async function draftEvent(): Promise<DraftEvent> {
   );
   unwrap(await setDraftPool(created.id, {}, db));
 
-  return { eventId: created.id, alpha: alpha.id, players: members.slice(2) };
+  return {
+    eventId: created.id,
+    alpha: alpha.id,
+    bravo: bravo.id,
+    players: members.slice(2),
+  };
 }
 
 async function lotsOf(eventId: string) {
@@ -122,7 +126,7 @@ beforeAll(async () => {
   a = await draftEvent();
   b = await draftEvent();
   hostOfA = await makeUser(db);
-  await addHost(a.eventId, hostOfA, null, db);
+  await makeHost(db, a.eventId, hostOfA);
 });
 
 beforeEach(() => {
@@ -164,7 +168,7 @@ describe("the draft room of an unpublished event", () => {
 
   beforeAll(async () => {
     const created = unwrap(await createEvent({ ...PUBLISHABLE, title: "Unpublished draft" }, db));
-    await addHost(created.id, hostOfA, null, db);
+    await makeHost(db, created.id, hostOfA);
     hidden = { slug: created.slug };
   });
 
@@ -239,6 +243,63 @@ describe("a host running their own event's draft", () => {
 
     expect(outcome).toMatchObject({ ok: true, error: null });
     expect(await getDraftSnapshot(a.eventId, {}, db)).toMatchObject({ lot: null });
+  });
+
+  /*
+   * R-147 / UC-16 E5. Clearing a bid takes back somebody's word in front of a
+   * room, so it leaves a line in the log saying who did it and to whom — the
+   * same reason an award does. Asserted through the action rather than the
+   * library because that is where this site records audit.
+   */
+  describe("clearing bids (R-147 / UC-16 E5)", () => {
+    async function auditFor(eventId: string) {
+      return db
+        .select()
+        .from(auditLog)
+        .where(and(eq(auditLog.eventId, eventId), eq(auditLog.action, "draft.bid_cleared")));
+    }
+
+    it("clears one captain's bid and records whose it was", async () => {
+      await runDraftAction(a.eventId, { type: "pick", userId: a.players[5], kind: "main" });
+      const lotId = (await getDraftSnapshot(a.eventId, {}, db))?.lot?.id ?? "";
+      unwrap(await placeBid(lotId, a.alpha, 40, {}, db));
+
+      const outcome = await runDraftAction(a.eventId, { type: "clearBid", teamId: a.alpha });
+
+      expect(outcome).toMatchObject({ ok: true, error: null });
+      expect(outcome.payload?.view.lot?.bidCount).toBe(0);
+      const rows = await auditFor(a.eventId);
+      expect(rows.at(-1)?.summary).toMatch(/Cleared Alpha's bid/);
+
+      await runDraftAction(a.eventId, { type: "cancel" });
+    });
+
+    it("clears every bid in one go and says how many", async () => {
+      await runDraftAction(a.eventId, { type: "pick", userId: a.players[5], kind: "main" });
+      const lotId = (await getDraftSnapshot(a.eventId, {}, db))?.lot?.id ?? "";
+      unwrap(await placeBid(lotId, a.alpha, 40, {}, db));
+      unwrap(await placeBid(lotId, a.bravo, 60, {}, db));
+
+      const outcome = await runDraftAction(a.eventId, { type: "clearBids" });
+
+      expect(outcome).toMatchObject({ ok: true, note: "2 bids cleared." });
+      expect(outcome.payload?.view.lot?.bidCount).toBe(0);
+      expect((await auditFor(a.eventId)).at(-1)?.summary).toMatch(/every bid.*2 of them/);
+
+      await runDraftAction(a.eventId, { type: "cancel" });
+    });
+
+    it("records nothing when there was nothing to clear", async () => {
+      await runDraftAction(a.eventId, { type: "pick", userId: a.players[5], kind: "main" });
+      const before = (await auditFor(a.eventId)).length;
+
+      const outcome = await runDraftAction(a.eventId, { type: "clearBids" });
+
+      expect(outcome).toMatchObject({ ok: true, note: "0 bids cleared." });
+      expect(await auditFor(a.eventId)).toHaveLength(before);
+
+      await runDraftAction(a.eventId, { type: "cancel" });
+    });
   });
 });
 

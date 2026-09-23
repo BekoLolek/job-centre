@@ -14,7 +14,9 @@
  * pick, and neither does this: the tied teams are named, the award buttons stay
  * side by side, and an admin decides in front of everyone. Earliest-bid-wins
  * would reward a fast connection and a coin flip would be a decision nobody in
- * the room saw being made.
+ * the room saw being made. The room is told a tie happened too — `DraftRoom`
+ * renders `tieNotice` above this panel, for every viewer and without the amount
+ * (UC-16 6b).
  *
  * ## Undo says what it will undo
  *
@@ -30,6 +32,7 @@ import { Alert, Button, Eyebrow, Panel, Tabs } from "@/components/ui";
 import { Money, undoPlan } from "@/components/draft";
 import type { DraftPoolKind } from "@/db/schema";
 import type { DraftRoomView } from "@/lib/draft";
+import { awardableTeamIds } from "@/lib/draft-policy";
 import type { AdminCommand } from "./actions";
 
 export type AdminConsoleProps = {
@@ -64,9 +67,18 @@ export default function AdminConsole({
   const byHand = view.config.selectionMode === "admin_pick";
   const resolution = lot?.resolution ?? null;
 
-  const bidders = view.teams.filter((team) => team.hasBid);
   const leaderId = resolution?.kind === "winner" ? resolution.teamId : null;
   const tiedIds = resolution?.kind === "tie" ? resolution.teamIds : [];
+  /*
+   * UC-16 6: a lot goes to the highest bid, so the only Award buttons offered
+   * are the ones the server would accept — one, or every tied team.
+   *
+   * The console used to offer one per bidder, which made "award to the team
+   * that bid least" a single click on a screen where the leader is a shade of
+   * blue away from everybody else. `awardLot` refuses it now either way; this
+   * is so the manager is never invited to try.
+   */
+  const awardable = resolution ? awardableTeamIds(resolution) : [];
 
   return (
     <Panel className="rise">
@@ -230,8 +242,13 @@ export default function AdminConsole({
                   <Button
                     size="sm"
                     variant={leads ? "union" : "default"}
-                    disabled={busy || !team.hasBid}
+                    disabled={busy || !awardable.includes(team.id)}
                     onClick={() => run({ type: "award", teamId: team.id })}
+                    title={
+                      team.hasBid && !awardable.includes(team.id)
+                        ? "A lot goes to the highest bid. Clear the higher ones first if that is not what you want."
+                        : undefined
+                    }
                   >
                     Award
                   </Button>

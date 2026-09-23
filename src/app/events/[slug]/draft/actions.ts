@@ -35,6 +35,7 @@ import type { DraftPoolKind } from "@/db/schema";
 import {
   awardLot,
   clearBid,
+  clearBids,
   describeLot,
   discardLot,
   getDraftSnapshot,
@@ -247,14 +248,44 @@ export async function runDraftAction(
 
     case "reserve": {
       if (!lotId) return done(false, "Nobody is on the block right now.");
+      const held = await describeLot(lotId);
       const result = await moveToReserve(lotId, { closedBy: admin.id });
-      return result.ok ? done(true) : done(false, result.error);
+      if (!result.ok) return done(false, result.error);
+
+      // R-144: the manager has to be told which of the two things they just
+      // did — held somebody over, or spent their last turn on the wheel.
+      const { returnedToPool, comebacksLeft } = result.data;
+      return done(
+        true,
+        null,
+        returnedToPool
+          ? comebacksLeft === null
+            ? "Held over for the reserve wheel."
+            : `Held over — ${comebacksLeft} more ${comebacksLeft === 1 ? "turn" : "turns"} on the reserve wheel.`
+          : `${held?.player ?? "That player"} has had every reserve turn this draft allows, so they are out of it.`
+      );
     }
 
     case "clearBid": {
       if (!lotId) return done(false, "Nobody is on the block right now.");
+      // Named from the view rather than the command, so the log says who lost
+      // a bid rather than repeating the id the button carried.
+      const team = snapshot.teams.find((row) => row.id === command.teamId);
       const result = await clearBid(lotId, command.teamId);
       if (!result.ok) return done(false, result.error);
+
+      // R-147 undoes somebody's word, so it leaves a line saying whose.
+      if (result.data.cleared) {
+        await recordAudit({
+          action: "draft.bid_cleared",
+          actor: admin,
+          eventId,
+          subject: lotId,
+          summary: `Cleared ${team?.name ?? "a team"}'s bid on the open lot.`,
+          detail: { teamId: command.teamId },
+        });
+      }
+
       return done(
         true,
         null,
@@ -264,14 +295,24 @@ export async function runDraftAction(
 
     case "clearBids": {
       if (!lotId) return done(false, "Nobody is on the block right now.");
-      // One call per bid rather than a bulk delete: `clearBid` is the tested
-      // path and it re-checks that the lot is still open every time.
-      let cleared = 0;
-      for (const bid of snapshot.lot?.bids ?? []) {
-        const result = await clearBid(lotId, bid.teamId);
-        if (!result.ok) return done(false, result.error);
-        if (result.data.cleared) cleared += 1;
+      // One statement in one transaction, not a loop: a bid placed between two
+      // separate deletes would survive the command that was meant to clear
+      // every one of them.
+      const result = await clearBids(lotId);
+      if (!result.ok) return done(false, result.error);
+
+      const cleared = result.data.cleared;
+      if (cleared > 0) {
+        await recordAudit({
+          action: "draft.bid_cleared",
+          actor: admin,
+          eventId,
+          subject: lotId,
+          summary: `Cleared every bid on the open lot — ${cleared} of them.`,
+          detail: { cleared },
+        });
       }
+
       return done(true, null, cleared === 1 ? "1 bid cleared." : `${cleared} bids cleared.`);
     }
 
