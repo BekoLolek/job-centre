@@ -2,18 +2,22 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   type Database,
+  adminAllowlist,
   applications,
   events,
+  sessions,
   teamMembers,
   teams,
   userNotes,
   users,
 } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { getAllowlistEntries } from "@/lib/admin-allowlist";
 import {
   type AdminUserResult,
   addUserNote,
   adminCount,
+  endSessions,
   eventsPlayedFor,
   grantAdmin,
   isEnvAdmin,
@@ -22,6 +26,7 @@ import {
   revokeAdmin,
 } from "@/lib/admin-users";
 import { revokeRefusal } from "@/lib/admin-users-policy";
+import { resolveAdminFlag } from "@/lib/auth-policy";
 import { getPlayerProfile } from "@/lib/players";
 
 /**
@@ -53,6 +58,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.delete(userNotes);
+  await db.delete(sessions);
+  await db.delete(adminAllowlist);
   await db.delete(teamMembers);
   await db.delete(teams);
   await db.delete(applications);
@@ -209,7 +216,9 @@ describe("revokeAdmin", () => {
     expect(await adminCount(db)).toBe(1);
   });
 
-  it("is a no-op that still succeeds when they do not have the flag", async () => {
+  it("succeeds when they do not have the flag — and still records the bar", async () => {
+    // Not a no-op: see "writes the bar even when the flag is already off"
+    // below. Nothing is taken away, and the decision is written down anyway.
     const actor = await makeAdmin("Actor");
     const plain = await makeUser(db, { displayName: "Plain" });
     const result = expectOk(await revokeAdmin(plain, actor, db));
@@ -428,5 +437,224 @@ describe("user notes", () => {
 
     expect(JSON.stringify(profile)).not.toContain("SECRET-ADMIN-REMARK");
     expect(Object.keys(profile)).not.toContain("notes");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Revoking is the permanent bar — UC-02 5, UC-29 2a                  */
+/* ------------------------------------------------------------------ */
+
+/** The allowlist's opinion about an id, as the sign-in path would read it. */
+async function signInWouldMakeAdmin(
+  discordId: string,
+  adminIdsEnv: string | undefined
+): Promise<boolean | undefined> {
+  return resolveAdminFlag(discordId, await getAllowlistEntries(db), adminIdsEnv);
+}
+
+describe("revoking records the bar", () => {
+  it("keeps a revoked admin non-admin with ADMIN_DISCORD_IDS still naming them", async () => {
+    // UC-29 2a, and the acceptance criterion of the whole task. This used to
+    // be `update users set is_admin = false` and nothing more, so the next
+    // sign-in read the environment, found the id and handed the flag straight
+    // back — with nothing in the audit log to account for it.
+    const actor = await makeAdmin("Actor");
+    const target = await makeAdmin("Target", "123456789012345678");
+
+    expectOk(await revokeAdmin(target, actor, db));
+
+    expect(await signInWouldMakeAdmin("123456789012345678", "123456789012345678")).toBe(false);
+  });
+
+  it("writes nothing when the revoke is refused", async () => {
+    // A refusal is not a partial success: no bar row, no demotion.
+    const actor = await makeAdmin("Actor", "111111111111111111");
+    await makeAdmin("Someone else");
+
+    await expectFail(revokeAdmin(actor, actor, db));
+
+    expect(await db.select().from(adminAllowlist)).toEqual([]);
+    expect(await signInWouldMakeAdmin("111111111111111111", undefined)).toBeUndefined();
+  });
+
+  it("writes the bar even when the flag is already off", async () => {
+    /*
+     * Two admins clicking revoke on the same person. The second one's read
+     * finds a member who no longer holds the flag, and revoking used to return
+     * success on that read without opening the bar's transaction at all — no
+     * allowlist row, so the next sign-in with their id still in
+     * ADMIN_DISCORD_IDS handed it straight back. "Permanently revoked" that
+     * depends on which of two clicks got there first is not permanent
+     * (R-05 / UC-02 5, UC-29 2a).
+     */
+    const actor = await makeAdmin("Actor");
+    const target = await makeAdmin("Target", "222222222222222222");
+
+    expectOk(await revokeAdmin(target, actor, db));
+    // Whatever took the flag off left no bar behind — the losing half of two
+    // simultaneous clicks, an older demotion, another admin's `forgetAdmin`.
+    // The second revoke is the one under test, and it has to write the row.
+    await db.delete(adminAllowlist);
+
+    expectOk(await revokeAdmin(target, actor, db));
+
+    expect(await signInWouldMakeAdmin("222222222222222222", "222222222222222222")).toBe(false);
+  });
+
+  it("bars a member who never held the flag rather than reporting a no-op", async () => {
+    // The same path with no first revoke at all: the decision is the bar, and
+    // it is written whether or not the flag happened to be on.
+    const actor = await makeAdmin("Actor");
+    const target = await makeUser(db, {
+      displayName: "Never an admin",
+      discordId: "333333333333333333",
+    });
+
+    const result = expectOk(await revokeAdmin(target, actor, db));
+
+    expect(result.user.isAdmin).toBe(false);
+    expect(await signInWouldMakeAdmin("333333333333333333", "333333333333333333")).toBe(false);
+  });
+
+  it("leaves a member with no Discord id demoted, with nothing to bar", async () => {
+    // UC-30's local sign-in has no Discord id, so there is no row to key a bar
+    // on — and nothing a bar would protect against either.
+    const actor = await makeAdmin("Actor");
+    const local = await makeUser(db, { displayName: "Local" });
+    await db.update(users).set({ isAdmin: true, discordId: null }).where(eq(users.id, local));
+
+    expectOk(await revokeAdmin(local, actor, db));
+
+    const [row] = await db.select().from(users).where(eq(users.id, local));
+    expect(row.isAdmin).toBe(false);
+    expect(await db.select().from(adminAllowlist)).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Two admins demoting each other — UC-02 5a under concurrency        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The version everybody writes first: count, decide, then write, with the two
+ * halves in different statements. Kept as the control — if the harness below
+ * were quietly running the two calls in sequence, this would leave one admin
+ * and the tests after it would prove nothing.
+ */
+async function naiveRevoke(userId: string, actorId: string): Promise<void> {
+  const total = await adminCount(db);
+  const refusal = revokeRefusal({ actorId, targetId: userId, adminCount: total });
+  if (refusal) return;
+  await db.update(users).set({ isAdmin: false }).where(eq(users.id, userId));
+}
+
+/**
+ * A handle whose `transaction` runs `between` to completion first — the same
+ * shape as `committingAfter` in `championship-results.test.ts`.
+ *
+ * Sequenced rather than raced. The window it pins is the one that matters: a
+ * revoke reads the member *before* it opens its transaction, so everything
+ * that read knows is stale by the time the decision is made. A test that had
+ * to win a race to see that would pass by luck.
+ */
+function committingAfter(between: () => Promise<unknown>): Database {
+  let pending: (() => Promise<unknown>) | null = between;
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property !== "transaction") return Reflect.get(target, property, receiver);
+      return async (run: Parameters<Database["transaction"]>[0]) => {
+        const first = pending;
+        pending = null;
+        if (first) await first();
+        return target.transaction(run);
+      };
+    },
+  });
+}
+
+describe("two admins demoting each other", () => {
+  it("control: a read-then-write outside a transaction leaves the site with none", async () => {
+    const a = await makeAdmin("A");
+    const b = await makeAdmin("B");
+
+    await Promise.all([naiveRevoke(b, a), naiveRevoke(a, b)]);
+
+    // Both counted two before either wrote. This is the bug, reproduced on
+    // demand, and it is what makes the two assertions below mean something.
+    expect(await adminCount(db)).toBe(0);
+  });
+
+  it("refuses the second one, deciding inside the transaction rather than on its own read", async () => {
+    const a = await makeAdmin("A");
+    const b = await makeAdmin("B");
+
+    // A's revoke of B reads the world, and *then* B's revoke of A commits.
+    // Everything the first read knew is now wrong; the refusal has to come
+    // from inside the transaction or not at all.
+    const refusal = await expectFail(
+      revokeAdmin(b, a, committingAfter(() => revokeAdmin(a, b, db)))
+    );
+
+    expect(refusal).toMatch(/last admin/i);
+    expect(await adminCount(db)).toBe(1);
+  });
+
+  it("lets exactly one of two simultaneous revokes through", async () => {
+    const a = await makeAdmin("A");
+    const b = await makeAdmin("B");
+
+    const results = await Promise.all([revokeAdmin(b, a, db), revokeAdmin(a, b, db)]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results.filter((result) => !result.ok)).toHaveLength(1);
+    expect(await adminCount(db)).toBe(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Ending sessions — UC-02 4a                                         */
+/* ------------------------------------------------------------------ */
+
+async function openSession(userId: string, token: string): Promise<void> {
+  await db.insert(sessions).values({
+    sessionToken: token,
+    userId,
+    expires: new Date("2099-01-01T00:00:00Z"),
+  });
+}
+
+describe("endSessions", () => {
+  it("deletes every session that member has open, and nobody else's", async () => {
+    const member = await makeUser(db, { displayName: "Removed" });
+    const other = await makeUser(db, { displayName: "Untouched" });
+    await openSession(member, "phone");
+    await openSession(member, "laptop");
+    await openSession(other, "theirs");
+
+    expect(expectOk(await endSessions(member, db))).toEqual({ ended: 2 });
+
+    const left = await db.select().from(sessions);
+    expect(left.map((row) => row.sessionToken)).toEqual(["theirs"]);
+  });
+
+  it("succeeds with nothing to end when they have no session open", async () => {
+    const member = await makeUser(db, { displayName: "Never here" });
+    expect(expectOk(await endSessions(member, db))).toEqual({ ended: 0 });
+  });
+
+  it("refuses a member who no longer exists", async () => {
+    expect(
+      await expectFail(endSessions("00000000-0000-0000-0000-000000000000", db))
+    ).toMatch(/no longer exists/i);
+  });
+
+  it("does not touch the admin flag — it is a sign-out, not a demotion", async () => {
+    const admin = await makeAdmin("Still an admin");
+    await openSession(admin, "somewhere");
+
+    expectOk(await endSessions(admin, db));
+
+    const [row] = await db.select().from(users).where(eq(users.id, admin));
+    expect(row.isAdmin).toBe(true);
   });
 });

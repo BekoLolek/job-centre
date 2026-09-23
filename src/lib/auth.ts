@@ -220,10 +220,17 @@ export async function setGateConfig(
 /**
  * The allowlist, or `null` when it cannot be read.
  *
- * `null` is not an empty list: an empty list means nobody has an opinion and
- * the environment decides, which is right. A failed read must fall through to
- * the environment too — but it must not be mistaken for "the table says this
- * person is barred", so the distinction is kept.
+ * `null` is not an empty list, and the difference is the whole of R-05 / UC-29
+ * 2a. An empty list is a successful read of a table nobody has written to yet:
+ * no opinion, so the environment decides, which is how a fresh deployment gets
+ * its first admin (R-141). `null` is "we do not know", and `resolveAdminFlag`
+ * grants nothing on it — a read that fails while a bar row is sitting in the
+ * table must not hand the flag back to everyone still named in
+ * `ADMIN_DISCORD_IDS`, silently and with nothing in the audit log.
+ *
+ * The sign-in itself still succeeds: `undefined` leaves `is_admin` exactly as
+ * the row already has it, so a transient failure costs a promotion, never a
+ * session.
  */
 async function readAllowlist(): Promise<AllowlistEntry[] | null> {
   try {

@@ -10,10 +10,17 @@
  * button and the server refuse for the same reason: an admin cannot revoke
  * their own flag, and the site can never reach zero admins.
  *
- * The allowlist still wins on sign-in — `shouldBeAdmin` grants the flag every
- * time somebody named in `ADMIN_DISCORD_IDS` signs in — so revoking one of
- * those comes straight back. That is said on the screen rather than left to be
- * discovered, because a silent regrant reads as a bug.
+ * Revoking here is permanent, and the screen says so rather than leaving it to
+ * be discovered. It used to be the other way round: `shouldBeAdmin` granted the
+ * flag on every sign-in by anybody named in `ADMIN_DISCORD_IDS`, so revoking
+ * one of those came straight back the next morning. `revokeAdmin` now bars the
+ * id in the same transaction as the demotion, and `resolveAdminFlag` reads that
+ * row and answers `false` whatever the variable says (R-05, R-141 / UC-29 2a).
+ * The variable is the bootstrap only — it decides for an id the allowlist has
+ * no row for, which is how the first admin gets in — and a deployment that has
+ * locked itself out is rescued by `forgetAdmin` dropping the row, not by the
+ * variable overriding it. That is why the allowlist is on this screen above the
+ * members list: the undo has to be somewhere an admin can find it.
  *
  * Guarded by `requireAdmin()`, which sends a signed-in non-admin to `/signin`
  * with `?error=admin-only` rather than to a 403.

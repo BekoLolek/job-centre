@@ -24,18 +24,16 @@
  */
 
 import { revalidatePath } from "next/cache";
-import { eq } from "drizzle-orm";
-import { db, users } from "@/db";
 import {
   type AddNoteInput,
   type AdminUserResult,
   addUserNote,
+  endSessions,
   grantAdmin,
   listUserNotes,
   revokeAdmin,
 } from "@/lib/admin-users";
-import { allowAdmin, barAdmin, countAdmins, forgetAdmin } from "@/lib/admin-allowlist";
-import { revokeRefusal } from "@/lib/admin-users-policy";
+import { allowAdmin, barAdmin, forgetAdmin } from "@/lib/admin-allowlist";
 import { normaliseDiscordId } from "@/lib/auth-policy";
 import { recordAudit } from "@/lib/audit";
 import { requireAdmin } from "@/lib/session-guards";
@@ -71,12 +69,15 @@ export async function grantAdminAction(
 }
 
 /**
- * Take the admin flag away.
+ * Take the admin flag away, for good (UC-02 4, 5).
  *
  * The two refusals — your own flag, and the last one — are decided inside
- * `revokeAdmin` against a *fresh* count, not against whatever the page was
- * rendered with. Nothing is logged when it is refused, because nothing
- * happened.
+ * `revokeAdmin`'s transaction against a *locked* read of the admin set, not
+ * against whatever the page was rendered with. Nothing is logged when it is
+ * refused, because nothing happened.
+ *
+ * The line says "permanently", because that is now what the button does: the
+ * same call writes the allowlist row that stops a sign-in restoring them.
  */
 export async function revokeAdminAction(
   userId: string
@@ -86,16 +87,52 @@ export async function revokeAdminAction(
   const result = await revokeAdmin(userId, admin.id);
   if (!result.ok) return result;
 
+  const who = result.data.user.displayName ?? result.data.user.name ?? "a member";
   await recordAudit({
     action: "user.admin.revoked",
     actor: admin,
     subject: userId,
-    summary: `Removed admin from ${result.data.user.displayName ?? result.data.user.name ?? "a member"}.`,
-    detail: { admins: result.data.admins },
+    summary: `Removed admin from ${who}; they cannot be made one again by signing in.`,
+    detail: { admins: result.data.admins, barred: true },
   });
 
   refresh();
   return { ok: true, data: { admins: result.data.admins } };
+}
+
+/* ------------------------------------------------------------------ */
+/* Sessions                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * End a member's open sessions (R-07 / UC-02 4a).
+ *
+ * Deliberately separate from revoking: one is about what somebody may do, the
+ * other about a tab that is still open. An admin removing somebody from the
+ * community usually wants both, and the screen offers both rather than
+ * guessing which was meant.
+ */
+export async function endSessionsAction(
+  userId: string
+): Promise<AdminUserResult<{ ended: number }>> {
+  const admin = await requireAdmin();
+
+  const result = await endSessions(userId);
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "user.sessions.ended",
+    actor: admin,
+    subject: userId,
+    summary:
+      result.data.ended === 0
+        ? "Ended a member's sessions; they had none open."
+        : `Ended ${result.data.ended} open ${result.data.ended === 1 ? "session" : "sessions"} for a member.`,
+    detail: { ended: result.data.ended },
+  });
+
+  refresh();
+  return { ok: true, data: { ended: result.data.ended } };
 }
 
 /* ------------------------------------------------------------------ */
@@ -198,8 +235,15 @@ export async function allowAdminAction(input: {
  * reasons — barring is a demotion with a longer memory, so it cannot be
  * allowed to do anything a demotion could not.
  *
- * They are re-checked here rather than trusted from the browser: a page loaded
- * when there were three admins is not evidence that there still are.
+ * They are **not** checked here. They used to be, in this file: read the
+ * target, read the admin count, refuse, then call `barAdmin` to do the write
+ * in a transaction of its own. Two things were wrong with it. The count came
+ * from a statement that had already finished by the time the write ran, so two
+ * admins barring each other at the same instant both passed; and the count was
+ * the whole site's, handed to a rule that is stated in terms of "the target
+ * included", so barring a member who was *not* an admin was refused as "this
+ * is the last admin" whenever the site had exactly one. Both are fixed by the
+ * rule living where the lock is, inside `barAdmin`'s transaction.
  */
 export async function barAdminAction(input: {
   discordId: string;
@@ -211,23 +255,6 @@ export async function barAdminAction(input: {
 
   const id = normaliseDiscordId(input.discordId);
   if (!id) return { ok: false, error: "That is not a Discord id." };
-
-  if (!input.forget) {
-    const [target] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.discordId, id));
-
-    // Only a bar that would actually demote somebody can lock anybody out.
-    if (target) {
-      const refusal = revokeRefusal({
-        actorId: admin.id,
-        targetId: target.id,
-        adminCount: await countAdmins(),
-      });
-      if (refusal) return { ok: false, error: refusal };
-    }
-  }
 
   if (input.forget) {
     await forgetAdmin(id);
@@ -244,7 +271,11 @@ export async function barAdminAction(input: {
     };
   }
 
-  const result = await barAdmin(id, { note: input.note ?? null, addedByUserId: admin.id });
+  const result = await barAdmin(id, {
+    note: input.note ?? null,
+    addedByUserId: admin.id,
+    actorId: admin.id,
+  });
   if (!result.ok) return result;
 
   await recordAudit({

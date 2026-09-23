@@ -18,7 +18,7 @@
 import { Alert, Avatar, Badge, Button, Eyebrow, Panel } from "@/components/ui";
 import { SIGN_IN_ERRORS, discordConfigStatus } from "@/lib/auth-policy";
 import { signIn, signOut } from "@/lib/auth";
-import { getCurrentUser } from "@/lib/session-guards";
+import { getCurrentUser, returnPathFromRequest, safeReturnPath } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +27,46 @@ export const metadata = {
 };
 
 type Explanation = { tone: "flare" | "union"; title: string; body: string };
+
+/**
+ * Cancelled, and unreachable. Two outcomes, two sentences (UC-01 3a, 4c).
+ *
+ * They used to read the same, because every Auth.js code that was not one of
+ * ours fell through to "Discord sent back an unexpected result (X)". That is
+ * the wrong answer to both: somebody who pressed Cancel is told the site is
+ * broken, and somebody who hit a Discord outage is given nothing to act on.
+ *
+ * The codes they hang off are Auth.js's, and worth writing down because they
+ * are not obvious from the outside (`@auth/core/errors.js`):
+ *
+ *  - Declining at Discord's consent screen comes back on the redirect as
+ *    `error=access_denied`, which `@auth/core` turns into an
+ *    `OAuthCallbackError` — one of the eight types it is willing to name on
+ *    the client, so it arrives as `?error=OAuthCallbackError`.
+ *  - A network failure during the token exchange is *not* client-safe: it is
+ *    wrapped in a `CallbackRouteError` and reported as `Configuration`, which
+ *    is why that entry stays about deployment mistakes. The Discord outage we
+ *    can actually recognise is the one in our own guild check, which produces
+ *    `guild-lookup-failed` from `evaluateGuildGate`.
+ */
+const CANCELLED: Explanation = {
+  tone: "union",
+  title: "Sign-in cancelled",
+  body:
+    "You came back from Discord without authorising the site, so nothing was stored — " +
+    "no account, no session. Start again whenever you like. If you did not cancel, " +
+    "Discord refused the request; try once more.",
+};
+
+const UNREACHABLE: Explanation = {
+  tone: "flare",
+  title: "Discord did not answer, try again",
+  body:
+    "We could not reach Discord to check your account, so you have not been signed in " +
+    "and nothing was stored. This is almost always a passing Discord problem — or the " +
+    "'servers' permission being declined on the consent screen. Try again in a moment " +
+    "and accept both permissions.",
+};
 
 /**
  * What went wrong, in words a member can act on. Covers our own codes from
@@ -49,19 +89,19 @@ const EXPLANATIONS: Record<string, Explanation> = {
       "Nobody can sign in until an admin sets one. This is a configuration problem, " +
       "not something you did.",
   },
-  [SIGN_IN_ERRORS.guildLookupFailed]: {
-    tone: "flare",
-    title: "Discord wouldn't tell us which servers you're in",
-    body:
-      "The membership check could not be completed — usually a temporary Discord " +
-      "problem, or the 'guilds' permission being declined on the consent screen. " +
-      "Try again in a moment and accept both permissions.",
-  },
+  [SIGN_IN_ERRORS.guildLookupFailed]: UNREACHABLE,
   [SIGN_IN_ERRORS.adminOnly]: {
     tone: "union",
     title: "That page is admin-only",
     body: "You're signed in, but your account doesn't have the admin flag.",
   },
+  // Discord's own `access_denied`, and the wrapper Auth.js reports it as.
+  OAuthCallbackError: CANCELLED,
+  access_denied: CANCELLED,
+  // A sign-in that never got as far as Discord's consent screen.
+  OAuthSignInError: UNREACHABLE,
+  // Discord answered the profile request with something unreadable.
+  OAuthProfileParseError: UNREACHABLE,
   AccessDenied: {
     tone: "flare",
     title: "Sign-in was refused",
@@ -113,14 +153,31 @@ export default async function SignInPage({
   const status = discordConfigStatus();
   const user = status.configured ? await getCurrentUser() : null;
 
+  /*
+   * The page they started from (UC-01 6, 8).
+   *
+   * `?from=` is what the guards put there when they sent somebody here from a
+   * page they asked for. The `Referer` is the fallback and covers the ordinary
+   * route in: they were reading something, they pressed "Sign in" in the
+   * header, and that header link carries no state of its own.
+   *
+   * Both are browser-supplied and both go through `safeReturnPath`, so the
+   * worst either can do is name another page on this site. `/` when neither
+   * says anything usable.
+   */
+  const from =
+    safeReturnPath(Array.isArray(params.from) ? params.from[0] : params.from) ??
+    (await returnPathFromRequest()) ??
+    "/";
+
   async function startSignIn() {
     "use server";
-    await signIn("discord", { redirectTo: "/" });
+    await signIn("discord", { redirectTo: from });
   }
 
   async function endSession() {
     "use server";
-    await signOut({ redirectTo: "/signin" });
+    await signOut({ redirectTo: from });
   }
 
   return (
@@ -179,6 +236,7 @@ export default async function SignInPage({
             <SignedIn
               name={user.displayName ?? user.name ?? "Member"}
               isAdmin={user.isAdmin}
+              from={from}
               endSession={endSession}
             />
           ) : (
@@ -262,10 +320,13 @@ function Ready({ startSignIn }: { startSignIn: () => Promise<void> }) {
 function SignedIn({
   name,
   isAdmin,
+  from,
   endSession,
 }: {
   name: string;
   isAdmin: boolean;
+  /** Where "Continue" goes: the page they started from, already sanitised. */
+  from: string;
   endSession: () => Promise<void>;
 }) {
   return (
@@ -283,7 +344,7 @@ function SignedIn({
         </div>
       </Panel>
 
-      <Button href="/" variant="union" className="mb-3 w-full">
+      <Button href={from} variant="union" className="mb-3 w-full">
         Continue
       </Button>
 

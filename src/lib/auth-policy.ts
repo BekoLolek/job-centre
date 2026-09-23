@@ -274,11 +274,23 @@ export type AllowlistEntry = { discordId: string; allowed: boolean };
  *    environment used to resurrect itself on every sign-in.
  *  - No row — no opinion, so the environment decides, which is what lets a
  *    fresh deployment bootstrap its first admin before this table has anything
- *    in it.
+ *    in it (R-141 / UC-29 2).
  *
  * `undefined` is returned for "no opinion either way", distinct from `false`.
  * The caller needs the difference: `false` demotes, `undefined` leaves a
  * promotion made on the members screen exactly where it is.
+ *
+ * ## A `null` allowlist is not an empty one
+ *
+ * `null` means the table could not be read, and the answer to that is
+ * `undefined` — nothing granted, nothing taken away — **not** the environment.
+ * Falling through to `ADMIN_DISCORD_IDS` on a failed read would mean one
+ * transient error on that select re-granting the flag to everybody still named
+ * there, which is exactly the resurrection R-05 / UC-29 2a exists to stop, and
+ * it would happen silently: the bar row is still sitting in the table that
+ * could not be read. A bootstrap is unaffected, because a fresh deployment
+ * reads an empty table *successfully* and gets `[]` — no opinion from the
+ * table, so the environment still names the first admin (R-141).
  */
 export function resolveAdminFlag(
   discordId: string | null | undefined,
@@ -288,7 +300,10 @@ export function resolveAdminFlag(
   const id = text(discordId).toLowerCase();
   if (!id) return undefined;
 
-  const row = allowlist?.find((entry) => text(entry.discordId).toLowerCase() === id);
+  // Unreadable, not empty: the environment must not decide on its behalf.
+  if (allowlist === null) return undefined;
+
+  const row = allowlist.find((entry) => text(entry.discordId).toLowerCase() === id);
   if (row) return row.allowed;
 
   return shouldBeAdmin(discordId, adminIdsEnv) ? true : undefined;

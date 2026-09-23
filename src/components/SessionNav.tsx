@@ -16,7 +16,7 @@ import Link from "next/link";
 import NavMenu from "./NavMenu";
 import { signOut } from "@/lib/auth";
 import { unreadCount } from "@/lib/notifications";
-import { getCurrentUser } from "@/lib/session-guards";
+import { getCurrentUser, returnPathFromRequest } from "@/lib/session-guards";
 
 export default async function SessionNav() {
   const user = await getCurrentUser();
@@ -32,9 +32,29 @@ export default async function SessionNav() {
     );
   }
 
+  /*
+   * UC-01 8: sign out and see the page you were on, as a visitor.
+   *
+   * The path is read inside the action rather than captured when the header
+   * rendered, because this header is on every page and the action is what
+   * knows which one it was submitted from — a server action arrives as a POST
+   * to the current page, so its `Referer` is that page and nothing else.
+   *
+   * `?? "/"` is only for when there is nothing to read at all: a POST with no
+   * `Referer` and no `next-url`, which is a client that strips the header, a
+   * curl, or a test. It is not a check on whether the page is behind a guard.
+   * Signing out of `/me` does return to `/me`, and that page's own
+   * `requireUser` then sends them to `/signin?from=/me` — the sign-in page,
+   * which is not the page they were on. That is deliberate rather than missed:
+   * the alternative is a list of guarded prefixes maintained in the header,
+   * duplicating every page's own guard and drifting silently the first time
+   * somebody adds a guarded route without thinking of this file. The cost of
+   * the current behaviour is one extra screen on the way out of a page they
+   * could not have seen as a visitor anyway.
+   */
   async function endSession() {
     "use server";
-    await signOut({ redirectTo: "/" });
+    await signOut({ redirectTo: (await returnPathFromRequest()) ?? "/" });
   }
 
   /*

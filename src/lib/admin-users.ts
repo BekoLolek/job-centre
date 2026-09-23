@@ -22,16 +22,20 @@
  *
  * Granting has no rules. Going from one admin to two takes nothing away.
  *
- * ## `ADMIN_DISCORD_IDS` still wins on sign-in
+ * ## `ADMIN_DISCORD_IDS` no longer wins on sign-in
  *
- * `shouldBeAdmin` in `auth-policy.ts` grants the flag on **every** sign-in for
- * anybody named in that variable, and only ever grants. So revoking somebody
- * who is on the allowlist works — and then comes straight back the next time
- * they sign in. That is not a bug to fix here: the allowlist is the bootstrap
- * that gets the first admin in, and making a database row able to override it
- * would mean a locked-out deployment could not be rescued. It is instead
- * something the screen has to *say*, which is what {@link isEnvAdmin} and the
- * `fromAllowlist` flag on each row are for.
+ * It used to. `shouldBeAdmin` granted the flag on **every** sign-in for anybody
+ * named in the variable, so revoking one of them worked and then came straight
+ * back the next morning, with nothing in the audit log to account for it. The
+ * variable is now the *bootstrap only*: it decides for an id the allowlist has
+ * no row for, and {@link revokeAdmin} writes a row saying `allowed: false`, so
+ * the decision on this screen outranks it (R-05, R-141 / UC-29 2a).
+ *
+ * A locked-out deployment is still rescuable, and deliberately so: `forgetAdmin`
+ * in `admin-allowlist.ts` drops the row and hands the id back to the variable.
+ * That is an undo, spelled differently from a removal so the two cannot be
+ * confused. {@link isEnvAdmin} and the `fromAllowlist` flag stay, because the
+ * screen still has to say which ids the variable would speak for.
  *
  * ## Notes
  *
@@ -51,10 +55,12 @@ import {
   applications,
   db as defaultDb,
   events,
+  sessions,
   teamMembers,
   userNotes,
   users,
 } from "@/db";
+import { barAdminUser } from "./admin-allowlist";
 import { NOTE_MAX, revokeRefusal } from "./admin-users-policy";
 import { parseAdminIds } from "./auth-policy";
 
@@ -361,14 +367,34 @@ export async function grantAdmin(
 }
 
 /**
- * Revoke the admin flag, subject to {@link revokeRefusal}.
+ * Revoke the admin flag — which is the **permanent bar** (R-05 / UC-02 4, 5).
  *
- * The count is read *inside* this function rather than taken from the caller,
- * because the screen's copy of it is as old as the last page load and the rule
- * it feeds is the one thing here that must not be decided on stale data. Two
- * admins demoting each other at the same instant is exactly the case the
- * count-then-check would get wrong, so the check runs against a fresh read and
- * the update is conditional on the flag still being set.
+ * This used to be an `update users set is_admin = false` and nothing else, and
+ * the screen had a paragraph explaining that it did not really work: anybody
+ * named in `ADMIN_DISCORD_IDS` was promoted again by their next sign-in, with
+ * nothing in the audit log to account for it. "Removed, comes back tomorrow"
+ * is not a thing to explain, it is a thing to fix, so revoking now records the
+ * decision on the allowlist as well. `resolveAdminFlag` reads that row and
+ * returns `false` for it whatever the environment says — which is UC-29 2a,
+ * and the one acceptance criterion this task turns on.
+ *
+ * Both refusals and both writes happen inside {@link barAdminUser}'s single
+ * transaction, over a locked read of the admin set. The count is never carried
+ * across a statement boundary: see that function for why two admins demoting
+ * each other is the case a read-then-write gets wrong.
+ *
+ * Nothing is decided here on the member that was read above, not even "they do
+ * not hold the flag, so there is nothing to do". That early return was the last
+ * read-then-decide on this path, and it had the same shape as the bug the
+ * transaction exists to fix: two admins clicking revoke on the same person, and
+ * the second one returning success having written no allowlist row at all — a
+ * permanent bar that is not permanent and not a bar, reported as done.
+ * {@link barWithin} already handles a target who holds no flag: it skips the
+ * refusals, because barring somebody who is not an admin takes nothing away,
+ * and still writes the row that stops the next sign-in re-granting it.
+ *
+ * `admins` in the result is read after the transaction and is a display figure
+ * for the screen — nothing decides on it.
  */
 export async function revokeAdmin(
   userId: string,
@@ -377,30 +403,51 @@ export async function revokeAdmin(
 ): Promise<AdminUserResult<AdminFlagChange>> {
   const member = await getMember(userId, database);
   if (!member) return fail("That member no longer exists.");
-  if (!member.isAdmin) {
-    return withData({ user: member, admins: await adminCount(database) });
-  }
 
-  const refusal = revokeRefusal({
-    actorId,
-    targetId: userId,
-    adminCount: await adminCount(database),
-  });
-  if (refusal) return fail(refusal);
+  const barred = await barAdminUser(
+    userId,
+    { actorId, addedByUserId: actorId },
+    database
+  );
+  if (!barred.ok) return fail(barred.error);
 
-  // `is_admin = true` in the predicate makes this a compare-and-set: if another
-  // admin demoted them between the read and the write, this simply matches
-  // nothing rather than racing the count back down through zero.
-  const [updated] = await database
-    .update(users)
-    .set({ isAdmin: false })
-    .where(and(eq(users.id, userId), eq(users.isAdmin, true)))
-    .returning();
-
+  const after = await getMember(userId, database);
   return withData({
-    user: updated ?? { ...member, isAdmin: false },
+    user: after ?? { ...member, isAdmin: false },
     admins: await adminCount(database),
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Sessions                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * End every session a member has open (R-07 / UC-02 4a).
+ *
+ * The point of database sessions rather than a signed cookie (§3.2) is exactly
+ * this: somebody removed from the community keeps an open tab until the cookie
+ * expires a month later unless there is a row to delete. Deleting it makes
+ * their next request a signed-out one.
+ *
+ * Not a demotion and not a bar — they may sign in again immediately, and for
+ * "gone for good" the caller wants {@link revokeAdmin} or the gate. That is
+ * why there is no refusal here, not even for yourself: signing yourself out
+ * everywhere is a reasonable thing to do from a machine you no longer trust.
+ */
+export async function endSessions(
+  userId: string,
+  database: Database = defaultDb
+): Promise<AdminUserResult<{ ended: number }>> {
+  const member = await getMember(userId, database);
+  if (!member) return fail("That member no longer exists.");
+
+  const removed = await database
+    .delete(sessions)
+    .where(eq(sessions.userId, userId))
+    .returning({ token: sessions.sessionToken });
+
+  return withData({ ended: removed.length });
 }
 
 /* ------------------------------------------------------------------ */
