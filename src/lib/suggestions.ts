@@ -16,21 +16,43 @@ import {
  * want to see it too. Voting needs an account: an anonymous tally is a number
  * anybody can make say anything, and this one is meant to justify spending a
  * Saturday on something.
+ *
+ * ## What a suggestion has to say (R-87, R-165 / UC-22 1, 1a, E1)
+ *
+ * A title *and* a short description, both required. UC-22 1 asks for both and
+ * the reason is the one the list exists for: "Rivals night" is not a proposal
+ * anybody can back or refuse, and a row nobody can judge is a row that sits at
+ * zero forever. The game stays optional — E1 asks for it so organisers can tell
+ * at a glance, and an idea that is not about one game should not have to invent
+ * one.
+ *
+ * Every one of those limits is checked here, on the server, and not only by the
+ * `maxLength` on the input. A browser attribute stops typing; it does not stop
+ * a POST, and every action on this feature is a public endpoint — see the
+ * Next.js Server Actions guide: "Treat every action as an untrusted entry
+ * point."
  */
 
+export const TITLE_MIN = 3;
 export const TITLE_MAX = 120;
 export const DETAIL_MAX = 1000;
 export const GAME_MAX = 80;
 
 export type SuggestionVote = 1 | -1 | 0;
 
+/** What somebody is proposing. The game is the only optional part. */
+export type SuggestionInput = {
+  title: string;
+  detail: string;
+  gameName?: string | null;
+};
+
 export type Suggestion = {
   id: string;
   title: string;
-  detail: string | null;
+  detail: string;
   gameName: string | null;
   status: SuggestionStatus;
-  eventId: string | null;
   createdAt: Date;
   by: { id: string; name: string; handle: string | null } | null;
   up: number;
@@ -62,7 +84,6 @@ export async function listSuggestions(
       detail: eventSuggestions.detail,
       gameName: eventSuggestions.gameName,
       status: eventSuggestions.status,
-      eventId: eventSuggestions.eventId,
       createdAt: eventSuggestions.createdAt,
       byId: users.id,
       byDisplayName: users.displayName,
@@ -106,10 +127,11 @@ export async function listSuggestions(
       return {
         id: row.id,
         title: row.title,
-        detail: row.detail,
+        // Required from Task 24 on; rows written before it may still hold null,
+        // and the column stays nullable so they survive (see the migration).
+        detail: row.detail ?? "",
         gameName: row.gameName,
         status: row.status,
-        eventId: row.eventId,
         createdAt: row.createdAt,
         by: row.byId
           ? {
@@ -128,7 +150,7 @@ export async function listSuggestions(
 }
 
 /**
- * Wanted first, then newest.
+ * Wanted first, then newest (R-88 / UC-22 4).
  *
  * Declined and done drop below everything open whatever their score, because
  * the list answers "what should we run next" and a thing already run is not an
@@ -144,27 +166,56 @@ function rank(a: Suggestion, b: Suggestion): number {
   );
 }
 
-/** Add one. The suggester is counted as wanting it, which saves a second click. */
+/**
+ * Why a suggestion is not one (UC-22 1a).
+ *
+ * Trimmed before measuring, so a thousand spaces is empty rather than merely
+ * long, and so the length the writer is told about is the length that is
+ * stored.
+ */
+function refusal(input: SuggestionInput): string | null {
+  const title = input.title.trim();
+  if (title.length < TITLE_MIN) return "Give it a title.";
+  if (title.length > TITLE_MAX) {
+    return `Keep the title under ${TITLE_MAX} characters.`;
+  }
+
+  const detail = input.detail.trim();
+  if (detail.length === 0) {
+    return "Say a little about it — what it is, and why it would be good.";
+  }
+  if (detail.length > DETAIL_MAX) {
+    return `Keep the description under ${DETAIL_MAX} characters.`;
+  }
+
+  if ((input.gameName ?? "").trim().length > GAME_MAX) {
+    return `Keep the game name under ${GAME_MAX} characters.`;
+  }
+
+  return null;
+}
+
+/**
+ * Add one (R-87, R-164 / UC-22 1, E2).
+ *
+ * The suggester is counted as wanting it, which saves a second click and is
+ * what E2 asks for: an idea posted by somebody who would not turn up to it is
+ * not an idea, so the first like is not worth making them prove.
+ */
 export async function addSuggestion(
   userId: string,
-  input: { title: string; detail?: string | null; gameName?: string | null },
+  input: SuggestionInput,
   database: Database = defaultDb
 ): Promise<SuggestionResult<{ id: string }>> {
-  const title = input.title.trim();
-  if (title.length < 3) return { ok: false, error: "Give it a title." };
-  if (title.length > TITLE_MAX) {
-    return { ok: false, error: `Keep the title under ${TITLE_MAX} characters.` };
-  }
-  if ((input.detail ?? "").length > DETAIL_MAX) {
-    return { ok: false, error: `Keep the detail under ${DETAIL_MAX} characters.` };
-  }
+  const bad = refusal(input);
+  if (bad) return { ok: false, error: bad };
 
   return database.transaction(async (tx) => {
     const [row] = await tx
       .insert(eventSuggestions)
       .values({
-        title,
-        detail: input.detail?.trim() || null,
+        title: input.title.trim(),
+        detail: input.detail.trim(),
         gameName: input.gameName?.trim() || null,
         createdByUserId: userId,
       })
@@ -177,7 +228,7 @@ export async function addSuggestion(
 }
 
 /**
- * Like, dislike, or take it back.
+ * Like, dislike, or take it back (R-89 / UC-22 3, 3a).
  *
  * Passing the same value again clears it, which is how every vote control
  * anybody has used behaves — clicking the lit arrow un-lights it. Without that
@@ -255,40 +306,58 @@ export async function voteSuggestion(
   });
 }
 
-/** An admin marking where a suggestion got to. */
+/**
+ * An admin marking where a suggestion got to (R-90 / UC-22 5, 6).
+ *
+ * Refuses rather than saying nothing when the row has gone. The screen moves
+ * the dropdown optimistically — it has to, or the control fights the cursor —
+ * so silence here leaves "Planned" showing against a suggestion that was
+ * deleted while the page was open, and leaves it showing until a reload.
+ */
 export async function setSuggestionStatus(
   suggestionId: string,
   status: SuggestionStatus,
   database: Database = defaultDb
-): Promise<void> {
-  await database
+): Promise<SuggestionResult<undefined>> {
+  const changed = await database
     .update(eventSuggestions)
     .set({ status, updatedAt: new Date() })
-    .where(eq(eventSuggestions.id, suggestionId));
+    .where(eq(eventSuggestions.id, suggestionId))
+    .returning({ id: eventSuggestions.id });
+
+  if (changed.length === 0) return { ok: false, error: "That suggestion has gone." };
+  return { ok: true, data: undefined };
 }
 
 /**
- * Remove one.
+ * Remove one (R-163 / UC-22 E3).
  *
- * Only ever called for the suggester's own, or by an admin — the check is at
- * the action, which is where the session is. The votes go with it by cascade,
- * which is right: they were votes for this, not for the idea in general.
+ * The ownership test is the `where` clause of the delete itself rather than a
+ * read beside it: authorise on the row you are about to write. A suggestion id
+ * is a uuid somebody can POST straight at this action, and a check that reads
+ * one row and then deletes by id is a check with a gap in the middle of it.
+ *
+ * Nothing deleted means the row was not theirs, or was not there — one sentence
+ * answers both and is true either way. The votes go with it by cascade, which
+ * is right: they were votes for this, not for the idea in general.
  */
 export async function deleteSuggestion(
   suggestionId: string,
+  actor: { userId: string; isAdmin: boolean },
   database: Database = defaultDb
-): Promise<void> {
-  await database.delete(eventSuggestions).where(eq(eventSuggestions.id, suggestionId));
-}
+): Promise<SuggestionResult<undefined>> {
+  const mine = actor.isAdmin
+    ? eq(eventSuggestions.id, suggestionId)
+    : and(
+        eq(eventSuggestions.id, suggestionId),
+        eq(eventSuggestions.createdByUserId, actor.userId)
+      );
 
-/** Who wrote it, for the ownership check. */
-export async function suggestionAuthor(
-  suggestionId: string,
-  database: Database = defaultDb
-): Promise<string | null> {
-  const [row] = await database
-    .select({ createdByUserId: eventSuggestions.createdByUserId })
-    .from(eventSuggestions)
-    .where(eq(eventSuggestions.id, suggestionId));
-  return row?.createdByUserId ?? null;
+  const gone = await database
+    .delete(eventSuggestions)
+    .where(mine)
+    .returning({ id: eventSuggestions.id });
+
+  if (gone.length === 0) return { ok: false, error: "That is not yours to remove." };
+  return { ok: true, data: undefined };
 }

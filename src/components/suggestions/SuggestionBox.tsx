@@ -1,8 +1,21 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Alert, Badge, Button, EmptyState, Field, Panel, Select, cx, plural } from "@/components/ui";
+import {
+  Alert,
+  Badge,
+  Button,
+  EmptyState,
+  Field,
+  Modal,
+  Panel,
+  Select,
+  Textarea,
+  cx,
+  plural,
+} from "@/components/ui";
 import type { SuggestionStatus } from "@/db/schema";
 import type { Suggestion, SuggestionVote } from "@/lib/suggestions";
 import {
@@ -27,6 +40,20 @@ import {
  * under the cursor, so the row you just voted on jumps somewhere else and the
  * next click lands on a different suggestion. The action returns the new tally
  * and only that row updates; the order settles on the next real page load.
+ *
+ * ## Signed out (UC-22 3b)
+ *
+ * The arrows are still there and they still do something — they are links to
+ * the sign-in page. A disabled control with a tooltip is not "the system asks
+ * them to sign in"; it is the system declining to say anything to the person
+ * most likely to be reading this list, since the page is public precisely so
+ * that people who are not members can see it.
+ *
+ * The `maxLength` attributes and the disabled button are a convenience — they
+ * stop typing rather than letting a save fail. They are not the check: the
+ * lengths and the required description are enforced in `src/lib/suggestions.ts`
+ * (the constants are spelled out again here rather than imported, so that a
+ * client bundle does not pull the database module in behind them).
  */
 
 export default function SuggestionBox({
@@ -47,6 +74,7 @@ export default function SuggestionBox({
   const [detail, setDetail] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<Suggestion | null>(null);
 
   const add = async () => {
     setBusy(true);
@@ -92,19 +120,43 @@ export default function SuggestionBox({
     }
   };
 
+  /** Only ever reached from the confirm dialog — see {@link RemoveConfirm}. */
   const remove = async (id: string) => {
+    setError(null);
+    setRemoving(null);
     const before = rows;
     setRows((current) => current.filter((row) => row.id !== id));
-    const result = await deleteSuggestionAction(id);
-    if (!result.ok) {
+    try {
+      const result = await deleteSuggestionAction(id);
+      if (!result.ok) {
+        setRows(before);
+        setError(result.error);
+      }
+    } catch {
       setRows(before);
-      setError(result.error);
+      setError("Could not reach the server.");
     }
   };
 
+  /*
+   * Optimistic like the vote, and for the same reason — but unlike the vote it
+   * used to throw the answer away. A status the server refused (the row was
+   * deleted while this page sat open) stayed on screen as if it had taken.
+   */
   const mark = async (id: string, status: SuggestionStatus) => {
+    setError(null);
+    const before = rows;
     setRows((current) => current.map((row) => (row.id === id ? { ...row, status } : row)));
-    await setSuggestionStatusAction(id, status);
+    try {
+      const result = await setSuggestionStatusAction(id, status);
+      if (!result.ok) {
+        setRows(before);
+        setError(result.error);
+      }
+    } catch {
+      setRows(before);
+      setError("Could not reach the server.");
+    }
   };
 
   return (
@@ -132,9 +184,11 @@ export default function SuggestionBox({
               onChange={(input) => setGameName(input.target.value)}
             />
           </div>
-          <Field
-            label="Anything else"
-            placeholder="Optional — how it would work, why it would be good"
+          <Textarea
+            label="What it is, and why"
+            hint="Needed. People are voting on the idea, not the title."
+            placeholder="How it would work, how long it would take, why it would be good"
+            className="h-24"
             value={detail}
             maxLength={1000}
             onChange={(input) => setDetail(input.target.value)}
@@ -142,7 +196,7 @@ export default function SuggestionBox({
           <div className="flex items-center gap-3">
             <Button
               variant="union"
-              disabled={busy || title.trim().length < 3}
+              disabled={busy || title.trim().length < 3 || detail.trim().length === 0}
               onClick={() => void add()}
             >
               {busy ? "Adding…" : "Suggest it"}
@@ -154,7 +208,11 @@ export default function SuggestionBox({
         </Panel>
       ) : (
         <Alert>
-          Anyone can read this list. Sign in to add a suggestion or to vote on one.
+          Anyone can read this list.{" "}
+          <Link href="/signin" className="underline">
+            Sign in
+          </Link>{" "}
+          to add a suggestion or to vote on one.
         </Alert>
       )}
 
@@ -171,13 +229,59 @@ export default function SuggestionBox({
               canRemove={isAdmin || (viewerId !== null && row.by?.id === viewerId)}
               isAdmin={isAdmin}
               onVote={(value) => void vote(row.id, value)}
-              onRemove={() => void remove(row.id)}
+              onRemove={() => setRemoving(row)}
               onMark={(status) => void mark(row.id, status)}
             />
           ))}
         </div>
       )}
+
+      <RemoveConfirm
+        row={removing}
+        onCancel={() => setRemoving(null)}
+        onConfirm={() => removing && void remove(removing.id)}
+      />
     </div>
+  );
+}
+
+/**
+ * Asking before removing (UC-22 E3).
+ *
+ * The votes are the reason this is a question rather than a button. Taking your
+ * own idea back is your business, but the eleven people who backed it are not
+ * asked, and they do not get a second chance to back it — so the person doing
+ * it is told what goes with it, by name and by count, before it does.
+ *
+ * Exported so the dialog can be rendered and read on its own.
+ */
+export function RemoveConfirm({
+  row,
+  onConfirm,
+  onCancel,
+}: {
+  row: Suggestion | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <Modal open={row !== null} onClose={onCancel} title="Remove this suggestion?" size="sm">
+      {row && (
+        <div className="space-y-4">
+          <p className="text-14 leading-relaxed text-body">
+            “{row.title}” goes for good, and so do the{" "}
+            <span className="text-chalk">{plural(row.up + row.down, "vote")}</span> on it.
+            Nobody who backed it is asked first, and there is nothing to put it back.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Button variant="flare" onClick={onConfirm}>
+              Remove it
+            </Button>
+            <Button onClick={onCancel}>Keep it</Button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -231,7 +335,7 @@ function Row({
         <Arrow
           direction="up"
           active={row.yours === 1}
-          disabled={!signedIn}
+          signedIn={signedIn}
           onClick={() => onVote(1)}
         />
         <span
@@ -245,7 +349,7 @@ function Row({
         <Arrow
           direction="down"
           active={row.yours === -1}
-          disabled={!signedIn}
+          signedIn={signedIn}
           onClick={() => onVote(-1)}
         />
       </div>
@@ -275,7 +379,11 @@ function Row({
           {row.by && <span>· suggested by {row.by.name}</span>}
         </div>
 
-        {(canRemove || isAdmin) && (
+        {/*
+          `canRemove` already covers the admin — it is `isAdmin || it is mine`
+          — so `canRemove || isAdmin` read as if there were a third case to
+          catch, and there is not. */}
+        {canRemove && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {isAdmin && (
               <Select
@@ -291,11 +399,9 @@ function Row({
                 ))}
               </Select>
             )}
-            {canRemove && (
-              <Button size="sm" variant="flare" onClick={onRemove}>
-                Remove
-              </Button>
-            )}
+            <Button size="sm" variant="flare" onClick={onRemove}>
+              Remove
+            </Button>
           </div>
         )}
       </div>
@@ -303,40 +409,63 @@ function Row({
   );
 }
 
+/**
+ * One arrow — a button for a member, a link to the sign-in page for anybody
+ * else (UC-22 3b).
+ *
+ * Same shape either way, so the row does not change size when somebody signs
+ * in, and so a visitor who goes for the arrow is answered rather than ignored.
+ */
 function Arrow({
   direction,
   active,
-  disabled,
+  signedIn,
   onClick,
 }: {
   direction: "up" | "down";
   active: boolean;
-  disabled: boolean;
+  signedIn: boolean;
   onClick: () => void;
 }) {
+  const label = direction === "up" ? "I want this" : "Not for me";
+  const className = cx(
+    "rounded p-1 transition-colors",
+    active
+      ? direction === "up"
+        ? "text-union"
+        : "text-flare"
+      : "text-dim hover:text-chalk"
+  );
+
+  /* A triangle rather than one of the line icons: at 14px a chevron and an
+     arrow look the same, and a filled shape reads as pressed. */
+  const glyph = (
+    <svg
+      viewBox="0 0 12 8"
+      aria-hidden
+      className={cx("h-2.5 w-3.5 fill-current", direction === "down" && "rotate-180")}
+    >
+      <path d="M6 0 L12 8 L0 8 Z" />
+    </svg>
+  );
+
+  if (!signedIn) {
+    return (
+      <Link href="/signin" aria-label={`Sign in to vote — ${label}`} className={className}>
+        {glyph}
+      </Link>
+    );
+  }
+
   return (
     <button
       type="button"
-      disabled={disabled}
       onClick={onClick}
       aria-pressed={active}
-      aria-label={direction === "up" ? "I want this" : "Not for me"}
-      title={disabled ? "Sign in to vote" : undefined}
-      className={cx(
-        "rounded p-1 transition-colors",
-        disabled && "cursor-not-allowed opacity-40",
-        active
-          ? direction === "up"
-            ? "text-union"
-            : "text-flare"
-          : "text-dim hover:text-chalk"
-      )}
+      aria-label={label}
+      className={className}
     >
-      {/* A triangle rather than one of the line icons: at 14px a chevron and
-          an arrow look the same, and a filled shape reads as pressed. */}
-      <svg viewBox="0 0 12 8" aria-hidden className={cx("h-2.5 w-3.5 fill-current", direction === "down" && "rotate-180")}>
-        <path d="M6 0 L12 8 L0 8 Z" />
-      </svg>
+      {glyph}
     </button>
   );
 }

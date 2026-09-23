@@ -16,6 +16,7 @@ import { revalidatePath } from "next/cache";
 import { recordAudit } from "@/lib/audit";
 import { notifyPollPosted } from "@/lib/notify-events";
 import {
+  type PollEditPreview,
   type PollInput,
   closePoll,
   createPoll,
@@ -35,7 +36,12 @@ export type PollDraft = {
   question: string;
   detail?: string;
   multiple: boolean;
-  /** ISO instant, or null for a poll that stays open. */
+  /**
+   * ISO instant. Required (R-91 / UC-23 1, 1a) — but typed nullable, because
+   * an empty `datetime-local` arrives as nothing and this is a public endpoint
+   * that can be sent anything. `refusal` in the library turns null into "Say
+   * when the poll closes."; it is not a poll that stays open.
+   */
   closesAt: string | null;
   options: Array<{ id?: string; label: string }>;
 };
@@ -84,7 +90,7 @@ export async function createPollAction(
 export async function previewPollEditAction(
   pollId: string,
   draft: PollDraft
-): Promise<PollActionResult<{ lostVotes: number; droppedOptions: string[]; closed: boolean }>> {
+): Promise<PollActionResult<PollEditPreview>> {
   await requireAdmin();
   const preview = await previewPollEdit(pollId, toInput(draft));
   return { ok: true, data: preview };
@@ -114,7 +120,11 @@ export async function updatePollAction(
 
 export async function closePollAction(pollId: string): Promise<PollActionResult> {
   const admin = await requireAdmin();
-  await closePoll(pollId);
+  const result = await closePoll(pollId);
+  // Nothing to log when nothing moved: a "Closed a poll" line against a poll
+  // that had already been deleted is a line that makes the log say something
+  // untrue. `setSuggestionStatusAction` refuses for the same reason.
+  if (!result.ok) return result;
 
   await recordAudit({
     action: "poll.closed",
@@ -127,15 +137,26 @@ export async function closePollAction(pollId: string): Promise<PollActionResult>
   return { ok: true, data: undefined };
 }
 
+/**
+ * Remove a poll and its votes (UC-23 5b).
+ *
+ * Its own audit action rather than `poll.closed` with a flag on the detail: the
+ * log is read as a list of headings, and a delete filed under "Poll closed" is
+ * a delete that nobody scanning the page will see. The screen asks first — see
+ * `PollList` — but the log is what is left once the screen is gone.
+ */
 export async function deletePollAction(pollId: string): Promise<PollActionResult> {
   const admin = await requireAdmin();
-  await deletePoll(pollId);
+  const result = await deletePoll(pollId);
+  // Same again: two admins on the same poll, or one on a stale page, must not
+  // both have "Deleted a poll, and the votes on it" written against their name.
+  if (!result.ok) return result;
 
   await recordAudit({
-    action: "poll.closed",
+    action: "poll.deleted",
     actor: admin,
-    summary: "Deleted a poll.",
-    detail: { pollId, deleted: true },
+    summary: "Deleted a poll, and the votes on it.",
+    detail: { pollId },
   });
 
   refresh();
