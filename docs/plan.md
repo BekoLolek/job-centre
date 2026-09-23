@@ -171,6 +171,28 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] The test suite is untouched and still green (nothing but comments moved)
 - **Depends on:** none.
 
+### Task 45: A decided series stops listing games nobody will play (found in the browser sweep)
+
+- **Serves:** R-79 / the bracket and results pages
+- **Files:** `src/components/format/MatchCard.tsx` (the "Side and map" list, ~lines 138-157), its tests
+- **Do:** the card prints one side-and-map row per game of the series, "including games that have not been played, which are precisely the ones the answer is still needed for". That holds while a series is live and is false once it is decided: a Bo3 won 2-0 still prints `G3 - Voss Vanguard picks the side · Bergstrom Brigade picks the map` in the future tense, styled exactly like the played games, on an event that finished a month ago. Next to it a genuinely live semi prints the same shape, so a reader cannot tell a finished series from an unfinished one. Once the match has a winner, drop the unplayed rows (or mark them "not needed" - pick one and say why in the docblock). A drawn decider waiting on `winner_override_id` is *not* decided and must keep its rows.
+- **Acceptance criteria:**
+  - [ ] A Bo3 won 2-0 lists G1 and G2 only
+  - [ ] A live Bo3 at 1-0 still lists G2 and G3 in the future tense
+  - [ ] A series frozen on a drawn decider keeps every row
+  - [ ] Proven by mutation: restoring the old behaviour fails a test
+- **Depends on:** none.
+
+### Task 46: Avatar initials are read aloud before every name (found in the browser sweep)
+
+- **Serves:** accessibility of every roster, table and profile
+- **Files:** `src/components/ui/Avatar.tsx`, its tests
+- **Do:** when there is no image the avatar renders the member's initials as text, and nothing hides them from assistive tech - so a screen reader announces every name twice over, as "FD Faro Delgado", in the standings, the draft room, the rosters and the profiles. The name is always printed beside the avatar, so the initials are decoration: mark them `aria-hidden`. Check whether an avatar *with* an image has an `alt` that repeats the adjacent name for the same reason.
+- **Acceptance criteria:**
+  - [ ] An imageless avatar contributes nothing to the accessible name of its row
+  - [ ] An avatar with an image does not repeat the adjacent name
+- **Depends on:** none.
+
 ## I. Championship (R-171 to R-198)
 
 Added 2026-09-20. A season of two to four events a month across different games, with one

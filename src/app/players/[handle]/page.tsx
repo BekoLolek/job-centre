@@ -42,6 +42,7 @@ import {
   cx,
   plural,
 } from "@/components/ui";
+import { ordinal } from "@/lib/format-policy";
 import { getPlayerByHandle, getPlayerProfile } from "@/lib/players";
 
 export const dynamic = "force-dynamic";
@@ -67,21 +68,6 @@ const PLACE_TONE: Record<number, string> = {
   2: "text-chalk",
   3: "text-chalk/80",
 };
-
-function ordinal(position: number): string {
-  const tens = position % 100;
-  if (tens >= 11 && tens <= 13) return `${position}th`;
-  switch (position % 10) {
-    case 1:
-      return `${position}st`;
-    case 2:
-      return `${position}nd`;
-    case 3:
-      return `${position}rd`;
-    default:
-      return `${position}th`;
-  }
-}
 
 export default async function PlayerPage({
   params,
