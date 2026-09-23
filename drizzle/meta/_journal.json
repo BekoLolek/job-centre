@@ -99,6 +99,41 @@
       "when": 1789925796944,
       "tag": "0013_championships",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790125158979,
+      "tag": "0014_drop_suggestion_event_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790125698928,
+      "tag": "0015_poll_closes_at_required",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790126098928,
+      "tag": "0016_standings_changed",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790127746763,
+      "tag": "0017_profile_field_retired_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790130718015,
+      "tag": "0018_host_application_one_pending",
+      "breakpoints": true
     }
   ]
 }

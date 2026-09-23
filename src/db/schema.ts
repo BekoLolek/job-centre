@@ -292,6 +292,16 @@ export const profileFields = pgTable(
       .default(sql`'[]'::jsonb`),
     required: boolean("required").notNull().default(false),
     sort: integer("sort").notNull().default(0),
+    /**
+     * When an admin retired the question (UC-03 5a, R-09).
+     *
+     * Retiring is the *only* way to stop asking something people have already
+     * answered: the row stays, every `profile_values` row pointing at it stays,
+     * and `loadProfile` simply stops listing it. Null means "still asked",
+     * which is what every row was before this column existed — so nothing
+     * needs backfilling and no existing question changes meaning.
+     */
+    retiredAt: instant("retired_at"),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
   (table) => [
@@ -433,6 +443,23 @@ export const hostApplications = pgTable(
   (table) => [
     index("host_applications_user_id_idx").on(table.userId),
     index("host_applications_status_idx").on(table.status),
+    /*
+     * One waiting application per member (R-83 / UC-20 3b).
+     *
+     * `applyToHost` reads for a pending row before it inserts, which answers
+     * the member who sends a second one a minute later. It cannot answer two
+     * submits in the same second: both reads find nothing and both inserts
+     * land, and the admin queue grows a duplicate nobody chose to send. The
+     * index is the half of that rule a read-then-insert cannot enforce, and
+     * the library turns its rejection back into the same sentence.
+     *
+     * Partial, because the rule is about the *queue*: approved, declined and
+     * withdrawn rows are a record of what happened and a member may have any
+     * number of them.
+     */
+    uniqueIndex("host_applications_one_pending_per_user")
+      .on(table.userId)
+      .where(sql`status = 'pending'`),
   ]
 );
 
@@ -444,8 +471,11 @@ export const hostApplications = pgTable(
  * separate, site-wide thing — a host is not a small admin, they are somebody
  * trusted with one evening.
  *
- * A table rather than `events.hostUserId` because co-hosting is the obvious
- * next ask and a join table costs nothing now.
+ * One grant per event (R-86): approving an application is the only thing that
+ * writes here, and it refuses an event somebody already holds. The table shape
+ * would carry co-hosts, and the helpers that would have managed a set of them
+ * are gone — they were only ever called by tests, and a permission nothing in
+ * the site can reach is a permission nobody has thought about.
  */
 export const eventHosts = pgTable(
   "event_hosts",
@@ -493,6 +523,13 @@ export const eventSuggestions = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     title: text("title").notNull(),
+    /**
+     * The short description UC-22 1 asks for. Required by `addSuggestion`, but
+     * nullable here on purpose: rows written before that rule have no
+     * description and there is nobody to ask for one, so `NOT NULL` would mean
+     * either losing them or inventing text for them. The read fills the gap
+     * with an empty string.
+     */
     detail: text("detail"),
     /** Free text. The game may well not be one this site knows about. */
     gameName: text("game_name"),
@@ -501,8 +538,6 @@ export const eventSuggestions = pgTable(
       onDelete: "set null",
     }),
     status: suggestionStatus("status").notNull().default("open"),
-    /** Set when an admin turns a suggestion into a real event. */
-    eventId: uuid("event_id").references(() => events.id, { onDelete: "set null" }),
     createdAt: instant("created_at").notNull().defaultNow(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
@@ -551,6 +586,11 @@ export const suggestionVotes = pgTable(
  * `closesAt` is the line the editing rule turns on: before it, an admin may
  * still change the question and the options; after it, nothing moves. A poll
  * whose wording can change after the result is a poll that proves nothing.
+ *
+ * It is required (R-91 / UC-23 1), and required in the column rather than only
+ * in `createPoll`: a poll with no closing time never closes by itself, so it
+ * never reaches UC-23 6 at all, and "we forgot about it" is how a question with
+ * a public tally stays open for a year.
  */
 export const polls = pgTable(
   "polls",
@@ -560,8 +600,8 @@ export const polls = pgTable(
     detail: text("detail"),
     /** Pick several, or pick one. */
     multiple: boolean("multiple").notNull().default(false),
-    /** Null means it stays open until somebody closes it by setting this. */
-    closesAt: instant("closes_at"),
+    /** When voting stops. Closing early is moving this, not a second flag. */
+    closesAt: instant("closes_at").notNull(),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -647,6 +687,16 @@ export const notificationKind = pgEnum("notification_kind", [
   "poll_posted",
   /** Your application to host was approved or declined. */
   "host_decision",
+  /**
+   * The championship standings moved after an event you played in (R-193).
+   *
+   * The audience is the narrowest of any kind here, and deliberately: the
+   * people who played *that* event, not everybody in the season. A season has
+   * a long tail of members who turned up once in March, and telling them the
+   * table moved because somebody else played in October is how a switch gets
+   * thrown and never thrown back.
+   */
+  "standings_changed",
 ]);
 
 export type NotificationKind = (typeof notificationKind.enumValues)[number];
@@ -2012,11 +2062,13 @@ export const championships = pgTable(
 /**
  * One event counting towards one championship, and what it is worth.
  *
- * `event_id` is unique on its own, and that single word is the whole of
- * R-196: **an event belongs to at most one championship**, refused by Postgres
- * rather than by whichever screen happens to be adding it. Adding the event to
- * a second season fails on the constraint, and UC-32 1a turns that into a
- * message naming the season it is already in.
+ * `event_id` is unique on its own, and that single word is the whole of the
+ * rule: **an event belongs to at most one championship**, refused by Postgres
+ * rather than by whichever screen happens to be adding it. It carries no
+ * requirement number — it is the last Constraint in `docs/requirements.md`,
+ * "so a result cannot count twice". Adding the event to a second season fails
+ * on the constraint, and UC-32 1a turns that into a message naming the season
+ * it is already in.
  *
  * `weight` is an integer. The domain model says "a number above 0", and the
  * case it exists for is "a whole-day tournament is worth double"; keeping it

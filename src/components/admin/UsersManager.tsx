@@ -26,6 +26,7 @@ import type { AdminUserView, AdminUsersView } from "@/lib/admin-users";
 import { NOTE_MAX, revokeRefusal } from "@/lib/admin-users-policy";
 import {
   addUserNoteAction,
+  endSessionsAction,
   grantAdminAction,
   listUserNotesAction,
   revokeAdminAction,
@@ -65,6 +66,7 @@ export default function UsersManager({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [notesFor, setNotesFor] = useState<AdminUserView | null>(null);
@@ -81,12 +83,17 @@ export default function UsersManager({
     });
   }, [view.users, search, filter]);
 
-  const run = (action: () => Promise<{ ok: boolean; error?: string }>) => {
+  const run = (
+    action: () => Promise<{ ok: boolean; error?: string }>,
+    said?: string
+  ) => {
     setError(null);
+    setNote(null);
     startTransition(async () => {
       const result = await action();
-      if (!result.ok) setError(result.error ?? "That did not work.");
-      else router.refresh();
+      if (!result.ok) return setError(result.error ?? "That did not work.");
+      if (said) setNote(said);
+      router.refresh();
     });
   };
 
@@ -95,23 +102,30 @@ export default function UsersManager({
   return (
     <div>
       {error && <Alert className="mb-6">{error}</Alert>}
+      {note && (
+        <Alert tone="success" className="mb-6">
+          {note}
+        </Alert>
+      )}
 
       {/* --- What the environment variable still does ---------------- */}
       <Section
         first
         icon="shield"
         title="Before you revoke anybody"
-        description="What the environment variable still does, and who it currently names."
+        description="What revoking does, what the environment variable still does, and who it currently names."
         className="rise"
       >
         <p className="text-14 leading-relaxed text-muted">
-          <code className="font-mono text-chalk">ADMIN_DISCORD_IDS</code> grants the admin
-          flag on <strong className="text-chalk">every sign-in</strong>, and only ever
-          grants it. Revoking somebody named there works — and then comes back the next
-          time they sign in. That is deliberate: the allowlist is the bootstrap that gets
-          the first admin in, and a database row able to override it would mean a
-          locked-out deployment could not be rescued. To demote one of them for good,
-          remove the id from the variable as well.
+          <strong className="text-chalk">Revoking is permanent.</strong> It takes the flag
+          off now and records that the id must not be made an admin again on sign-in, so
+          somebody named in{" "}
+          <code className="font-mono text-chalk">ADMIN_DISCORD_IDS</code> stays revoked
+          rather than coming back the next morning. The variable now decides only for ids
+          nothing on this screen has an opinion about — it is the bootstrap that gets the
+          first admin in, and a deployment that has locked itself out is rescued by
+          removing the barred entry from the list above, which hands that id back to the
+          variable.
         </p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Eyebrow as="span">On the allowlist</Eyebrow>
@@ -187,6 +201,12 @@ export default function UsersManager({
                 busy={pending}
                 onGrant={() => run(() => grantAdminAction(row.id))}
                 onRevoke={() => run(() => revokeAdminAction(row.id))}
+                onEndSessions={() =>
+                  run(
+                    () => endSessionsAction(row.id),
+                    `Signed ${row.displayName} out everywhere. They can sign in again.`
+                  )
+                }
                 onNotes={() => setNotesFor(row)}
               />
             ))
@@ -216,6 +236,7 @@ function MemberRow({
   busy,
   onGrant,
   onRevoke,
+  onEndSessions,
   onNotes,
 }: {
   member: AdminUserView;
@@ -225,6 +246,7 @@ function MemberRow({
   busy: boolean;
   onGrant: () => void;
   onRevoke: () => void;
+  onEndSessions: () => void;
   onNotes: () => void;
 }) {
   return (
@@ -291,6 +313,23 @@ function MemberRow({
         <Button size="sm" disabled={busy} onClick={onNotes}>
           Notes{member.notes > 0 ? ` (${member.notes})` : ""}
         </Button>
+        {/*
+          UC-02 4a. Offered for everyone, including yourself: the reason to
+          reach for it is a machine you no longer trust, and that machine is
+          sometimes the one you are looking at.
+        */}
+        <Button
+          size="sm"
+          disabled={busy || member.lastSeenAt === null}
+          title={
+            member.lastSeenAt === null
+              ? "They have never signed in, so there is nothing open."
+              : "Sign them out of every device. They can sign in again."
+          }
+          onClick={onEndSessions}
+        >
+          End sessions
+        </Button>
         {member.isAdmin ? (
           <span className="flex items-center gap-2">
             <Button
@@ -315,7 +354,8 @@ function MemberRow({
       )}
       {member.isAdmin && !refusal && member.fromAllowlist && (
         <p className="w-full text-12 leading-relaxed text-muted">
-          Revoking works, but ADMIN_DISCORD_IDS re-grants it the next time they sign in.
+          Named in ADMIN_DISCORD_IDS. Revoking still holds — the id is barred, and
+          signing in will not give it back.
         </p>
       )}
     </div>
