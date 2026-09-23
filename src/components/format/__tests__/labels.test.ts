@@ -23,10 +23,79 @@ import {
   seriesLabel,
   seriesLengthsInUse,
   seriesSentence,
+  slotOriginLabel,
   stageKindLabel,
   tiebreakerLabel,
   STAGE_KIND_CHOICES,
 } from "../labels";
+import { resolveMatches } from "@/lib/format-resolve";
+import { blankRecords, makeTeams } from "@/lib/__tests__/format-helpers";
+
+/**
+ * UC-11 8a: "Slot not yet decided - System shows where it comes from ('Winner
+ * of Upper semi 1')." The example in the use case is the assertion.
+ *
+ * `format-resolve` decides *which* match feeds a slot and prints it as
+ * "<label> winner"; `slotOriginLabel` only chooses the word order. So the
+ * fixtures are real generated stages rather than hand-written strings: the
+ * suffix this function removes is a contract with that module, and a test that
+ * spelled both sides itself would keep passing after the contract moved.
+ */
+describe("slotOriginLabel", () => {
+  /** Every unresolved slot of a stage nobody has played a game of yet. */
+  const unplayed = (kind: "double_elim" | "single_elim" | "group_playoff", teams: number) => {
+    const spec = generateStage(kind, teams);
+    const resolved = resolveMatches({
+      stage: spec,
+      matches: blankRecords(spec),
+      teams: makeTeams(teams),
+    });
+    return resolved.flatMap((match) => [
+      ...(match.teamAId ? [] : [slotOriginLabel(match.sourceA, match.nameA)]),
+      ...(match.teamBId ? [] : [slotOriginLabel(match.sourceB, match.nameB)]),
+    ]);
+  };
+
+  it("says where a bracket slot's team comes from, the way UC-11 8a says it", () => {
+    const said = unplayed("double_elim", 8);
+
+    expect(said).toContain("Winner of Upper semi 1");
+    expect(said).toContain("Winner of Upper quarter 1");
+    expect(said).toContain("Loser of Upper final");
+    expect(said).toContain("Winner of Lower round 2 \u00b7 1");
+  });
+
+  it("never leaves the relationship trailing behind the label", () => {
+    const said = [
+      ...unplayed("double_elim", 8),
+      ...unplayed("single_elim", 8),
+      ...unplayed("group_playoff", 8),
+    ];
+
+    expect(said.length).toBeGreaterThan(0);
+    expect(said.filter((line) => /\s(winner|loser)$/i.test(line))).toEqual([]);
+  });
+
+  it("leaves the sources that already read forwards alone", () => {
+    // A group placing and a seed are already noun-first, and a reference
+    // nobody recognises has nothing to reword.
+    expect(slotOriginLabel("group:a:rank:1", "Group A #1")).toBe("Group A #1");
+    expect(slotOriginLabel("seed:3", "Seed 3")).toBe("Seed 3");
+    expect(slotOriginLabel(null, "TBD")).toBe("TBD");
+    expect(slotOriginLabel("nonsense", "TBD")).toBe("TBD");
+  });
+
+  it("does not take a word off the end of a name just because it reads like one", () => {
+    // The source is consulted, not the string: a real team called
+    // "Grand Final Winner" keeps its name. Callers only pass an unresolved
+    // slot, but the function must not be the reason that rule has to hold.
+    expect(slotOriginLabel("seed:2", "Grand Final Winner")).toBe("Grand Final Winner");
+    // ...and a winner reference whose label somehow lost its suffix is left
+    // exactly as the resolver produced it rather than rebuilt from a guess.
+    expect(slotOriginLabel("winner:ubsf1", "Upper semi 1")).toBe("Upper semi 1");
+    expect(slotOriginLabel("winner:ubsf1", "winner")).toBe("winner");
+  });
+});
 
 describe("stageKindLabel", () => {
   it("names every kind the policy layer knows", () => {

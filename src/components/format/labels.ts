@@ -9,7 +9,13 @@
  */
 
 import type { GeneratedStage, MatchBracket } from "@/lib/bracket";
-import type { BronzeMode, PlaySide, StageKind, Tiebreaker } from "@/lib/format-policy";
+import {
+  type BronzeMode,
+  type PlaySide,
+  type StageKind,
+  type Tiebreaker,
+  parseSource,
+} from "@/lib/format-policy";
 import type { MatchStatus, ResolvedMatch } from "@/lib/format-resolve";
 
 /* ------------------------------------------------------------------ */
@@ -88,6 +94,47 @@ export const BRACKET_HALVES: ReadonlyArray<{ key: MatchBracket; label: string }>
   { key: "bronze", label: "Bronze match" },
   { key: "final", label: "Grand final" },
 ];
+
+/* ------------------------------------------------------------------ */
+/* Slots nobody has played into yet (UC-11 8a)                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Where an undecided slot's team is going to come from, said forwards.
+ *
+ * UC-11 8a: *"Slot not yet decided — System shows where it comes from ('Winner
+ * of Upper semi 1')."* `format-resolve` already works out which match feeds
+ * this slot and prints it, but it prints it backwards — "Upper semi 1 winner"
+ * — where the slot's own label reads first and the relationship last. In a
+ * bracket column, two rows deep, under the heading of the match it belongs to,
+ * that scans as a team called "Upper semi 1"; R-46 asks a visitor to be able to
+ * follow the competition, and following it means reading which result fills
+ * this line.
+ *
+ * Reworded rather than re-derived, and that is the point of taking the `source`
+ * too: the suffix is not guessed off the end of a string, it is removed only
+ * when the reference actually says `winner:` or `loser:`. A seed ("Seed 3"), a
+ * group placing ("Group A #1") and the no-source case ("TBD") already read
+ * forwards and are returned untouched. So is a real team name — callers pass
+ * this only for a slot that has not resolved, which is the one state the
+ * sentence is about.
+ */
+export function slotOriginLabel(
+  source: string | null | undefined,
+  placeholder: string
+): string {
+  const ref = parseSource(source);
+  if (!ref || (ref.kind !== "winner" && ref.kind !== "loser")) return placeholder;
+
+  const word = ref.kind === "winner" ? "winner" : "loser";
+  const suffix = ` ${word}`;
+  if (!placeholder.toLowerCase().endsWith(suffix)) return placeholder;
+
+  const origin = placeholder.slice(0, -suffix.length).trim();
+  if (!origin) return placeholder;
+
+  return `${word === "winner" ? "Winner" : "Loser"} of ${origin}`;
+}
 
 /* ------------------------------------------------------------------ */
 /* Series and modes                                                   */
