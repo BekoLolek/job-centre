@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Alert, Badge, Button, EmptyState, Eyebrow, Field, plural } from "@/components/ui";
+import type { LadderImpact } from "@/lib/admin-games";
 import { normaliseRankLadder, reorder } from "@/lib/profile-fields";
 import { previewRankLadderAction, setRankLadderAction } from "@/app/admin/games/actions";
 
@@ -17,8 +18,17 @@ import { previewRankLadderAction, setRankLadderAction } from "@/app/admin/games/
  * so nothing here insists on entries, and a game with an empty ladder simply
  * cannot have a rank question.
  *
- * Saving is preceded by `previewRankLadder`: removing an entry orphans every
- * answer naming it, and the count is shown before the write.
+ * Saving is preceded by `previewRankLadder`, which answers two questions the
+ * admin cannot see from this list:
+ *
+ *  - **What does it cost in answers?** Removing an entry orphans every answer
+ *    naming it, and the count is shown before the write.
+ *  - **What does it do to the events?** (UC-03 3b, R-10.) An event's entry
+ *    rule is stored as a rank *name*, so moving that name up or down this list
+ *    re-aims the rule — the same stored "Platinum I or above" lets a different
+ *    set of people in. A pure reorder costs no answers at all and is the case
+ *    where that is easiest to miss, so the affected events are named here,
+ *    before saving, rather than discovered by somebody who was refused entry.
  */
 
 export type LadderEditorProps = {
@@ -38,9 +48,7 @@ export default function LadderEditor({
   const [entry, setEntry] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [confirmLoss, setConfirmLoss] = useState<{ removed: string[]; answers: number } | null>(
-    null
-  );
+  const [confirm, setConfirm] = useState<LadderImpact | null>(null);
 
   const dirty =
     draft.length !== ladder.length || draft.some((name, index) => name !== ladder[index]);
@@ -64,14 +72,16 @@ export default function LadderEditor({
       const next = normaliseRankLadder(draft);
       if (!force) {
         const impact = await previewRankLadderAction(gameId, next);
-        if (impact.answers > 0) {
-          setConfirmLoss(impact);
+        // Either cost is enough to stop and say so. Events without answers is
+        // exactly the reorder case, which is the one worth catching.
+        if (impact.answers > 0 || impact.events.length > 0) {
+          setConfirm(impact);
           return;
         }
       }
       const result = await setRankLadderAction(gameId, next);
       if (!result.ok) return setError(result.error);
-      setConfirmLoss(null);
+      setConfirm(null);
       onChanged();
     } catch {
       setError("Could not reach the server.");
@@ -90,24 +100,50 @@ export default function LadderEditor({
 
       {error && <Alert>{error}</Alert>}
 
-      {confirmLoss && (
+      {confirm && (
         <Alert tone="flare">
-          <span className="block font-medium">
-            {confirmLoss.answers === 1
-              ? "1 stored answer names a rank you are removing"
-              : `${confirmLoss.answers} stored answers name a rank you are removing`}
-          </span>
-          <span className="mt-1 block opacity-90">
-            Removing {confirmLoss.removed.slice(0, 4).join(", ")}
-            {confirmLoss.removed.length > 4 && ` and ${confirmLoss.removed.length - 4} more`}{" "}
-            leaves those members with a rank this game no longer has, so those answers are
-            cleared and they will be asked again.
-          </span>
+          <span className="block font-medium">Before you save this ladder</span>
+
+          {confirm.answers > 0 && (
+            <span className="mt-2 block opacity-90">
+              {confirm.answers === 1
+                ? "1 stored answer names a rank you are removing"
+                : `${confirm.answers} stored answers name a rank you are removing`}
+              . Removing {confirm.removed.slice(0, 4).join(", ")}
+              {confirm.removed.length > 4 && ` and ${confirm.removed.length - 4} more`} leaves
+              those members with a rank this game no longer has, so those answers are cleared
+              and they will be asked again.
+            </span>
+          )}
+
+          {confirm.events.length > 0 && (
+            <span className="mt-2 block opacity-90">
+              <span className="block">
+                {plural(confirm.events.length, "event")} with a rank rule on {gameName}{" "}
+                {confirm.events.length === 1 ? "means" : "mean"} something different after
+                this. The rule stays as written; where it sits on the ladder does not.
+              </span>
+              <ul className="mt-2 space-y-1">
+                {confirm.events.map((event) => (
+                  <li key={event.id}>
+                    <span className="font-medium">{event.title}</span>
+                    {" — "}
+                    {event.rules
+                      .map((rule) => (rule === "enter" ? "entry" : "captain"))
+                      .join(" and ")}{" "}
+                    at {event.ranks.join(", ")}
+                    {event.ranksGone && ", which this ladder no longer has"}
+                  </li>
+                ))}
+              </ul>
+            </span>
+          )}
+
           <span className="mt-3 flex gap-2">
             <Button size="sm" variant="flare" disabled={busy} onClick={() => void save(true)}>
-              Save and clear them
+              {confirm.answers > 0 ? "Save and clear them" : "Save the new order"}
             </Button>
-            <Button size="sm" disabled={busy} onClick={() => setConfirmLoss(null)}>
+            <Button size="sm" disabled={busy} onClick={() => setConfirm(null)}>
               Cancel
             </Button>
           </span>
@@ -188,7 +224,7 @@ export default function LadderEditor({
             onClick={() => {
               setDraft([...ladder]);
               setError(null);
-              setConfirmLoss(null);
+              setConfirm(null);
             }}
           >
             Revert

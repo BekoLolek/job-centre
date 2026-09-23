@@ -11,15 +11,18 @@ import {
   Eyebrow,
   Field,
   Section,
+  Select,
   StatusPill,
   Tabs,
   plural,
 } from "@/components/ui";
-import type { AdminGameView, AdminGamesView } from "@/lib/admin-games";
+import type { AdminFieldView, AdminGameView, AdminGamesView } from "@/lib/admin-games";
 import {
   createGameAction,
   moveGameAction,
   renameGameAction,
+  restoreFieldAction,
+  retireFieldAction,
   setGameActiveAction,
 } from "@/app/admin/games/actions";
 
@@ -44,6 +47,14 @@ import {
  * keeping every answer, and checklist.md's standing rule is that nothing is
  * destructive. A game deleted in a tidying mood would take years of profile
  * data with it; a game switched off can be switched back on.
+ *
+ * ## Why nothing deletes an answered question either
+ *
+ * The same rule, one level down (UC-03 5a, R-09). `RetiredQuestions` below is
+ * the switch: retiring stops a question being asked and keeps every answer to
+ * it, restoring puts both back. Deleting survives only for a question nobody
+ * has answered — the five-minute-old typo — and `deleteField` refuses the
+ * rest.
  */
 
 export default function GamesManager({ view }: { view: AdminGamesView }) {
@@ -134,6 +145,12 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
           busy={pending}
           onChanged={refresh}
         />
+        <RetiredQuestions
+          asked={view.globalFields}
+          retired={view.globalRetired}
+          busy={pending}
+          onChanged={refresh}
+        />
       </Section>
 
       {/* --- The games --------------------------------------------- */}
@@ -168,6 +185,115 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
           </div>
         )}
       </Section>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Retiring a question                                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Stop asking a question without losing what people said (UC-03 5a, R-09).
+ *
+ * The thing a question accumulates is answers, and they are the only part of
+ * it that cannot be typed again. So there is no delete here for a question
+ * anybody has used: retiring takes it off every member's profile and off the
+ * completeness count, and leaves every stored answer where it is. Restoring
+ * brings the question and all of its answers straight back, which is what
+ * makes retiring a decision an admin can afford to get wrong.
+ *
+ * It sits under the list rather than as a button on each row because the list
+ * is `QuestionList`'s, and one panel that names the question it is about reads
+ * no worse than a third icon on every row.
+ */
+function RetiredQuestions({
+  asked,
+  retired,
+  busy,
+  onChanged,
+}: {
+  asked: AdminFieldView[];
+  retired: AdminFieldView[];
+  busy: boolean;
+  onChanged: () => void;
+}) {
+  const [picked, setPicked] = useState("");
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const locked = busy || working;
+
+  const run = async (action: () => Promise<{ ok: boolean; error?: string }>) => {
+    setWorking(true);
+    setError(null);
+    const result = await action();
+    if (!result.ok) setError(result.error ?? "That did not work.");
+    else {
+      setPicked("");
+      onChanged();
+    }
+    setWorking(false);
+  };
+
+  if (asked.length === 0 && retired.length === 0) return null;
+
+  return (
+    <div className="mt-5 border-t border-hair pt-4">
+      <Eyebrow className="mb-2">Retiring</Eyebrow>
+      {error && <Alert className="mb-3">{error}</Alert>}
+
+      <p className="mb-3 text-12 leading-relaxed text-muted">
+        A retired question stops being asked and stops counting towards a profile being
+        complete. Nothing is deleted — every answer is kept, and restoring the question brings
+        all of them back.
+      </p>
+
+      {asked.length > 0 && (
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[14rem] flex-1">
+            <Select
+              label="Stop asking"
+              value={picked}
+              onChange={(event) => setPicked(event.target.value)}
+            >
+              <option value="">Pick a question…</option>
+              {asked.map((field) => (
+                <option key={field.id} value={field.id}>
+                  {field.label} · {plural(field.answers, "answer")}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <Button
+            size="sm"
+            disabled={locked || !picked}
+            onClick={() => void run(() => retireFieldAction(picked))}
+          >
+            Retire it
+          </Button>
+        </div>
+      )}
+
+      {retired.length > 0 && (
+        <ul className="mt-4 divide-y divide-hair/60 rounded-lg border border-hair">
+          {retired.map((field) => (
+            <li key={field.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
+              <span className="min-w-0 flex-1 truncate text-14 text-muted">{field.label}</span>
+              <Badge tone={field.answers > 0 ? "success" : "default"}>
+                {plural(field.answers, "answer")} kept
+              </Badge>
+              <Button
+                size="sm"
+                disabled={locked}
+                onClick={() => void run(() => restoreFieldAction(field.id))}
+              >
+                Ask it again
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -265,14 +391,22 @@ function GameCard({
           />
 
           {tab === "questions" && (
-            <QuestionList
-              gameId={game.id}
-              gameName={game.name}
-              rankLadder={game.rankLadder}
-              fields={game.fields}
-              busy={busy}
-              onChanged={onChanged}
-            />
+            <>
+              <QuestionList
+                gameId={game.id}
+                gameName={game.name}
+                rankLadder={game.rankLadder}
+                fields={game.fields}
+                busy={busy}
+                onChanged={onChanged}
+              />
+              <RetiredQuestions
+                asked={game.fields}
+                retired={game.retired}
+                busy={busy}
+                onChanged={onChanged}
+              />
+            </>
           )}
 
           {tab === "ranks" && (

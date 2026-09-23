@@ -90,11 +90,21 @@ export const GLOBAL_SECTION_KEY = "global";
 /**
  * Everything `/me/profile` needs, in three queries.
  *
- * Only **active** games get a section: deactivating a game hides its questions
- * without destroying a single answer, which is what makes deactivation the safe
- * alternative to deletion. The global section appears only when global fields
- * exist, because an empty "Everyone" heading is noise rather than an empty
- * state.
+ * Two things are hidden here without a single answer being destroyed, and they
+ * are the same bargain at two scales:
+ *
+ *  - Only **active** games get a section. Deactivating a game hides its
+ *    questions and keeps every answer, which is what makes deactivation the
+ *    safe alternative to deleting one.
+ *  - Only questions that have not been **retired** are listed (UC-03 5a,
+ *    R-09). A retired question stops being asked the moment an admin retires
+ *    it — including in `completeness`, so nobody is told their profile is
+ *    incomplete because of a question nobody is asking any more — while its
+ *    `profile_values` rows sit exactly where they were. Restoring it puts
+ *    every one of them back on the form.
+ *
+ * The global section appears only when global fields exist, because an empty
+ * "Everyone" heading is noise rather than an empty state.
  */
 export async function loadProfile(
   userId: string,
@@ -115,7 +125,7 @@ export async function loadProfile(
   const build = (game: Game | null): ProfileSectionView => {
     const ladder = game?.rankLadder ?? [];
     const fields = allFields
-      .filter((field) => field.gameId === (game?.id ?? null))
+      .filter((field) => field.gameId === (game?.id ?? null) && field.retiredAt === null)
       .map((field): ProfileFieldView => ({
         id: field.id,
         key: field.key,
@@ -142,9 +152,9 @@ export async function loadProfile(
   if (global.fields.length > 0) sections.push(global);
   for (const game of activeGames) sections.push(build(game));
 
-  // A value belonging to a field of a deactivated game still counts as the
-  // member having answered something — "untouched" is about them, not about
-  // what happens to be on screen.
+  // A value belonging to a field of a deactivated game, or to a retired
+  // question, still counts as the member having answered something —
+  // "untouched" is about them, not about what happens to be on screen.
   const answeredFieldIds = new Set(storedValues.map((row) => row.fieldId));
 
   return {
@@ -212,10 +222,19 @@ export async function saveProfileSection(
     return { ok: false, errors: { _: `${game.name} is not active any more.` } };
   }
 
-  const fields = await database
-    .select()
-    .from(profileFields)
-    .where(gameId ? eq(profileFields.gameId, gameId) : isNull(profileFields.gameId));
+  /*
+   * Retired questions are dropped here too, not just on the read. A page open
+   * since before the retirement would otherwise still post to one, and the
+   * save would quietly write an answer to a question the site has stopped
+   * asking — the answers a retirement keeps are the ones already given, not
+   * new ones (UC-03 5a).
+   */
+  const fields = (
+    await database
+      .select()
+      .from(profileFields)
+      .where(gameId ? eq(profileFields.gameId, gameId) : isNull(profileFields.gameId))
+  ).filter((field) => field.retiredAt === null);
 
   const fieldById = new Map(fields.map((field) => [field.id, field]));
   const ladder = game?.rankLadder ?? [];

@@ -408,9 +408,46 @@ describe("saveProfileSection", () => {
     expect(after.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
   });
 
-  it("loses the answer when the question is deleted, by cascade", async () => {
+  /*
+   * UC-03 5a: "Admin reorders or retires a detail - System keeps members'
+   * existing answers but stops asking."
+   *
+   * This test used to assert the opposite — that deleting the question took
+   * the answer with it by cascade — and pinned the behaviour Task 14 exists to
+   * remove. The cascade is still there, because a question with no answers is
+   * a normal thing to delete; what changed is that an answered question is
+   * never deleted at all. `admin-games.ts` refuses it and offers retirement,
+   * and this is retirement seen from the member's side: the row survives, and
+   * the form stops asking.
+   */
+  it("keeps the answer when the question is retired, and stops asking it", async () => {
     await saveProfileSection(userId, rivalsId, { [ignId]: "lolek" }, db);
-    await db.delete(profileFields).where(eq(profileFields.id, ignId));
-    expect(await db.select().from(profileValues)).toHaveLength(0);
+
+    await db
+      .update(profileFields)
+      .set({ retiredAt: new Date("2026-09-23T12:00:00Z") })
+      .where(eq(profileFields.id, ignId));
+
+    // Kept: the answer is exactly where the member left it.
+    const rows = await db
+      .select()
+      .from(profileValues)
+      .where(eq(profileValues.fieldId, ignId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].value).toBe("lolek");
+
+    // Not asked: it is off the member's form, and off the section's count.
+    const rivals = (await loadProfile(userId, db)).sections.find(
+      (section) => section.gameId === rivalsId
+    );
+    expect(rivals?.fields.map((field) => field.key)).toEqual(["rank", "roles"]);
+    // It was required, so leaving it in the count would mark this member
+    // incomplete for not answering a question nobody is asking.
+    expect(rivals?.completeness.required).toBe(2);
+    expect(rivals?.completeness.missing).not.toContain("In-game name");
+
+    // And the member has still answered something, so the profile is not
+    // "untouched" just because the only thing they filled in was retired.
+    expect((await loadProfile(userId, db)).untouched).toBe(false);
   });
 });

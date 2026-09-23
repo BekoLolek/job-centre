@@ -15,9 +15,23 @@
  *
  * Nothing here deletes a game. Deactivating hides it from `/me/profile` and
  * from applications while leaving every answer intact, which is the standing
- * "nothing destructive, ever" rule in checklist.md. Fields *can* be deleted,
- * because a mistyped question with no answers is a normal thing to remove — but
- * the count comes back first.
+ * "nothing destructive, ever" rule in checklist.md.
+ *
+ * ## Answers survive (R-09, UC-03 5a)
+ *
+ * The same rule now holds one level down, for the questions themselves:
+ *
+ *  - **Retiring** a question stops it being asked and keeps every answer
+ *    (`retireField`). It is the replacement for deleting one people have used.
+ *  - **Editing** a question never clears an answer (`updateField`). A retyped
+ *    question can leave stored answers the new definition does not recognise;
+ *    `previewFieldEdit` counts them so the admin knows, and they are *kept*
+ *    rather than deleted, because an answer somebody gave is a fact about them
+ *    and an admin's second thoughts about the wording are not a reason to
+ *    forget it.
+ *  - **Deleting** survives only for a question nobody has answered — a
+ *    mistyped question with no answers is a normal thing to remove. One with
+ *    answers is refused and pointed at retirement.
  */
 
 import { and, asc, count, eq, inArray, isNull, ne, sql } from "drizzle-orm";
@@ -28,6 +42,7 @@ import {
   type ProfileFieldOption,
   type ProfileFieldType,
   db as defaultDb,
+  events,
   games,
   profileFields,
   profileValues,
@@ -76,8 +91,11 @@ export type AdminFieldView = ProfileField & {
 };
 
 export type AdminGameView = Game & {
+  /** Still asked. A retired question is in `retired`, not here. */
   fields: AdminFieldView[];
-  /** Answers across every field of this game — the weight of the game itself. */
+  /** Retired (UC-03 5a): no longer asked, answers still stored. */
+  retired: AdminFieldView[];
+  /** Answers across every field of this game, retired ones included. */
   answers: number;
 };
 
@@ -86,6 +104,8 @@ export type AdminGamesView = {
   games: AdminGameView[];
   /** The `game_id is null` fields, which belong to no game (§7). */
   globalFields: AdminFieldView[];
+  /** Retired global fields, same rule. */
+  globalRetired: AdminFieldView[];
   globalAnswers: number;
 };
 
@@ -115,19 +135,25 @@ export async function loadAdminGames(database: Database = defaultDb): Promise<Ad
     answers: answersByField.get(field.id) ?? 0,
   });
 
-  const globalFields = fieldRows.filter((field) => field.gameId === null).map(decorate);
+  const asked = (field: ProfileField) => field.retiredAt === null;
+  const globals = fieldRows.filter((field) => field.gameId === null).map(decorate);
 
   return {
     games: gameRows.map((game) => {
-      const fields = fieldRows.filter((field) => field.gameId === game.id).map(decorate);
+      const mine = fieldRows.filter((field) => field.gameId === game.id).map(decorate);
       return {
         ...game,
-        fields,
-        answers: fields.reduce((total, field) => total + field.answers, 0),
+        fields: mine.filter(asked),
+        retired: mine.filter((field) => !asked(field)),
+        // Deliberately the whole set: a retired question's answers are still
+        // stored, and the number on the card is how much of this game's data
+        // exists, not how much of it is on a profile form today.
+        answers: mine.reduce((total, field) => total + field.answers, 0),
       };
     }),
-    globalFields,
-    globalAnswers: globalFields.reduce((total, field) => total + field.answers, 0),
+    globalFields: globals.filter(asked),
+    globalRetired: globals.filter((field) => !asked(field)),
+    globalAnswers: globals.reduce((total, field) => total + field.answers, 0),
   };
 }
 
@@ -151,6 +177,26 @@ const NAME_MAX = 60;
 
 function cleanName(raw: unknown): string {
   return typeof raw === "string" ? raw.trim().replace(/\s+/g, " ").slice(0, NAME_MAX) : "";
+}
+
+/**
+ * Whether some *other* game already carries this name (UC-03 1a).
+ *
+ * Case- and space-insensitive, because "Marvel Rivals" and "marvel  rivals"
+ * are the same game to everyone except `=`. `cleanName` has already collapsed
+ * the spaces, so this only has to fold case.
+ *
+ * `exceptId` is what makes it work on a rename: a game is allowed to keep its
+ * own name, and without it saving a row unchanged would reject itself.
+ */
+async function nameTaken(
+  database: Database,
+  name: string,
+  exceptId?: string
+): Promise<boolean> {
+  const rows = await database.select({ id: games.id, name: games.name }).from(games);
+  const wanted = name.toLowerCase();
+  return rows.some((row) => row.id !== exceptId && row.name.toLowerCase() === wanted);
 }
 
 /** The next `sort` value, so a new row lands at the bottom rather than the top. */
@@ -182,6 +228,7 @@ export async function createGame(
 ): Promise<AdminResult<Game>> {
   const name = cleanName(input.name);
   if (!name) return fail("Give the game a name.");
+  if (await nameTaken(database, name)) return fail("That game already exists.");
 
   const key = slugify(typeof input.key === "string" && input.key.trim() ? input.key : name);
   if (!key) return fail("That name has no letters or numbers in it to make a key from.");
@@ -203,7 +250,15 @@ export async function createGame(
   return withData(created);
 }
 
-/** Rename a game. The key never moves — things point at it. */
+/**
+ * Rename a game. The key never moves — things point at it.
+ *
+ * The name is the only thing an admin ever reads a game by, so it carries the
+ * same uniqueness rule on a rename as it does on a create (UC-03 1a). Without
+ * it the catalogue can be walked into a state with two "Marvel Rivals" in it,
+ * which the create path refuses outright — and a rule that only holds on the
+ * way in is not a rule.
+ */
 export async function renameGame(
   gameId: string,
   rawName: string,
@@ -211,6 +266,7 @@ export async function renameGame(
 ): Promise<AdminResult<Game>> {
   const name = cleanName(rawName);
   if (!name) return fail("Give the game a name.");
+  if (await nameTaken(database, name, gameId)) return fail("That game already exists.");
 
   const [updated] = await database
     .update(games)
@@ -283,24 +339,167 @@ async function writeFieldSort(
   }
 }
 
+/** One section's questions in `sort` order — a game's, or the global set's. */
+async function siblingsOf(
+  database: Database,
+  gameId: string | null
+): Promise<ProfileField[]> {
+  return database
+    .select()
+    .from(profileFields)
+    .where(gameId ? eq(profileFields.gameId, gameId) : isNull(profileFields.gameId))
+    .orderBy(asc(profileFields.sort), asc(profileFields.createdAt));
+}
+
+/**
+ * Renumber a section as asked-first, retired-after, 0…n-1.
+ *
+ * Retired questions keep a `sort` because they can be restored, but they are
+ * parked behind the live ones. Leaving one sitting between two live questions
+ * would make "move up" skip over something nobody can see, which reads on
+ * screen as the button being broken — the same failure dense renumbering was
+ * introduced to prevent.
+ */
+async function resequenceSection(database: Database, gameId: string | null): Promise<void> {
+  const rows = await siblingsOf(database, gameId);
+  await writeFieldSort(database, [
+    ...rows.filter((row) => row.retiredAt === null),
+    ...rows.filter((row) => row.retiredAt !== null),
+  ]);
+}
+
 /* ------------------------------------------------------------------ */
 /* Rank ladders                                                       */
 /* ------------------------------------------------------------------ */
+
+/** One event whose entry rule this ladder change would re-aim (UC-03 3b). */
+export type LadderAffectedEvent = {
+  id: string;
+  slug: string;
+  title: string;
+  /** Which threshold moves: "enter", "captain", or both. */
+  rules: Array<"enter" | "captain">;
+  /** The rank each moved threshold names, so the warning can quote it. */
+  ranks: string[];
+  /** True when a threshold's own rank is being removed outright. */
+  ranksGone: boolean;
+};
 
 export type LadderImpact = {
   /** Ladder entries that would stop being valid answers. */
   removed: string[];
   /** How many stored answers name one of them. */
   answers: number;
+  /** Events whose rank rules this change re-aims. Empty when none. */
+  events: LadderAffectedEvent[];
 };
+
+/**
+ * Which ladder entries sit at or above `threshold`, as a set.
+ *
+ * This *is* an entry rule (R-10, §8.3): eligibility is "your rank is at least
+ * the threshold's", so the rule's meaning is exactly the set of ranks it lets
+ * in. Comparing that set before and after is therefore the only honest test of
+ * whether a reorder changed anything.
+ *
+ * Null when the ladder does not contain the threshold at all — the rule has
+ * been unmoored rather than moved, which the caller reports differently.
+ */
+function admitted(ladder: readonly string[], threshold: string): Set<string> | null {
+  const at = ladder.indexOf(threshold);
+  return at < 0 ? null : new Set(ladder.slice(at));
+}
+
+/**
+ * Whether the two ladders let the same people through `threshold`.
+ *
+ * Only entries present in *both* ladders count. Adding a brand new rank is not
+ * a change to an existing rule — nobody could have answered with it — and
+ * flagging every addition would make the warning noise the admin learns to
+ * click past, which is the one thing a warning must not become.
+ */
+function ruleMoved(
+  before: readonly string[],
+  after: readonly string[],
+  threshold: string
+): { moved: boolean; gone: boolean } {
+  const was = admitted(before, threshold);
+  const now = admitted(after, threshold);
+  if (!was) return { moved: false, gone: false };
+  if (!now) return { moved: true, gone: true };
+
+  const shared = new Set(before.filter((name) => after.includes(name)));
+  const trim = (set: Set<string>) => [...set].filter((name) => shared.has(name)).sort();
+  const a = trim(was);
+  const b = trim(now);
+  return { moved: a.length !== b.length || a.some((name, at) => name !== b[at]), gone: false };
+}
+
+/**
+ * Which events' rank rules a new ladder would re-aim (UC-03 3b).
+ *
+ * Read from `events` rather than from a count kept somewhere: an entry rule is
+ * stored as the ladder *entry name* (§8.3), so its meaning is defined entirely
+ * by where that name sits in `games.rank_ladder`. Move the name and the same
+ * stored rule admits a different set of people, without anybody having edited
+ * the event.
+ */
+async function ladderAffectedEvents(
+  gameId: string,
+  before: readonly string[],
+  after: readonly string[],
+  database: Database
+): Promise<LadderAffectedEvent[]> {
+  const rows = await database
+    .select({
+      id: events.id,
+      slug: events.slug,
+      title: events.title,
+      enter: events.minRankToEnter,
+      captain: events.minRankToCaptain,
+    })
+    .from(events)
+    .where(eq(events.gameId, gameId));
+
+  const out: LadderAffectedEvent[] = [];
+  for (const row of rows) {
+    const rules: Array<"enter" | "captain"> = [];
+    const ranks: string[] = [];
+    let ranksGone = false;
+
+    const thresholds: Array<["enter" | "captain", string | null]> = [
+      ["enter", row.enter],
+      ["captain", row.captain],
+    ];
+    for (const [rule, threshold] of thresholds) {
+      if (!threshold) continue;
+      const { moved, gone } = ruleMoved(before, after, threshold);
+      if (!moved) continue;
+      rules.push(rule);
+      if (!ranks.includes(threshold)) ranks.push(threshold);
+      if (gone) ranksGone = true;
+    }
+
+    if (rules.length > 0) {
+      out.push({ id: row.id, slug: row.slug, title: row.title, rules, ranks, ranksGone });
+    }
+  }
+  return out.sort((a, b) => a.title.localeCompare(b.title));
+}
 
 /**
  * What replacing this game's ladder would cost.
  *
- * A `rank` answer stores the ladder entry's *name*, so renaming or removing an
- * entry orphans every answer holding it. The admin is told the number before
- * they commit, and `setRankLadder` clears exactly those rows afterwards — the
- * alternative is a profile that displays a rank the game no longer has.
+ * Two separate costs, and the screen shows both before the write:
+ *
+ *  1. **Answers.** A `rank` answer stores the ladder entry's *name*, so
+ *     removing an entry orphans every answer holding it. `setRankLadder`
+ *     clears exactly those rows afterwards — the alternative is a profile
+ *     displaying a rank the game no longer has. A pure *reorder* removes
+ *     nothing and so costs no answers at all.
+ *  2. **Events (UC-03 3b).** A reorder costs no answers but silently re-aims
+ *     every entry rule written against this game, which is the change nobody
+ *     sees coming. Those events are named before the save, not after.
  */
 export async function previewRankLadder(
   gameId: string,
@@ -308,17 +507,20 @@ export async function previewRankLadder(
   database: Database = defaultDb
 ): Promise<LadderImpact> {
   const [game] = await database.select().from(games).where(eq(games.id, gameId)).limit(1);
-  if (!game) return { removed: [], answers: 0 };
+  if (!game) return { removed: [], answers: 0, events: [] };
 
-  const keeping = new Set(normaliseRankLadder([...nextLadder]));
+  const next = normaliseRankLadder([...nextLadder]);
+  const keeping = new Set(next);
   const removed = game.rankLadder.filter((name) => !keeping.has(name));
-  if (removed.length === 0) return { removed: [], answers: 0 };
+  const affected = await ladderAffectedEvents(gameId, game.rankLadder, next, database);
+
+  if (removed.length === 0) return { removed: [], answers: 0, events: affected };
 
   const rankFields = await database
     .select({ id: profileFields.id })
     .from(profileFields)
     .where(and(eq(profileFields.gameId, gameId), eq(profileFields.type, "rank")));
-  if (rankFields.length === 0) return { removed, answers: 0 };
+  if (rankFields.length === 0) return { removed, answers: 0, events: affected };
 
   const rows = await database
     .select({ fieldId: profileValues.fieldId, value: profileValues.value })
@@ -328,7 +530,7 @@ export async function previewRankLadder(
   const orphaned = rows.filter(
     (row) => typeof row.value === "string" && removed.includes(row.value)
   );
-  return { removed, answers: orphaned.length };
+  return { removed, answers: orphaned.length, events: affected };
 }
 
 /**
@@ -361,10 +563,17 @@ export async function setRankLadder(
 /**
  * Delete stored answers that no longer parse against their field.
  *
- * Called after any edit that can invalidate answers — a shortened ladder, a
- * retyped field, a deleted option. Reads the values rather than trying to
- * express "still valid" in SQL, because the rules live in `profile-fields` and
- * having them in two places is how the two versions drift apart.
+ * The one remaining caller is `setRankLadder`, and only when the admin has
+ * confirmed a ladder entry's *removal*: an answer naming a rank the game no
+ * longer has would render as a rank nobody can be. Editing a question does
+ * **not** call this any more — see `updateField`.
+ *
+ * Retired questions are skipped. Their answers are the archive that retiring
+ * exists to protect (UC-03 5a), and nothing is asking them to still parse.
+ *
+ * Reads the values rather than trying to express "still valid" in SQL, because
+ * the rules live in `profile-fields` and having them in two places is how the
+ * two versions drift apart.
  */
 async function clearInvalidAnswers(
   gameId: string | null,
@@ -374,10 +583,12 @@ async function clearInvalidAnswers(
     ? await database.select().from(games).where(eq(games.id, gameId)).limit(1)
     : [null];
 
-  const fields = await database
-    .select()
-    .from(profileFields)
-    .where(gameId ? eq(profileFields.gameId, gameId) : isNull(profileFields.gameId));
+  const fields = (
+    await database
+      .select()
+      .from(profileFields)
+      .where(gameId ? eq(profileFields.gameId, gameId) : isNull(profileFields.gameId))
+  ).filter((field) => field.retiredAt === null);
   if (fields.length === 0) return 0;
 
   const rows = await database
@@ -487,7 +698,14 @@ export async function createField(
 export type FieldEditImpact = {
   /** Answers stored against the field today. */
   answers: number;
-  /** How many of them the proposed edit would invalidate and clear. */
+  /**
+   * How many of them the new definition would no longer recognise.
+   *
+   * They are **kept** either way — `updateField` deletes nothing (UC-03 5a).
+   * This is the number that says "forty people answered this and your new
+   * wording makes forty answers unreadable", which is a thing to know before
+   * clicking rather than after.
+   */
   invalidated: number;
 };
 
@@ -495,9 +713,9 @@ export type FieldEditImpact = {
  * What an edit to this field would cost, without making it.
  *
  * The honest version of "are you sure?": retyping a `select` as a `number`
- * invalidates every answer, while adding an option to a `multiselect`
- * invalidates none, and the admin should be able to tell those apart before
- * clicking rather than after.
+ * strands every answer, while adding an option to a `multiselect` strands
+ * none, and the admin should be able to tell those apart before clicking
+ * rather than after.
  */
 export async function previewFieldEdit(
   fieldId: string,
@@ -536,8 +754,20 @@ export async function previewFieldEdit(
 }
 
 /**
- * Edit a field's label, type, options or required flag, then clear any answer
- * the new definition makes nonsense of.
+ * Edit a field's label, type, options or required flag. **No answer is ever
+ * deleted by an edit** (UC-03 5a, R-09).
+ *
+ * This is the rule the module exists for. An answer is something a member
+ * said; an admin's second thoughts about the wording of the question are not a
+ * reason to forget it. Retyping `select` to `number` can leave answers the new
+ * definition cannot read — `previewFieldEdit` counts them and the dialog says
+ * the number — but they stay on the row, and putting the question back the way
+ * it was brings every one of them back with it. That round trip is impossible
+ * if the edit deleted them, and it is the difference between an edit and an
+ * amputation.
+ *
+ * `strandedAnswers` is what comes back: how many stored answers the new
+ * definition will not parse. Zero on a harmless edit.
  *
  * The key is left alone on a relabel. It is an internal identifier; changing it
  * would break nothing today but would break a saved application answer in
@@ -547,7 +777,7 @@ export async function updateField(
   fieldId: string,
   input: FieldInput,
   database: Database = defaultDb
-): Promise<AdminResult<{ field: ProfileField; clearedAnswers: number }>> {
+): Promise<AdminResult<{ field: ProfileField; strandedAnswers: number }>> {
   const checked = validateFieldInput(input);
   if (!checked.ok) return checked;
 
@@ -568,28 +798,104 @@ export async function updateField(
     }
   }
 
+  // Counted against the *incoming* definition before the write, which is the
+  // same arithmetic `previewFieldEdit` did — so the number the admin confirmed
+  // is the number they are told afterwards.
+  const stranded = (await previewFieldEdit(fieldId, input, database)).invalidated;
+
   const [updated] = await database
     .update(profileFields)
     .set(checked.data)
     .where(eq(profileFields.id, fieldId))
     .returning();
 
-  const cleared = await clearInvalidAnswers(existing.gameId, database);
-  return withData({ field: updated, clearedAnswers: cleared });
+  return withData({ field: updated, strandedAnswers: stranded });
+}
+
+/* ------------------------------------------------------------------ */
+/* Retiring                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Stop asking a question, keep every answer to it (UC-03 5a, R-09).
+ *
+ * The replacement for deleting one that people have used. `loadProfile` drops
+ * it from the member's form and from that section's completeness, so nobody is
+ * asked it again and nobody is marked incomplete for not having answered it;
+ * `profile_values` is not touched at all. Switching it back on with
+ * `restoreField` brings every answer back onto the form exactly as it was,
+ * which is the whole point — the same bargain `setGameActive` makes one level
+ * up.
+ *
+ * Already retired is not an error. A second click on a button that has done
+ * its job is a double click, not a fault, and reporting one would be the
+ * screen arguing with the admin about something it already agrees with.
+ */
+export async function retireField(
+  fieldId: string,
+  database: Database = defaultDb,
+  now: Date = new Date()
+): Promise<AdminResult<{ field: ProfileField; keptAnswers: number }>> {
+  const [existing] = await database
+    .select()
+    .from(profileFields)
+    .where(eq(profileFields.id, fieldId))
+    .limit(1);
+  if (!existing) return fail("That question no longer exists.");
+
+  const kept = await fieldAnswerCount(fieldId, database);
+  const [updated] = await database
+    .update(profileFields)
+    .set({ retiredAt: existing.retiredAt ?? now })
+    .where(eq(profileFields.id, fieldId))
+    .returning();
+
+  await resequenceSection(database, existing.gameId);
+  return withData({ field: updated, keptAnswers: kept });
+}
+
+/** Ask it again. Every answer stored while it was retired comes back with it. */
+export async function restoreField(
+  fieldId: string,
+  database: Database = defaultDb
+): Promise<AdminResult<{ field: ProfileField; restoredAnswers: number }>> {
+  const restored = await fieldAnswerCount(fieldId, database);
+  const [updated] = await database
+    .update(profileFields)
+    .set({ retiredAt: null })
+    .where(eq(profileFields.id, fieldId))
+    .returning();
+  if (!updated) return fail("That question no longer exists.");
+
+  await resequenceSection(database, updated.gameId);
+  return withData({ field: updated, restoredAnswers: restored });
 }
 
 /**
- * Delete a question and every answer to it.
+ * Delete a question **nobody has answered**.
  *
- * `profile_values.field_id` cascades, so the answers go with it whether or not
- * anyone counted them first — which is precisely why the screen calls
- * `fieldAnswerCount` and says the number out loud before offering the button.
+ * `profile_values.field_id` cascades, so a delete really does take every
+ * answer with it — which is why a question with answers is refused outright
+ * and pointed at `retireField` instead (UC-03 5a). There is no confirm dialog
+ * that makes destroying them acceptable, and offering one only moves the
+ * decision to the tiredest moment of somebody's evening.
+ *
+ * A question with no answers is a different thing: a typo, added five minutes
+ * ago, that should simply go. That one still deletes.
  */
 export async function deleteField(
   fieldId: string,
   database: Database = defaultDb
 ): Promise<AdminResult<{ deletedAnswers: number }>> {
   const answers = await fieldAnswerCount(fieldId, database);
+  if (answers > 0) {
+    return fail(
+      `${answers === 1 ? "1 member has" : `${answers} members have`} answered this question, ` +
+        "so it cannot be deleted. Retire it instead: it stops being asked and every answer " +
+        "is kept."
+    );
+  }
+
   const [deleted] = await database
     .delete(profileFields)
     .where(eq(profileFields.id, fieldId))
@@ -597,21 +903,19 @@ export async function deleteField(
   if (!deleted) return fail("That question no longer exists.");
 
   // Close the gap the delete left, so `sort` stays dense.
-  const siblings = await database
-    .select()
-    .from(profileFields)
-    .where(
-      deleted.gameId
-        ? eq(profileFields.gameId, deleted.gameId)
-        : isNull(profileFields.gameId)
-    )
-    .orderBy(asc(profileFields.sort), asc(profileFields.createdAt));
-  await writeFieldSort(database, siblings);
+  await resequenceSection(database, deleted.gameId);
 
   return withData({ deletedAnswers: answers });
 }
 
-/** Move a question within its own section, then renumber that section. */
+/**
+ * Move a question within its own section, then renumber that section.
+ *
+ * The move happens among the questions of the same standing — a live question
+ * swaps with the live question next to it, never with a retired one it cannot
+ * see. Retired questions are then written back behind the live ones, so the
+ * section stays dense either way.
+ */
 export async function moveField(
   fieldId: string,
   direction: "up" | "down",
@@ -624,15 +928,17 @@ export async function moveField(
     .limit(1);
   if (!field) return fail("That question no longer exists.");
 
-  const siblings = await database
-    .select()
-    .from(profileFields)
-    .where(
-      field.gameId ? eq(profileFields.gameId, field.gameId) : isNull(profileFields.gameId)
-    )
-    .orderBy(asc(profileFields.sort), asc(profileFields.createdAt));
+  const siblings = await siblingsOf(database, field.gameId);
+  const asked = siblings.filter((row) => row.retiredAt === null);
+  const retired = siblings.filter((row) => row.retiredAt !== null);
+  const moving = field.retiredAt === null ? asked : retired;
+  const staying = field.retiredAt === null ? retired : asked;
 
-  await writeFieldSort(database, reorderById(siblings, fieldId, direction));
+  const reordered = reorderById(moving, fieldId, direction);
+  await writeFieldSort(
+    database,
+    field.retiredAt === null ? [...reordered, ...staying] : [...staying, ...reordered]
+  );
   return done();
 }
 

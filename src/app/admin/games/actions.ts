@@ -20,6 +20,7 @@ import { revalidatePath } from "next/cache";
 import {
   type AdminResult,
   type FieldInput,
+  type LadderImpact,
   createField,
   createGame,
   deleteField,
@@ -28,6 +29,8 @@ import {
   previewFieldEdit,
   previewRankLadder,
   renameGame,
+  restoreField,
+  retireField,
   setGameActive,
   setRankLadder,
   updateField,
@@ -86,14 +89,16 @@ export async function moveGameAction(
 /* ------------------------------------------------------------------ */
 
 /**
- * What replacing the ladder would orphan. Read-only — the screen calls this
- * before it offers the button, so "3 answers will be cleared" is on screen
- * before anyone commits to it.
+ * What replacing the ladder would orphan, and which events it would re-aim.
+ *
+ * Read-only — the screen calls this before it offers the button, so both "3
+ * answers will be cleared" and the list of events whose entry rules move
+ * (UC-03 3b) are on screen before anyone commits to it.
  */
 export async function previewRankLadderAction(
   gameId: string,
   ladder: string[]
-): Promise<{ removed: string[]; answers: number }> {
+): Promise<LadderImpact> {
   await requireAdmin();
   return previewRankLadder(gameId, ladder);
 }
@@ -134,12 +139,40 @@ export async function previewFieldEditAction(
 export async function updateFieldAction(
   fieldId: string,
   input: FieldInput
-): Promise<AdminResult<{ clearedAnswers: number }>> {
+): Promise<AdminResult<{ strandedAnswers: number }>> {
   await requireAdmin();
   const result = await updateField(fieldId, input);
   if (!result.ok) return result;
   refresh();
-  return { ok: true, data: { clearedAnswers: result.data.clearedAnswers } };
+  return { ok: true, data: { strandedAnswers: result.data.strandedAnswers } };
+}
+
+/**
+ * Stop asking a question, keep every answer (UC-03 5a).
+ *
+ * The authorisation is on the row this is about to write — `retireField`
+ * resolves the field itself and writes that row, and there is no second id
+ * beside it for a caller to point somewhere else.
+ */
+export async function retireFieldAction(
+  fieldId: string
+): Promise<AdminResult<{ keptAnswers: number }>> {
+  await requireAdmin();
+  const result = await retireField(fieldId);
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true, data: { keptAnswers: result.data.keptAnswers } };
+}
+
+/** Ask it again. Every answer kept while it was retired comes back with it. */
+export async function restoreFieldAction(
+  fieldId: string
+): Promise<AdminResult<{ restoredAnswers: number }>> {
+  await requireAdmin();
+  const result = await restoreField(fieldId);
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true, data: { restoredAnswers: result.data.restoredAnswers } };
 }
 
 export async function moveFieldAction(
@@ -153,10 +186,11 @@ export async function moveFieldAction(
 }
 
 /**
- * Delete a question and every answer to it.
+ * Delete a question nobody has answered.
  *
- * The count is already on the confirm dialog — `loadAdminGames` fetches it with
- * the field — so this is the point of no return rather than the discovery.
+ * One that *has* answers is refused by `deleteField` and pointed at retiring
+ * (UC-03 5a) — the count is already on the confirm dialog, so the admin is not
+ * discovering the number here.
  */
 export async function deleteFieldAction(
   fieldId: string

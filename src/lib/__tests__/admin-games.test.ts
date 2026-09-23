@@ -1,6 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { type Database, games, profileFields, profileValues } from "@/db";
+import { type Database, events, games, profileFields, profileValues } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { RIVALS_RANK_LADDER } from "@/db/seed";
 import {
@@ -14,6 +14,8 @@ import {
   previewFieldEdit,
   previewRankLadder,
   renameGame,
+  restoreField,
+  retireField,
   setGameActive,
   setRankLadder,
   updateField,
@@ -45,9 +47,31 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.delete(profileValues);
   await db.delete(profileFields);
+  // Events hold a game's rank rules, which UC-03 3b is about; they survive
+  // their game (`on delete set null`), so they have to go first and by name.
+  await db.delete(events);
   await db.delete(games);
   userId = await makeUser(db);
 });
+
+/** An event with a rank rule on `gameId`, which is what UC-03 3b warns about. */
+async function eventWithRankRule(
+  gameId: string,
+  over: { title?: string; slug?: string; enter?: string; captain?: string } = {}
+): Promise<string> {
+  const suffix = Math.random().toString(36).slice(2, 8);
+  const [row] = await db
+    .insert(events)
+    .values({
+      slug: over.slug ?? `event-${suffix}`,
+      title: over.title ?? "Rivals night",
+      gameId,
+      minRankToEnter: over.enter ?? null,
+      minRankToCaptain: over.captain ?? null,
+    })
+    .returning({ id: events.id });
+  return row.id;
+}
 
 /** The admin flow the brief is measured against: a game, then two questions. */
 async function addRepo() {
@@ -83,11 +107,22 @@ describe("createGame", () => {
     expect(rows.map((row) => row.sort)).toEqual([0, 1]);
   });
 
-  it("reports a clashing key rather than inventing repo-2", async () => {
+  // UC-03 1a: "Name already used - System rejects with 'That game already
+  // exists'". Case is not a difference anybody means, so "repo" is "REPO".
+  it("refuses a name that is already used, whatever the case", async () => {
     await createGame({ name: "REPO" }, db);
     const second = await createGame({ name: "repo" }, db);
     expect(second.ok).toBe(false);
-    if (!second.ok) expect(second.error).toMatch(/already a game/i);
+    if (!second.ok) expect(second.error).toBe("That game already exists.");
+  });
+
+  it("reports a clashing key rather than inventing repo-2", async () => {
+    await createGame({ name: "REPO" }, db);
+    // A different name that slugs to the same key, so the key check is the one
+    // doing the work here rather than the name check above.
+    const second = await createGame({ name: "Repo!" }, db);
+    expect(second.ok).toBe(false);
+    if (!second.ok) expect(second.error).toMatch(/already a game with the key/i);
   });
 
   it("refuses a nameless game, or one with no letters in it", async () => {
@@ -113,6 +148,21 @@ describe("renameGame and setGameActive", () => {
       expect(result.data.name).toBe("R.E.P.O.");
       expect(result.data.key).toBe("repo");
     }
+  });
+
+  // UC-03 1a again, on the other door in. A rule that only holds on the way in
+  // is not a rule: renaming is how you would otherwise end up with two
+  // "Marvel Rivals" the create path would have refused outright.
+  it("refuses a rename onto a name another game already has", async () => {
+    await createGame({ name: "Marvel Rivals" }, db);
+    const other = await addRepo();
+
+    const clash = await renameGame(other.id, "marvel rivals", db);
+    expect(clash.ok).toBe(false);
+    if (!clash.ok) expect(clash.error).toBe("That game already exists.");
+
+    // Its own name back is not a clash — saving an unchanged row must work.
+    expect((await renameGame(other.id, "REPO", db)).ok).toBe(true);
   });
 
   it("refuses a blank name and a game that is gone", async () => {
@@ -359,7 +409,9 @@ describe("answers, and what edits do to them", () => {
     expect(await fieldAnswerCount(field.id, db)).toBe(1);
   });
 
-  it("clears the answers an edit really does invalidate", async () => {
+  // UC-03 5a: editing a detail keeps members' existing answers. The edit that
+  // strands one is precisely the edit that used to delete it.
+  it("keeps an answer the edit strands, and says how many it stranded", async () => {
     const { field } = await gameWithAnsweredSelect();
     const result = await updateField(
       field.id,
@@ -367,27 +419,47 @@ describe("answers, and what edits do to them", () => {
       db
     );
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.clearedAnswers).toBe(1);
-    expect(await fieldAnswerCount(field.id, db)).toBe(0);
+    if (result.ok) expect(result.data.strandedAnswers).toBe(1);
+    expect(await fieldAnswerCount(field.id, db)).toBe(1);
+
+    const [row] = await db.select().from(profileValues);
+    expect(row.value).toBe("medic");
   });
 
-  it("keeps the answers a harmless edit does not", async () => {
+  it("gives a stranded answer back when the question is put back", async () => {
+    // The point of keeping it: the edit is reversible, and an admin's second
+    // thoughts cost nothing. A delete could not be undone by anybody.
+    const { field, game } = await gameWithAnsweredSelect();
+    await updateField(field.id, { label: "Role", type: "number" }, db);
+    await updateField(
+      field.id,
+      { label: "Role", type: "select", options: ["Sniper", "Medic"] },
+      db
+    );
+
+    const section = (await loadProfile(userId, db)).sections.find(
+      (row) => row.gameId === game.id
+    );
+    expect(section?.fields[0].value).toBe("medic");
+  });
+
+  it("strands nothing on a harmless edit", async () => {
     const { field } = await gameWithAnsweredSelect();
     const result = await updateField(
       field.id,
       { label: "Which role?", type: "select", options: ["Sniper", "Medic", "Scout"] },
       db
     );
-    if (result.ok) expect(result.data.clearedAnswers).toBe(0);
+    if (result.ok) expect(result.data.strandedAnswers).toBe(0);
     expect(await fieldAnswerCount(field.id, db)).toBe(1);
   });
 
-  it("clears everything when the type changes out from under the answers", async () => {
+  it("keeps the answers even when the type changes out from under them", async () => {
     const { field } = await gameWithAnsweredSelect();
     const result = await updateField(field.id, { label: "Role", type: "number" }, db);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.clearedAnswers).toBe(1);
-    expect(await fieldAnswerCount(field.id, db)).toBe(0);
+    if (result.ok) expect(result.data.strandedAnswers).toBe(1);
+    expect(await fieldAnswerCount(field.id, db)).toBe(1);
   });
 
   it("leaves the key alone on a relabel", async () => {
@@ -409,14 +481,27 @@ describe("answers, and what edits do to them", () => {
     expect(await fieldAnswerCount(field.id, db)).toBe(1);
   });
 
-  it("deletes a question and says how many answers went with it", async () => {
+  // UC-03 5a: retiring is the way to stop asking something people have
+  // answered, so the destructive door is shut rather than guarded.
+  it("refuses to delete a question people have answered, and says to retire it", async () => {
     const { field } = await gameWithAnsweredSelect();
     const result = await deleteField(field.id, db);
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.data.deletedAnswers).toBe(1);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/retire it instead/i);
 
+    expect(await db.select().from(profileFields)).toHaveLength(1);
+    expect(await db.select().from(profileValues)).toHaveLength(1);
+  });
+
+  it("still deletes the five-minute-old typo nobody has answered", async () => {
+    const game = await addRepo();
+    const typo = await createField(game.id, { label: "Whta is your IGN", type: "text" }, db);
+    if (!typo.ok) throw new Error(typo.error);
+
+    const result = await deleteField(typo.data.id, db);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.data.deletedAnswers).toBe(0);
     expect(await db.select().from(profileFields)).toHaveLength(0);
-    expect(await db.select().from(profileValues)).toHaveLength(0);
   });
 
   it("closes the gap in sort after a delete", async () => {
@@ -434,6 +519,141 @@ describe("answers, and what edits do to them", () => {
 
   it("reports a delete of something already gone", async () => {
     expect((await deleteField("00000000-0000-4000-8000-000000000000", db)).ok).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * UC-03 5a: "Admin reorders or retires a detail - System keeps members'
+ * existing answers but stops asking."
+ *
+ * Both halves matter, and they pull opposite ways: the answer has to still be
+ * in `profile_values` *and* the question has to be off the member's form. A
+ * test that only checks one of them passes for a delete or for a no-op.
+ */
+describe("retiring a question (UC-03 5a)", () => {
+  async function answeredQuestion() {
+    const game = await addRepo();
+    const field = await createField(game.id, { label: "Old handle", type: "text" }, db);
+    if (!field.ok) throw new Error(field.error);
+    await saveProfileSection(userId, game.id, { [field.data.id]: "lolek" }, db);
+    return { game, fieldId: field.data.id };
+  }
+
+  it("keeps the answer and stops asking the question", async () => {
+    const { game, fieldId } = await answeredQuestion();
+
+    const retired = await retireField(fieldId, db);
+    expect(retired.ok).toBe(true);
+    if (retired.ok) expect(retired.data.keptAnswers).toBe(1);
+
+    // Kept.
+    expect(await fieldAnswerCount(fieldId, db)).toBe(1);
+    const [stored] = await db.select().from(profileValues);
+    expect(stored.value).toBe("lolek");
+
+    // Not asked.
+    const section = (await loadProfile(userId, db)).sections.find(
+      (row) => row.gameId === game.id
+    );
+    expect(section?.fields.map((field) => field.id)).not.toContain(fieldId);
+  });
+
+  it("stops a retired question counting against a complete profile", async () => {
+    const game = await addRepo();
+    const asked = await createField(game.id, { label: "IGN", type: "text", required: true }, db);
+    const dropped = await createField(
+      game.id,
+      { label: "Old handle", type: "text", required: true },
+      db
+    );
+    if (!asked.ok || !dropped.ok) throw new Error("setup");
+    await saveProfileSection(userId, game.id, { [asked.data.id]: "lolek" }, db);
+
+    const before = (await loadProfile(userId, db)).sections.find(
+      (row) => row.gameId === game.id
+    );
+    expect(before?.completeness.complete).toBe(false);
+
+    await retireField(dropped.data.id, db);
+    const after = (await loadProfile(userId, db)).sections.find(
+      (row) => row.gameId === game.id
+    );
+    expect(after?.completeness.complete).toBe(true);
+  });
+
+  it("refuses a save to a question it has stopped asking", async () => {
+    const { game, fieldId } = await answeredQuestion();
+    await retireField(fieldId, db);
+
+    // A page open since before the retirement. The stored answer is the one
+    // the member gave while it was asked; this is not a second chance to add.
+    const result = await saveProfileSection(userId, game.id, { [fieldId]: "new" }, db);
+    expect(result.ok).toBe(false);
+    const [stored] = await db.select().from(profileValues);
+    expect(stored.value).toBe("lolek");
+  });
+
+  it("brings the question and every answer back when it is restored", async () => {
+    const { game, fieldId } = await answeredQuestion();
+    await retireField(fieldId, db);
+
+    const restored = await restoreField(fieldId, db);
+    expect(restored.ok).toBe(true);
+    if (restored.ok) expect(restored.data.restoredAnswers).toBe(1);
+
+    const section = (await loadProfile(userId, db)).sections.find(
+      (row) => row.gameId === game.id
+    );
+    expect(section?.fields.find((field) => field.id === fieldId)?.value).toBe("lolek");
+  });
+
+  it("shows a retired question to the admin, separately, with its answers", async () => {
+    const { game, fieldId } = await answeredQuestion();
+    await retireField(fieldId, db);
+
+    const shown = (await loadAdminGames(db)).games.find((row) => row.id === game.id);
+    expect(shown?.fields).toHaveLength(0);
+    expect(shown?.retired.map((field) => field.id)).toEqual([fieldId]);
+    expect(shown?.retired[0].answers).toBe(1);
+    // The game's weight is what is stored, not what is on a form today.
+    expect(shown?.answers).toBe(1);
+  });
+
+  it("parks a retired question behind the live ones so the arrows keep working", async () => {
+    const game = await addRepo();
+    const one = await createField(game.id, { label: "One", type: "text" }, db);
+    const two = await createField(game.id, { label: "Two", type: "text" }, db);
+    const three = await createField(game.id, { label: "Three", type: "text" }, db);
+    if (!one.ok || !two.ok || !three.ok) throw new Error("setup");
+
+    await retireField(two.data.id, db);
+    // "Three" moves up past "One", not past the retired question between them.
+    await moveField(three.data.id, "up", db);
+
+    const rows = await db.select().from(profileFields).orderBy(asc(profileFields.sort));
+    expect(rows.map((row) => row.label)).toEqual(["Three", "One", "Two"]);
+    expect(rows.map((row) => row.sort)).toEqual([0, 1, 2]);
+  });
+
+  it("takes a second click on retire as a double click, not a fault", async () => {
+    const { fieldId } = await answeredQuestion();
+    const first = await retireField(fieldId, db, new Date("2026-01-01T00:00:00Z"));
+    const second = await retireField(fieldId, db, new Date("2026-06-01T00:00:00Z"));
+    expect(second.ok).toBe(true);
+    // The date it was retired is the first one — the second click changed
+    // nothing, which is what "already done" should mean.
+    if (first.ok && second.ok) {
+      expect(second.data.field.retiredAt?.toISOString()).toBe(
+        first.data.field.retiredAt?.toISOString()
+      );
+    }
+  });
+
+  it("reports retiring something already gone", async () => {
+    expect((await retireField("00000000-0000-4000-8000-000000000000", db)).ok).toBe(false);
+    expect((await restoreField("00000000-0000-4000-8000-000000000000", db)).ok).toBe(false);
   });
 });
 
@@ -479,6 +699,7 @@ describe("rank ladders", () => {
     expect(await previewRankLadder(gameId, reordered, db)).toEqual({
       removed: [],
       answers: 0,
+      events: [],
     });
   });
 
@@ -499,6 +720,81 @@ describe("rank ladders", () => {
     const result = await setRankLadder(gameId, reordered, db);
     if (result.ok) expect(result.data.clearedAnswers).toBe(0);
     expect(await fieldAnswerCount(fieldId, db)).toBe(1);
+  });
+
+  /*
+   * UC-03 3b: "Ranks reordered while an event has an entry rule on this game -
+   * System warns which events are affected before saving."
+   *
+   * This is the case with no other symptom. A reorder removes no rank and
+   * orphans no answer, so the answer-count warning stays silent — and every
+   * event's stored "Platinum I or above" quietly starts admitting a different
+   * set of people. The warning is the only thing standing between an admin and
+   * that, so it is named, before the write, per event.
+   */
+  describe("events whose rank rules a reorder re-aims (UC-03 3b)", () => {
+    it("names the event, and which of its two rules moved", async () => {
+      const { gameId } = await rivalsWithRank();
+      await eventWithRankRule(gameId, { title: "Rivals night", enter: "Diamond II" });
+
+      // Reversing puts Diamond II near the bottom: the same rule now lets in
+      // almost everybody it used to keep out.
+      const impact = await previewRankLadder(gameId, [...RIVALS_RANK_LADDER].reverse(), db);
+      expect(impact.answers).toBe(0);
+      expect(impact.events).toHaveLength(1);
+      expect(impact.events[0].title).toBe("Rivals night");
+      expect(impact.events[0].rules).toEqual(["enter"]);
+      expect(impact.events[0].ranks).toEqual(["Diamond II"]);
+      expect(impact.events[0].ranksGone).toBe(false);
+    });
+
+    it("reports both thresholds when both move", async () => {
+      const { gameId } = await rivalsWithRank();
+      await eventWithRankRule(gameId, {
+        title: "Captains draft",
+        enter: "Gold III",
+        captain: "Diamond II",
+      });
+
+      const impact = await previewRankLadder(gameId, [...RIVALS_RANK_LADDER].reverse(), db);
+      expect(impact.events[0].rules).toEqual(["enter", "captain"]);
+      expect(impact.events[0].ranks).toEqual(["Gold III", "Diamond II"]);
+    });
+
+    it("says so when the rank a rule names is going altogether", async () => {
+      const { gameId } = await rivalsWithRank();
+      await eventWithRankRule(gameId, { enter: "Diamond II" });
+
+      const kept = RIVALS_RANK_LADDER.filter((rank) => rank !== "Diamond II");
+      const impact = await previewRankLadder(gameId, kept, db);
+      expect(impact.events[0].ranksGone).toBe(true);
+    });
+
+    it("stays quiet when the reorder does not change who the rule admits", async () => {
+      const { gameId } = await rivalsWithRank();
+      await eventWithRankRule(gameId, { enter: "Diamond II" });
+
+      // A new rank on the top: every existing rank keeps its place relative to
+      // the threshold, so no stored rule means anything new. Warning about
+      // this is how a warning becomes noise nobody reads.
+      const appended = [...RIVALS_RANK_LADDER, "Celestial Prime"];
+      expect((await previewRankLadder(gameId, appended, db)).events).toEqual([]);
+
+      // And the ladder untouched is obviously quiet.
+      expect(
+        (await previewRankLadder(gameId, [...RIVALS_RANK_LADDER], db)).events
+      ).toEqual([]);
+    });
+
+    it("leaves out an event with no rank rule, and one for another game", async () => {
+      const { gameId } = await rivalsWithRank();
+      await eventWithRankRule(gameId, { title: "Casual night" });
+      const other = await addRepo();
+      await eventWithRankRule(other.id, { title: "REPO night", enter: "Diamond II" });
+
+      const impact = await previewRankLadder(gameId, [...RIVALS_RANK_LADDER].reverse(), db);
+      expect(impact.events).toEqual([]);
+    });
   });
 
   it("refuses an absurdly long ladder", async () => {
@@ -537,7 +833,12 @@ describe("loadAdminGames", () => {
 
   it("is empty and does not throw on a fresh database", async () => {
     const view = await loadAdminGames(db);
-    expect(view).toEqual({ games: [], globalFields: [], globalAnswers: 0 });
+    expect(view).toEqual({
+      games: [],
+      globalFields: [],
+      globalRetired: [],
+      globalAnswers: 0,
+    });
   });
 });
 
