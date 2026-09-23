@@ -58,6 +58,7 @@ import {
 } from "@/components/ui";
 import { podiumEntries } from "@/components/format/board";
 import { dayBySlot as dayOfSlot } from "@/components/format/columns";
+import LiveRefresh from "@/components/events/LiveRefresh";
 import BracketTab from "./BracketTab";
 import ResultsTab from "./ResultsTab";
 import ScheduleTab from "./ScheduleTab";
@@ -164,6 +165,19 @@ export default async function EventPage({
   return (
     <div className="min-h-screen">
       <AppHeader />
+
+      {/*
+        UC-11's outcome: while the event is running this page keeps itself
+        current without a reload (docs/decisions/002-live-event-pages.md). It
+        renders nothing — it asks the server for this page again every ten
+        seconds, and only while the status is running and the tab is visible.
+        Mounted unconditionally and given the status, rather than rendered
+        behind a condition here, so that the one rule about when to poll lives
+        in one file. A page opened *before* the event goes live does not start
+        on its own — it is one refresh behind, which is the cost the decision
+        accepted in exchange for polling nothing that is not being played.
+      */}
+      <LiveRefresh status={event.status} />
 
       <Page className="space-y-6">
         <nav className="text-12 text-muted">
