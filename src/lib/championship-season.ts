@@ -80,6 +80,7 @@ import { and, desc, eq, inArray, ne } from "drizzle-orm";
 import {
   type Database,
   type EventStatus,
+  championshipEvents,
   championships,
   db as defaultDb,
   events,
@@ -550,3 +551,142 @@ function winnersOfSeason(
     .map((row) => row.userId);
 }
 
+
+/* ------------------------------------------------------------------ */
+/* One event's season, and one player's (R-193, R-197, R-198)         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The season row one event counts towards, or null when it counts towards
+ * nothing.
+ *
+ * `championshipOfEvent` in `./championships` answers a neighbouring question
+ * and is the right one for a *write*: it carries the counting row and the
+ * scoring rules, which is what a placement needs. This one carries the row
+ * itself — the slug, the status and the months — because everything that
+ * *tells somebody* about a season needs to link to it, and a link needs the
+ * slug that neither the counting row nor `EventChampionship.season` has.
+ *
+ * Here rather than in either caller because there are two of them, in two
+ * modules that must not disagree about which season an event belongs to: the
+ * notification (UC-36 2) and the announcement (UC-36 3) are triggered by the
+ * same write and have to name the same season.
+ *
+ * Not memoized, unlike the two lookups above. These callers run *after* a
+ * write, not during a render, and a read deduplicated across a write is a read
+ * that can answer with the season as it was before it.
+ */
+export async function seasonOfEvent(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<ChampionshipRow | null> {
+  const [row] = await database
+    // `championship_events.event_id` is unique, so this is one row at most.
+    .select({ season: championships })
+    .from(championshipEvents)
+    .innerJoin(championships, eq(championships.id, championshipEvents.championshipId))
+    .where(eq(championshipEvents.eventId, eventId))
+    .limit(1);
+  return row?.season ?? null;
+}
+
+/** One season a player took part in, and where they came in it (R-198, UC-36 5). */
+export type PlayerSeason = {
+  slug: string;
+  name: string;
+  runsFrom: string | null;
+  runsTo: string | null;
+  /**
+   * True when the season is closed and the position is therefore final.
+   *
+   * The profile says "Finished 3rd" for one of these and "3rd so far" for a
+   * season still running, which is the whole difference between a record and a
+   * scoreboard. A page that printed both the same way would be claiming a
+   * result for a season with four events still to play.
+   */
+  finished: boolean;
+  /** 1-based. Players still level after the tie rule share one (R-181). */
+  position: number;
+  points: number;
+  /** True when somebody else holds the same position. */
+  level: boolean;
+  /** How many of their results count, of how many they played (UC-34 2d). */
+  counted: number;
+  played: number;
+};
+
+/**
+ * Every season this player has a result in, newest first (R-198, UC-36 4-5).
+ *
+ * **Derived, like everything else here.** There is no column saying where
+ * anybody finished: each season is re-scored from its recorded places by the
+ * same `scoreChampionship` the season's own page runs, so a correction to a
+ * three-year-old night changes this profile on the next read and a closed
+ * season says for ever exactly what its page says.
+ *
+ * Hidden seasons are left out, and that is R-189 rather than tidiness: a
+ * hidden season is an admin's draft, and a public profile listing one would
+ * tell every visitor it exists — the one thing the status is for. Published
+ * and closed are both in, because both have public pages to link to.
+ *
+ * Read in a fixed number of queries whatever the player has played, the same
+ * way `finishedSeasons` is and for the same reason: this runs on a public page
+ * that anybody can open, and a query per season per event is how a profile
+ * becomes the slowest page on the site.
+ *
+ * A season the player is not in simply does not appear. Turning up to a season
+ * and scoring nothing is impossible — taking part is worth points, possibly
+ * zero — so "has a standing" is the same question as "played in it".
+ */
+export async function playerSeasons(
+  userId: string,
+  database: Database = defaultDb
+): Promise<PlayerSeason[]> {
+  const rows = await database
+    .select()
+    .from(championships)
+    // Newest first by when the season was set up, for the reason
+    // `finishedSeasons` gives: `runs_to` is nullable and would sort a season
+    // whose months were never filled in to whichever end of the list.
+    .where(ne(championships.status, "hidden"))
+    .orderBy(desc(championships.createdAt));
+  if (rows.length === 0) return [];
+
+  const counting = await listCountingEventsIn(
+    rows.map((season) => season.id),
+    database
+  );
+  const inputs = await scoringInputsFor([...counting.values()].flat(), database);
+
+  const out: PlayerSeason[] = [];
+  for (const season of rows) {
+    // The same rule the season's own page draws: an event with no finishing
+    // order recorded on it has not counted, so it is not scored.
+    const scored = (counting.get(season.id) ?? [])
+      .map((row) => inputs.get(row.eventId))
+      .filter(
+        (input): input is CountingEventInput =>
+          input !== undefined && input.placements.length > 0
+      );
+
+    const mine = scoreChampionship(scoringOf(season), scored).find(
+      (row) => row.userId === userId
+    );
+    if (!mine) continue;
+
+    out.push({
+      slug: season.slug,
+      name: season.name,
+      runsFrom: season.runsFrom,
+      runsTo: season.runsTo,
+      finished: season.status === "closed",
+      position: mine.position,
+      points: mine.points,
+      level: mine.level,
+      counted: mine.counted,
+      played: mine.played,
+    });
+  }
+
+  return out;
+}

@@ -7,9 +7,12 @@ import {
   notify,
   seatHoldersOf,
 } from "./notifications";
+import { membersPlacedIn } from "./championship-policy";
+import { scoringInputFor } from "./championship-results";
+import { seasonOfEvent } from "./championship-season";
 
 /**
- * The eight places the site has something to say, in one file.
+ * The nine places the site has something to say, in one file.
  *
  * Each is a small function an action calls and forgets. They are here rather
  * than inline in the actions for the same reason the announcements are in
@@ -221,6 +224,77 @@ export function notifyPollPosted(
       body: question,
       href: "/polls",
       subject: pollId,
+      exceptUserId,
+    });
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* The championship                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A counting event was scored, so the table moved (R-193, UC-36 1-2).
+ *
+ * ## Who hears it
+ *
+ * **The people who played that event, and nobody else.** Not the season's
+ * members, not everybody who has ever played in it: a season runs for months
+ * and collects people who turned up once in March, and telling all of them
+ * that the table moved because somebody else played last night is the kind of
+ * notification a member switches off and never switches back on.
+ *
+ * So the audience comes from the event's own result — the finishing order
+ * unfolded into the members it scores for (R-180: a team's place is every
+ * member's), plus everybody who took part and was not placed, who scored the
+ * taking-part points off the same night. That is `scoringInputFor`'s answer,
+ * which is the one mapping from stored rows to what the arithmetic used, so
+ * the set told is exactly the set whose points changed. Asking the season
+ * instead would be a different question with a much longer answer.
+ *
+ * ## When it does not fire
+ *
+ * Three cases, all silent:
+ *
+ *  - **The event counts towards nothing**, so there is no table to move.
+ *  - **The season is not published.** A hidden season is an admin's draft
+ *    (R-189), and a notification naming it would tell forty people it exists —
+ *    the one thing the status is for. A closed season cannot get here at all:
+ *    `setPlacements` refuses the write that triggers this.
+ *  - **Nothing is recorded on the event.** Clearing an order is an admin
+ *    undoing a mistake, usually a keystroke before recording the right one.
+ *    An event with no order has not counted (`seasonPage` draws that line),
+ *    and "the standings have changed" is not the honest thing to say about a
+ *    night that has now not been played.
+ *
+ * Collapsed by the day rather than for ever, exactly as an event's details
+ * moving is: a host who corrects a typo four times this evening has produced
+ * one piece of news, and a correction next week is news again (UC-33 4a).
+ */
+export function notifyStandingsChanged(eventId: string, exceptUserId?: string): void {
+  defer(async () => {
+    const season = await seasonOfEvent(eventId);
+    if (!season || season.status !== "published") return;
+
+    const [event, scoring] = await Promise.all([
+      eventBrief(eventId),
+      scoringInputFor(eventId),
+    ]);
+    if (!event || !scoring || scoring.placements.length === 0) return;
+
+    const played = [
+      ...new Set([...membersPlacedIn(scoring.placements), ...scoring.participants]),
+    ];
+
+    await notify({
+      kind: "standings_changed",
+      userIds: played,
+      title: `The ${season.name} standings have changed`,
+      body: `${event.title} has been scored. Your place in the table may have moved.`,
+      href: `/championship/${season.slug}`,
+      eventId: event.id,
+      subject: event.id,
+      daily: true,
       exceptUserId,
     });
   });

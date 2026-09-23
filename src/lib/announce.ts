@@ -17,7 +17,7 @@
  * too, though nobody gets it unless an admin asks. Which of them actually post
  * is an **admin setting** (`SETTING_KEYS.announcements`), read through
  * `announcementSettingsFrom`, which supplies a default for anything the stored
- * object does not mention. That is what lets a sixth kind ship without a
+ * object does not mention. That is what let a seventh kind ship without a
  * migration and without a deployment silently starting to post something nobody
  * asked for.
  *
@@ -32,6 +32,10 @@
  */
 
 import type { SettingValue } from "@/db/schema";
+import type { TopOfTable } from "./championship-policy";
+// The bracket's ordinal, again. `./format-policy` imports nothing, so this
+// module stays what its comment says it is: data in, a payload out.
+import { ordinal } from "./format-policy";
 
 /* ------------------------------------------------------------------ */
 /* The kinds                                                          */
@@ -49,7 +53,9 @@ export type AnnouncementKind =
   /** A draft lot settled with a winner and a price. */
   | "draft_lot_sold"
   /** A series was decided. */
-  | "match_result";
+  | "match_result"
+  /** A counting event was scored and the championship table moved. */
+  | "standings_changed";
 
 export type AnnouncementSpec = {
   kind: AnnouncementKind;
@@ -64,10 +70,13 @@ export type AnnouncementSpec = {
 /**
  * Every kind, in the order the settings screen lists them, with their defaults.
  *
- * "Sensible" here means: the ones that are *news* are on, the two that are a
- * consolation are off. A published event and a settled lot are things people
- * want pinged about; being told, in public, that four hundred applications were
- * each waitlisted is a channel nobody reads twice. Accepted stays on because
+ * "Sensible" here means: the ones that are *news* are on, and three are off —
+ * the two that are a consolation, plus the one that says again what a message
+ * already sent says. A published event and a settled lot are things people want
+ * pinged about; being told, in public, that four hundred applications were each
+ * waitlisted is a channel nobody reads twice, and a table that moved because of
+ * a result already announced is the same night posted twice (see
+ * `standings_changed` below). Accepted stays on because
  * the accepted list is already on the public event page — announcing it tells
  * people something they could look up, which is the test for whether an
  * announcement is safe.
@@ -108,6 +117,21 @@ export const ANNOUNCEMENTS: readonly AnnouncementSpec[] = [
     label: "A result is recorded",
     detail: "Posts only when a series is actually decided, never on a part-recorded card.",
     fallback: true,
+  },
+  {
+    kind: "standings_changed",
+    label: "The championship table moves",
+    detail:
+      "Posts the top three after a counting event is scored, and says whether the lead changed hands. Off by default — a season that also announces its results posts twice a night until somebody asks for both.",
+    /*
+     * Off, unlike the other four pieces of news, and for the reason this
+     * whole object exists (see the module comment): a kind that ships with its
+     * switch on is a deployment that silently starts posting something nobody
+     * asked for. `match_result` already posts when a series is decided, so on
+     * an install that runs brackets this is the second message about the same
+     * night — which is a choice an admin should make rather than inherit.
+     */
+    fallback: false,
   },
 ] as const;
 
@@ -484,5 +508,75 @@ export function matchResultMessage(input: MatchResultInput): DiscordMessage {
         : []),
     ],
     footer: { text: "Result" },
+  });
+}
+
+export type StandingsInput = {
+  seasonName: string;
+  /** The season's own slug — every link here goes to `/championship/<slug>`. */
+  slug: string;
+  /** The event that was just scored, named so the message says what moved it. */
+  eventTitle: string;
+  /** The top of the table and what happened to the lead — `topOfTheTable`'s answer. */
+  top: TopOfTable;
+  origin?: string | null;
+};
+
+/**
+ * The new top of the table (R-197, UC-36 3).
+ *
+ * Three places, not the whole standings. A channel message is read in a
+ * glance and a forty-row table is not one; the page it links to is where the
+ * rest of the season lives, and this is the line that makes somebody click it.
+ *
+ * What it *says* is `topOfTheTable`'s decision, not this function's: whether
+ * somebody took the lead, held it, or whether these are the first standings of
+ * the season is a fact about the season, so it is worked out in
+ * `./championship-policy` and turned into a sentence here. A season with
+ * nobody in it produces a message about the event and no names, rather than an
+ * empty bold pair of asterisks — the builder above it returns `null` for that
+ * case, and this stays total anyway because a message that renders wrong is
+ * indistinguishable from a webhook that is down.
+ *
+ * Level at the top puts both names in the sentence, for the same reason the
+ * standings show them level rather than picking one.
+ */
+export function standingsMessage(input: StandingsInput): DiscordMessage {
+  const leaders = input.top.rows
+    .filter((row) => row.position === 1)
+    .map((row) => `**${clamp(row.name, 80)}**`);
+  const named = leaders.join(" and ");
+  const event = `**${clamp(input.eventTitle, 120)}**`;
+
+  const plural = leaders.length > 1;
+  const description = !named
+    ? `The table moved after ${event}.`
+    : input.top.lead === "first"
+      ? `The first standings are in after ${event}. ${named} ${plural ? "lead" : "leads"}.`
+      : input.top.lead === "changed"
+        ? `${named} ${plural ? "take" : "takes"} the lead after ${event}.`
+        : input.top.lead === "held"
+          ? `${named} ${plural ? "stay" : "stays"} top after ${event}.`
+          /*
+           * `unknown`: the table moved, and who took the lead from whom is
+           * not something this event can say — see `Movement`. So the message
+           * says what is true, which is where the table stands now.
+           */
+          : `The table has moved after ${event}. ${named} ${plural ? "lead" : "leads"}.`;
+
+  const url = linkTo(`/championship/${input.slug}`, input.origin ?? null);
+
+  return message({
+    title: clamp(input.seasonName, 240),
+    description,
+    ...(url ? { url } : {}),
+    color: COLOURS.gold,
+    fields: input.top.rows.map((row) => ({
+      // `=1st` for a shared place, exactly as the standings table prints it.
+      name: row.level ? `=${ordinal(row.position)}` : ordinal(row.position),
+      value: `${clamp(row.name, 80)} — ${row.points}`,
+      inline: true,
+    })),
+    footer: { text: "Standings" },
   });
 }

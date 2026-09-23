@@ -62,11 +62,14 @@ import {
   eventPublishedMessage,
   lotSoldMessage,
   matchResultMessage,
+  standingsMessage,
   type AnnounceEnv,
   resolveSiteOrigin,
   resolveWebhookUrl,
   siteOrigin,
 } from "./announce";
+import { type Movement, topOfTheTable } from "./championship-policy";
+import { seasonOfEvent, seasonPage } from "./championship-season";
 import { recordAudit } from "./audit";
 import { eventIdOfApplication, eventIdOfMatch } from "./event-scope";
 import { formatFor } from "./format";
@@ -418,7 +421,7 @@ async function noteFailure(
 }
 
 /* ------------------------------------------------------------------ */
-/* The four announcers                                                */
+/* The five announcers                                                */
 /* ------------------------------------------------------------------ */
 
 /**
@@ -632,5 +635,73 @@ export function announceMatchResult(matchId: string, database: Database = defaul
       };
     },
     { subject: { matchId }, eventOf: () => eventIdOfMatch(matchId, database) }
+  );
+}
+
+/**
+ * A counting event was scored, so here is the new top of the table
+ * (R-197, UC-36 3).
+ *
+ * Gathered after the response like the other four, and for a better reason
+ * than any of them: the standings are not stored anywhere, so the message is a
+ * re-score of the whole season from its recorded places. That is several reads
+ * and some arithmetic, and the host who clicked "save" is not waiting for it.
+ *
+ * ## What it refuses to post
+ *
+ *  - **An event that counts towards nothing.** There is no table.
+ *  - **A season that is not published.** A hidden season is an admin's draft
+ *    (R-189), and announcing it to the channel is the loudest possible way to
+ *    publish something nobody has published. A closed season cannot reach here:
+ *    `setPlacements` refuses the write that triggers it.
+ *  - **An event with no finishing order on it.** Clearing an order is an admin
+ *    undoing a mistake, and `seasonPage` has already decided that such an
+ *    event has not counted — so there is nothing to announce about it.
+ *  - **A season nobody has scored in yet**, which cannot happen alongside the
+ *    check above but is cheap to be sure of rather than post an embed with no
+ *    names in it.
+ *
+ * The switch is `standings_changed` and it is off by default (`./announce`),
+ * and a missing webhook stops this exactly where it stops every other
+ * announcement — inside `deliver`, before anything is posted or logged.
+ */
+export function announceStandings(eventId: string, database: Database = defaultDb): void {
+  announceGathered(
+    ["standings_changed"],
+    async () => {
+      const season = await seasonOfEvent(eventId, database);
+      if (!season || season.status !== "published") return null;
+
+      const page = await seasonPage(season, database);
+      const scored = page.counted.find((event) => event.eventId === eventId);
+      if (!scored || page.standings.length === 0) return null;
+
+      /*
+       * Whether the movement figures say anything about *this* event. They are
+       * measured at the last event played (`seasonPage`), which is the event
+       * just scored on any ordinary night and is not it when a host records an
+       * old result late. Deciding that here, where both ids are to hand, keeps
+       * `topOfTheTable` a statement about a table rather than about a schedule.
+       */
+      const movement: Movement =
+        page.movedAt === null
+          ? "none"
+          : page.movedAt.eventId === eventId
+            ? "here"
+            : "elsewhere";
+
+      return {
+        kind: "standings_changed",
+        eventId,
+        message: standingsMessage({
+          seasonName: season.name,
+          slug: season.slug,
+          eventTitle: scored.title,
+          top: topOfTheTable(page.standings, { movement }),
+          origin: await announceOrigin(),
+        }),
+      };
+    },
+    { subject: { eventId }, eventOf: async () => eventId }
   );
 }

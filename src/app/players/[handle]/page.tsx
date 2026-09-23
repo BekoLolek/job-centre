@@ -42,6 +42,8 @@ import {
   cx,
   plural,
 } from "@/components/ui";
+import { seasonMonths } from "@/lib/championship-policy";
+import { type PlayerSeason, playerSeasons } from "@/lib/championship-season";
 import { ordinal } from "@/lib/format-policy";
 import { getPlayerByHandle, getPlayerProfile } from "@/lib/players";
 
@@ -69,6 +71,20 @@ const PLACE_TONE: Record<number, string> = {
   3: "text-chalk/80",
 };
 
+/**
+ * "Finished" for a season that is over, "so far" for one still being played
+ * (R-198, UC-36 5).
+ *
+ * The difference is the whole point of the section: a closed season's position
+ * is a result and a running season's is a scoreboard, and printing them
+ * identically would claim a third place in a championship with four nights
+ * left. `PlayerSeason.finished` is the season's status, not a date, because
+ * closing is what freezes the standings.
+ */
+function seasonPlaceLabel(season: PlayerSeason): string {
+  return season.finished ? "Finished" : "So far";
+}
+
 export default async function PlayerPage({
   params,
 }: {
@@ -82,7 +98,17 @@ export default async function PlayerPage({
   // joined.
   if (!user) notFound();
 
-  const profile = await getPlayerProfile(user);
+  /*
+   * The seasons are read alongside the profile rather than inside it, and that
+   * is not a preference: `getPlayerProfile` lives in `players.ts`, and the
+   * season history is scored by `championship-results.ts`, which reads its
+   * names out of `players.ts`. One module asking the other back would be an
+   * import cycle — so the page, which is downstream of both, asks them both.
+   */
+  const [profile, seasons] = await Promise.all([
+    getPlayerProfile(user),
+    playerSeasons(user.id),
+  ]);
   const { totals } = profile;
 
   return (
@@ -141,6 +167,59 @@ export default async function PlayerPage({
             </div>
           )}
         </Panel>
+
+        {/* --- Seasons ------------------------------------------------ */}
+        {seasons.length > 0 && (
+          <section className="space-y-3">
+            <Eyebrow>{plural(seasons.length, "championship")}</Eyebrow>
+            <Panel as="article">
+              <ul className="space-y-3">
+                {seasons.map((season) => {
+                  const months = seasonMonths(season.runsFrom, season.runsTo);
+                  return (
+                    <li
+                      key={season.slug}
+                      className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-hair/60 pb-3 last:border-0 last:pb-0"
+                    >
+                      <Link
+                        href={`/championship/${season.slug}`}
+                        className="text-14 text-chalk underline-offset-4 hover:text-union hover:underline"
+                      >
+                        {season.name}
+                      </Link>
+                      {months && <span className="text-12 text-muted">{months}</span>}
+                      <span className="text-12 text-muted">
+                        {season.counted === season.played
+                          ? plural(season.played, "event")
+                          : `${season.counted} of ${plural(season.played, "event")} counting`}
+                      </span>
+                      <span className="ml-auto flex items-baseline gap-3">
+                        <span className="text-12 text-muted">{seasonPlaceLabel(season)}</span>
+                        <span
+                          className={cx(
+                            "font-display text-24 leading-none",
+                            PLACE_TONE[season.position] ?? "text-muted"
+                          )}
+                        >
+                          {season.level
+                            ? `=${ordinal(season.position)}`
+                            : ordinal(season.position)}
+                        </span>
+                        <span className="text-12 text-muted">
+                          <span className="num text-13 text-body">{season.points}</span> points
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-4 text-12 leading-relaxed text-muted">
+                Worked out from the recorded results every time this page is opened, so a
+                correction to an old night shows up here too.
+              </p>
+            </Panel>
+          </section>
+        )}
 
         {/* --- Every event -------------------------------------------- */}
         <section className="space-y-3">

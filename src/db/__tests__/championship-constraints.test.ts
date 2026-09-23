@@ -7,9 +7,10 @@ import { type TestDatabase, expectRejection, freshDatabase, makeUser } from "./h
  * What Postgres itself guarantees about a season.
  *
  * One of these is load-bearing rather than tidy: **an event belongs to at most
- * one championship** (R-196, UC-32 1a). Two admins adding the same event to two
- * seasons at once is a race no screen can see, and an event counting twice
- * would score its players twice.
+ * one championship** — the last Constraint in `docs/requirements.md` rather
+ * than a numbered requirement, and UC-32 1a in the flows. Two admins adding the
+ * same event to two seasons at once is a race no screen can see, and an event
+ * counting twice would score its players twice.
  */
 
 let ctx: TestDatabase;

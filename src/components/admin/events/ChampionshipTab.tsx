@@ -45,8 +45,11 @@ import type { ChampionshipTabData } from "./types";
  *
  * ## One season, and the database says so
  *
- * An event counts towards at most one season (R-196, a unique index on
+ * An event counts towards at most one season (UC-32 1a, over a unique index on
  * `event_id`), so this is not a multi-select: it is either in one or it is not.
+ * That rule has no numbered requirement of its own — it is the last Constraint
+ * in `docs/requirements.md`, "an event belongs to at most one championship, so
+ * a result cannot count twice".
  * Moving it is take it out, then put it in, which is two deliberate acts rather
  * than a dropdown that silently drops a season's results.
  *

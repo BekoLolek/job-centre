@@ -171,6 +171,28 @@ export function duplicateMemberIn(placements: readonly PlacementInput[]): string
 }
 
 /**
+ * Everybody a finishing order scores for, without repeats (R-180, R-193).
+ *
+ * The same walk `duplicateMemberIn` makes, kept for the caller that wants the
+ * people rather than the fault: who is told the table moved (UC-36 2) is
+ * "whoever this event scored for", and unfolding a team's place into its
+ * members a second time in the module that sends the notification would be a
+ * second copy of R-180 — the rule that a team's place is every member's.
+ */
+export function membersPlacedIn(placements: readonly PlacementInput[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const placement of placements) {
+    for (const userId of membersOf(placement.subject)) {
+      if (seen.has(userId)) continue;
+      seen.add(userId);
+      out.push(userId);
+    }
+  }
+  return out;
+}
+
+/**
  * Whether a counting event scores off its own points table rather than the
  * season's (R-177).
  *
@@ -363,6 +385,114 @@ export function scoreChampionship(
   }
 
   return rows;
+}
+
+/* ------------------------------------------------------------------ */
+/* The top of the table (R-197, UC-36 3)                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One standing, as far as the question "who is at the top, and is that news"
+ * is concerned.
+ *
+ * Deliberately a structural type rather than `ChampionshipStanding`: the
+ * caller that asks this is the announcement, and what it has to hand is the
+ * assembled `SeasonPlayer` — the same numbers with a name and a face on them.
+ * Naming the fields the decision actually reads is what lets both fit without
+ * this module importing either of them, and without a mapping step whose only
+ * purpose is to satisfy a type.
+ */
+export type TopRow = {
+  userId: string;
+  name: string;
+  position: number;
+  points: number;
+  /** True when somebody else holds the same position. */
+  level: boolean;
+  /**
+   * Places gained at the last counted event: positive up, negative down, 0 for
+   * a player who held station, null for somebody who was not in the standings
+   * before it — see `SeasonPlayer.moved`, which is where this comes from.
+   */
+  moved: number | null;
+};
+
+/**
+ * What happened at the top, and therefore what the announcement says.
+ *
+ *  - `first` — there is no earlier standing to compare with, so nobody has
+ *    taken anything from anybody. The first night of a season, every time.
+ *  - `changed` — somebody leads now who did not lead before.
+ *  - `held` — the same person or people are still there.
+ *  - `unknown` — the table moved, but not measurably *here*. See `movement`.
+ */
+export type LeadChange = "first" | "changed" | "held" | "unknown";
+
+/**
+ * Where the movement figures were measured, relative to the event being
+ * announced.
+ *
+ *  - `none` — there is no earlier standing at all: this is the season's first
+ *    counted event.
+ *  - `here` — they were measured at this event, so they say what it changed.
+ *  - `elsewhere` — they were measured at a different night. A season's
+ *    movement is measured at the *last event played*, and a host recording an
+ *    October result in December has scored an event that is not that one. The
+ *    table has still moved and the top is still the top; who took the lead
+ *    from whom is a question this event's data cannot answer, and the one
+ *    thing an announcement must not do is answer it anyway.
+ */
+export type Movement = "none" | "here" | "elsewhere";
+
+export type TopOfTable = {
+  /** The rows at the first few positions, in order. Level players share one. */
+  rows: TopRow[];
+  lead: LeadChange;
+};
+
+/** How many positions "the top of the table" means, unless a caller says otherwise. */
+export const TOP_OF_TABLE_PLACES = 3;
+
+/**
+ * The top of the table, and whether the lead changed hands (UC-36 3).
+ *
+ * Here rather than in the announcer for the reason every other decision in
+ * this file is here: it is a statement about a season, made from plain
+ * numbers, and a copy of it in a module that also talks to Discord is a copy
+ * that cannot be tested without one. The announcer turns the answer into a
+ * sentence; it does not work out what the answer is.
+ *
+ * **Positions, not rows.** Taking the first three *entries* would print two
+ * names when three players are level at the top and cut a shared third place
+ * in half. `position <= places` is the same rule the standings table draws its
+ * own line with, and it keeps a tie whole.
+ *
+ * `movement` is the caller's, because only the caller knows what the `moved`
+ * figures were measured against. Two things go wrong without it. `moved` is
+ * null both for a player who was not in the standings before *and* for every
+ * player on the season's first night, so the first result of a season would
+ * announce itself as somebody taking the lead from somebody who never had it.
+ * And the figures are measured at the last event *played*, which is not
+ * always the event just scored — see {@link Movement}.
+ */
+export function topOfTheTable(
+  standings: readonly TopRow[],
+  options: { places?: number; movement: Movement }
+): TopOfTable {
+  const places = options.places ?? TOP_OF_TABLE_PLACES;
+  const rows = standings.filter((row) => row.position <= places);
+
+  if (options.movement === "none") return { rows, lead: "first" };
+  if (options.movement === "elsewhere") return { rows, lead: "unknown" };
+
+  // A leader who climbed into first, or who was not in the standings at all
+  // before tonight, is a new leader. One who was already first and stayed
+  // there has `moved === 0`, whatever else moved underneath them.
+  const changed = standings
+    .filter((row) => row.position === 1)
+    .some((row) => row.moved === null || row.moved > 0);
+
+  return { rows, lead: changed ? "changed" : "held" };
 }
 
 /* ------------------------------------------------------------------ */

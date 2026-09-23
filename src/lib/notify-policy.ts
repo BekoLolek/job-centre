@@ -36,6 +36,13 @@ export type KindSpec = {
  * when you come looking; a direct message arrives whether or not you wanted it,
  * and opting somebody into that on their behalf is the sort of thing that gets
  * an integration muted at the Discord end and never turned back on.
+ *
+ * That is also what "off by default" means for a new optional kind, and it is
+ * the only thing it can mean here: the loud channel is off, the switch exists,
+ * and nothing arrives anywhere a member has not gone looking. A kind added
+ * with `inApp: false` would be a kind nobody ever sees until they find a
+ * screen they have no reason to visit, and would quietly break the rule the
+ * suite states as "in-app on and Discord off, everywhere, by default".
  */
 export const NOTIFICATION_KINDS: readonly KindSpec[] = [
   {
@@ -94,6 +101,22 @@ export const NOTIFICATION_KINDS: readonly KindSpec[] = [
     blurb: "When your application to run an event is decided.",
     audience: "You",
     fixed: true,
+    defaults: { inApp: true, discord: false },
+  },
+  {
+    kind: "standings_changed",
+    label: "Championship standings",
+    blurb: "When the table moves after an event you played in.",
+    /*
+     * The narrowest audience of the nine, and the whole reason this kind is
+     * defensible (R-193, UC-36 2). A season runs for months and collects
+     * members who played once; telling all of them that the table moved
+     * because somebody else played last night is the shape of notification
+     * that gets a site muted. So it is the people who played *that* event —
+     * see `notifyStandingsChanged`, which takes them from the event's own
+     * result rather than from the season.
+     */
+    audience: "People who played that event",
     defaults: { inApp: true, discord: false },
   },
 ];

@@ -278,11 +278,13 @@ describe("adding an event to a championship", () => {
 
   it("lets only one of two seasons take the same event at the same moment", async () => {
     /*
-     * R-196 is the column's, not the screen's: both calls read nothing in the
-     * way and both insert. Postgres refuses the loser on
-     * `championship_events_event_uniq`, and without the catch around the insert
-     * that refusal reaches the browser as "Could not reach the server" — which
-     * invites a retry that will fail identically.
+     * One season per event (UC-32 1a; the rule is a Constraint in
+     * `docs/requirements.md`, not a numbered requirement) is the column's job,
+     * not the screen's: both calls read nothing in the way and both insert.
+     * Postgres refuses the loser on `championship_events_event_uniq`, and
+     * without the catch around the insert that refusal reaches the browser as
+     * "Could not reach the server" — which invites a retry that will fail
+     * identically.
      */
     const first = await seasonIn();
     const second = await seasonIn();

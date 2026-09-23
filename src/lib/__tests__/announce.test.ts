@@ -38,11 +38,19 @@ describe("the toggle settings", () => {
     expect(defaults.application_waitlisted).toBe(false);
     // Somebody's "no" is a consolation too, and off for the same reason.
     expect(defaults.application_declined).toBe(false);
+    /*
+     * And the newest kind is off as well (R-197, UC-36 3), which is not the
+     * "consolation" rule but the one in the module comment: a kind that ships
+     * with its switch on is a deploy that silently starts posting something
+     * nobody asked for. On an install that runs brackets it would also be the
+     * second message about the same night, beside `match_result`.
+     */
+    expect(defaults.standings_changed).toBe(false);
   });
 
   it("has a spec for every kind, and only for kinds", () => {
-    expect(ANNOUNCEMENTS).toHaveLength(6);
-    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(6);
+    expect(ANNOUNCEMENTS).toHaveLength(7);
+    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(7);
     for (const spec of ANNOUNCEMENTS) {
       expect(spec.label.length).toBeGreaterThan(0);
       expect(spec.detail.length).toBeGreaterThan(0);

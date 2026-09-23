@@ -355,7 +355,10 @@ async function nameTaken(
 /** The two indexes a season's name can collide on — its own, and its slug's. */
 const NAME_COLLISION = /championships_(open_name_uniq|slug_unique)/;
 
-/** R-196's index: one event, at most one season (UC-32 1a). */
+/**
+ * The one-season index: one event, at most one season (UC-32 1a). The rule is a
+ * Constraint in `docs/requirements.md`, not a numbered requirement.
+ */
 const EVENT_COLLISION = /championship_events_event_uniq/;
 
 /**
@@ -795,10 +798,12 @@ export async function listCountingEventsIn(
  * The season this event counts towards, or null.
  *
  * One row at most, because `championship_events.event_id` is unique — which is
- * the whole of R-196 and is why every write below is keyed on the event id
- * rather than on the counting row's. The caller authorising these writes
- * authorises on an event, so keying them on anything else would mean checking
- * one id and writing another (see `src/lib/event-scope.ts`).
+ * the whole of "an event belongs to at most one championship" (the last
+ * Constraint in `docs/requirements.md`; UC-32 1a is the behaviour) and is why
+ * every write below is keyed on the event id rather than on the counting row's.
+ * The caller authorising these writes authorises on an event, so keying them on
+ * anything else would mean checking one id and writing another (see
+ * `src/lib/event-scope.ts`).
  */
 export async function championshipOfEvent(
   eventId: string,
