@@ -1,10 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
-import { type Database, hostApplications } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
-import { createEvent } from "@/lib/events";
+import { and, eq } from "drizzle-orm";
+import { type Database, eventHosts, hostApplications } from "@/db";
 import {
-  addHost,
+  PUBLISHABLE,
+  type TestDatabase,
+  expectRejection,
+  freshDatabase,
+  makeHost,
+  makeUser,
+} from "@/db/__tests__/helpers";
+import { createEvent, getEventById, publishEvent, updateEvent } from "@/lib/events";
+import {
+  ALREADY_PENDING,
   applyToHost,
   approveHostApplication,
   canManageEvent,
@@ -12,19 +19,24 @@ import {
   declineHostApplication,
   eventsHostedBy,
   getHostApplication,
-  hostsOf,
+  linkableEvents,
   listHostApplications,
   myHostApplications,
-  removeHost,
+  questionsFromApplication,
   withdrawHostApplication,
 } from "@/lib/hosting";
 
 /**
- * Applying to host, and the permission it grants.
+ * Applying to host, and the permission it grants (R-83 to R-86 / UC-20, UC-21).
  *
  * `canManageEvent` is the only thing standing between "a member" and "an
  * editor for somebody else's event", so most of what is here is that one
  * function answered from every direction.
+ *
+ * The rest follows the two use cases line by line, and two of them are checked
+ * against Postgres rather than against the library: one pending application per
+ * member is a *rule*, and a rule that only a read enforces is a rule that two
+ * clicks in the same second break.
  */
 
 let handle: TestDatabase;
@@ -42,6 +54,14 @@ afterAll(async () => {
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
   if (!result.ok) throw new Error(result.error);
   return result.data;
+}
+
+/** The refusal, with its field marks — for the tests that read them. */
+function refusal(
+  result: { ok: true } | { ok: false; error: string; errors?: Record<string, string> }
+): { error: string; errors: Record<string, string> } {
+  if (result.ok) throw new Error("Expected a refusal, and it went through.");
+  return { error: result.error, errors: result.errors ?? {} };
 }
 
 let counter = 0;
@@ -83,41 +103,34 @@ describe("canManageEvent", () => {
   it("lets a host manage the event they were given", async () => {
     const eventId = await anEvent();
     const host = { id: await makeUser(db), isAdmin: false };
-    await addHost(eventId, host.id, null, db);
+    await makeHost(db, eventId, host.id);
     expect(await canManageEvent(host, eventId, db)).toBe(true);
   });
 
   it("does NOT let a host manage anybody else's event", async () => {
-    // The whole boundary. A host is trusted with one evening, not with the site.
+    // The whole boundary (UC-21 5a). A host is trusted with one evening, not
+    // with the site.
     const mine = await anEvent();
     const theirs = await anEvent();
     const host = { id: await makeUser(db), isAdmin: false };
-    await addHost(mine, host.id, null, db);
+    await makeHost(db, mine, host.id);
 
     expect(await canManageEvent(host, mine, db)).toBe(true);
     expect(await canManageEvent(host, theirs, db)).toBe(false);
   });
 
-  it("stops letting them once the grant is taken away", async () => {
+  it("reads the grant every time, so removing the row ends it", async () => {
+    // Nothing in the site removes a grant — approving is the only thing that
+    // writes one (R-86). This is the other half of that: the answer comes from
+    // the table on every call, so it is never a cached yes.
     const eventId = await anEvent();
     const host = { id: await makeUser(db), isAdmin: false };
-    await addHost(eventId, host.id, null, db);
-    await removeHost(eventId, host.id, db);
+    await makeHost(db, eventId, host.id);
+
+    await db.delete(eventHosts).where(eq(eventHosts.eventId, eventId));
     expect(await canManageEvent(host, eventId, db)).toBe(false);
   });
-
-  it("is idempotent, so granting twice is not two grants", async () => {
-    const eventId = await anEvent();
-    const host = await makeUser(db);
-    await addHost(eventId, host, null, db);
-    await addHost(eventId, host, null, db);
-    expect(await hostsOf(eventId, db)).toHaveLength(1);
-  });
 });
-
-/* ------------------------------------------------------------------ */
-/* Applying                                                           */
-/* ------------------------------------------------------------------ */
 
 describe("canSeeEvent", () => {
   it("shows a published event to anyone, signed out included", async () => {
@@ -130,7 +143,7 @@ describe("canSeeEvent", () => {
   it("shows an unpublished event to its host", async () => {
     const event = { id: await anEvent(), status: "draft" };
     const host = { id: await makeUser(db), isAdmin: false };
-    await addHost(event.id, host.id, null, db);
+    await makeHost(db, event.id, host.id);
 
     expect(await canSeeEvent(host, event, db)).toBe(true);
   });
@@ -143,8 +156,13 @@ describe("canSeeEvent", () => {
   });
 });
 
+/* ------------------------------------------------------------------ */
+/* Applying (UC-20)                                                   */
+/* ------------------------------------------------------------------ */
+
 describe("applying", () => {
   it("keeps what the admin needs to set the event up", async () => {
+    // UC-20 2 to 4: what they describe is what the admin reads in UC-21.
     const userId = await makeUser(db, { displayName: "Ada" });
     const { id } = unwrap(await applyToHost(userId, APPLICATION, db));
 
@@ -155,19 +173,65 @@ describe("applying", () => {
     expect(application?.by?.name).toBe("Ada");
   });
 
+  it("keeps the expected players and the summary (R-167, R-168 / UC-20 E1)", async () => {
+    const userId = await makeUser(db);
+    const { id } = unwrap(
+      await applyToHost(userId, { ...APPLICATION, expectedPlayers: 12 }, db)
+    );
+
+    const application = await getHostApplication(id, db);
+    expect(application?.expectedPlayers).toBe(12);
+    expect(application?.summary).toBe(APPLICATION.summary);
+  });
+
+  it("marks every empty field at once rather than the first (UC-20 3a)", async () => {
+    const userId = await makeUser(db);
+
+    const { error, errors } = refusal(
+      await applyToHost(
+        userId,
+        { title: "", gameName: "", summary: "", playerInfoNeeded: "" },
+        db
+      )
+    );
+
+    expect(Object.keys(errors).sort()).toEqual([
+      "gameName",
+      "playerInfoNeeded",
+      "summary",
+      "title",
+    ]);
+    // And a sentence for a caller with nowhere to put the marks.
+    expect(error).toBeTruthy();
+    expect(await myHostApplications(userId, db)).toEqual([]);
+  });
+
+  it("marks only the field that is wrong, and says what is wrong with it", async () => {
+    const userId = await makeUser(db);
+
+    const { errors } = refusal(
+      await applyToHost(userId, { ...APPLICATION, expectedPlayers: 900 }, db)
+    );
+
+    expect(Object.keys(errors)).toEqual(["expectedPlayers"]);
+    expect(errors.expectedPlayers).toMatch(/between 2 and 500/);
+  });
+
   it("insists on the two things approving it depends on", async () => {
     const userId = await makeUser(db);
     // No game: the admin cannot attach one.
-    expect((await applyToHost(userId, { ...APPLICATION, gameName: "" }, db)).ok).toBe(false);
+    expect(refusal(await applyToHost(userId, { ...APPLICATION, gameName: "" }, db)).errors)
+      .toHaveProperty("gameName");
     // No player info: the admin cannot write the questions.
     expect(
-      (await applyToHost(userId, { ...APPLICATION, playerInfoNeeded: "" }, db)).ok
-    ).toBe(false);
+      refusal(await applyToHost(userId, { ...APPLICATION, playerInfoNeeded: "" }, db)).errors
+    ).toHaveProperty("playerInfoNeeded");
     // A summary that says nothing.
-    expect((await applyToHost(userId, { ...APPLICATION, summary: "pls" }, db)).ok).toBe(false);
+    expect(refusal(await applyToHost(userId, { ...APPLICATION, summary: "pls" }, db)).errors)
+      .toHaveProperty("summary");
   });
 
-  it("allows one pending application at a time", async () => {
+  it("allows one pending application at a time (UC-20 3b)", async () => {
     const userId = await makeUser(db);
     unwrap(await applyToHost(userId, APPLICATION, db));
 
@@ -176,7 +240,7 @@ describe("applying", () => {
     expect(second.ok === false && second.error).toMatch(/already have an application/);
   });
 
-  it("frees them up again once they withdraw", async () => {
+  it("frees them up again once they withdraw (UC-20 4a)", async () => {
     const userId = await makeUser(db);
     const { id } = unwrap(await applyToHost(userId, APPLICATION, db));
     await withdrawHostApplication(id, db);
@@ -197,12 +261,74 @@ describe("applying", () => {
   });
 });
 
+describe("one pending application, in the database (UC-20 3b)", () => {
+  it("is refused by Postgres, not only by the read in applyToHost", async () => {
+    // The rule as the database holds it. `applyToHost` is not involved: a
+    // second pending row cannot exist however it is written.
+    const userId = await makeUser(db);
+    unwrap(await applyToHost(userId, APPLICATION, db));
+
+    await expectRejection(
+      () =>
+        db.insert(hostApplications).values({
+          userId,
+          title: "Straight past the library",
+          gameName: "REPO",
+          summary: APPLICATION.summary,
+          playerInfoNeeded: APPLICATION.playerInfoNeeded,
+        }),
+      /host_applications_one_pending_per_user/
+    );
+  });
+
+  it("still lets them keep every decided application they have ever sent", async () => {
+    // Partial index: the rule is about the queue, not about the record.
+    const userId = await makeUser(db);
+    const first = unwrap(await applyToHost(userId, APPLICATION, db));
+    await withdrawHostApplication(first.id, db);
+    const second = unwrap(await applyToHost(userId, APPLICATION, db));
+    unwrap(
+      await declineHostApplication(second.id, await makeUser(db), "Clashes with the final", db)
+    );
+
+    expect((await applyToHost(userId, APPLICATION, db)).ok).toBe(true);
+    expect(await myHostApplications(userId, db)).toHaveLength(3);
+  });
+
+  it("refuses the second of two sent at the same moment, with the same sentence", async () => {
+    /*
+     * The race the read cannot see: both calls look for a pending row before
+     * either has inserted one, so both find none. Only the index can refuse the
+     * loser — and it must come back as the sentence the member would get a
+     * minute later, not as a crash.
+     */
+    const userId = await makeUser(db);
+
+    const [first, second] = await Promise.all([
+      applyToHost(userId, APPLICATION, db),
+      applyToHost(userId, { ...APPLICATION, title: "Sent twice" }, db),
+    ]);
+
+    expect([first.ok, second.ok].filter(Boolean)).toHaveLength(1);
+    const loser = first.ok ? second : first;
+    expect(loser.ok === false && loser.error).toBe(ALREADY_PENDING);
+    expect(
+      await db
+        .select({ id: hostApplications.id })
+        .from(hostApplications)
+        .where(
+          and(eq(hostApplications.userId, userId), eq(hostApplications.status, "pending"))
+        )
+    ).toHaveLength(1);
+  });
+});
+
 /* ------------------------------------------------------------------ */
-/* Deciding                                                           */
+/* Deciding (UC-21)                                                   */
 /* ------------------------------------------------------------------ */
 
 describe("approving", () => {
-  it("makes them the host of the event, in one go", async () => {
+  it("links the event the admin built from it and hands it over (UC-21 3, 4)", async () => {
     const applicant = await makeUser(db);
     const admin = await makeUser(db);
     const { id } = unwrap(await applyToHost(applicant, APPLICATION, db));
@@ -217,6 +343,50 @@ describe("approving", () => {
     expect(await eventsHostedBy(applicant, db)).toHaveLength(1);
   });
 
+  it("refuses an event somebody else already hosts, and grants nothing (R-86)", async () => {
+    /*
+     * The failure mode this check exists for: `eventId` comes off a select in
+     * the browser, so an approval aimed at an event that is already somebody's
+     * would hand a second person full rights over their evening. One grant per
+     * event, authorised on the row being written.
+     */
+    const theirHost = await makeUser(db);
+    const applicant = await makeUser(db);
+    const admin = await makeUser(db);
+    const eventId = await anEvent();
+    await makeHost(db, eventId, theirHost);
+    const { id } = unwrap(await applyToHost(applicant, APPLICATION, db));
+
+    const { errors } = refusal(await approveHostApplication(id, admin, { eventId }, db));
+
+    expect(errors).toHaveProperty("eventId");
+    expect(await canManageEvent({ id: applicant, isAdmin: false }, eventId, db)).toBe(false);
+    expect((await getHostApplication(id, db))?.status).toBe("pending");
+    expect(
+      await db.select().from(eventHosts).where(eq(eventHosts.eventId, eventId))
+    ).toHaveLength(1);
+  });
+
+  it("refuses an event that is not there, and one that was never chosen", async () => {
+    const applicant = await makeUser(db);
+    const admin = await makeUser(db);
+    const { id } = unwrap(await applyToHost(applicant, APPLICATION, db));
+
+    expect(refusal(await approveHostApplication(id, admin, { eventId: "" }, db)).errors)
+      .toHaveProperty("eventId");
+    expect(
+      refusal(
+        await approveHostApplication(
+          id,
+          admin,
+          { eventId: "00000000-0000-0000-0000-000000000000" },
+          db
+        )
+      ).errors
+    ).toHaveProperty("eventId");
+    expect((await getHostApplication(id, db))?.status).toBe("pending");
+  });
+
   it("refuses to decide the same application twice", async () => {
     const applicant = await makeUser(db);
     const admin = await makeUser(db);
@@ -228,14 +398,31 @@ describe("approving", () => {
     expect(again.ok).toBe(false);
     expect(again.ok === false && again.error).toMatch(/already been decided/);
   });
+});
 
-  it("does not grant anything on a decline, and says why", async () => {
+describe("declining", () => {
+  it("needs a reason, and changes nothing without one (UC-21 3a)", async () => {
+    const applicant = await makeUser(db);
+    const admin = await makeUser(db);
+    const { id } = unwrap(await applyToHost(applicant, APPLICATION, db));
+
+    for (const note of [null, "", "   ", "no"]) {
+      const { errors } = refusal(await declineHostApplication(id, admin, note, db));
+      expect(errors).toHaveProperty("note");
+    }
+
+    const application = await getHostApplication(id, db);
+    expect(application?.status).toBe("pending");
+    expect(application?.decidedAt).toBeNull();
+  });
+
+  it("does not grant anything, and says why (UC-21 3a)", async () => {
     const applicant = await makeUser(db);
     const admin = await makeUser(db);
     const { id } = unwrap(await applyToHost(applicant, APPLICATION, db));
     const eventId = await anEvent();
 
-    await declineHostApplication(id, admin, "Clashes with the tournament", db);
+    unwrap(await declineHostApplication(id, admin, "Clashes with the tournament", db));
 
     const application = await getHostApplication(id, db);
     expect(application?.status).toBe("declined");
@@ -244,15 +431,28 @@ describe("approving", () => {
     expect(await canManageEvent({ id: applicant, isAdmin: false }, eventId, db)).toBe(false);
   });
 
-  it("leaves the queue with the undecided ones on top", async () => {
+  it("refuses to decide one that has already been decided", async () => {
+    const applicant = await makeUser(db);
+    const first = await makeUser(db);
+    const second = await makeUser(db);
+    const { id } = unwrap(await applyToHost(applicant, APPLICATION, db));
+
+    unwrap(await declineHostApplication(id, first, "Not this term", db));
+    const again = await declineHostApplication(id, second, "Changed my mind", db);
+
+    expect(again.ok).toBe(false);
+    // The first decision stands, with its author and its reason.
+    expect((await getHostApplication(id, db))?.decisionNote).toBe("Not this term");
+  });
+});
+
+describe("the queue", () => {
+  it("leaves the undecided ones on top", async () => {
     const settled = await makeUser(db);
     const waiting = await makeUser(db);
 
     const first = unwrap(await applyToHost(settled, APPLICATION, db));
-    await db
-      .update(hostApplications)
-      .set({ status: "declined" })
-      .where(eq(hostApplications.id, first.id));
+    unwrap(await declineHostApplication(first.id, await makeUser(db), "Another time", db));
     const second = unwrap(
       await applyToHost(waiting, { ...APPLICATION, title: "Still waiting" }, db)
     );
@@ -263,5 +463,51 @@ describe("approving", () => {
     const at = (id: string) => queue.findIndex((row) => row.id === id);
     expect(at(second.id)).toBeLessThan(at(first.id));
     expect(queue[0].status).toBe("pending");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* What an approval may be pointed at (UC-21 2, 3)                    */
+/* ------------------------------------------------------------------ */
+
+describe("linkable events", () => {
+  it("offers an event nobody hosts, and drops it once somebody does", async () => {
+    const eventId = await anEvent();
+    const has = async () => (await linkableEvents(db)).some((row) => row.id === eventId);
+
+    expect(await has()).toBe(true);
+    await makeHost(db, eventId, await makeUser(db));
+    expect(await has()).toBe(false);
+  });
+
+  it("leaves out an event nothing can need doing to", async () => {
+    // A cancelled event has no evening left to hand anybody, so it is not
+    // something an approval can be pointed at.
+    counter += 1;
+    const created = unwrap(
+      await createEvent({ ...PUBLISHABLE, title: `Called off ${counter}` }, db)
+    );
+    unwrap(await publishEvent(created.id, db));
+    unwrap(await updateEvent(created.id, { status: "cancelled" }, db));
+    expect((await getEventById(created.id, {}, db))?.status).toBe("cancelled");
+
+    expect((await linkableEvents(db)).some((row) => row.id === created.id)).toBe(false);
+  });
+});
+
+describe("the questions the application already wrote (UC-21 2)", () => {
+  it("makes one required short answer per line, in their order", () => {
+    expect(
+      questionsFromApplication("In-game name\n  Do you own the DLC?  \n\nRank")
+    ).toEqual([
+      { label: "In-game name", type: "text", required: true },
+      { label: "Do you own the DLC?", type: "text", required: true },
+      { label: "Rank", type: "text", required: true },
+    ]);
+  });
+
+  it("never writes more questions than an event will take", () => {
+    const many = Array.from({ length: 60 }, (_, index) => `Question ${index}`).join("\n");
+    expect(questionsFromApplication(many).length).toBeLessThanOrEqual(40);
   });
 });

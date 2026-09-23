@@ -3,28 +3,48 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Alert, Badge, Button, EmptyState, Field, cx, plural } from "@/components/ui";
+import { Alert, Badge, Button, EmptyState, Field, Select, plural } from "@/components/ui";
 import type { HostApplication } from "@/lib/hosting";
 import {
   approveHostApplicationAction,
+  createEventFromApplicationAction,
   declineHostApplicationAction,
-} from "@/app/host/actions";
+} from "@/app/admin/host/actions";
 
 /**
- * The queue of people who want to run something.
+ * The queue of people who want to run something (UC-21).
  *
- * Approving creates a draft event and hands it to them. What it deliberately
- * does *not* do is create the game or the questions: the application says what
- * they need, and an admin reads it and sets the game up on `/admin/games` if it
- * is not there already. Guessing a game catalogue from free text is how you end
- * up with three spellings of the same game.
+ * The screen follows the use case's three steps in order, because they are
+ * three decisions and not one:
  *
- * So the "what I need to know about each player" answer is shown at full size
- * rather than folded away — it is the thing the admin is about to act on, not
- * background.
+ *  1. **Create the event from this application** (UC-21 2). It arrives named
+ *     after the application, with its game attached if the applicant picked one
+ *     this site knows, and with one sign-up question per line of what they said
+ *     they need to know about each player. That prefill is why the form asks
+ *     for those two things at all.
+ *  2. **Approve, linking that event** (UC-21 3). The event is chosen, not
+ *     assumed — the admin may have built it a week ago, and an approval that
+ *     silently created a second empty event would be worse than a select.
+ *  3. **Decline** (UC-21 3a), which needs a reason. The button does not send
+ *     without one, and the server refuses it as well, because the reason is the
+ *     entire content of what the applicant gets back.
+ *
+ * Refusals are painted where they belong: a field-keyed error goes under its
+ * own control, and only a refusal with nowhere to sit becomes a banner. One
+ * lump message at the top of a card with three controls makes the admin guess
+ * which one it is about.
  */
 
-export default function HostQueue({ applications }: { applications: HostApplication[] }) {
+export type LinkableEvent = { id: string; title: string; status: string };
+
+export default function HostQueue({
+  applications,
+  events,
+}: {
+  applications: HostApplication[];
+  /** Events nobody hosts yet — what an approval may be linked to (UC-21 3). */
+  events: LinkableEvent[];
+}) {
   const pending = applications.filter((row) => row.status === "pending");
   const decided = applications.filter((row) => row.status !== "pending");
 
@@ -38,7 +58,7 @@ export default function HostQueue({ applications }: { applications: HostApplicat
           </EmptyState>
         ) : (
           pending.map((application) => (
-            <Card key={application.id} application={application} />
+            <Card key={application.id} application={application} events={events} />
           ))
         )}
       </div>
@@ -76,26 +96,95 @@ export default function HostQueue({ applications }: { applications: HostApplicat
   );
 }
 
-function Card({ application }: { application: HostApplication }) {
+/** What the admin is told when they try to approve without choosing an event. */
+export const NO_EVENT_CHOSEN =
+  "Create the event from this application first, then approve it onto that event.";
+
+/** What the Decline button refuses to send without (UC-21 3a). */
+export const NO_REASON_GIVEN =
+  "A decline needs a reason — one line is enough, and it is all they get.";
+
+function Card({
+  application,
+  events,
+}: {
+  application: HostApplication;
+  events: LinkableEvent[];
+}) {
   const router = useRouter();
   const [note, setNote] = useState("");
-  const [busy, setBusy] = useState<"approve" | "decline" | null>(null);
+  const [eventId, setEventId] = useState("");
+  const [busy, setBusy] = useState<"create" | "approve" | "decline" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [created, setCreated] = useState<string | null>(null);
 
-  const run = async (which: "approve" | "decline") => {
-    setBusy(which);
+  /** Both refusal shapes, from one place: a banner, field marks, or both. */
+  const refused = (result: { error: string; errors?: Record<string, string> }) => {
+    setErrors(result.errors ?? {});
+    setError(result.errors ? null : result.error);
+  };
+
+  const clear = () => {
     setError(null);
+    setErrors({});
+  };
+
+  const create = async () => {
+    setBusy("create");
+    clear();
     try {
-      const result =
-        which === "approve"
-          ? await approveHostApplicationAction(application.id, note)
-          : await declineHostApplicationAction(application.id, note);
+      const result = await createEventFromApplicationAction(application.id);
       if (!result.ok) {
-        setError(result.error);
+        refused(result);
         return;
       }
-      if (which === "approve" && "data" in result && result.data) {
-        router.push(`/admin/events/${result.data.eventId}`);
+      // Chosen for them, because it is the event they just built from this.
+      setEventId(result.data.eventId);
+      setCreated(
+        result.data.note ??
+          `Created it with ${plural(result.data.questions, "question")} from what they wrote. Set it up, then approve.`
+      );
+      router.refresh();
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const approve = async () => {
+    if (!eventId) {
+      setErrors({ eventId: NO_EVENT_CHOSEN });
+      return;
+    }
+    setBusy("approve");
+    clear();
+    try {
+      const result = await approveHostApplicationAction(application.id, { eventId, note });
+      if (!result.ok) {
+        refused(result);
+        return;
+      }
+      router.push(`/admin/events/${result.data.eventId}`);
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const decline = async () => {
+    if (note.trim().length === 0) {
+      setErrors({ note: NO_REASON_GIVEN });
+      return;
+    }
+    setBusy("decline");
+    clear();
+    try {
+      const result = await declineHostApplicationAction(application.id, note);
+      if (!result.ok) {
+        refused(result);
         return;
       }
       router.refresh();
@@ -105,6 +194,14 @@ function Card({ application }: { application: HostApplication }) {
       setBusy(null);
     }
   };
+
+  // The event built from this application is not in `events` until the page
+  // reloads, so it is added here — otherwise the select cannot offer the one
+  // thing the admin just made.
+  const choices: LinkableEvent[] =
+    created && !events.some((event) => event.id === eventId)
+      ? [{ id: eventId, title: `${application.title} (just created)`, status: "draft" }, ...events]
+      : events;
 
   return (
     <section className="rounded-lg bg-panel px-5 py-4">
@@ -131,15 +228,14 @@ function Card({ application }: { application: HostApplication }) {
         {application.summary}
       </p>
 
-      {/* The part the admin has to act on before approving. */}
+      {/* The part the event is built from. */}
       <div className="mt-4 rounded bg-overlay-1 px-4 py-3">
         <span className="eyebrow">What they need from each player</span>
         <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-13 leading-relaxed text-chalk">
           {application.playerInfoNeeded}
         </p>
         <p className="mt-2 text-13 leading-relaxed text-dim">
-          Turn this into the event&rsquo;s questions after approving — Setup → Questions on the
-          event, and{" "}
+          One line of this becomes one sign-up question on the event, ready to edit — and{" "}
           <Link href="/admin/games" className="text-union underline underline-offset-4">
             Games
           </Link>{" "}
@@ -147,31 +243,51 @@ function Card({ application }: { application: HostApplication }) {
         </p>
       </div>
 
+      {/* --- 1: the event ------------------------------------------- */}
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <Button
+          variant={eventId ? undefined : "union"}
+          disabled={busy !== null}
+          onClick={() => void create()}
+        >
+          {busy === "create" ? "Creating…" : "Create event from this application"}
+        </Button>
+        <Select
+          label="Approve onto"
+          value={eventId}
+          error={errors.eventId}
+          wrapperClassName="min-w-[16rem] flex-1"
+          onChange={(input) => setEventId(input.target.value)}
+        >
+          <option value="">Choose the event…</option>
+          {choices.map((event) => (
+            <option key={event.id} value={event.id}>
+              {event.title} · {event.status}
+            </option>
+          ))}
+        </Select>
+      </div>
+      {created && <p className="mt-2 text-13 leading-relaxed text-success">{created}</p>}
+
+      {/* --- 2 and 3: the decision ---------------------------------- */}
       <div className="mt-4 space-y-3">
         <Field
           label="Note to them"
-          placeholder="Optional — shown to the applicant either way"
+          placeholder="Required to decline; optional when approving"
           value={note}
           maxLength={500}
+          error={errors.note}
           onChange={(input) => setNote(input.target.value)}
         />
         <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="union"
-            disabled={busy !== null}
-            onClick={() => void run("approve")}
-          >
-            {busy === "approve" ? "Approving…" : "Approve and create the event"}
+          <Button variant="union" disabled={busy !== null} onClick={() => void approve()}>
+            {busy === "approve" ? "Approving…" : "Approve and hand it over"}
           </Button>
-          <Button
-            variant="flare"
-            disabled={busy !== null}
-            onClick={() => void run("decline")}
-          >
+          <Button variant="flare" disabled={busy !== null} onClick={() => void decline()}>
             {busy === "decline" ? "Declining…" : "Decline"}
           </Button>
-          <span className={cx("text-13 text-dim")}>
-            Approving makes a draft event and hands it to them. It does not publish anything.
+          <span className="text-13 text-dim">
+            Approving gives them that one event and nothing else. It does not publish anything.
           </span>
         </div>
       </div>

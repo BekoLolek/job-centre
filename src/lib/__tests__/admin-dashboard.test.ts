@@ -15,6 +15,7 @@ import {
   updateEvent,
 } from "@/lib/events";
 import { generateMatches, setStages } from "@/lib/format";
+import { applyToHost, declineHostApplication } from "@/lib/hosting";
 
 /**
  * `/admin` — what needs attention (§4).
@@ -304,6 +305,45 @@ describe("a championship result nobody has recorded", () => {
 
     expect(
       (await itemsFor(event.id)).filter((row) => row.kind === "championship_result")
+    ).toEqual([]);
+  });
+});
+
+describe("a member waiting to hear about an event they want to run", () => {
+  it("appears on the admin home while it is pending, and goes when it is decided", async () => {
+    // R-109 / UC-27 2: the third thing the admin home has to show, next to
+    // pending applications and unscheduled matches. It has no event — an
+    // application is what exists before the event does.
+    counter += 1;
+    const applicant = await makeUser(db, { displayName: `Would-be host ${counter}` });
+    const application = unwrap(
+      await applyToHost(
+        applicant,
+        {
+          title: `Friday REPO night ${counter}`,
+          gameName: "REPO",
+          summary: "Six of us, a few rounds, prizes for whoever survives longest.",
+          playerInfoNeeded: "In-game name",
+        },
+        db
+      )
+    );
+
+    const before = (await loadDashboard({}, db)).items.filter(
+      (item) => item.kind === "host_applications"
+    );
+    expect(before).toHaveLength(1);
+    expect(before[0].href).toBe("/admin/host");
+    expect(before[0].event).toBeNull();
+    expect(before[0].count).toBe(1);
+
+    // Decided is decided: nothing is marked done, the count is just taken again.
+    unwrap(
+      await declineHostApplication(application.id, await makeUser(db), "Another time", db)
+    );
+
+    expect(
+      (await loadDashboard({}, db)).items.filter((item) => item.kind === "host_applications")
     ).toEqual([]);
   });
 });

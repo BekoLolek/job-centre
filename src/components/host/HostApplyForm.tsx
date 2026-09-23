@@ -48,6 +48,12 @@ export default function HostApplyForm({
   const [playerInfo, setPlayerInfo] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /*
+   * Keyed by field, so every problem is marked where it was made (UC-20 3a).
+   * One banner naming the first empty field makes somebody fix it, send, and be
+   * told about the next one — four sends for one form.
+   */
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
   const chosen = games.find((game) => game.id === gameId) ?? null;
   const effectiveGameName = chosen ? chosen.name : gameName;
@@ -55,6 +61,7 @@ export default function HostApplyForm({
   const send = async () => {
     setBusy(true);
     setError(null);
+    setErrors({});
     try {
       const result = await applyToHostAction({
         title,
@@ -67,7 +74,10 @@ export default function HostApplyForm({
         playerInfoNeeded: playerInfo,
       });
       if (!result.ok) {
-        setError(result.error);
+        setErrors(result.errors ?? {});
+        // Only a refusal with nowhere to sit becomes a banner — "you already
+        // have one waiting" is about the form, not about a field in it.
+        setError(result.errors ? null : result.error);
         return;
       }
       router.refresh();
@@ -114,6 +124,7 @@ export default function HostApplyForm({
             placeholder="Friday REPO night"
             value={title}
             maxLength={120}
+            error={errors.title}
             onChange={(input) => setTitle(input.target.value)}
           />
 
@@ -137,6 +148,7 @@ export default function HostApplyForm({
                 placeholder="REPO"
                 value={gameName}
                 maxLength={80}
+                error={errors.gameName}
                 wrapperClassName="min-w-[12rem] flex-1"
                 onChange={(input) => setGameName(input.target.value)}
               />
@@ -149,9 +161,15 @@ export default function HostApplyForm({
             placeholder="Six of us, a few rounds, prizes for whoever survives longest. Two hours tops."
             value={summary}
             maxLength={2000}
+            error={errors.summary}
             onChange={(input) => setSummary(input.target.value)}
           />
 
+          {/*
+            How many players and the summary above are kept, not decoration
+            (R-167, R-168 / UC-20 E1): they are the two things an admin judges
+            the application on before deciding it in UC-21.
+          */}
           <div className="flex flex-wrap items-end gap-3">
             <Field
               label="How it runs"
@@ -166,6 +184,7 @@ export default function HostApplyForm({
               placeholder="Optional"
               value={expected}
               inputMode="numeric"
+              error={errors.expectedPlayers}
               wrapperClassName="w-[7rem]"
               onChange={(input) => setExpected(input.target.value.replace(/\D/g, ""))}
             />
@@ -185,6 +204,7 @@ export default function HostApplyForm({
               placeholder="Their in-game name, and whether they own the DLC."
               value={playerInfo}
               maxLength={1000}
+              error={errors.playerInfoNeeded}
               onChange={(input) => setPlayerInfo(input.target.value)}
             />
             <p className="mt-2 max-w-2xl text-13 leading-relaxed text-muted">

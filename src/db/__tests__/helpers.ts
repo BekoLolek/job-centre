@@ -1,5 +1,5 @@
 import { PGlite } from "@electric-sql/pglite";
-import { type Database, createPgliteDatabase, users } from "@/db";
+import { type Database, createPgliteDatabase, eventHosts, users } from "@/db";
 import { applyMigrations } from "@/db/migrate";
 
 /**
@@ -47,6 +47,24 @@ export async function makeUser(
     })
     .returning({ id: users.id });
   return row.id;
+}
+
+/**
+ * Make somebody the host of an event.
+ *
+ * The one grant (R-86), written straight in. In the site it is only ever
+ * written by approving a host application (UC-21 3/4) — `src/lib/hosting.ts`
+ * has no add-a-host helper any more, because the co-host helpers it used to
+ * export had no caller outside tests, and a permission nothing in the site can
+ * reach is a permission nobody has thought about. A fixture is what the tests
+ * wanted from them, so the fixture lives here with the other fixtures.
+ */
+export async function makeHost(
+  db: Database,
+  eventId: string,
+  userId: string
+): Promise<void> {
+  await db.insert(eventHosts).values({ eventId, userId }).onConflictDoNothing();
 }
 
 /**

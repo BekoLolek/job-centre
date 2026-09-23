@@ -20,11 +20,14 @@
  * unfinished one always can, including a draft nobody else can see, which is
  * precisely where "ready to publish" lives.
  *
- * There are two exceptions, and both are listed whatever state their event is
- * in: a failed Discord announcement (see `failedAnnouncements`) and a
- * championship result nobody has recorded (see `missingResults`). The second
- * is the more pointed one — the event it belongs to is usually *complete*,
- * which is exactly the status the rule above excludes.
+ * There are three exceptions. Two are listed whatever state their event is in:
+ * a failed Discord announcement (see `failedAnnouncements`) and a championship
+ * result nobody has recorded (see `missingResults`) — the second is the more
+ * pointed one, since the event it belongs to is usually *complete*, which is
+ * exactly the status the rule above excludes. The third has no event at all: a
+ * host application (see `waitingHostApplications`) is what a member sends
+ * *before* there is an event, and R-109 names it as one of the three things the
+ * admin home has to show.
  *
  * ## Nothing here decides a rule
  *
@@ -41,6 +44,7 @@ import {
   auditLog,
   db as defaultDb,
   draftLots,
+  hostApplications,
   teams,
 } from "@/db";
 import { blockers, readiness } from "@/components/admin/events/readiness";
@@ -54,6 +58,7 @@ import { type FormatView, formatFor, matchIdsFor } from "./format";
 
 export type AttentionKind =
   | "applications"
+  | "host_applications"
   | "publish"
   | "captains"
   | "lot_open"
@@ -306,6 +311,7 @@ export async function loadDashboard(
     }
   }
 
+  items.push(...(await waitingHostApplications(database)));
   items.push(...(await missingResults(database)));
   items.push(...(await failedAnnouncements(all, database)));
 
@@ -401,6 +407,42 @@ async function failedAnnouncements(
         : null,
     };
   });
+}
+
+/**
+ * Members waiting to hear about an event they want to run (R-109 / UC-27 2).
+ *
+ * The third thing the use case names, next to pending applications and
+ * unscheduled matches — and the one with a person on the other end of it who
+ * cannot do anything until an admin answers. One line for the whole queue
+ * rather than one per application: the screen that resolves it is the same
+ * screen either way, and it reads them in one sitting.
+ *
+ * No event to hang it on, which is the point: an application is what exists
+ * *before* the event does.
+ */
+async function waitingHostApplications(database: Database): Promise<AttentionItem[]> {
+  const rows = await database
+    .select({ id: hostApplications.id })
+    .from(hostApplications)
+    .where(eq(hostApplications.status, "pending"));
+
+  if (rows.length === 0) return [];
+
+  return [
+    {
+      key: "host:applications",
+      kind: "host_applications",
+      label: `${rows.length} ${rows.length === 1 ? "member wants" : "members want"} to run something`,
+      detail:
+        "Build the event from what they wrote, then approve onto it — or decline, with a reason. They are waiting either way.",
+      href: "/admin/host",
+      action: "Read them",
+      count: rows.length,
+      urgency: "next",
+      event: null,
+    },
+  ];
 }
 
 /**
