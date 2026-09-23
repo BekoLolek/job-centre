@@ -113,7 +113,30 @@ import {
  */
 export type EventResult<T = null> =
   | { ok: true; data: T }
-  | { ok: false; error: string; errors?: Record<string, string> };
+  | {
+      ok: false;
+      error: string;
+      errors?: Record<string, string>;
+      /**
+       * Present on the one refusal that is not a "no": UC-14 3a's over-cap
+       * accept, which the manager may go through with by asking again.
+       */
+      confirm?: OverCapacityConfirmation;
+    };
+
+/**
+ * What the screen has to put in front of the manager before it may ask again
+ * (UC-14 3a). The numbers are read inside the write's own transaction, so they
+ * are what the cap actually is and what the room actually holds — not what the
+ * page was rendered with.
+ */
+export type OverCapacityConfirmation = {
+  kind: "over_capacity";
+  /** The cap, unchanged — accepting past it does not raise it. */
+  capacity: number;
+  /** How many hold a seat right now, before this accept. */
+  accepted: number;
+};
 
 function fail(error: string, errors?: Record<string, string>): {
   ok: false;
@@ -121,6 +144,23 @@ function fail(error: string, errors?: Record<string, string>): {
   errors?: Record<string, string>;
 } {
   return errors ? { ok: false, error, errors } : { ok: false, error };
+}
+
+/**
+ * A refusal the caller can overturn by asking a second time.
+ *
+ * Deliberately a refusal rather than a flag on a success: the write has not
+ * happened. `setApplicationStatus` returning `ok` with "…but it was over the
+ * cap" is exactly the shape that let the old screen decide after the fact, and
+ * a decision made after the fact cannot be enforced on a caller that skips the
+ * screen (UC-14 3a).
+ */
+function needsConfirming(error: string, confirm: OverCapacityConfirmation): {
+  ok: false;
+  error: string;
+  confirm: OverCapacityConfirmation;
+} {
+  return { ok: false, error, confirm };
 }
 
 function withData<T>(data: T): EventResult<T> {
@@ -1524,6 +1564,89 @@ async function renumberWaitlist(database: Database, eventId: string): Promise<vo
   }
 }
 
+/**
+ * **The one rule for a seat that frees.** Every caller that can free one goes
+ * through here, and none of them promotes on its own.
+ *
+ * There are four ways a seat comes free and they are the same event wearing
+ * four hats:
+ *
+ *  - the applicant withdraws (UC-13 3a, R-54);
+ *  - the applicant says they are not coming (UC-13 5a);
+ *  - a manager declines somebody who held a seat (UC-14 5-6, R-58);
+ *  - a manager puts somebody who held a seat back on the queue (UC-14 5-6).
+ *
+ * docs/diagrams/application-state.md states it once for all four: *leaving
+ * `Accepted` frees a seat; the earliest `Waitlisted` becomes `Accepted` in the
+ * same change, and is notified* (R-55). Four copies of that sentence in four
+ * call sites is four chances for one of them to drift, which is what this
+ * function exists to prevent.
+ *
+ * ## Why the read is in here and not in the caller
+ *
+ * The caller has already read the applications — that is how it knew what it
+ * was changing — and passing that array in would be free. It would also be
+ * wrong. Those rows were read *before* the caller's own write landed, so the
+ * row that just stopped holding a seat still looks accepted in them, and a
+ * promotion computed from them fills a seat that is not free and skips the seat
+ * that is. So this re-reads inside the same transaction, after the write, and
+ * decides from what the database now says.
+ *
+ * That the transaction is holding the event's row lock (`lockEvent`) is the
+ * other half of it, and it is the caller's job: two seats freeing at once must
+ * queue behind each other, or both promotions are computed from the same
+ * pre-promotion queue and the same person is promoted twice while the next one
+ * is never promoted at all. `src/lib/__tests__/events.test.ts` sequences that
+ * interleave deliberately rather than racing for it.
+ *
+ * Nothing is promoted when the change did not actually free a seat: a manager
+ * queueing a `pending` applicant in an approval event has taken nothing away,
+ * and an event with spare seats and a queue the manager built by hand is not an
+ * invitation to empty that queue. The renumbering runs either way, because any
+ * change to the set can leave a hole in it (`renumberWaitlist`).
+ *
+ * ## The row that vacated is not a candidate for its own seat
+ *
+ * `vacated.id` is left out of the arithmetic, and it has to be. A manager
+ * putting the only seated applicant back on the queue (UC-14 5-6) frees a seat
+ * and creates a queue of one — themselves — so a promotion computed over
+ * everybody would hand the seat straight back and quietly undo the decision.
+ * On an uncapped event it is worse: `promoteFromWaitlist` promotes the whole
+ * queue there by design, so the manager's decision would not survive the same
+ * transaction that made it. Dropping the row keeps the seat count right (it is
+ * not accepted any more either way) and asks the only question that matters:
+ * who *else* is waiting.
+ */
+async function freeSeat(
+  database: Database,
+  event: { id: string; capacity: number | null },
+  vacated: { id: string; from: ApplicationStatus; to: ApplicationStatus }
+): Promise<Application[]> {
+  const gaveUpASeat = vacated.from === "accepted" && vacated.to !== "accepted";
+
+  let promoted: Application[] = [];
+  if (gaveUpASeat) {
+    const rows = await readApplications(database, event.id);
+    const others = rows.filter((row) => row.id !== vacated.id);
+    const promotion = promoteFromWaitlist(others, event.capacity);
+    if (promotion.promoted.length > 0) {
+      promoted = await database
+        .update(applications)
+        .set({ status: "accepted", waitlistPosition: null })
+        .where(
+          inArray(
+            applications.id,
+            promotion.promoted.map((row) => row.id)
+          )
+        )
+        .returning();
+    }
+  }
+
+  await renumberWaitlist(database, event.id);
+  return promoted;
+}
+
 /** Upsert one application's day answers; `null` clears a day. */
 async function writeAvailability(
   database: Database,
@@ -1553,11 +1676,12 @@ async function writeAvailability(
 }
 
 /**
- * Withdraw, and let the next person in.
+ * Withdraw, and let the next person in (UC-13 3a, R-54).
  *
- * A withdrawal is the one status change that promotes automatically (§14): the
- * member has freed a seat, nobody needs to approve that, and the person at the
- * front of the queue should not have to refresh the page all evening to notice.
+ * The promotion is not this function's rule: it is `freeSeat`'s, the same one
+ * a decline and a "not coming" go through. All this decides is that a
+ * withdrawal is a departure, and then it says so.
+ *
  * Promotion and renumbering happen in the same transaction as the withdrawal,
  * so there is no instant at which the seat is free and the queue still says #1.
  *
@@ -1582,36 +1706,16 @@ export async function withdrawApplication(
       return withData({ application: await decorateOne(tx, mine), promoted: [] });
     }
 
-    const freedASeat = mine.status === "accepted";
-
-    const [withdrawn] = await tx
+    await tx
       .update(applications)
       .set({ status: "withdrawn", waitlistPosition: null, decidedAt: new Date() })
-      .where(eq(applications.id, mine.id))
-      .returning();
+      .where(eq(applications.id, mine.id));
 
-    let promoted: Application[] = [];
-    if (freedASeat) {
-      const remaining = rows
-        .filter((row) => row.id !== mine.id)
-        .concat({ ...withdrawn });
-      const promotion = promoteFromWaitlist(remaining, event.capacity);
-
-      if (promotion.promoted.length > 0) {
-        promoted = await tx
-          .update(applications)
-          .set({ status: "accepted", waitlistPosition: null })
-          .where(
-            inArray(
-              applications.id,
-              promotion.promoted.map((row) => row.id)
-            )
-          )
-          .returning();
-      }
-    }
-
-    await renumberWaitlist(tx, eventId);
+    const promoted = await freeSeat(tx, event, {
+      id: mine.id,
+      from: mine.status,
+      to: "withdrawn",
+    });
 
     const [fresh] = await tx.select().from(applications).where(eq(applications.id, mine.id));
     return withData({
@@ -1626,21 +1730,33 @@ export type DecisionInput = {
   note?: string | null;
   now?: Date;
   /**
-   * Fill the seat this decision frees from the waitlist. Off by default: an
-   * admin declining somebody is *choosing* who is in the event, and a promotion
-   * they did not ask for is a surprise. A withdrawal is the case where nobody
-   * is choosing, and that promotes on its own.
+   * The manager has been shown the cap and has asked again anyway (UC-14 3a).
+   * Only an accept that would go past the cap reads this; nothing else does,
+   * and it never raises the cap.
    */
-  promote?: boolean;
+  confirmOverCapacity?: boolean;
 };
 
 /**
- * An admin decision on one application.
+ * An admin decision on one application (UC-14 3-6, R-58).
  *
- * This is §8.3's override, so it is deliberately not gated: an admin can accept
- * somebody the rank threshold would have turned away, and can accept past
- * capacity — the result says `overCapacity` so the screen can show it rather
- * than the write silently refusing. Gates are guidance, not a wall.
+ * This is §8.3's override, so the *rank* gates are deliberately not enforced
+ * here: an admin can accept somebody the threshold would have turned away.
+ * Gates are guidance, not a wall.
+ *
+ * The seat cap is the one exception, and it is not a wall either — it is a
+ * question. UC-14 3a: accepting past the cap asks the manager to confirm, and
+ * the cap itself does not change. The question is asked **here**, in the write,
+ * rather than in the screen that usually asks it: a server action is a public
+ * POST endpoint, so a confirmation that lives in a dialog is a confirmation
+ * anybody can skip by calling the action directly. The first call is refused
+ * with `confirm`; the second, carrying `confirmOverCapacity`, goes through.
+ *
+ * Every decision that takes a seat away goes through `freeSeat`, the same rule
+ * a withdrawal and a "not coming" use. There is no `promote` option any more
+ * and there must not be one: UC-14 6 says the seat a decline frees goes to the
+ * next waitlisted, and an option to skip that is an option to leave a seat
+ * empty with somebody queueing for it.
  */
 export async function setApplicationStatus(
   applicationId: string,
@@ -1676,10 +1792,31 @@ export async function setApplicationStatus(
     const rows = await readApplications(tx, current.eventId);
     const others = rows.filter((row) => row.id !== current.id);
 
+    /*
+     * UC-14 3a, inside the lock. `others` is what the room holds without this
+     * application in it, read after `lockEvent`, so the count cannot have moved
+     * between the question and the answer: a manager who confirms going over a
+     * cap that somebody has meanwhile freed a seat in is simply let through,
+     * and one who was told there was room that has since gone is asked.
+     */
+    const before = capacityState(event, others);
+    const takesASeat = status === "accepted" && current.status !== "accepted";
+    if (
+      takesASeat &&
+      before.capacity !== null &&
+      before.accepted >= before.capacity &&
+      !options.confirmOverCapacity
+    ) {
+      return needsConfirming(
+        `This event's cap is ${before.capacity} and ${before.accepted} are already in. Accepting anyway puts it over the cap — confirm to go ahead.`,
+        { kind: "over_capacity", capacity: before.capacity, accepted: before.accepted }
+      );
+    }
+
     const waitlistPosition =
       status === "waitlisted" ? nextWaitlistPosition(others) : null;
 
-    const [updated] = await tx
+    await tx
       .update(applications)
       .set({
         status,
@@ -1688,28 +1825,13 @@ export async function setApplicationStatus(
         decidedBy: options.decidedBy ?? null,
         note: options.note === undefined ? current.note : cleanNullable(options.note, NOTE_MAX),
       })
-      .where(eq(applications.id, applicationId))
-      .returning();
+      .where(eq(applications.id, applicationId));
 
-    let promoted: Application[] = [];
-    if (options.promote) {
-      const after = others.concat(updated);
-      const promotion = promoteFromWaitlist(after, event.capacity);
-      if (promotion.promoted.length > 0) {
-        promoted = await tx
-          .update(applications)
-          .set({ status: "accepted", waitlistPosition: null })
-          .where(
-            inArray(
-              applications.id,
-              promotion.promoted.map((row) => row.id)
-            )
-          )
-          .returning();
-      }
-    }
-
-    await renumberWaitlist(tx, current.eventId);
+    const promoted = await freeSeat(tx, event, {
+      id: current.id,
+      from: current.status,
+      to: status,
+    });
 
     const final = await readApplications(tx, current.eventId);
     const seats = capacityState(event, final);
@@ -1798,19 +1920,44 @@ export async function setAvailability(
   });
 }
 
+/** What the "still coming?" answer did — including, for "out", who it let in. */
+export type ConfirmationOutcome = {
+  state: ConfirmationState;
+  confirmedAt: Date;
+  /** Where the application stands afterwards: `withdrawn` when a seat was given up. */
+  status: ApplicationStatus;
+  /** Whoever the freed seat promoted, so the caller can notify them (R-55). */
+  promoted: ApplicationView[];
+};
+
 /**
- * The "still coming?" answer (§2).
+ * The "still coming?" answer (R-56, UC-13 5-6) — and, for "not coming", the
+ * seat it frees (UC-13 5a).
  *
  * Only somebody with a live application can answer it: confirming attendance
  * for an application that was declined or withdrawn is not a state worth
  * storing, and letting it through would put the wrong people in the count the
  * admin uses to decide whether the event can run.
+ *
+ * ## "I can't make it", from somebody holding a seat, is a departure
+ *
+ * It used to be a note for the admin, and the seat stayed held. UC-13 5a is
+ * explicit that it frees the seat, promoting exactly as a withdrawal does, and
+ * docs/diagrams/application-state.md draws the two as one edge:
+ * *Accepted → Withdrawn: applicant withdraws or says "not coming"*. A seat held
+ * by somebody who has said they are not coming is a seat nobody can have, with
+ * a queue waiting for it — which is the situation R-55 exists to end.
+ *
+ * From the **queue** it is not a departure and does not become one. A
+ * waitlisted member answering "I can't make it" has no seat to give up, the
+ * diagram has no such edge, and dropping them out of the queue over one tap
+ * would cost them a place they could still want.
  */
 export async function setConfirmation(
   applicationId: string,
   state: ConfirmationState,
   database: Database = defaultDb
-): Promise<EventResult<{ state: ConfirmationState; confirmedAt: Date }>> {
+): Promise<EventResult<ConfirmationOutcome>> {
   return database.transaction(async (tx) => {
     const [application] = await tx
       .select()
@@ -1836,7 +1983,30 @@ export async function setConfirmation(
         set: { state, confirmedAt },
       });
 
-    return withData({ state, confirmedAt });
+    // The same departure a withdrawal is, so the same rule fills the seat.
+    // An answer that gives nothing up touches the queue not at all: "I'll be
+    // there" must not rewrite everybody's place in it.
+    const givingUpASeat = state === "out" && application.status === "accepted";
+    let promoted: Application[] = [];
+    if (givingUpASeat) {
+      await tx
+        .update(applications)
+        .set({ status: "withdrawn", waitlistPosition: null, decidedAt: confirmedAt })
+        .where(eq(applications.id, applicationId));
+
+      promoted = await freeSeat(tx, event, {
+        id: applicationId,
+        from: "accepted",
+        to: "withdrawn",
+      });
+    }
+
+    return withData({
+      state,
+      confirmedAt,
+      status: givingUpASeat ? ("withdrawn" as ApplicationStatus) : application.status,
+      promoted: await decorate(tx, promoted),
+    });
   });
 }
 

@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Database } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { type TestDatabase, freshDatabase, makeHost, makeUser } from "@/db/__tests__/helpers";
 import { createEvent } from "@/lib/events";
-import { addHost } from "@/lib/hosting";
 
 /*
  * `/events/[slug]` and `/events/[slug]/apply` for an event nobody has published
@@ -51,7 +50,7 @@ beforeAll(async () => {
   if (!created.ok) throw new Error(created.error);
   slug = created.data.slug;
   host = await makeUser(handle.db);
-  await addHost(created.data.id, host, null, handle.db);
+  await makeHost(handle.db, created.data.id, host);
 });
 
 afterAll(async () => {

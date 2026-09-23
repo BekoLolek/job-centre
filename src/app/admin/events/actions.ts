@@ -79,8 +79,13 @@ import {
   notifyEventPublished,
   notifyEventUpdated,
   notifyQuestionsChanged,
+  notifyStandingsChanged,
 } from "@/lib/notify-events";
-import { announceApplicationDecision, announceEventPublished } from "@/lib/discord";
+import {
+  announceApplicationDecision,
+  announceEventPublished,
+  announceStandings,
+} from "@/lib/discord";
 import { isFieldType } from "@/lib/profile-fields";
 import {
   eventIdOfApplication,
@@ -673,6 +678,21 @@ export async function saveEventPlacementsAction(
     detail: { championship: counting.season.id, placed: placements.length },
   });
 
+  /*
+   * UC-36 1-3, and the only place either of them can go: the notification
+   * needs to happen once per recorded result rather than once per read, and
+   * the announcement is this layer's by the rule at the top of this file.
+   * Both are fire-and-forget — they return `void`, they run after the
+   * response, and neither can fail the result that has already been saved.
+   *
+   * `admin` is passed as the person who caused it: a host who records the
+   * order they were just looking at does not need telling that it changed the
+   * table. They hear about it the same way they hear about their own
+   * application decisions, which is not at all.
+   */
+  notifyStandingsChanged(eventId, admin.id);
+  announceStandings(eventId);
+
   refreshSeason(eventId, counting.season.id);
   return { ok: true, data: null };
 }
@@ -702,22 +722,28 @@ export type DecisionResult = {
   waitlisted: number;
   /** True when an override has put more people in than the cap allows. */
   overCapacity: boolean;
-  /** Who this decision let in, when the caller asked for a promotion. */
+  /** Who the seat this decision freed let in (UC-14 6). Usually none or one. */
   promoted: Array<{ id: string; userId: string }>;
 };
 
 /**
- * Accept, waitlist or decline one application.
+ * Accept, waitlist or decline one application (UC-14 3-6, R-58).
  *
- * `promote` is off unless the screen asks for it, and the screen only asks
- * after the admin has said yes to a named person. That is `setApplicationStatus`'s
- * own reasoning: an admin declining somebody is *choosing* who is in the event,
- * and a promotion they did not ask for is a surprise.
+ * There is no `promote` option. UC-14 6 is not a preference: the seat a decline
+ * frees goes to the next waitlisted applicant, in the same transaction, and
+ * both of them are told. `setApplicationStatus` owns that rule (`freeSeat`),
+ * and this layer's job is only the two things it is the only layer that can
+ * do — write the audit line, because it is the only one that knows who is
+ * acting, and hand the news to Discord and to the people concerned.
+ *
+ * `confirmOverCapacity` is the manager's second ask on UC-14 3a. It is passed
+ * straight through; the decision about whether it was needed is made inside
+ * the write, where a caller that never opened the screen cannot skip it.
  */
 export async function decideApplicationAction(
   applicationId: string,
   status: ApplicationDecision,
-  options: { note?: string | null; promote?: boolean }
+  options: { note?: string | null; confirmOverCapacity?: boolean }
 ): Promise<EventResult<DecisionResult>> {
   /*
    * Authorised on the row about to be written, and every read and audit line
@@ -733,8 +759,10 @@ export async function decideApplicationAction(
   const result = await setApplicationStatus(applicationId, status, {
     decidedBy: admin.id,
     note: options.note,
-    promote: options.promote,
+    confirmOverCapacity: options.confirmOverCapacity,
   });
+  // A refusal carrying `confirm` is UC-14 3a's question, and it travels back
+  // to the screen untouched: nothing was written, so there is nothing to log.
   if (!result.ok) return result;
 
   // Read back rather than describe the payload: the decision may have promoted

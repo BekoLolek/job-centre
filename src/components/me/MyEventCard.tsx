@@ -58,6 +58,17 @@ import {
  * "one person is waiting and will take your seat immediately" — rather than
  * asking "are you sure?" about an outcome it has not mentioned. Withdrawing
  * from the *queue* costs nobody anything, and says that instead.
+ *
+ * ## And so does "I can't make it"
+ *
+ * UC-13 5a puts "not coming" and withdrawing on the same edge: from a seat,
+ * both free it and promote the next in line. This card used to say the opposite
+ * — "it keeps your place until they decide what to do about it" — which was a
+ * promise the seat cap could not keep. So from a seat the chip asks first,
+ * through the same dialog and with the same warning, because it costs the same
+ * thing. From the *queue* it is only an answer: there is no seat to give up,
+ * the state diagram has no edge for it, and one tap must not cost somebody a
+ * place they may still want.
  */
 
 export type MyEventRow = {
@@ -89,7 +100,8 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
   const [confirmation, setConfirmation] = useState(row.confirmation);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
-  const [asking, setAsking] = useState(false);
+  /** Which departure the dialog is asking about, or null when it is shut. */
+  const [asking, setAsking] = useState<"withdraw" | "not_coming" | null>(null);
 
   const active = row.status === "accepted" || row.status === "waitlisted";
   /**
@@ -141,6 +153,15 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
       if (!result.ok) {
         setConfirmation(before);
         setProblem(result.error);
+        return;
+      }
+      setAsking(null);
+
+      // UC-13 5a: "not coming" from a seat *is* a withdrawal, so it leaves the
+      // same way one does. Said on the page rather than in here, because the
+      // card is about to move into another section and remount — see `withdraw`.
+      if (result.data.status === "withdrawn") {
+        leave(result.data.promoted > 0);
       }
     } catch {
       setConfirmation(before);
@@ -148,6 +169,23 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
     } finally {
       setBusy(false);
     }
+  };
+
+  /**
+   * Off this card and onto the page's own message.
+   *
+   * Withdrawing moves this card into another section, which remounts it, and a
+   * message that cannot survive the thing that triggers it is not a message.
+   * The page reads the slug back off the query string and checks it really is
+   * one of theirs.
+   */
+  const leave = (promotedSomebody: boolean) => {
+    router.replace(
+      `/me/events?withdrew=${encodeURIComponent(row.slug)}${
+        promotedSomebody ? "&promoted=1" : ""
+      }`
+    );
+    router.refresh();
   };
 
   const withdraw = async () => {
@@ -159,17 +197,8 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
         setProblem(result.error);
         return;
       }
-      setAsking(false);
-      // Said on the page rather than in here: withdrawing moves this card into
-      // another section, which remounts it, and a message that cannot survive
-      // the thing that triggers it is not a message. The page reads the slug
-      // back off the query string and checks it really is one of theirs.
-      router.replace(
-        `/me/events?withdrew=${encodeURIComponent(row.slug)}${
-          result.data.promoted > 0 ? "&promoted=1" : ""
-        }`
-      );
-      router.refresh();
+      setAsking(null);
+      leave(result.data.promoted > 0);
     } catch {
       setProblem("Could not reach the server, so nothing changed.");
     } finally {
@@ -332,15 +361,23 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
               <ChoiceChip
                 selected={confirmation === "out"}
                 disabled={busy}
-                onClick={() => void saveConfirmation("out")}
+                onClick={() => {
+                  // From a seat this gives the seat up (UC-13 5a), so it asks
+                  // first, through the dialog that already explains the cost.
+                  if (row.status === "accepted") setAsking("not_coming");
+                  else void saveConfirmation("out");
+                }}
               >
                 I can&apos;t make it
               </ChoiceChip>
             </ChoiceRow>
 
             <p className="text-12 leading-relaxed text-muted">
-              Saying you cannot make it is not the same as withdrawing — it tells the admin,
-              and keeps your place until they decide what to do about it.
+              {row.status === "accepted"
+                ? freesASeat
+                  ? `Saying you cannot make it frees your seat — the first of the ${plural(row.seats.waitlisted, "person", "people")} waiting takes it straight away.`
+                  : "Saying you cannot make it frees your seat. You can apply again while signups are open, and your answers are kept."
+                : "This just tells the organisers. You keep your place in the queue either way."}
             </p>
           </section>
         )}
@@ -348,7 +385,12 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
         {/* --- Withdraw -------------------------------------------- */}
         {editable && (
           <div className="flex flex-wrap items-center gap-4 border-t border-hair pt-4">
-            <Button variant="flare" size="sm" disabled={busy} onClick={() => setAsking(true)}>
+            <Button
+              variant="flare"
+              size="sm"
+              disabled={busy}
+              onClick={() => setAsking("withdraw")}
+            >
               Withdraw
             </Button>
             <p className="min-w-0 flex-1 text-12 leading-relaxed text-muted">
@@ -365,18 +407,31 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
       </div>
 
       <Modal
-        open={asking}
-        onClose={() => setAsking(false)}
+        open={asking !== null}
+        onClose={() => setAsking(null)}
         eyebrow={row.title}
-        title="Withdraw from this event?"
+        title={
+          asking === "not_coming" ? "Give up your seat?" : "Withdraw from this event?"
+        }
         size="sm"
         footer={
           <>
-            <Button size="sm" onClick={() => setAsking(false)} disabled={busy}>
+            <Button size="sm" onClick={() => setAsking(null)} disabled={busy}>
               Keep my place
             </Button>
-            <Button variant="flare" size="sm" onClick={() => void withdraw()} disabled={busy}>
-              {busy ? "Withdrawing…" : "Yes, withdraw"}
+            <Button
+              variant="flare"
+              size="sm"
+              onClick={() =>
+                asking === "not_coming" ? void saveConfirmation("out") : void withdraw()
+              }
+              disabled={busy}
+            >
+              {busy
+                ? "Saving…"
+                : asking === "not_coming"
+                  ? "Yes, I can't make it"
+                  : "Yes, withdraw"}
             </Button>
           </>
         }

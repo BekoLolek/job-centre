@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { type Database, type EventStatus, auditLog, events } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
-import { addHost } from "@/lib/hosting";
+import { type TestDatabase, freshDatabase, makeHost, makeUser } from "@/db/__tests__/helpers";
 
 /*
  * UC-09 through the status control, for real against an in-memory Postgres.
@@ -84,7 +83,7 @@ async function eventIn(status: EventStatus): Promise<string> {
     .insert(events)
     .values({ slug: `status-${counter}`, title: `Status ${counter}`, status })
     .returning({ id: events.id });
-  await addHost(event.id, hostId, null, db);
+  await makeHost(db, event.id, hostId);
   return event.id;
 }
 

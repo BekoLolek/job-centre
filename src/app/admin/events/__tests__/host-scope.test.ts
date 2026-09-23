@@ -1,9 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { type Database, applications, auditLog, events, matchGames, matches, teams } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { type TestDatabase, freshDatabase, makeHost, makeUser } from "@/db/__tests__/helpers";
 import { generateMatches, matchIdsFor, setStages } from "@/lib/format";
-import { addHost } from "@/lib/hosting";
 
 /*
  * The actions run for real against an in-memory Postgres. Only what cannot run
@@ -106,7 +105,7 @@ beforeAll(async () => {
   a = await boardEvent();
   b = await boardEvent();
   hostOfA = await makeUser(db);
-  await addHost(a.eventId, hostOfA, null, db);
+  await makeHost(db, a.eventId, hostOfA);
 });
 
 beforeEach(() => {

@@ -23,7 +23,7 @@
  */
 
 import { revalidatePath } from "next/cache";
-import type { AvailabilityState, ConfirmationState } from "@/db/schema";
+import type { ApplicationStatus, AvailabilityState, ConfirmationState } from "@/db/schema";
 import {
   type EventResult,
   getMyApplications,
@@ -31,7 +31,28 @@ import {
   setConfirmation,
   withdrawApplication,
 } from "@/lib/events";
+import { notifyApplicationDecided } from "@/lib/notify-events";
 import { requireUser } from "@/lib/session-guards";
+
+/**
+ * Tell everyone a freed seat let in (R-55, R-100).
+ *
+ * The member who freed it needs no telling — they are the one who did it — so
+ * "notify both parties" comes out one-sided on this side of the boundary. The
+ * other side, a manager's decision, is in `src/app/admin/events/actions.ts` and
+ * tells the applicant too.
+ *
+ * Fire-and-forget by construction (`notify-events.ts` defers), so a promotion
+ * cannot be undone by a notification that could not be written.
+ */
+function tellThePromoted(
+  eventId: string,
+  promoted: ReadonlyArray<{ userId: string }>
+): void {
+  for (const row of promoted) {
+    if (row.userId) notifyApplicationDecided(eventId, row.userId, "accepted");
+  }
+}
 
 /** Everything a member touches changes these four surfaces. */
 function refresh(slug?: string): void {
@@ -68,18 +89,45 @@ export async function setMyAvailabilityAction(
   return result;
 }
 
+export type ConfirmationOutcome = {
+  state: ConfirmationState;
+  /** Where the application stands now — `withdrawn` when the seat was given up. */
+  status: ApplicationStatus;
+  /** How many the freed seat let in (UC-13 5a). */
+  promoted: number;
+};
+
+/**
+ * Answer "still coming?" — and, for "no" from somebody holding a seat, give the
+ * seat up (UC-13 5a).
+ *
+ * The status comes back because the answer can change it: the card has to stop
+ * calling this application accepted the moment it is not.
+ */
 export async function setMyConfirmationAction(
   applicationId: string,
   state: ConfirmationState
-): Promise<EventResult<{ state: ConfirmationState; confirmedAt: Date }>> {
+): Promise<EventResult<ConfirmationOutcome>> {
   const user = await requireUser();
 
   const application = await ownApplication(user.id, applicationId);
   if (!application) return { ok: false, error: "That is not one of your applications." };
 
   const result = await setConfirmation(applicationId, state);
-  if (result.ok) refresh(application.event.slug);
-  return result;
+  if (!result.ok) return result;
+
+  tellThePromoted(application.event.id, result.data.promoted);
+  refresh(application.event.slug);
+  revalidatePath(`/admin/events/${application.event.id}`);
+
+  return {
+    ok: true,
+    data: {
+      state: result.data.state,
+      status: result.data.status,
+      promoted: result.data.promoted.length,
+    },
+  };
 }
 
 export type WithdrawOutcome = {
@@ -104,6 +152,8 @@ export async function withdrawFromEventAction(
 
   const result = await withdrawApplication(eventId, user.id);
   if (!result.ok) return result;
+
+  tellThePromoted(eventId, result.data.promoted);
 
   refresh(slug);
   revalidatePath(`/admin/events/${eventId}`);

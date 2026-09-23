@@ -54,17 +54,24 @@ import {
  *
  * ## Two things this screen refuses to do quietly
  *
- * **It never promotes behind your back.** `setApplicationStatus` takes
- * `promote` and it is off by default: an admin declining somebody is choosing
- * who is in the event, and a promotion they did not ask for is a surprise. So a
- * decision that frees a seat comes back with `seatsLeft`, and the screen offers
- * the promotion by name — "a seat is free, X is next" — rather than acting.
- * (A member *withdrawing* is the other case, and that promotes on its own,
- * because nobody is choosing.)
+ * **It says who a freed seat let in.** UC-14 6 is not a choice the manager
+ * makes any more: declining or queueing somebody who held a seat promotes the
+ * front of the queue, in the same transaction, and tells them both. This screen
+ * used to *offer* that promotion instead, which meant an admin who closed the
+ * banner left a seat empty with somebody queueing for it. So the promotion has
+ * already happened by the time the banner appears, and the banner names who.
  *
  * **It never hides somebody who is below the bar.** §8.3's thresholds are
  * guidance; the row says "below Platinum III" and the Accept button still
  * works, which is the admin override the plan insists must exist.
+ *
+ * ## The over-cap question is the server's, not this screen's
+ *
+ * Accepting past the cap (UC-14 3a) is refused the first time, with `confirm`
+ * on the refusal, and this screen turns that into the ask. It is written that
+ * way round on purpose: `decideApplicationAction` is a public POST endpoint, so
+ * a confirmation that only existed here would be one a direct call skips. What
+ * is here is the wording; what is enforced is in `src/lib/events.ts`.
  */
 
 type Filter = "all" | ApplicationStatus;
@@ -80,11 +87,12 @@ const FILTERS: ReadonlyArray<{ value: Filter; label: string }> = [
   { value: "withdrawn", label: "Withdrew" },
 ];
 
-/** A promotion the admin has been offered but not yet taken. */
-type Offer = {
-  applicationId: string;
+/** An accept the server has refused once, pending the manager's second ask. */
+type OverCapAsk = {
+  row: ApplicantView;
   name: string;
-  seatsLeft: number;
+  capacity: number;
+  accepted: number;
 };
 
 export default function ApplicantsTab({
@@ -100,7 +108,8 @@ export default function ApplicantsTab({
   const [openId, setOpenId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [offer, setOffer] = useState<Offer | null>(null);
+  const [ask, setAsk] = useState<OverCapAsk | null>(null);
+  const [moved, setMoved] = useState<string | null>(null);
   const [overCapacity, setOverCapacity] = useState(false);
 
   const nameOf = (row: ApplicantView) =>
@@ -111,44 +120,49 @@ export default function ApplicantsTab({
 
   const shown = filter === "all" ? applicants : applicants.filter((row) => row.status === filter);
 
-  /** Who a freed seat would let in: the front of the queue, minus whoever just moved. */
-  const frontOfQueue = (exceptId: string): ApplicantView | null =>
-    applicants
-      .filter((row) => row.status === "waitlisted" && row.id !== exceptId)
-      .sort((a, b) => (a.waitlistPosition ?? 0) - (b.waitlistPosition ?? 0))[0] ?? null;
+  /** Who this decision would move up, for the sentence afterwards. */
+  const nameOfId = (applicationId: string): string => {
+    const row = applicants.find((entry) => entry.id === applicationId);
+    return row ? nameOf(row) : "somebody from the queue";
+  };
 
   const decide = async (
     row: ApplicantView,
     status: ApplicationDecision,
-    options: { promote?: boolean } = {}
+    options: { confirmOverCapacity?: boolean } = {}
   ) => {
     setBusyId(row.id);
     setError(null);
-    setOffer(null);
+    setAsk(null);
+    setMoved(null);
     try {
       const result = await decideApplicationAction(row.id, status, {
-        promote: options.promote,
+        confirmOverCapacity: options.confirmOverCapacity,
       });
       if (!result.ok) {
+        // UC-14 3a: not a no, a question. Nothing has been written yet.
+        if (result.confirm) {
+          setAsk({
+            row,
+            name: nameOf(row),
+            capacity: result.confirm.capacity,
+            accepted: result.confirm.accepted,
+          });
+          return;
+        }
         setError(result.error);
         return;
       }
 
       setOverCapacity(result.data.overCapacity);
 
-      // A seat opened and somebody is queueing for it. Say so; do not act.
-      const next = frontOfQueue(row.id);
-      if (
-        !options.promote &&
-        next &&
-        result.data.seatsLeft !== null &&
-        result.data.seatsLeft > 0
-      ) {
-        setOffer({
-          applicationId: next.id,
-          name: nameOf(next),
-          seatsLeft: result.data.seatsLeft,
-        });
+      // UC-14 6: the seat has already gone to the front of the queue. Report it.
+      if (result.data.promoted.length > 0) {
+        setMoved(
+          result.data.promoted.length === 1
+            ? `${nameOfId(result.data.promoted[0].id)} moved off the queue into the free seat.`
+            : `${plural(result.data.promoted.length, "person", "people")} moved off the queue into the free seats.`
+        );
       }
 
       router.refresh();
@@ -157,14 +171,6 @@ export default function ApplicantsTab({
     } finally {
       setBusyId(null);
     }
-  };
-
-  const takeOffer = async () => {
-    if (!offer) return;
-    const row = applicants.find((entry) => entry.id === offer.applicationId);
-    setOffer(null);
-    if (!row) return;
-    await decide(row, "accepted", { promote: true });
   };
 
   return (
@@ -179,22 +185,33 @@ export default function ApplicantsTab({
         </Alert>
       )}
 
-      {offer && (
+      {moved && (
         <Alert tone="success">
+          <span className="block font-medium">The seat went to the next in line</span>
+          <span className="mt-1 block opacity-90">{moved}</span>
+        </Alert>
+      )}
+
+      {ask && (
+        <Alert tone="union">
           <span className="block font-medium">
-            {plural(offer.seatsLeft, "seat")} free ·{" "}
-            {plural(event.seats.waitlisted, "person", "people")} queueing
+            That would put this event over its cap of {ask.capacity}
           </span>
           <span className="mt-1 block opacity-90">
-            <span className="text-chalk">{offer.name}</span> is at the front of the queue.
-            Nobody has been moved.
+            {ask.accepted} already hold a seat. Accepting{" "}
+            <span className="text-chalk">{ask.name}</span> makes it {ask.accepted + 1}. The cap
+            stays where it is — nothing has been changed yet.
           </span>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" variant="union" onClick={() => void takeOffer()}>
-              Promote {offer.name}
+            <Button
+              size="sm"
+              variant="union"
+              onClick={() => void decide(ask.row, "accepted", { confirmOverCapacity: true })}
+            >
+              Accept anyway
             </Button>
-            <Button size="sm" onClick={() => setOffer(null)}>
-              Leave the queue alone
+            <Button size="sm" onClick={() => setAsk(null)}>
+              Leave the cap alone
             </Button>
           </span>
         </Alert>

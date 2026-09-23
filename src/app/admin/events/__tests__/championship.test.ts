@@ -1,8 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { type Database, applications, auditLog, championships, events } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
-import { addHost } from "@/lib/hosting";
+import { type TestDatabase, freshDatabase, makeHost, makeUser } from "@/db/__tests__/helpers";
 
 /*
  * UC-32 through the event editor's Championship section. Mocked as
@@ -86,7 +85,7 @@ async function anEvent(title = "Rivals night", hosted = true): Promise<string> {
     .insert(events)
     .values({ slug: `counts-event-${counter}`, title })
     .returning({ id: events.id });
-  if (hosted) await addHost(row.id, hostId, null, db);
+  if (hosted) await makeHost(db, row.id, hostId);
   return row.id;
 }
 

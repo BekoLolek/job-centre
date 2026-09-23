@@ -169,6 +169,33 @@ function writingAfter(between: () => Promise<unknown>): Database {
   });
 }
 
+/**
+ * This file's database, except that the first transaction it opens runs
+ * `between` to completion first -- `committingAfter` in
+ * `championship-results.test.ts` and `admin-users.test.ts`, for the window
+ * between a seat freeing and the promotion that fills it.
+ *
+ * Sequenced rather than raced. Two seats freeing at once is not a thing a timer
+ * can be trusted to reproduce, and a test that had to *win* a race to see the
+ * bug would pass by luck on the days it did not. This pins the interleave
+ * exactly: everything the outer call could have read before it opened its
+ * transaction is stale, because the inner one has already committed.
+ */
+function committingAfter(between: () => Promise<unknown>): Database {
+  let pending: (() => Promise<unknown>) | null = between;
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property !== "transaction") return Reflect.get(target, property, receiver);
+      return async (run: Parameters<Database["transaction"]>[0]) => {
+        const first = pending;
+        pending = null;
+        if (first) await first();
+        return target.transaction(run);
+      };
+    },
+  });
+}
+
 async function setProfileValue(userId: string, fieldId: string, value: unknown): Promise<void> {
   await db
     .insert(profileValues)
@@ -1188,6 +1215,91 @@ describe("the waitlist", () => {
     });
   });
 
+  /**
+   * Two seats freeing, one after the other, with the second decision's caller
+   * having read the world before the first one committed (R-55, UC-13 3a).
+   *
+   * This is the bug the one `freeSeat` rule exists to make impossible. Compute
+   * a promotion from rows read before the other seat freed and the arithmetic
+   * comes out twice on the same person: C is promoted by the first withdrawal
+   * and, on a stale read, is still the front of the queue for the second -- so
+   * C is "promoted" again, the write is a no-op, and D is left queueing at #1
+   * with an empty seat in front of them. Nobody is double-booked; somebody is
+   * simply never let in, which is the half of it that goes unnoticed.
+   *
+   * So the assertion is both halves: each freed seat promoted a *different*
+   * person, and nobody was skipped.
+   */
+  it("gives two seats freeing at once to two different people, skipping nobody", async () => {
+    const event = await openEvent({ capacity: 2 });
+    const [a, b, c, d] = [
+      await makeUser(db),
+      await makeUser(db),
+      await makeUser(db),
+      await makeUser(db),
+    ];
+    expectOk(await applyToEvent(event.id, a, { now: NOW }, db));
+    expectOk(await applyToEvent(event.id, b, { now: hours(1) }, db));
+    expectOk(await applyToEvent(event.id, c, { now: hours(2) }, db));
+    expectOk(await applyToEvent(event.id, d, { now: hours(3) }, db));
+
+    // B withdraws and commits; only then does A's withdrawal open its own
+    // transaction. A's promotion has to be decided from what B left behind.
+    const outer = expectOk(
+      await withdrawApplication(
+        event.id,
+        a,
+        committingAfter(() => withdrawApplication(event.id, b, db))
+      )
+    );
+
+    expect(outer.promoted.map((row) => row.userId)).toEqual([d]);
+    expect(await queueFor(event.id)).toEqual({
+      [a]: ["withdrawn", null],
+      [b]: ["withdrawn", null],
+      [c]: ["accepted", null],
+      [d]: ["accepted", null],
+    });
+  });
+
+  // The same interleave through the manager's door (UC-14 6). A decline and a
+  // withdrawal free two seats between them, and the two promotions must not
+  // land on the same person either.
+  it("does not promote the same person for a seat somebody else has already freed", async () => {
+    const event = await openEvent({ capacity: 2 });
+    const [a, b, c, d] = [
+      await makeUser(db),
+      await makeUser(db),
+      await makeUser(db),
+      await makeUser(db),
+    ];
+    expectOk(await applyToEvent(event.id, a, { now: NOW }, db));
+    expectOk(await applyToEvent(event.id, b, { now: hours(1) }, db));
+    expectOk(await applyToEvent(event.id, c, { now: hours(2) }, db));
+    expectOk(await applyToEvent(event.id, d, { now: hours(3) }, db));
+
+    const rows = await rowsFor(event.id);
+    const holder = rows.find((row) => row.userId === a);
+
+    const outer = expectOk(
+      await setApplicationStatus(
+        holder?.id ?? "",
+        "declined",
+        { now: NOW },
+        committingAfter(() => withdrawApplication(event.id, b, db))
+      )
+    );
+
+    expect(outer.promoted.map((row) => row.userId)).toEqual([d]);
+    expect(outer.seats.accepted).toBe(2);
+    expect(await queueFor(event.id)).toEqual({
+      [a]: ["declined", null],
+      [b]: ["withdrawn", null],
+      [c]: ["accepted", null],
+      [d]: ["accepted", null],
+    });
+  });
+
   it("withdrawing twice says withdrawn rather than failing", async () => {
     const { event, seated } = await queuedEvent();
     expectOk(await withdrawApplication(event.id, seated, db));
@@ -1358,7 +1470,11 @@ describe("setApplicationStatus", () => {
     });
   });
 
-  it("declining somebody who held a seat still promotes nobody on its own", async () => {
+  // UC-14 5-6: "Manager declines another. System frees their seat, promotes the
+  // next waitlisted, notifies both." Promoting used to be an option the screen
+  // had to remember to pass, and an admin who closed the banner left the seat
+  // empty with two people queueing for it. It is not an option any more.
+  it("declining somebody who held a seat gives it to the front of the queue", async () => {
     const { event, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const holder = rows.find((row) => row.userId === seated);
@@ -1367,26 +1483,8 @@ describe("setApplicationStatus", () => {
       await setApplicationStatus(holder?.id ?? "", "declined", { now: NOW }, db)
     );
 
-    // The seat is free and the admin can see it, but who fills it is their call.
-    expect(result.promoted).toEqual([]);
-    expect(result.seats.seatsLeft).toBe(1);
-    expect(await queueFor(event.id)).toEqual({
-      [seated]: ["declined", null],
-      [first]: ["waitlisted", 1],
-      [second]: ["waitlisted", 2],
-    });
-  });
-
-  it("promotes when the admin asks it to", async () => {
-    const { event, seated, first, second } = await queuedEvent();
-    const rows = await rowsFor(event.id);
-    const holder = rows.find((row) => row.userId === seated);
-
-    const result = expectOk(
-      await setApplicationStatus(holder?.id ?? "", "declined", { now: NOW, promote: true }, db)
-    );
-
     expect(result.promoted.map((row) => row.userId)).toEqual([first]);
+    expect(result.seats.seatsLeft).toBe(0);
     expect(await queueFor(event.id)).toEqual({
       [seated]: ["declined", null],
       [first]: ["accepted", null],
@@ -1394,32 +1492,143 @@ describe("setApplicationStatus", () => {
     });
   });
 
-  it("lets an admin accept past the capacity, and says that is what happened", async () => {
-    const { event, first } = await queuedEvent();
-    const rows = await rowsFor(event.id);
-    const queued = rows.find((row) => row.userId === first);
-
-    const result = expectOk(
-      await setApplicationStatus(queued?.id ?? "", "accepted", { now: NOW }, db)
-    );
-
-    expect(result.overCapacity).toBe(true);
-    expect(result.seats.accepted).toBe(2);
-    expect(result.application.waitlistPosition).toBeNull();
-  });
-
-  it("puts somebody back on the queue at the end", async () => {
+  // UC-14 5-6 by the other door: putting a seated applicant back on the queue
+  // frees exactly the same seat (docs/diagrams/application-state.md,
+  // "Accepted --> Waitlisted"), so it fills it the same way -- and the person
+  // who gave it up goes to the back of the queue, not the front.
+  it("queueing somebody who held a seat gives it to the front of the queue", async () => {
     const { event, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const holder = rows.find((row) => row.userId === seated);
 
-    expectOk(await setApplicationStatus(holder?.id ?? "", "waitlisted", { now: NOW }, db));
+    const result = expectOk(
+      await setApplicationStatus(holder?.id ?? "", "waitlisted", { now: NOW }, db)
+    );
 
+    expect(result.promoted.map((row) => row.userId)).toEqual([first]);
     expect(await queueFor(event.id)).toEqual({
-      [seated]: ["waitlisted", 3],
-      [first]: ["waitlisted", 1],
-      [second]: ["waitlisted", 2],
+      [first]: ["accepted", null],
+      [second]: ["waitlisted", 1],
+      [seated]: ["waitlisted", 2],
     });
+  });
+
+  // The seat somebody is put back on the queue for is not a seat they may be
+  // handed straight back. Without anybody else queueing there is a free seat
+  // and a queue of exactly one -- them -- so a promotion computed over
+  // everybody undoes the manager's decision inside the transaction that made
+  // it, and the applicant ends the call accepted again.
+  it("leaves the only seated applicant on the queue when a manager puts them there", async () => {
+    const event = await openEvent({ capacity: 1 });
+    const userId = await makeUser(db);
+    const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    const result = expectOk(
+      await setApplicationStatus(application.id, "waitlisted", { now: NOW }, db)
+    );
+
+    expect(result.promoted).toEqual([]);
+    expect(await queueFor(event.id)).toEqual({ [userId]: ["waitlisted", 1] });
+  });
+
+  // Same rule, and the case that makes it load-bearing: an uncapped event has
+  // no seat to run out of, so `promoteFromWaitlist` promotes the whole queue
+  // there. Everybody except the person who just gave the seat up.
+  it("does not hand an uncapped event's queue back the seat somebody just left", async () => {
+    const event = await openEvent({ capacity: null });
+    const seated = await makeUser(db);
+    const other = await makeUser(db);
+    const first = expectOk(await applyToEvent(event.id, seated, { now: NOW }, db));
+    const second = expectOk(await applyToEvent(event.id, other, { now: hours(1) }, db));
+    expectOk(await setApplicationStatus(second.id, "waitlisted", { now: NOW }, db));
+
+    const result = expectOk(
+      await setApplicationStatus(first.id, "waitlisted", { now: hours(2) }, db)
+    );
+
+    expect(result.promoted.map((row) => row.userId)).toEqual([other]);
+    expect(await queueFor(event.id)).toEqual({
+      [other]: ["accepted", null],
+      [seated]: ["waitlisted", 1],
+    });
+  });
+
+  // UC-14 3a: "Accepting goes over the cap - System asks the manager to confirm
+  // going over; seat cap is not changed."
+  it("refuses an accept that would go over the cap, and says what it would cost", async () => {
+    const { event, first } = await queuedEvent();
+    const rows = await rowsFor(event.id);
+    const queued = rows.find((row) => row.userId === first);
+
+    const refusal = await setApplicationStatus(queued?.id ?? "", "accepted", { now: NOW }, db);
+
+    expect(expectFail(refusal).error).toMatch(/over the cap/i);
+    expect(refusal.ok === false && refusal.confirm).toEqual({
+      kind: "over_capacity",
+      capacity: 1,
+      accepted: 1,
+    });
+
+    // The refusal is a question, not a rollback: nothing was written at all.
+    expect((await rowsFor(event.id)).find((row) => row.userId === first)?.status).toBe(
+      "waitlisted"
+    );
+  });
+
+  // The confirmation is the server's, which is the whole reason it is not a
+  // dialog: this call never went near the screen that asks.
+  it("lets the confirmed second call through, and leaves the cap where it was", async () => {
+    const { event, first } = await queuedEvent();
+    const rows = await rowsFor(event.id);
+    const queued = rows.find((row) => row.userId === first);
+
+    expectFail(await setApplicationStatus(queued?.id ?? "", "accepted", { now: NOW }, db));
+    const result = expectOk(
+      await setApplicationStatus(
+        queued?.id ?? "",
+        "accepted",
+        { now: NOW, confirmOverCapacity: true },
+        db
+      )
+    );
+
+    expect(result.overCapacity).toBe(true);
+    expect(result.seats.accepted).toBe(2);
+    expect(result.seats.capacity).toBe(1);
+    expect(result.application.waitlistPosition).toBeNull();
+
+    const [row] = await db.select().from(events).where(eq(events.id, event.id));
+    expect(row.capacity).toBe(1);
+  });
+
+  // Re-affirming a status is not an accept. A manager saving a decision on
+  // somebody already in must not be asked to confirm a seat they are sitting in.
+  it("does not ask when the applicant already holds the seat", async () => {
+    const { event, seated } = await queuedEvent();
+    const rows = await rowsFor(event.id);
+    const holder = rows.find((row) => row.userId === seated);
+
+    const result = expectOk(
+      await setApplicationStatus(holder?.id ?? "", "accepted", { now: NOW }, db)
+    );
+    expect(result.seats.accepted).toBe(1);
+    expect(result.overCapacity).toBe(false);
+  });
+
+  // ...and neither is an accept into a seat that is really there.
+  it("does not ask when there is a spare seat", async () => {
+    const event = await openEvent({ capacity: 2 });
+    const seated = await makeUser(db);
+    const other = await makeUser(db);
+    expectOk(await applyToEvent(event.id, seated, { now: NOW }, db));
+    const application = expectOk(await applyToEvent(event.id, other, { now: hours(1) }, db));
+    expectOk(await setApplicationStatus(application.id, "waitlisted", { now: NOW }, db));
+
+    const result = expectOk(
+      await setApplicationStatus(application.id, "accepted", { now: hours(2) }, db)
+    );
+    expect(result.overCapacity).toBe(false);
+    expect(result.seats.accepted).toBe(2);
   });
 
   it("records who decided, when, and any note", async () => {
@@ -1513,15 +1722,48 @@ describe("setAvailability", () => {
 });
 
 describe("setConfirmation", () => {
-  it("records in, and lets it be changed to out", async () => {
+  it("records in, and keeps the seat", async () => {
     const event = await openEvent();
     const userId = await makeUser(db);
     const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
 
-    expect(expectOk(await setConfirmation(application.id, "in", db)).state).toBe("in");
-    expect(expectOk(await setConfirmation(application.id, "out", db)).state).toBe("out");
+    const result = expectOk(await setConfirmation(application.id, "in", db));
+    expect(result.state).toBe("in");
+    expect(result.status).toBe("accepted");
 
     const [view] = await getApplicationsForEvent(event.id, db);
+    expect(view.confirmation).toBe("in");
+  });
+
+  // UC-13 5a: "Applicant says they are not coming - System frees their seat,
+  // promoting as in 3a." docs/diagrams/application-state.md draws it as one
+  // edge with withdrawing, so this is the same departure by another name.
+  it("frees the seat when somebody in it says they are not coming", async () => {
+    const { event, seated, first, second } = await queuedEvent();
+    const rows = await rowsFor(event.id);
+    const holder = rows.find((row) => row.userId === seated);
+
+    const result = expectOk(await setConfirmation(holder?.id ?? "", "out", db));
+
+    expect(result.state).toBe("out");
+    expect(result.status).toBe("withdrawn");
+    expect(result.promoted.map((row) => row.userId)).toEqual([first]);
+    expect(await queueFor(event.id)).toEqual({
+      [seated]: ["withdrawn", null],
+      [first]: ["accepted", null],
+      [second]: ["waitlisted", 1],
+    });
+  });
+
+  it("keeps the answer on the row it freed, so the admin can see why", async () => {
+    const event = await openEvent({ capacity: 1 });
+    const userId = await makeUser(db);
+    const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    expectOk(await setConfirmation(application.id, "out", db));
+
+    const [view] = await getApplicationsForEvent(event.id, db);
+    expect(view.status).toBe("withdrawn");
     expect(view.confirmation).toBe("out");
   });
 
@@ -1530,6 +1772,24 @@ describe("setConfirmation", () => {
     const rows = await rowsFor(event.id);
     const queued = rows.find((row) => row.userId === first);
     expect(expectOk(await setConfirmation(queued?.id ?? "", "in", db)).state).toBe("in");
+  });
+
+  // There is no seat to give up from the queue, the state diagram has no edge
+  // for it, and one tap must not cost somebody a place they may still want.
+  it("leaves a waitlisted member in the queue when they say they cannot make it", async () => {
+    const { event, seated, first, second } = await queuedEvent();
+    const rows = await rowsFor(event.id);
+    const queued = rows.find((row) => row.userId === first);
+
+    const result = expectOk(await setConfirmation(queued?.id ?? "", "out", db));
+
+    expect(result.status).toBe("waitlisted");
+    expect(result.promoted).toEqual([]);
+    expect(await queueFor(event.id)).toEqual({
+      [seated]: ["accepted", null],
+      [first]: ["waitlisted", 1],
+      [second]: ["waitlisted", 2],
+    });
   });
 
   it("refuses to confirm a withdrawn application", async () => {

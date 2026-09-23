@@ -298,9 +298,23 @@ const WRITES: Write[] = [
     false,
     (f) => setCaptains(f.eventId, [{ teamId: f.teamIds[1], userId: f.members[4] }], db),
   ],
-  ["setDraftConfig", false, (f) => setDraftConfig(f.eventId, { defaultBalance: 10 }, db)],
+  /*
+   * These two ask for no change at all, which is deliberate.
+   *
+   * This fixture has awarded a lot, and UC-16 1a and E6a fix a draft's rules
+   * and its pools from the moment the first lot opens — a rule that survives a
+   * reopen, because reopening an event does not un-open the lot the room
+   * watched. So a *changing* call is refused after the reopen for a reason that
+   * has nothing to do with the archive lock, and this table is about the
+   * archive lock.
+   *
+   * `lockRefusal` is asked before either of those checks in both functions, so
+   * an identical re-save still proves what the row is here to prove: refused
+   * with `REFUSAL` while the event is finished, through once it is live again.
+   */
+  ["setDraftConfig", false, (f) => setDraftConfig(f.eventId, {}, db)],
   ["setDraftPool", false, (f) => setDraftPool(f.eventId, { userIds: [f.members[3]] }, db)],
-  ["setPoolKind", false, (f) => setPoolKind(f.eventId, f.members[3], "reserve", db)],
+  ["setPoolKind", false, (f) => setPoolKind(f.eventId, f.members[3], "main", db)],
   ["openLot", false, (f) => openLot(f.eventId, { userId: f.members[3] }, db)],
   ["placeBid", true, (f) => placeBid(f.openLotId ?? "", f.teamIds[0], 50, {}, db)],
   ["clearBid", true, (f) => clearBid(f.openLotId ?? "", f.teamIds[1], db)],
