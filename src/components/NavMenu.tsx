@@ -125,15 +125,30 @@ export default function NavMenu({
             A dot, not a number. The count is on the notifications page; what
             the header has to answer is "is there anything", and a badge that
             says 14 makes people stop reading it at about four.
+
+            It carries a role because a label needs something to stick to. A
+            bare span is `role=generic`, which ARIA 1.2 prohibits naming, so an
+            `aria-label` on one is free to be dropped and browsers differ on
+            whether it is — the count either reached a reader or did not,
+            depending on what they used. A dot that means something is a
+            graphic with a name, which is the role it wanted anyway.
           */}
           {unread > 0 && (
             <span
+              role="img"
               aria-label={`${unread} unread`}
               className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-ink bg-union"
             />
           )}
         </span>
-        <span className="hidden text-14 text-chalk/90 sm:block">{name}</span>
+        {/*
+          `sr-only` below `sm`, not `hidden`. The avatar beside it is decoration
+          and carries `aria-hidden` (plan Task 46), so this span is the only
+          thing naming the account button — and `hidden` is `display:none`,
+          which takes it out of the accessible tree too, leaving an unnamed
+          button on a phone. Hidden from the eye, kept for the ear.
+        */}
+        <span className="sr-only text-14 text-chalk/90 sm:not-sr-only sm:block">{name}</span>
         <svg
           viewBox="0 0 10 6"
           aria-hidden
