@@ -38,9 +38,38 @@ import {
  * forty people have answered it.
  *
  * Editing a question that already has answers goes through a second step:
- * `previewFieldEdit` says how many the change would invalidate, and nothing is
- * written until that number has been read and accepted.
+ * `previewFieldEdit` says how many stored answers the new definition will no
+ * longer read, and nothing is written until that number has been seen.
+ *
+ * **No answer is deleted by an edit** (UC-03 5a, R-09). `updateField` writes
+ * the field row and nothing else, so the warning below is about answers going
+ * *quiet*, not about answers going away — and putting the question back as it
+ * was brings every one of them back onto the form. The copy said the opposite
+ * until Task 47, which is the worse failure of the two: an admin who believes
+ * an edit destroys answers avoids retiring a question and deletes it instead.
  */
+
+/**
+ * What the admin is told when the new definition cannot read stored answers.
+ *
+ * Exported as a function of the count so a test can pin every word of it
+ * without driving the dialog into that state. Each clause is checked against
+ * `updateField`: the rows stay, `loadProfile` hands the member the question
+ * with a value its control cannot show, and restoring the old definition makes
+ * them readable again because nothing was thrown away in between.
+ */
+export function strandedAnswerNotice(count: number): { heading: string; body: string } {
+  const one = count === 1;
+  return {
+    heading: `${plural(count, "stored answer")} no longer fits this question`,
+    body:
+      `Nothing is deleted — editing a question never throws an answer away. ` +
+      `${one ? "The answer stays" : "The answers stay"} on the member's profile row, ` +
+      `but the question as you have now written it cannot show ${one ? "it" : "them"} ` +
+      `until ${one ? "that member answers" : "those members answer"} again. Putting the ` +
+      `question back the way it was makes ${one ? "it" : "them"} readable again.`,
+  };
+}
 
 export type QuestionDialogProps = {
   open: boolean;
@@ -73,8 +102,11 @@ export default function QuestionDialog({
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Set when the edit would clear answers: the second, deliberate click. */
-  const [confirmLoss, setConfirmLoss] = useState<number | null>(null);
+  /**
+   * How many stored answers the new definition would not read, once counted.
+   * Set means "the number is on screen"; saving again goes through with it.
+   */
+  const [stranded, setStranded] = useState<number | null>(null);
   const [previewValue, setPreviewValue] = useState<ProfileValue>(null);
 
   const info = fieldTypeInfo(type);
@@ -106,12 +138,14 @@ export default function QuestionDialog({
     setError(null);
     try {
       if (editing && field) {
-        // Count what this would destroy before destroying it. `force` is the
-        // second click, made with the number on screen.
+        // Count what this would strand before stranding it. `force` is the
+        // second click, made with the number on screen. Nothing here deletes:
+        // the number is how many answers the question stops being able to
+        // show, and the admin is owed it before the save rather than after.
         if (!force) {
           const impact = await previewFieldEditAction(field.id, input);
           if (impact.invalidated > 0) {
-            setConfirmLoss(impact.invalidated);
+            setStranded(impact.invalidated);
             return;
           }
         }
@@ -121,7 +155,7 @@ export default function QuestionDialog({
         const result = await createFieldAction(gameId, input);
         if (!result.ok) return setError(result.error);
       }
-      setConfirmLoss(null);
+      setStranded(null);
       onSaved();
       onClose();
     } catch {
@@ -155,20 +189,17 @@ export default function QuestionDialog({
     >
       {error && <Alert>{error}</Alert>}
 
-      {confirmLoss !== null && (
-        <Alert tone="flare">
-          <span className="block font-medium">
-            This change clears {plural(confirmLoss, "stored answer")}
-          </span>
+      {stranded !== null && (
+        <Alert tone="union">
+          <span className="block font-medium">{strandedAnswerNotice(stranded).heading}</span>
           <span className="mt-1 block opacity-90">
-            The new definition does not accept what those members already said, so those
-            answers would be removed. Nothing has been changed yet.
+            {strandedAnswerNotice(stranded).body}
           </span>
           <span className="mt-3 flex gap-2">
-            <Button size="sm" variant="flare" onClick={() => void save(true)} disabled={busy}>
-              Clear them and save
+            <Button size="sm" variant="union" onClick={() => void save(true)} disabled={busy}>
+              Save the change
             </Button>
-            <Button size="sm" onClick={() => setConfirmLoss(null)} disabled={busy}>
+            <Button size="sm" onClick={() => setStranded(null)} disabled={busy}>
               Leave it alone
             </Button>
           </span>
