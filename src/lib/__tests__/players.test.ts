@@ -10,7 +10,13 @@ import {
   setDraftPool,
   setTeams,
 } from "@/lib/draft";
-import { applyToEvent, createEvent, publishEvent, setApplicationStatus } from "@/lib/events";
+import {
+  applyToEvent,
+  createEvent,
+  publishEvent,
+  setApplicationStatus,
+  setEventDays,
+} from "@/lib/events";
 import {
   formatFor,
   generateMatches,
@@ -362,5 +368,94 @@ describe("what the profile refuses to show", () => {
     expect(profile.entries).toHaveLength(1);
     expect(JSON.stringify(profile)).not.toContain("my phone number");
     expect(JSON.stringify(profile)).not.toContain("Anything else?");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-05 2, R-24 — when each listed event ran                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A published event whose dates exist **only** on its `event_days` rows.
+ *
+ * Which is to say: an ordinary event. `createEvent` writes the day rows and
+ * nothing writes `events.starts_at` any more (R-24), so this is what every
+ * event created since looks like — and the assertion inside is here so a
+ * fixture can never quietly start supplying the column the profile is not
+ * allowed to read.
+ */
+async function eventRunningOn(title: string, dayStarts: readonly Date[]): Promise<string> {
+  counter += 1;
+  const event = unwrap(
+    await createEvent(
+      {
+        title: `${title} ${counter}`,
+        signupOpensAt: new Date("2000-01-01T00:00:00Z"),
+        // R-25: sign-ups close no later than the first day starts.
+        signupClosesAt: dayStarts[0],
+        days: dayStarts.map((startsAt) => ({ startsAt })),
+      },
+      db
+    )
+  );
+  unwrap(await publishEvent(event.id, db));
+
+  const [row] = await db.select().from(events).where(eq(events.id, event.id));
+  expect([row.startsAt, row.endsAt]).toEqual([null, null]);
+
+  return event.id;
+}
+
+async function profileOf(userId: string) {
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
+  return getPlayerProfile(user, db);
+}
+
+describe("when the profile says each event ran", () => {
+  it("takes the dates off the event's days, because the columns are empty", async () => {
+    const eventId = await eventRunningOn("Two nighter", [
+      new Date("2099-03-01T18:00:00Z"),
+      new Date("2099-03-02T18:00:00Z"),
+    ]);
+    const userId = await makeUser(db, { displayName: `Dated ${(counter += 1)}` });
+    unwrap(await applyToEvent(eventId, userId, {}, db));
+
+    const [entry] = (await profileOf(userId)).entries;
+
+    // First day's start and last day's — the same pair the event page prints.
+    expect(entry.event.startsAt).toEqual(new Date("2099-03-01T18:00:00Z"));
+    expect(entry.event.endsAt).toEqual(new Date("2099-03-02T18:00:00Z"));
+  });
+
+  it("orders by that date and still lists an event nobody has timed", async () => {
+    /*
+     * The order is derived too, so it cannot be an `order by` — the titles
+     * below are in a third order again, so an assertion that passed on the
+     * alphabetical one would not pass here.
+     */
+    counter += 1;
+    const userId = await makeUser(db, { displayName: `Ordered ${counter}` });
+
+    const march = await eventRunningOn("AAA March", [new Date("2099-03-01T18:00:00Z")]);
+    const july = await eventRunningOn("ZZZ July", [new Date("2099-07-01T18:00:00Z")]);
+    const undated = await eventRunningOn("MMM undated", [new Date("2099-05-01T18:00:00Z")]);
+    // A day whose time is still to be agreed — supported, not a gap (R-24).
+    unwrap(await setEventDays(undated, [{ startsAt: null }], db));
+
+    for (const eventId of [march, july, undated]) {
+      unwrap(await applyToEvent(eventId, userId, {}, db));
+    }
+
+    const { entries } = await profileOf(userId);
+
+    expect(entries).toHaveLength(3);
+    // Newest first; the event with no dated day last, because nobody has said
+    // it is the most recent thing this member did.
+    expect(entries.map((entry) => entry.event.startsAt)).toEqual([
+      new Date("2099-07-01T18:00:00Z"),
+      new Date("2099-03-01T18:00:00Z"),
+      null,
+    ]);
+    expect(entries.map((entry) => entry.event.endsAt)).toEqual([null, null, null]);
   });
 });

@@ -45,6 +45,7 @@ import {
   users,
 } from "@/db";
 import { placementsOf } from "./event-board";
+import { readDatesFor } from "./events";
 import { formatFor } from "./format";
 import { slugify, uniqueKey } from "./profile-fields";
 
@@ -337,6 +338,20 @@ export async function getPlayerByHandle(
  * read (§8.5) and is deliberately not a column, so there is nothing to look up.
  * A member with twenty events is twenty resolutions — comfortably fast, and the
  * page is `force-dynamic` anyway because everything else on the site is.
+ *
+ * ## When each event was: its days', not a column
+ *
+ * An event's dates are its `event_days` rows' (R-24) and there is no longer a
+ * `starts_at` to select, so the two queries below read neither date and
+ * `readDatesFor` answers for the whole set in one grouped query — not one read
+ * per event, which for a twenty-event profile would be twenty round trips.
+ *
+ * That also moves the order out of SQL, the same way `listEvents` had to: a
+ * derived date has no column for `order by` to name. The sort below was already
+ * the one that decided what the page shows (both queries fed one map, and the
+ * map was re-sorted), so the two `desc(events.starts_at)` clauses were dropped
+ * rather than replaced — nothing is left for them to order by, and nothing on
+ * the page changes. Newest first, an event with no dated day last (UC-05 2).
  */
 export async function getPlayerProfile(
   user: User,
@@ -352,8 +367,6 @@ export async function getPlayerProfile(
         title: events.title,
         type: events.type,
         status: events.status,
-        startsAt: events.startsAt,
-        endsAt: events.endsAt,
         createdAt: events.createdAt,
       })
       .from(applications)
@@ -365,7 +378,7 @@ export async function getPlayerProfile(
           inArray(events.status, LISTED_STATUSES)
         )
       )
-      .orderBy(desc(events.startsAt), desc(events.createdAt)),
+      .orderBy(desc(events.createdAt)),
 
     database
       .select({
@@ -378,16 +391,22 @@ export async function getPlayerProfile(
         slug: events.slug,
         title: events.title,
         type: events.type,
-        startsAt: events.startsAt,
-        endsAt: events.endsAt,
         createdAt: events.createdAt,
       })
       .from(teamMembers)
       .innerJoin(teams, eq(teamMembers.teamId, teams.id))
       .innerJoin(events, eq(teamMembers.eventId, events.id))
       .where(and(eq(teamMembers.userId, user.id), inArray(events.status, LISTED_STATUSES)))
-      .orderBy(desc(events.startsAt), asc(teams.sort)),
+      .orderBy(asc(teams.sort)),
   ]);
+
+  // When each of these events ran, in one query rather than one per event.
+  const dates = await readDatesFor(
+    database,
+    [...accepted.map((row) => row.id), ...memberships.map((row) => row.eventId)]
+  );
+  /** An event nobody has given a dated day yet — a supported state, not a gap. */
+  const undated = { startsAt: null, endsAt: null };
 
   // A roster row is the stronger claim: somebody can be on a team without an
   // application row surviving (an admin override, a late substitution), and
@@ -402,8 +421,7 @@ export async function getPlayerProfile(
         title: row.title,
         type: row.type,
         status: row.status,
-        startsAt: row.startsAt,
-        endsAt: row.endsAt,
+        ...(dates.get(row.id) ?? undated),
       },
       team: null,
       isCaptain: false,
@@ -421,8 +439,7 @@ export async function getPlayerProfile(
         title: row.title,
         type: row.type,
         status: row.status,
-        startsAt: row.startsAt,
-        endsAt: row.endsAt,
+        ...(dates.get(row.eventId) ?? undated),
       },
       team: { id: row.teamId, name: row.teamName },
       isCaptain: row.isCaptain,
@@ -446,6 +463,10 @@ export async function getPlayerProfile(
     })
   );
 
+  // Newest first, and — since the dates are derived — the only thing ordering
+  // the page. An undated event reads as the epoch, which in a descending sort
+  // puts it last: nobody has said when it is, so it is not the most recent
+  // thing this member did. Ties broken by title so the order is total.
   const entries = [...byEvent.values()].sort((a, b) => {
     const at = a.event.startsAt?.getTime() ?? 0;
     const bt = b.event.startsAt?.getTime() ?? 0;

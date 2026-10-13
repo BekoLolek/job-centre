@@ -72,6 +72,7 @@ import { type Movement, topOfTheTable } from "./championship-policy";
 import { seasonOfEvent, seasonPage } from "./championship-season";
 import { recordAudit } from "./audit";
 import { eventIdOfApplication, eventIdOfMatch } from "./event-scope";
+import { readDatesFor } from "./events";
 import { formatFor } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -435,15 +436,30 @@ async function noteFailure(
  * scoreline.
  */
 
-/** An event went public. */
+/**
+ * An event went public.
+ *
+ * The "Starts" field is the event's **derived** start — its first dated day's
+ * (R-24) — read with `readDatesFor` rather than off the event row. The two
+ * date columns are dead (see `events.startsAt` in `src/db/schema.ts`): nothing
+ * writes them any more, so on every event published from Task 12 on they are
+ * null, and `eventPublishedMessage` drops the field when it is. The channel
+ * message would then be missing the one fact a reader needs before deciding
+ * whether to apply (R-107 / UC-26 4).
+ *
+ * The extra read is the days, which is the only place the answer exists.
+ */
 export function announceEventPublished(eventId: string, database: Database = defaultDb): void {
   announceGathered(
     ["event_published"],
     async () => {
       const [event] = await database.select().from(events).where(eq(events.id, eventId)).limit(1);
       // Only ever announce something that is actually published — a status that
-      // moved on again between the click and the callback is not news.
+      // moved on again between the click and the callback is not news. Checked
+      // before the days are read, so nothing is read for a non-announcement.
       if (!event || event.status !== "published") return null;
+
+      const dates = await readDatesFor(database, [eventId]);
 
       return {
         kind: "event_published",
@@ -454,7 +470,7 @@ export function announceEventPublished(eventId: string, database: Database = def
           type: event.type,
           description: event.description,
           capacity: event.capacity,
-          startsAt: event.startsAt,
+          startsAt: dates.get(eventId)?.startsAt ?? null,
           signupClosesAt: event.signupClosesAt,
           origin: await announceOrigin(),
         }),

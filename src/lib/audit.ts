@@ -59,6 +59,8 @@ export const AUDIT_ACTIONS = {
   "event.status": "Status changed",
   "event.published": "Published",
   "event.reopened": "Reopened",
+  "event.basics": "Setup changed",
+  "event.entryRules": "Entry rules changed",
   "event.days": "Days changed",
   "event.questions": "Application form changed",
   "application.decided": "Application decided",

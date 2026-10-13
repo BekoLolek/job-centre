@@ -124,11 +124,15 @@ describe("applying", () => {
 
   it("tells a queued applicant where they are, and says so in the log", async () => {
     // UC-12 7a: seats full, so they are stored waitlisted with their position.
-    const event = await openEvent(1);
+    // Two seats, because that is the smallest cap R-26 allows, so filling them
+    // takes two people and the third is the one who queues.
+    const event = await openEvent(2);
     const seated = await makeUser(db, { displayName: "Early Eli" });
+    const alsoSeated = await makeUser(db, { displayName: "Prompt Pia" });
     const queued = await makeUser(db, { displayName: "Late Lena" });
 
     await applyAs(seated, event);
+    await applyAs(alsoSeated, event);
     sent.decided.mockClear();
     const result = await applyAs(queued, event);
 
@@ -137,8 +141,8 @@ describe("applying", () => {
     expect(sent.decided).toHaveBeenCalledWith(event.id, queued, "waitlisted");
 
     const audit = await auditFor(event.id);
-    expect(audit).toHaveLength(2);
-    expect(audit[1].summary).toMatch(/Late Lena applied to .* and joined the queue at number 1\./);
+    expect(audit).toHaveLength(3);
+    expect(audit[2].summary).toMatch(/Late Lena applied to .* and joined the queue at number 1\./);
   });
 
   it("logs an approval event's application but tells nobody yet", async () => {

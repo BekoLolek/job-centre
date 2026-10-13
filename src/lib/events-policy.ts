@@ -93,6 +93,278 @@ export function missingToPublish(event: PublishView): PublishRequirement[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* When an event runs — derived from its days (R-24)                  */
+/* ------------------------------------------------------------------ */
+
+/** A day as every rule below needs it: when it starts, and what it is called. */
+export type DayView = {
+  startsAt: Date | null;
+  /** UC-08 E3's label, used wherever the day is named. Absent is "Day N". */
+  label?: string | null;
+};
+
+/** The two instants an event has: when it starts and when it ends. */
+export type EventDates = {
+  startsAt: Date | null;
+  endsAt: Date | null;
+};
+
+/**
+ * "Day 2", or the label the manager gave it (UC-08 E3).
+ *
+ * A *trimmed* label, so a day labelled with spaces is still called "Day 2"
+ * rather than nothing at all. `daySequenceProblem` below names days with this,
+ * and so does the event page's day list, which is what makes a refusal
+ * ("Saturday starts before Friday") and the page agree about what a day is
+ * called. Three other components still have their own `label ?? …` copy, which
+ * is the weaker rule; porting them is docs/plan.md, Task 51.
+ */
+export function dayName(day: DayView, index: number): string {
+  const label = typeof day.label === "string" ? day.label.trim() : "";
+  return label === "" ? `Day ${index + 1}` : label;
+}
+
+/**
+ * When this event starts and ends: **its first day's start and its last
+ * day's** (R-24).
+ *
+ * There is no `starts_at` column to read any more, for the same reason there is
+ * no `applications_open` one: an event's dates are its days', and a copy on the
+ * event row is a second answer to one question that goes stale the moment a
+ * manager moves a day. Every screen that orders, filters or counts down to an
+ * event (R-40, R-41, UC-10 4, UC-11 2) reads this.
+ *
+ * Two deliberate details:
+ *
+ *  - **The earliest and latest dated day, not index 0 and index n.** With the
+ *    day list validated in order (`daySequenceProblem`) the two are the same
+ *    answer, so this costs nothing — but a row written before that rule
+ *    existed, or a day whose time is still to be agreed sitting between two
+ *    dated ones, must not be able to report an event that ends before it
+ *    starts. Undated days are simply not dates yet and are skipped.
+ *  - **One dated day means no end.** An event that runs for one evening has
+ *    nothing to put after an arrow; "19:00 → 19:00" is not a range, it is the
+ *    same instant printed twice. Everything that needs "when was this over"
+ *    already reads `endsAt ?? startsAt`, which gives the same answer either
+ *    way.
+ */
+export function eventDates(days: readonly DayView[]): EventDates {
+  const dated = days
+    .map((day) => day.startsAt)
+    .filter((startsAt): startsAt is Date => startsAt !== null)
+    .sort((a, b) => a.getTime() - b.getTime());
+
+  if (dated.length === 0) return { startsAt: null, endsAt: null };
+  return {
+    startsAt: dated[0],
+    endsAt: dated.length > 1 ? dated[dated.length - 1] : null,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Setting one up: what a save is refused for (UC-08 10, 10c)         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The fewest seats an event may be set up with (R-26, domain-model.md).
+ *
+ * Two, because one seat is not an event — it is a booking. A manager who wants
+ * to run something for one person does not need a seat cap, a waitlist or a
+ * promotion rule, and every one of those behaves strangely with a single seat:
+ * the first application fills the event and everybody else queues behind a seat
+ * that can only free if that one person pulls out.
+ *
+ * **Uncapped stays legal.** `null` is not "below two" — it is no limit at all,
+ * which is a real and supported setup (UC-08 E5 lists "no cap" as advice, not a
+ * blocker, and the local fixtures have an uncapped LAN in them). Only a *number*
+ * is held to the minimum.
+ *
+ * ## Why there is no database constraint to match
+ *
+ * `events_capacity_positive` still reads `capacity is null or capacity > 0`,
+ * and tightening it to `>= 2` is a follow-up that needs a look at the live
+ * rows first, not a line in this commit:
+ *
+ *  - Deployed rows may hold `capacity = 1` — legal under the rule this
+ *    replaces, so a plain `ALTER TABLE … ADD CONSTRAINT` would **fail the
+ *    deploy** and take every later migration with it, exactly the failure
+ *    drizzle/0015 and drizzle/0018 exist to avoid.
+ *  - Clamping them to 2 is worse than leaving them: it hands a finished event
+ *    a seat it never had, and on a published one it reopens applications and
+ *    promotes the next person off the waitlist — a notification saying "you're
+ *    in" that no manager sent.
+ *  - `ADD CONSTRAINT … NOT VALID` skips the existing rows at migration time but
+ *    re-checks any row it *updates* afterwards, so a legacy one-seat event
+ *    could never be cancelled or completed again.
+ *
+ * So the rule is enforced here, on the way in, where it can be refused with a
+ * sentence instead of a 23514. The follow-up is: read the live rows, decide per
+ * row what the right cap is (an owner's decision, not a migration's), then
+ * tighten the check.
+ */
+export const MIN_CAPACITY = 2;
+
+/**
+ * Why this seat cap cannot be saved, or null when it can (UC-08 10c).
+ *
+ * Refused only by callers that are *writing* a capacity — `createEvent`,
+ * `updateEvent` when `capacity` is in the patch, and therefore the Basics save
+ * only when the manager moved the cap. An event carrying a cap from before this
+ * rule is not re-validated by a save that does not touch it, because refusing
+ * to cancel a one-seat event from 2024 until somebody edits its cap is the rule
+ * getting in the way of the record.
+ *
+ * The admin checklist calls it too, to *say* the cap is below the minimum
+ * without refusing anything (`readiness.ts`). That is the point of there being
+ * one function: the sentence the manager reads on the Publish tab and the
+ * sentence a save is refused with cannot drift apart.
+ */
+export function capacityProblem(capacity: number | null): string | null {
+  if (capacity === null) return null;
+  if (!Number.isInteger(capacity)) {
+    return "Capacity has to be a whole number of seats, or empty for unlimited.";
+  }
+  if (capacity < MIN_CAPACITY) {
+    return `An event needs at least ${MIN_CAPACITY} seats. Clear the box for an uncapped event.`;
+  }
+  return null;
+}
+
+/**
+ * Why this day list cannot be saved, or null when it can (R-24, UC-08 4, 10c).
+ *
+ * Two problems, each with its own sentence, because they are two different
+ * mistakes and "check the days" tells a manager nothing:
+ *
+ *  - **Out of order.** Day 2 starting before Day 1 is almost always two times
+ *    typed into the wrong boxes, and silently sorting them would move the
+ *    availability answers people have already given against "Day 1".
+ *  - **The same instant twice.** Two days of one event cannot run at once;
+ *    domain-model.md puts it as "days do not overlap" and "a day's schedule
+ *    never moves another day's". With a start time and no length, two days
+ *    starting at the same moment is the whole of what overlapping can mean
+ *    here — which is why this is the rule rather than a guess at how long a
+ *    day lasts. The running order (`format-schedule.ts`) builds each day's
+ *    blocks forward from its own start, so two days sharing a start produce
+ *    two schedules on top of each other.
+ *
+ * Undated days are skipped rather than refused: "Fri / Sat / Sun before the
+ * times are agreed" is how this gets filled in (see `event_days.starts_at`),
+ * and the comparison is only ever between two days that *have* times.
+ */
+export function daySequenceProblem(days: readonly DayView[]): string | null {
+  const dated = days.flatMap((day, index) =>
+    day.startsAt ? [{ name: dayName(day, index), at: day.startsAt.getTime() }] : []
+  );
+
+  for (let index = 1; index < dated.length; index += 1) {
+    const previous = dated[index - 1];
+    const current = dated[index];
+    if (current.at === previous.at) {
+      return `${current.name} starts at the same time as ${previous.name}. Two days of one event cannot run at once.`;
+    }
+    if (current.at < previous.at) {
+      return `${current.name} starts before ${previous.name}. Put the days in the order they run.`;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Why this sign-up window cannot be saved, or null when it can (R-25,
+ * UC-08 5, 10c).
+ *
+ * `startsAt` is the event's own start — the first day's (`eventDates`) — so
+ * this is one rule checked from both directions: a window moved past the first
+ * day is refused when the window is saved, and a first day pulled back before
+ * the closing time is refused when the days are saved. Either way the pair is
+ * the thing that has to make sense, and whichever save made it stop making
+ * sense is the one that is told.
+ *
+ * Why sign-ups may not close *after* the start: `applicationsOpen` already
+ * refuses an application to an event that has begun, so a closing time past
+ * the start is a promise the event page makes ("applications close in 2 days")
+ * and the apply action breaks. Closing exactly *at* the start is allowed —
+ * both deadlines are inclusive, and "sign up right up to the minute it
+ * starts" is a real intention.
+ */
+export function signupWindowProblem(
+  window: { signupOpensAt: Date | null; signupClosesAt: Date | null },
+  startsAt: Date | null
+): string | null {
+  const { signupOpensAt: opens, signupClosesAt: closes } = window;
+
+  if (opens && closes && closes.getTime() < opens.getTime()) {
+    return "Signups cannot close before they open.";
+  }
+  if (opens && startsAt && startsAt.getTime() < opens.getTime()) {
+    return "Signups open after the event starts, so nobody could ever apply.";
+  }
+  if (closes && startsAt && closes.getTime() > startsAt.getTime()) {
+    return "Signups close after the first day starts, so somebody could apply to an event already under way. Close them no later than the start.";
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Is this save worth telling anybody about? (R-98, UC-08 10b)        */
+/* ------------------------------------------------------------------ */
+
+/** The parts of a setup an applicant's plans depend on. */
+const TOLD_ABOUT = [
+  "title",
+  "type",
+  "description",
+  "slug",
+  "gameId",
+  "capacity",
+  "signupOpensAt",
+  "signupClosesAt",
+  "minRankToEnter",
+  "minRankToCaptain",
+] as const;
+
+export type SetupField = (typeof TOLD_ABOUT)[number];
+
+/** Enough of an event row to compare two saves of it. */
+export type SetupView = Readonly<Record<SetupField, unknown>>;
+
+/**
+ * Which of the things an applicant cares about this save actually changed
+ * (R-98, UC-08 10b).
+ *
+ * The audience for "this event has changed" is people who already applied, and
+ * what they are owed is news. A manager who opens Basics, types nothing and
+ * presses Save has produced none: the row is identical, and a notification
+ * saying otherwise is the one that teaches somebody to switch the kind off
+ * (R-104's switch is the escape hatch, not the plan). So the message is sent
+ * off the *difference between two rows*, not off the fact that a write
+ * happened.
+ *
+ * Dates are compared by instant, not by identity — two `Date` objects for the
+ * same moment are the same answer, and `!==` on them is always true.
+ *
+ * `config` is deliberately not in the list. The entry mode and the waitlist
+ * switch change what happens to a *future* application, not the plans of
+ * somebody who already holds a seat, and UC-08 6/6a does not ask for them to
+ * be announced. The audit line records them either way, which is where a
+ * question about who changed the entry mode gets answered.
+ */
+export function changedSetupFields(before: SetupView, after: SetupView): SetupField[] {
+  return TOLD_ABOUT.filter((field) => {
+    const left = before[field];
+    const right = after[field];
+    if (left instanceof Date || right instanceof Date) {
+      const leftTime = left instanceof Date ? left.getTime() : null;
+      const rightTime = right instanceof Date ? right.getTime() : null;
+      return leftTime !== rightTime;
+    }
+    return left !== right;
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Are applications open?                                             */
 /* ------------------------------------------------------------------ */
 

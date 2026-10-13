@@ -56,12 +56,16 @@ describe("applications waiting", () => {
   it("appears for somebody the cap queued and nobody has looked at", async () => {
     counter += 1;
     const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Queue ${counter}` }, db));
-    unwrap(await updateEvent(event.id, { capacity: 1 }, db));
+    // Two seats — R-26's minimum — so it takes two applicants to fill them and
+    // a third to be the one left waiting.
+    unwrap(await updateEvent(event.id, { capacity: 2 }, db));
     unwrap(await publishEvent(event.id, db));
 
     const first = await makeUser(db, { displayName: `In ${counter}` });
+    const alsoIn = await makeUser(db, { displayName: `Also in ${counter}` });
     const second = await makeUser(db, { displayName: `Queued ${counter}` });
     unwrap(await applyToEvent(event.id, first, {}, db));
+    unwrap(await applyToEvent(event.id, alsoIn, {}, db));
     const queued = unwrap(await applyToEvent(event.id, second, {}, db));
     expect(queued.status).toBe("waitlisted");
 
@@ -263,12 +267,14 @@ describe("a finished event", () => {
   it("never appears, because nothing about it can need doing", async () => {
     counter += 1;
     const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Over ${counter}` }, db));
-    unwrap(await updateEvent(event.id, { capacity: 1 }, db));
+    unwrap(await updateEvent(event.id, { capacity: 2 }, db));
     unwrap(await publishEvent(event.id, db));
 
     const first = await makeUser(db, { displayName: `In ${counter}` });
+    const alsoIn = await makeUser(db, { displayName: `Also in ${counter}` });
     const second = await makeUser(db, { displayName: `Queued ${counter}` });
     unwrap(await applyToEvent(event.id, first, {}, db));
+    unwrap(await applyToEvent(event.id, alsoIn, {}, db));
     unwrap(await applyToEvent(event.id, second, {}, db));
     expect((await itemsFor(event.id)).length).toBeGreaterThan(0);
 

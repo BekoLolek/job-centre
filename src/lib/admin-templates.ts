@@ -59,6 +59,7 @@ import {
   templateData as withData,
   templateFail as fail,
 } from "./admin-templates-policy";
+import { readDatesFor } from "./events";
 
 /* ------------------------------------------------------------------ */
 /* Results and rules                                                  */
@@ -131,11 +132,19 @@ export type TemplateSource = {
 };
 
 /**
- * The whole screen in six queries.
+ * The whole screen in seven queries.
  *
  * The usage counts are grouped in Postgres rather than fetched per template,
  * for the same reason `loadAdminGames` groups its answer counts: a dozen
  * templates should not be a dozen round trips.
+ *
+ * The seventh is the dates for the "make a template from this" picker. An
+ * event's start is its first dated day's (R-24) — there is no `starts_at` to
+ * select beside the title — so it comes from `event_days` via `readDatesFor`,
+ * which answers for all sixty candidates at once. The picker is still ordered
+ * newest *created* first, which is the right order for "what did I just run"
+ * and needs no date at all; a candidate whose days have no times yet is listed
+ * with none, exactly as before.
  */
 export async function loadAdminTemplates(
   database: Database = defaultDb
@@ -166,7 +175,6 @@ export async function loadAdminTemplates(
           slug: events.slug,
           type: events.type,
           status: events.status,
-          startsAt: events.startsAt,
           createdAt: events.createdAt,
         })
         .from(events)
@@ -197,6 +205,10 @@ export async function loadAdminTemplates(
   const questionsByEvent = new Map(
     questionCounts.map((row) => [row.eventId, Number(row.total)])
   );
+  const datesByEvent = await readDatesFor(
+    database,
+    sourceRows.map((row) => row.id)
+  );
 
   return {
     templates: templateRows.map((template) => ({
@@ -209,6 +221,9 @@ export async function loadAdminTemplates(
     sources: sourceRows.map((row) => ({
       ...row,
       questions: questionsByEvent.get(row.id) ?? 0,
+      // Null for an event whose days have no times yet — it is still a
+      // candidate, just one with nothing to print beside it.
+      startsAt: datesByEvent.get(row.id)?.startsAt ?? null,
     })),
     profileFields: fieldRows.map((row) => ({
       ...row,

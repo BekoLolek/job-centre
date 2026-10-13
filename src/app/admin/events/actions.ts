@@ -54,6 +54,7 @@ import {
   type EventResult,
   createEvent,
   describeApplication,
+  getEventSetup,
   previewEventDays,
   publishEvent,
   setApplicationNote,
@@ -63,7 +64,7 @@ import {
   setEventQuestions,
   updateEvent,
 } from "@/lib/events";
-import type { ApplicationDecision } from "@/lib/events-policy";
+import { type ApplicationDecision, changedSetupFields } from "@/lib/events-policy";
 import {
   type ChampionshipResult,
   type CountingEventFields,
@@ -170,22 +171,48 @@ export type BasicsFields = {
   /** ISO instants, or null for "no bound that side". */
   signupOpensAt: string | null;
   signupClosesAt: string | null;
-  startsAt: string | null;
-  endsAt: string | null;
 };
 
 /**
- * Save the Basics panel of the Setup step.
+ * Whether an event's applicants are in a position to care about a change to it
+ * (UC-08 10b, R-98, R-99).
  *
- * Note what is *not* here: status and the two rank thresholds. Each tab saves
- * itself, so Basics must not carry — and therefore cannot silently revert — a
- * value the admin last changed on a different tab.
+ * A draft is invisible to everybody but its managers, so an admin filling one
+ * in for the first time is not changing anybody's plans — there is nothing to
+ * be told about and nobody who could have applied. From `published` onwards
+ * there is, which includes `live` and `cancelled`: somebody who applied to an
+ * event that has been called off is still owed the news that its questions or
+ * its details moved (the cancellation itself has its own notification).
+ */
+function appliedTo(status: EventStatus): boolean {
+  return status !== "draft";
+}
+
+/**
+ * Save the Basics panel of the Setup step (UC-08 3, 5, 9, 10).
+ *
+ * Note what is *not* here: status and the two rank thresholds, because each tab
+ * saves itself and Basics must not carry — and therefore cannot silently revert
+ * — a value the admin last changed on a different tab. Nor the dates: an
+ * event's start and end are its days' (R-24), so they are the Days tab's to
+ * save.
+ *
+ * ## Audited always, announced only when there is news
+ *
+ * Every save writes an audit line (R-110's log is a record of what was done,
+ * and "the manager pressed save and nothing moved" is part of that record).
+ * The notification is not: `changedSetupFields` says what an applicant would
+ * actually notice, and a save that moved none of it tells nobody (UC-08 10b).
+ * Neither does a save to a draft — nobody can have applied yet.
  */
 export async function saveBasicsAction(
   eventId: string,
   fields: BasicsFields
 ): Promise<EventResult<{ slug: string }>> {
-  await requireEventManager(eventId);
+  const admin = await requireEventManager(eventId);
+
+  const before = await getEventSetup(eventId);
+  if (!before) return fail("That event no longer exists.");
 
   const result = await updateEvent(eventId, {
     title: fields.title,
@@ -194,7 +221,26 @@ export async function saveBasicsAction(
     description: fields.description,
     bannerUrl: fields.bannerUrl,
     gameId: fields.gameId,
-    capacity: fields.capacity,
+    /*
+     * The cap, **only when the manager moved it.**
+     *
+     * R-26's minimum is checked on the capacity a save is *writing*
+     * (`capacityProblem`, called by `updateEvent` only when `capacity` is in
+     * the patch) — which is what lets an event carrying a one-seat cap from
+     * before that rule existed still be edited at all; see `MIN_CAPACITY` for
+     * why the rule is not a database constraint. But the panel renders the cap
+     * the event holds, so an unconditional `capacity:` here sends `1` straight
+     * back on every save of such an event, and renaming it or fixing a typo in
+     * its description is refused with "An event needs at least 2 seats" until
+     * the manager raises the cap. Raising it is the one thing they must not be
+     * pushed into: it hands a published event a seat it never had and promotes
+     * the next person off the waitlist — a "you're in" nobody sent.
+     *
+     * Re-sending the value the row already holds is not writing a capacity, so
+     * it is left out of the patch. A save that genuinely types a cap below the
+     * minimum still goes in, and is still refused.
+     */
+    ...(fields.capacity !== before.capacity ? { capacity: fields.capacity } : {}),
     // Both arrive from the browser, so neither is stored as it was sent:
     // `updateEvent` merges this into the config it already has.
     config: {
@@ -203,18 +249,29 @@ export async function saveBasicsAction(
     },
     signupOpensAt: parseStamp(fields.signupOpensAt),
     signupClosesAt: parseStamp(fields.signupClosesAt),
-    startsAt: parseStamp(fields.startsAt),
-    endsAt: parseStamp(fields.endsAt),
   });
   if (!result.ok) return result;
 
+  const changed = changedSetupFields(before, result.data);
+  await recordAudit({
+    action: "event.basics",
+    actor: admin,
+    eventId,
+    summary:
+      changed.length > 0
+        ? `Changed ${changed.join(", ")} on "${result.data.title}".`
+        : `Saved the basics of "${result.data.title}" with nothing changed.`,
+    detail: { changed },
+  });
+
   /*
-   * Only for an event people have already applied to — `notifyEventUpdated`
-   * asks for exactly that audience, so an admin still drafting one is not
-   * announcing every keystroke to nobody. Collapsed to one a day, because
-   * saving four times on Tuesday is one change of plan.
+   * Two gates, and they are different questions. `notifyEventUpdated` picks the
+   * audience — the people who applied — while these decide whether there is
+   * anything to tell them: something actually moved, and the event is one they
+   * could have applied to (UC-08 10b). Beyond that the notification collapses
+   * to one a day, because saving four times on Tuesday is one change of plan.
    */
-  notifyEventUpdated(eventId);
+  if (changed.length > 0 && appliedTo(result.data.status)) notifyEventUpdated(eventId);
 
   refresh(eventId);
   // The slug comes back because `freeSlug` may have disambiguated it, and an
@@ -369,15 +426,26 @@ export async function saveEventDaysAction(
     action: "event.days",
     actor: admin,
     eventId,
-    summary:
-      result.data.clearedAvailability > 0
+    summary: !result.data.changed
+      ? `Saved the day list (${result.data.days.length}) with nothing changed.`
+      : result.data.clearedAvailability > 0
         ? `Rewrote the day list to ${result.data.days.length}, losing ${result.data.clearedAvailability} availability answers.`
         : `Rewrote the day list to ${result.data.days.length}.`,
     detail: {
       days: result.data.days.length,
       clearedAvailability: result.data.clearedAvailability,
+      changed: result.data.changed,
     },
   });
+
+  /*
+   * The days *are* the event's dates (R-24), so a day that moved is the change
+   * an applicant is counting on being told about (R-98, UC-08 10b) — the same
+   * news a start time moving used to be when it lived on the event row. Silent
+   * when nothing moved, and silent while the event is still a draft.
+   */
+  const event = await getEventSetup(eventId);
+  if (result.data.changed && event && appliedTo(event.status)) notifyEventUpdated(eventId);
 
   refresh(eventId);
   return {
@@ -450,21 +518,29 @@ export async function saveEventQuestionsAction(
     action: "event.questions",
     actor: admin,
     eventId,
-    summary:
-      result.data.clearedAnswers > 0
+    summary: !result.data.changed
+      ? `Saved the application form (${result.data.questions.length} questions) with nothing changed.`
+      : result.data.clearedAnswers > 0
         ? `Rewrote the application form to ${result.data.questions.length} questions, losing ${result.data.clearedAnswers} answers.`
         : `Rewrote the application form to ${result.data.questions.length} questions.`,
     detail: {
       questions: result.data.questions.length,
       clearedAnswers: result.data.clearedAnswers,
+      changed: result.data.changed,
     },
   });
 
   /*
-   * Told only to people who have already answered. For anybody else there is
-   * nothing to check — they will simply see today's questions when they apply.
+   * Told only to people who have already answered, and only when the form they
+   * answered is genuinely different (R-99, UC-08 10b): a save that moved
+   * nothing sends them looking for a change that is not there. For anybody who
+   * has not applied there is nothing to check either way — they will simply see
+   * today's questions when they apply, which is also why a draft tells nobody.
    */
-  notifyQuestionsChanged(eventId, admin.id);
+  const event = await getEventSetup(eventId);
+  if (result.data.changed && event && appliedTo(event.status)) {
+    notifyQuestionsChanged(eventId, admin.id);
+  }
 
   refresh(eventId);
   // With their ids, for the same reason the days come back with theirs: a
@@ -502,13 +578,37 @@ export async function saveEntryRulesAction(
   eventId: string,
   rules: { minRankToEnter: string | null; minRankToCaptain: string | null }
 ): Promise<EventResult<null>> {
-  await requireEventManager(eventId);
+  const admin = await requireEventManager(eventId);
+
+  const before = await getEventSetup(eventId);
+  if (!before) return fail("That event no longer exists.");
 
   const result = await updateEvent(eventId, {
     minRankToEnter: rules.minRankToEnter,
     minRankToCaptain: rules.minRankToCaptain,
   });
   if (!result.ok) return result;
+
+  // The other half of the Setup step, and therefore audited like the rest of it
+  // (UC-08 7, 10): who tightened the rank gate on an event people had already
+  // applied to is exactly the question the log exists to answer.
+  const changed = changedSetupFields(before, result.data);
+  await recordAudit({
+    action: "event.entryRules",
+    actor: admin,
+    eventId,
+    summary:
+      changed.length > 0
+        ? `Set the entry rules on "${result.data.title}" to ${result.data.minRankToEnter ?? "no minimum"} to enter, ${result.data.minRankToCaptain ?? "no minimum"} to captain.`
+        : `Saved the entry rules of "${result.data.title}" with nothing changed.`,
+    detail: {
+      minRankToEnter: result.data.minRankToEnter,
+      minRankToCaptain: result.data.minRankToCaptain,
+      changed,
+    },
+  });
+
+  if (changed.length > 0 && appliedTo(result.data.status)) notifyEventUpdated(eventId);
 
   refresh(eventId);
   return { ok: true, data: null };

@@ -76,20 +76,27 @@ import { LOCKED_STATUSES, lockRefusal } from "./archive-policy";
 import {
   type ApplicationsState,
   type CapacityState,
+  type DayView,
   type Eligibility,
+  type EventDates,
   type PublishView,
+  type SetupField,
   PUBLISH_REQUIREMENT_TEXT,
   applicationsOpen,
   canTransition,
+  capacityProblem,
   capacityState,
   confirmationDeadline,
   confirmationsOpen,
+  daySequenceProblem,
   eligibility,
   entryMode,
+  eventDates,
   missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
   recomputeWaitlist,
+  signupWindowProblem,
 } from "./events-policy";
 import {
   type FieldShape,
@@ -300,6 +307,119 @@ async function readDays(database: Database, eventId: string): Promise<EventDay[]
     .from(eventDays)
     .where(eq(eventDays.eventId, eventId))
     .orderBy(asc(eventDays.dayIndex));
+}
+
+/**
+ * The event row as the rest of the site reads it: **its dates are its days'**
+ * (R-24, UC-11 2).
+ *
+ * Every read in this module goes through here, which is what makes "stop
+ * reading `starts_at`" true rather than aspirational — the column is still on
+ * the row until the follow-up migration drops it, and overwriting it on the way
+ * out is what stops a stale copy leaking into a countdown, a listing order or
+ * the answer deadline. `eventDates` is where the arithmetic lives.
+ */
+function withDates(event: EventRow, days: readonly DayView[]): EventRow {
+  return { ...event, ...eventDates(days) };
+}
+
+/** The same, for a row whose days have already been reduced to two instants. */
+function withKnownDates(event: EventRow, dates: EventDates): EventRow {
+  return { ...event, ...dates };
+}
+
+/**
+ * When each of these events runs, in one query.
+ *
+ * The list pages and "my applications" need the dates of twenty events at
+ * once, and twenty reads of `event_days` would be twenty round trips — on Neon,
+ * twenty HTTP requests. Grouped in TypeScript rather than with `min`/`max` in
+ * SQL so that `eventDates` stays the only place the rule is written down.
+ *
+ * Exported because three list reads outside this module — the player profile,
+ * a championship season's events and the templates screen — each need the same
+ * answer for a whole set of events at once (R-24, R-40, R-41, UC-11 2), and the
+ * publish announcement needs it for one (`announceEventPublished`, which has
+ * the event row already and only wants the date). The alternative was a copy of
+ * "earliest dated day, latest dated day" next to each of them, which is the
+ * drift this module's `eventDates` exists to prevent. A one-event call is just
+ * a one-row map rather than a special case worth its own function.
+ *
+ * {@link withDates} and {@link withKnownDates} stay private: they overwrite an
+ * `EventRow`'s own columns, and these callers hold column projections, a row
+ * they must not write dates onto, or no row at all.
+ */
+export async function readDatesFor(
+  database: Database,
+  eventIds: readonly string[]
+): Promise<Map<string, EventDates>> {
+  const out = new Map<string, EventDates>();
+  if (eventIds.length === 0) return out;
+
+  const rows = await database
+    .select({
+      eventId: eventDays.eventId,
+      startsAt: eventDays.startsAt,
+      dayIndex: eventDays.dayIndex,
+    })
+    .from(eventDays)
+    .where(inArray(eventDays.eventId, [...eventIds]))
+    .orderBy(asc(eventDays.dayIndex));
+
+  const byEvent = new Map<string, DayView[]>();
+  for (const row of rows) {
+    const bag = byEvent.get(row.eventId) ?? [];
+    bag.push({ startsAt: row.startsAt });
+    byEvent.set(row.eventId, bag);
+  }
+  for (const eventId of eventIds) {
+    out.set(eventId, eventDates(byEvent.get(eventId) ?? []));
+  }
+  return out;
+}
+
+/**
+ * A setup as it stands before a save, for the action layer's two questions
+ * (UC-08 10b): *did anything an applicant depends on move* —
+ * `changedSetupFields` — and *is this an event anybody could have applied to*,
+ * which is `status`.
+ *
+ * **Exactly those columns, and deliberately not the two dead ones.** The
+ * version of this that returned a whole `EventRow` had to read `event_days` as
+ * well, purely to overwrite `starts_at`/`ends_at` with the derived answer
+ * (`withDates`) so that nobody could read the stale column off it — a second
+ * round trip on every setup save, for dates none of these callers looks at
+ * (`TOLD_ABOUT` has no dates in it, because a day moving is the Days tab's
+ * notification to send). Projecting the columns instead is one query and makes
+ * the stale read impossible rather than merely overwritten.
+ *
+ * A caller that wants the dates wants {@link getEventById} (the game, the days
+ * and the questions too) or {@link readDatesFor} (the dates alone).
+ */
+export type EventSetupRow = Pick<EventRow, "status" | SetupField>;
+
+export async function getEventSetup(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<EventSetupRow | null> {
+  const [row] = await database
+    .select({
+      status: events.status,
+      title: events.title,
+      type: events.type,
+      description: events.description,
+      slug: events.slug,
+      gameId: events.gameId,
+      capacity: events.capacity,
+      signupOpensAt: events.signupOpensAt,
+      signupClosesAt: events.signupClosesAt,
+      minRankToEnter: events.minRankToEnter,
+      minRankToCaptain: events.minRankToCaptain,
+    })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  return row ?? null;
 }
 
 async function readApplications(
@@ -554,6 +674,14 @@ export type EventDayInput = {
   label?: string | null;
 };
 
+/**
+ * The event's own fields.
+ *
+ * **No `startsAt` or `endsAt`.** When an event runs is its days' answer
+ * (R-24) — `eventDates` derives it on every read — so there is nothing here to
+ * set and nothing to accidentally set to something the days disagree with. A
+ * caller that wants to move an event moves its days (`setEventDays`).
+ */
 export type EventFieldsInput = {
   title?: string;
   slug?: string;
@@ -564,8 +692,6 @@ export type EventFieldsInput = {
   capacity?: number | null;
   signupOpensAt?: Date | null;
   signupClosesAt?: Date | null;
-  startsAt?: Date | null;
-  endsAt?: Date | null;
   minRankToEnter?: string | null;
   minRankToCaptain?: string | null;
   config?: EventConfig;
@@ -592,41 +718,34 @@ export type UpdateEventInput = EventFieldsInput & {
 /** The refusal when the status changed between reading the event and writing it. */
 const STATUS_CHANGED = "The event changed meanwhile - reload.";
 
-/** One place to check the things a title and a calendar can get wrong. */
+/**
+ * One place to check the things a title and a calendar can get wrong
+ * (UC-08 10, 10c).
+ *
+ * `startsAt` is not a field here — it is *context*: the event's first day
+ * (`eventDates`), which the sign-up window has to fit inside (R-25). Every
+ * sentence comes from `events-policy.ts`, so the admin checklist, the write and
+ * the preview cannot disagree about what is wrong with a setup.
+ *
+ * Capacity is not checked here either; `capacityProblem` is called by the
+ * callers that *write* a capacity, so an event carrying a one-seat cap from
+ * before R-26's minimum existed can still be published, cancelled, completed
+ * and edited — which is why `saveBasicsAction` leaves an unchanged cap out of
+ * its patch rather than echoing the one the panel rendered. See
+ * `MIN_CAPACITY`.
+ */
 function validateFields(
   next: {
-    capacity: number | null;
     signupOpensAt: Date | null;
     signupClosesAt: Date | null;
     startsAt: Date | null;
-    endsAt: Date | null;
     minRankToEnter: string | null;
     minRankToCaptain: string | null;
   },
   game: Game | null
 ): string | null {
-  if (next.capacity !== null) {
-    if (!Number.isInteger(next.capacity) || next.capacity < 1) {
-      return "Capacity has to be a whole number of seats, or empty for unlimited.";
-    }
-  }
-  if (
-    next.signupOpensAt &&
-    next.signupClosesAt &&
-    next.signupClosesAt.getTime() < next.signupOpensAt.getTime()
-  ) {
-    return "Signups cannot close before they open.";
-  }
-  if (next.startsAt && next.endsAt && next.endsAt.getTime() < next.startsAt.getTime()) {
-    return "The event cannot end before it starts.";
-  }
-  if (
-    next.signupOpensAt &&
-    next.startsAt &&
-    next.startsAt.getTime() < next.signupOpensAt.getTime()
-  ) {
-    return "Signups open after the event starts, so nobody could ever apply.";
-  }
+  const window = signupWindowProblem(next, next.startsAt);
+  if (window) return window;
 
   const gates: Array<[string | null, string]> = [
     [next.minRankToEnter, "minimum rank to enter"],
@@ -693,16 +812,28 @@ export async function createEvent(
   const game = await readGame(database, gameId);
   if (gameId && !game) return fail("That game no longer exists.");
 
+  const days = input.days ?? [];
+  const capacity = input.capacity ?? null;
   const next = {
-    capacity: input.capacity ?? null,
+    capacity,
     signupOpensAt: input.signupOpensAt ?? null,
     signupClosesAt: input.signupClosesAt ?? null,
-    startsAt: input.startsAt ?? null,
-    endsAt: input.endsAt ?? null,
     minRankToEnter: cleanNullable(input.minRankToEnter, 60),
     minRankToCaptain: cleanNullable(input.minRankToCaptain, 60),
   };
-  const problem = validateFields(next, game);
+
+  /*
+   * Every refusal before the insert, including the day list's — UC-08 10c says
+   * *nothing saved*, and the days are written by `setEventDays` after the event
+   * row exists, so a day problem found down there would leave an event behind
+   * that the caller was told had not been created. The same rules run again in
+   * `setEventDays`, which is the one that has to be right for an edit; this is
+   * the create path refusing early rather than trusting it.
+   */
+  const problem =
+    capacityProblem(capacity) ??
+    dayListProblem(next, days) ??
+    validateFields({ ...next, startsAt: dayStart(days) }, game);
   if (problem) return fail(problem);
 
   const slug = await freeSlug(database, slugify(input.slug ?? title), slugify(title));
@@ -733,9 +864,10 @@ export async function createEvent(
     if (!written.ok) return fail(written.error, written.errors);
   }
 
-  if (input.days && input.days.length > 0) {
-    const written = await setEventDays(created.id, input.days, database);
+  if (days.length > 0) {
+    const written = await setEventDays(created.id, days, database);
     if (!written.ok) return fail(written.error, written.errors);
+    return withData(withDates(created, written.data.days));
   }
 
   return withData(created);
@@ -789,9 +921,13 @@ async function resolveTemplateQuestions(
 async function publishRefusal(
   database: Database,
   eventId: string,
-  event: Omit<PublishView, "days">
+  event: Omit<PublishView, "days">,
+  days?: readonly EventDay[]
 ): Promise<string | null> {
-  const missing = missingToPublish({ ...event, days: await readDays(database, eventId) });
+  const missing = missingToPublish({
+    ...event,
+    days: days ? [...days] : await readDays(database, eventId),
+  });
   if (missing.length === 0) return null;
   const needs = missing.map((requirement) => PUBLISH_REQUIREMENT_TEXT[requirement]);
   const list =
@@ -846,8 +982,6 @@ export async function updateEvent(
     capacity: (pick("capacity", current.capacity) ?? null) as number | null,
     signupOpensAt: (pick("signupOpensAt", current.signupOpensAt) ?? null) as Date | null,
     signupClosesAt: (pick("signupClosesAt", current.signupClosesAt) ?? null) as Date | null,
-    startsAt: (pick("startsAt", current.startsAt) ?? null) as Date | null,
-    endsAt: (pick("endsAt", current.endsAt) ?? null) as Date | null,
     minRankToEnter:
       "minRankToEnter" in patch
         ? cleanNullable(patch.minRankToEnter, 60)
@@ -858,7 +992,21 @@ export async function updateEvent(
         : current.minRankToCaptain,
   };
 
-  const problem = validateFields(next, game);
+  // The days are the event's calendar (R-24), so they are read here: the
+  // sign-up window is checked against the first one, and `publishRefusal`
+  // wants the same list rather than reading it again.
+  const days = await readDays(database, eventId);
+  const dates = eventDates(days);
+
+  // Only a save that is actually writing a capacity is held to R-26's minimum
+  // — see `MIN_CAPACITY` for why a legacy one-seat event must still be
+  // editable in every other respect.
+  if ("capacity" in patch) {
+    const problem = capacityProblem(next.capacity);
+    if (problem) return fail(problem);
+  }
+
+  const problem = validateFields({ ...next, startsAt: dates.startsAt }, game);
   if (problem) return fail(problem);
 
   let title = current.title;
@@ -868,7 +1016,7 @@ export async function updateEvent(
   }
 
   if (moveTo === "published") {
-    const refusal = await publishRefusal(database, eventId, { title, ...next });
+    const refusal = await publishRefusal(database, eventId, { title, ...next }, days);
     if (refusal) return fail(refusal);
   }
 
@@ -911,7 +1059,7 @@ export async function updateEvent(
     .returning();
 
   if (!updated) return fail(STATUS_CHANGED);
-  return withData(updated);
+  return withData(withKnownDates(updated, dates));
 }
 
 /**
@@ -927,12 +1075,13 @@ export async function publishEvent(
 ): Promise<EventResult<EventRow>> {
   const current = await readEvent(database, eventId);
   if (!current) return fail("That event no longer exists.");
-  if (current.status === "published") return withData(current);
+  const days = await readDays(database, eventId);
+  if (current.status === "published") return withData(withDates(current, days));
 
   if (!canTransition(current.status, "published")) {
     return fail(`A ${current.status} event cannot be published.`);
   }
-  const refusal = await publishRefusal(database, eventId, current);
+  const refusal = await publishRefusal(database, eventId, current, days);
   if (refusal) return fail(refusal);
 
   const [updated] = await database
@@ -942,7 +1091,7 @@ export async function publishEvent(
     .returning();
 
   if (!updated) return fail(STATUS_CHANGED);
-  return withData(updated);
+  return withData(withDates(updated, days));
 }
 
 /* ------------------------------------------------------------------ */
@@ -966,6 +1115,51 @@ export type EventDaysImpact = {
   /** Why `setEventDays` would refuse this list. Null when it would go through. */
   problem: string | null;
 };
+
+/**
+ * When a day list says the event starts, before any of it is written.
+ *
+ * The one place an *unwritten* list is reduced to the event's start (R-24), so
+ * `createEvent` validating a new event's sign-up window and
+ * {@link dayListProblem} validating an edited day list are asking `eventDates`
+ * the same question in the same words.
+ */
+function dayStart(days: readonly EventDayInput[]): Date | null {
+  return eventDates(days.map((day) => ({ startsAt: day.startsAt ?? null }))).startsAt;
+}
+
+/**
+ * Why this day list cannot be written, or null when it can (UC-08 4, 10c).
+ *
+ * The one list of refusals {@link previewEventDays} and {@link setEventDays}
+ * share, so a preview that says a save would go through is a save that goes
+ * through. Each rule is `events-policy.ts`'s, each with its own sentence:
+ *
+ *  - more than four days (§10, `MAX_EVENT_DAYS`);
+ *  - days out of order, or two of them starting at once (`daySequenceProblem`);
+ *  - a first day that starts before sign-ups close (`signupWindowProblem`).
+ *
+ * That last one is the sign-up window rule arriving from the other direction:
+ * `updateEvent` refuses a closing time past the first day, and this refuses a
+ * first day pulled back behind the closing time. Writing the days and leaving
+ * the window impossible would be the same broken pair, saved by the other
+ * door.
+ */
+function dayListProblem(
+  event: Pick<EventRow, "signupOpensAt" | "signupClosesAt">,
+  days: readonly EventDayInput[]
+): string | null {
+  if (days.length > MAX_EVENT_DAYS) {
+    return `An event runs over at most ${MAX_EVENT_DAYS} days.`;
+  }
+
+  const views: DayView[] = days.map((day) => ({
+    startsAt: day.startsAt ?? null,
+    label: day.label ?? null,
+  }));
+
+  return daySequenceProblem(views) ?? signupWindowProblem(event, dayStart(days));
+}
 
 /**
  * What writing this day list would cost, without writing it.
@@ -1002,9 +1196,8 @@ export async function previewEventDays(
   const event = await readEvent(database, eventId);
   if (!event) return { ...nothing, problem: "That event no longer exists." };
 
-  if (days.length > MAX_EVENT_DAYS) {
-    return { ...nothing, problem: `An event runs over at most ${MAX_EVENT_DAYS} days.` };
-  }
+  const refusal = dayListProblem(event, days);
+  if (refusal) return { ...nothing, problem: refusal };
 
   const existing = await readDays(database, eventId);
   const existingIds = new Set(existing.map((day) => day.id));
@@ -1064,15 +1257,16 @@ export async function setEventDays(
   eventId: string,
   days: readonly EventDayInput[],
   database: Database = defaultDb
-): Promise<EventResult<{ days: EventDay[]; clearedAvailability: number }>> {
+): Promise<
+  EventResult<{ days: EventDay[]; clearedAvailability: number; changed: boolean }>
+> {
   const event = await readEvent(database, eventId);
   if (!event) return fail("That event no longer exists.");
   const locked = lockRefusal(event);
   if (locked) return fail(locked);
 
-  if (days.length > MAX_EVENT_DAYS) {
-    return fail(`An event runs over at most ${MAX_EVENT_DAYS} days.`);
-  }
+  const refusal = dayListProblem(event, days);
+  if (refusal) return fail(refusal);
 
   const existing = await readDays(database, eventId);
   const existingIds = new Set(existing.map((day) => day.id));
@@ -1128,7 +1322,26 @@ export async function setEventDays(
     }
   }
 
-  return withData({ days: await readDays(database, eventId), clearedAvailability });
+  const written = await readDays(database, eventId);
+  /*
+   * Whether this save moved anything, for the caller deciding whether there is
+   * any news to send (R-98, UC-08 10b). A manager who opens the Days tab and
+   * presses Save has not changed the dates, and an applicant told the event
+   * "has changed" would go and look for what moved.
+   */
+  const changed =
+    written.length !== existing.length ||
+    written.some((day, index) => {
+      const before = existing[index];
+      return (
+        before === undefined ||
+        before.id !== day.id ||
+        (before.startsAt?.getTime() ?? null) !== (day.startsAt?.getTime() ?? null) ||
+        before.label !== day.label
+      );
+    });
+
+  return withData({ days: written, clearedAvailability, changed });
 }
 
 /** The slot `moveDaysInto` parks a row in. Never a resting value — see schema. */
@@ -1214,7 +1427,9 @@ export async function setEventQuestions(
   eventId: string,
   questions: readonly EventQuestionInput[],
   database: Database = defaultDb
-): Promise<EventResult<{ questions: EventQuestion[]; clearedAnswers: number }>> {
+): Promise<
+  EventResult<{ questions: EventQuestion[]; clearedAnswers: number; changed: boolean }>
+> {
   const event = await readEvent(database, eventId);
   if (!event) return fail("That event no longer exists.");
   const locked = lockRefusal(event);
@@ -1358,7 +1573,32 @@ export async function setEventQuestions(
     game?.rankLadder ?? []
   );
 
-  return withData({ questions: written, clearedAnswers });
+  /*
+   * Whether the form anybody has already answered is actually different
+   * (R-99, UC-08 10b). A manager who opens the Questions tab and saves it back
+   * unchanged has given applicants nothing to re-check, and "the questions have
+   * changed" sends them looking for a change that is not there.
+   *
+   * Compared on what an applicant would notice — the wording, the type, the
+   * options, whether it is required, the order, and which question it is —
+   * rather than on the row wholesale: `key` is regenerated from the label on
+   * every save and is not something anybody reads.
+   */
+  const shapeFor = (question: EventQuestion): string =>
+    JSON.stringify([
+      question.id,
+      question.label,
+      question.type,
+      question.required,
+      question.sort,
+      question.profileFieldId,
+      question.options.map((option) => [option.value, option.label]),
+    ]);
+  const changed =
+    written.length !== existing.length ||
+    written.some((question, index) => shapeFor(question) !== shapeFor(existing[index]));
+
+  return withData({ questions: written, clearedAnswers, changed });
 }
 
 /**
@@ -1448,10 +1688,16 @@ export async function applyToEvent(
   const now = input.now ?? new Date();
 
   return database.transaction(async (tx) => {
-    const event = await lockEvent(tx, eventId);
-    if (!event) return fail("That event no longer exists.");
-    const locked = lockRefusal(event);
+    const row = await lockEvent(tx, eventId);
+    if (!row) return fail("That event no longer exists.");
+    const locked = lockRefusal(row);
     if (locked) return fail(locked);
+
+    // Read inside the lock, like everything else here: whether the event has
+    // already started is one of the reasons to refuse (`applicationsOpen`), and
+    // that answer is its first day's (R-24).
+    const days = await readDays(tx, eventId);
+    const event = withDates(row, days);
 
     const [member] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!member) return fail("We do not have an account for you.");
@@ -1493,7 +1739,6 @@ export async function applyToEvent(
       return fail("Some of those answers need another look.", checked.errors);
     }
 
-    const days = await readDays(tx, eventId);
     const dayIds = new Set(days.map((day) => day.id));
     for (const dayId of Object.keys(input.availability ?? {})) {
       if (!dayIds.has(dayId)) return fail("That day is not part of this event.");
@@ -1999,10 +2244,16 @@ export async function setConfirmation(
       .where(eq(applications.id, applicationId))
       .limit(1);
     if (!application) return fail("That application no longer exists.");
-    const event = await lockEvent(tx, application.eventId);
-    if (!event) return fail("That event no longer exists.");
-    const locked = lockRefusal(event);
+    const row = await lockEvent(tx, application.eventId);
+    if (!row) return fail("That event no longer exists.");
+    const locked = lockRefusal(row);
     if (locked) return fail(locked);
+
+    // The deadline is two days before the start, and the start is the first
+    // day's (R-24) — so a manager who moves the first day has moved the
+    // deadline, and this reads the days rather than a column that would still
+    // be describing the old date (`confirmationDeadline`).
+    const event = withDates(row, await readDays(tx, application.eventId));
 
     if (application.status === "declined" || application.status === "withdrawn") {
       return fail("That application is not active, so there is nothing to confirm.");
@@ -2071,9 +2322,18 @@ export type ListEventsOptions = {
 /**
  * The list behind the hub, the events index and the archive.
  *
- * Seat counts come back grouped from Postgres rather than per event, because
- * twenty events would otherwise be twenty round trips — and on Neon that is
- * twenty HTTP requests.
+ * Seat counts and dates come back grouped from Postgres rather than per event,
+ * because twenty events would otherwise be twenty round trips — and on Neon
+ * that is twenty HTTP requests.
+ *
+ * ## Soonest first, ordered here rather than in SQL
+ *
+ * The order is "what is coming up next" (R-40, R-41, UC-10 4), and that is the
+ * first day's start — not a column, so `order by` cannot do it. It is sorted
+ * after the dates are in hand, matching Postgres's own `asc` exactly so the
+ * lists read as they always have: ascending by start, an event with no date
+ * last rather than first (it is not coming up sooner than everything else —
+ * nobody has said when it is), and the newest created first within a tie.
  */
 export async function listEvents(
   options: ListEventsOptions = {},
@@ -2089,8 +2349,7 @@ export async function listEvents(
   const rows = await database
     .select()
     .from(events)
-    .where(wanted ? inArray(events.status, wanted) : undefined)
-    .orderBy(asc(events.startsAt), desc(events.createdAt));
+    .where(wanted ? inArray(events.status, wanted) : undefined);
 
   const counts = await database
     .select({
@@ -2108,7 +2367,30 @@ export async function listEvents(
     byEvent.set(row.eventId, bag);
   }
 
-  const summaries = rows.map((event) => summarise(event, byEvent.get(event.id) ?? [], now));
+  const dates = await readDatesFor(
+    database,
+    rows.map((event) => event.id)
+  );
+  const nowhere = { startsAt: null, endsAt: null } satisfies EventDates;
+
+  const summaries = rows
+    .map((event) =>
+      summarise(
+        withKnownDates(event, dates.get(event.id) ?? nowhere),
+        byEvent.get(event.id) ?? [],
+        now
+      )
+    )
+    .sort((a, b) => {
+      const left = a.startsAt?.getTime() ?? null;
+      const right = b.startsAt?.getTime() ?? null;
+      if (left !== right) {
+        if (left === null) return 1;
+        if (right === null) return -1;
+        return left - right;
+      }
+      return b.createdAt.getTime() - a.createdAt.getTime();
+    });
 
   if (options.upcoming === undefined) return summaries;
 
@@ -2166,6 +2448,13 @@ export async function countApplicationsByStatus(
   return out;
 }
 
+/**
+ * One event as a list renders it.
+ *
+ * `event` is expected to carry its derived dates already (`withDates`), because
+ * whether applications are open depends on whether the event has started
+ * (`applicationsOpen`) and that is the first day's answer (R-24).
+ */
 function summarise(
   event: EventRow,
   rows: ReadonlyArray<{ status: ApplicationStatus }>,
@@ -2196,7 +2485,10 @@ async function detail(
 
   const ladder = game?.rankLadder ?? [];
   return {
-    ...summarise(event, rows, now),
+    // The days are read here anyway, so this is where the event's own dates
+    // come from (R-24): the page's countdown, its date range and its list of
+    // days are then three readings of one answer (UC-11 2).
+    ...summarise(withDates(event, days), rows, now),
     game,
     rankLadder: [...ladder],
     days,
@@ -2374,7 +2666,7 @@ export async function getMyApplications(
   if (rows.length === 0) return [];
 
   const eventIds = [...new Set(rows.map((row) => row.eventId))];
-  const [eventRows, views, counts] = await Promise.all([
+  const [eventRows, views, counts, dates] = await Promise.all([
     database.select().from(events).where(inArray(events.id, eventIds)),
     decorate(database, rows),
     database
@@ -2382,9 +2674,17 @@ export async function getMyApplications(
       .from(applications)
       .where(inArray(applications.eventId, eventIds))
       .groupBy(applications.eventId, applications.status),
+    readDatesFor(database, eventIds),
   ]);
 
-  const eventById = new Map(eventRows.map((event) => [event.id, event]));
+  // Soonest first, and the member's cards count down to the start and show the
+  // answer deadline (R-200) — all three are the first day's answer (R-24).
+  const eventById = new Map(
+    eventRows.map((event) => [
+      event.id,
+      withKnownDates(event, dates.get(event.id) ?? { startsAt: null, endsAt: null }),
+    ])
+  );
   const byEvent = new Map<string, Array<{ status: ApplicationStatus }>>();
   for (const row of counts) {
     const bag = byEvent.get(row.eventId) ?? [];

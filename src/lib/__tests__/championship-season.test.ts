@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import {
   type ChampionshipStatusValue,
   type Database,
   applications,
   championships,
+  eventDays,
   events,
   games,
   teamMembers,
@@ -66,7 +67,16 @@ async function season(
   return made.data.id;
 }
 
-/** A counting event on a season, played at the given hour so the order is fixed. */
+/**
+ * A counting event on a season, played at the given hour so the order is fixed.
+ *
+ * The date goes on a day row and **nowhere else**. `events.starts_at` is no
+ * longer written by anything in the site (R-24: an event's dates are its days'),
+ * so a fixture that set the column would be building an event no manager can
+ * create any more — and `seasonEvents` would read its date from `event_days`
+ * and find none. `null` means exactly what it means in the site: an event
+ * nobody has given a time to yet.
+ */
 async function night(
   seasonId: string,
   title: string,
@@ -80,10 +90,12 @@ async function night(
       slug: `night-${counter}`,
       title,
       status: "complete",
-      startsAt,
       gameId: over.gameId,
     })
     .returning({ id: events.id });
+  if (startsAt) {
+    await db.insert(eventDays).values({ eventId: row.id, dayIndex: 0, startsAt });
+  }
   const added = await addCountingEvent(seasonId, row.id, db);
   if (!added.ok) throw new Error(added.error);
   return row.id;
@@ -426,6 +438,45 @@ describe("the season's events", () => {
 
     expect(counted.map((event) => [event.title, event.winners])).toEqual([["Played", ["Ana"]]]);
     expect(toCome.map((event) => event.title)).toEqual(["Still to come"]);
+  });
+
+  it("dates each one from its days, orders the list by that, and keeps an undated night (R-24)", async () => {
+    /*
+     * The regression this pins: an event's dates are its `event_days` rows'
+     * and nothing writes `events.starts_at` any more, so a night created
+     * today has null in the column. Reading the column here printed every
+     * event with no date at all and collapsed the played order into the
+     * alphabetical one `listCountingEvents` already gives.
+     *
+     * The titles are deliberately in the reverse of the date order, and one
+     * night has no date: an assertion that holds for either order, or that
+     * cannot tell a date from a null, is not asserting anything.
+     */
+    const id = await season("published");
+    const zulu = await night(id, "Zulu night", new Date("2026-03-01T19:00:00Z"));
+    const alpha = await night(id, "Alpha night", new Date("2026-03-08T19:00:00Z"));
+    const mike = await night(id, "Mike night", null);
+
+    const rows = await db
+      .select()
+      .from(events)
+      .where(inArray(events.id, [zulu, alpha, mike]));
+    expect(rows.map((row) => row.startsAt)).toEqual([null, null, null]);
+
+    const { toCome } = await page(id);
+
+    // Earliest first, the undated night last — not A, M, Z.
+    expect(toCome.map((event) => event.title)).toEqual([
+      "Zulu night",
+      "Alpha night",
+      "Mike night",
+    ]);
+    expect(toCome.map((event) => event.startsAt)).toEqual([
+      new Date("2026-03-01T19:00:00Z"),
+      new Date("2026-03-08T19:00:00Z"),
+      // Nobody has said when it is. It is listed all the same (UC-34 6).
+      null,
+    ]);
   });
 
   it("scores nobody for an event nobody has recorded a result on", async () => {

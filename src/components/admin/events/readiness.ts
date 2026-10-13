@@ -2,7 +2,12 @@
 // client components, and this file has to stay importable from a plain test.
 import { plural } from "@/components/ui/plural";
 import type { EventDetail } from "@/lib/events";
-import { entryMode, missingToPublish, rankMeetsMinimum } from "@/lib/events-policy";
+import {
+  capacityProblem,
+  entryMode,
+  missingToPublish,
+  rankMeetsMinimum,
+} from "@/lib/events-policy";
 
 /**
  * Is this event ready to publish, and if not, what does each gap mean?
@@ -103,6 +108,8 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
   // queues nobody by itself, so neither sentence about the waitlist is true of
   // one.
   const byApproval = entryMode(event.config) === "approval";
+  // The one copy of R-26's minimum, shared with the writes that enforce it.
+  const capProblem = capacityProblem(event.capacity);
 
   if (event.capacity === null) {
     checks.push({
@@ -113,12 +120,25 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
         ? "Uncapped: no seat limit, but every application still waits for your review."
         : "Uncapped: everybody who applies is accepted and there is never a waitlist.",
     });
-  } else if (!Number.isInteger(event.capacity) || event.capacity < 1) {
+  } else if (capProblem) {
+    /*
+     * `capacityProblem`'s own sentence, because this panel must not hold a
+     * second copy of R-26's minimum: the copy that was here said `< 1` and so
+     * showed a green "1 seat" on an event whose cap the write refuses.
+     *
+     * A gap rather than a blocker. The only cap the database can be holding
+     * that this refuses is one seat — legal before the minimum existed, which
+     * is why there is no constraint to match (`MIN_CAPACITY`) — and such an
+     * event can still be published, cancelled and completed, so disabling the
+     * publish button would be this panel disagreeing with the server in the
+     * other direction. What is true is that the next cap typed into the box
+     * has to clear the minimum.
+     */
     checks.push({
       key: "capacity",
-      label: "Capacity is not a number of seats",
-      level: "stop",
-      detail: "It has to be at least one, or empty for unlimited.",
+      label: `${plural(event.capacity, "seat")}, below what a new event may be set up with`,
+      level: "warn",
+      detail: `${capProblem} Everything else about the event still saves, and it can still be published.`,
     });
   } else {
     checks.push({

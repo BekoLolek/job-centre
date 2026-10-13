@@ -989,6 +989,23 @@ export const events = pgTable(
     /** The signup window. Null at either end means "no bound that side". */
     signupOpensAt: instant("signup_opens_at"),
     signupClosesAt: instant("signup_closes_at"),
+    /**
+     * **Nothing reads these two any more, and nothing writes them.**
+     *
+     * An event's dates are its days' (R-24): `eventDates` in
+     * `src/lib/events-policy.ts` takes the first day's start and the last day's,
+     * and every read in `src/lib/events.ts` overwrites these columns with that
+     * answer on the way out. They are two stale copies of one question, which is
+     * the whole reason they are going.
+     *
+     * Still here only because dropping a column is a one-way door: drizzle/0020
+     * backfilled a day from `starts_at` for every event with no day that had a
+     * time on it, and these rows are what that backfill can be checked against
+     * until the follow-up commit drops both columns (docs/plan.md, Task 50). Do
+     * not read them — the derived value is the only one that is right after a
+     * manager moves a day, and the one read that was left behind here cost
+     * every publish announcement its "Starts" field (`announceEventPublished`).
+     */
     startsAt: instant("starts_at"),
     endsAt: instant("ends_at"),
 
@@ -1030,8 +1047,20 @@ export const events = pgTable(
     updatedAt: instant("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    // The hub asks two questions: "what is on, soonest first" and "show me
-    // everything with this status".
+    /*
+     * The hub asks two questions: "what is on, soonest first" and "show me
+     * everything with this status".
+     *
+     * Only the second of those is still a database question. `starts_at` is a
+     * dead column (see above), so nothing filters or orders by it any more —
+     * the soonest-first order is `eventDates` over `event_days`, in TypeScript.
+     * This index is therefore two columns of write cost for a query nobody
+     * makes, and it goes with the columns in the follow-up that drops them
+     * (docs/plan.md, Task 50), which is also where "is a plain `status` index
+     * worth having instead" gets measured. Not here: dropping an index is a
+     * separate decision from stopping reading a column, and this commit is
+     * already the one that has to be able to recover the dates.
+     */
     index("events_status_starts_at_idx").on(table.status, table.startsAt),
     index("events_game_id_idx").on(table.gameId),
     // `/admin/templates` counts events per template, which is this index.

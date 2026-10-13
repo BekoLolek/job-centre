@@ -5,6 +5,7 @@ import {
   type NotificationKind,
   applications,
   confirmations,
+  eventDays,
   events,
   notificationDmClaims,
   users,
@@ -358,13 +359,19 @@ describe("sendDueReminders", () => {
   const HOUR = 60 * 60 * 1000;
   const MINUTE = 60 * 1000;
 
-  /** A published event starting at `startsAt`, with one accepted seat. */
+  /**
+   * A published event starting at `startsAt`, with one accepted seat.
+   *
+   * The start is written as the event's **first day** (R-24): that is where an
+   * event's dates live now, and `eventsStartingSoon` reads them from there.
+   */
   async function eventWithSeat(startsAt: Date, status: "published" | "draft" = "published") {
     const suffix = Math.random().toString(36).slice(2, 10);
     const [event] = await db
       .insert(events)
-      .values({ slug: `reminder-${suffix}`, title: `Reminder ${suffix}`, status, startsAt })
+      .values({ slug: `reminder-${suffix}`, title: `Reminder ${suffix}`, status })
       .returning({ id: events.id });
+    await db.insert(eventDays).values({ eventId: event.id, dayIndex: 0, startsAt });
     const userId = await makeUser(db);
     await db.insert(applications).values({ eventId: event.id, userId, status: "accepted" });
     return userId;
@@ -471,13 +478,18 @@ describe("sendDueReminders — the answer deadline", () => {
   const HOUR = 60 * 60 * 1000;
   const MINUTE = 60 * 1000;
 
-  /** A published event starting at `startsAt`, with one accepted seat. */
+  /**
+   * A published event starting at `startsAt`, with one accepted seat — or, for
+   * `null`, one nobody has scheduled, which is an event with no dated day
+   * (R-24, UC-13 7a).
+   */
   async function eventWithSeat(startsAt: Date | null) {
     const suffix = Math.random().toString(36).slice(2, 10);
     const [event] = await db
       .insert(events)
-      .values({ slug: `ask-${suffix}`, title: `Ask ${suffix}`, status: "published", startsAt })
+      .values({ slug: `ask-${suffix}`, title: `Ask ${suffix}`, status: "published" })
       .returning({ id: events.id });
+    await db.insert(eventDays).values({ eventId: event.id, dayIndex: 0, startsAt });
     const userId = await makeUser(db);
     const [application] = await db
       .insert(applications)
@@ -682,13 +694,13 @@ describe("direct messages are sent once", () => {
     const secondRun = new Date(firstRun.getTime() + 23 * HOUR);
     const [event] = await db
       .insert(events)
-      .values({
-        slug: "dm-reminder",
-        title: "DM reminder",
-        status: "published",
-        startsAt: new Date(firstRun.getTime() + 30 * HOUR),
-      })
+      .values({ slug: "dm-reminder", title: "DM reminder", status: "published" })
       .returning({ id: events.id });
+    await db.insert(eventDays).values({
+      eventId: event.id,
+      dayIndex: 0,
+      startsAt: new Date(firstRun.getTime() + 30 * HOUR),
+    });
     const seat = await dmMember("event_reminder");
     await db.insert(applications).values({ eventId: event.id, userId: seat, status: "accepted" });
 
@@ -771,5 +783,151 @@ describe("direct messages are sent once", () => {
     vi.stubEnv("DISCORD_BOT_TOKEN", "test-token");
     await notify(input, db);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Which event is "soon", and who has a seat in it (R-24, R-97)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The reminder job after Task 12: an event starts when its first day does, and
+ * the people reminded are the ones holding a seat.
+ */
+describe("sendDueReminders — the dates and the audience", () => {
+  const HOUR = 60 * 60 * 1000;
+
+  /** A published event with the given days, and one application per status. */
+  async function eventWith(
+    dayStarts: Array<Date | null>,
+    seats: ReadonlyArray<"accepted" | "waitlisted" | "declined" | "withdrawn">
+  ) {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const [event] = await db
+      .insert(events)
+      .values({ slug: `dates-${suffix}`, title: `Dates ${suffix}`, status: "published" })
+      .returning({ id: events.id });
+
+    for (const [dayIndex, startsAt] of dayStarts.entries()) {
+      await db.insert(eventDays).values({ eventId: event.id, dayIndex, startsAt });
+    }
+
+    const members: Record<string, string> = {};
+    for (const status of seats) {
+      const userId = await makeUser(db);
+      members[status] = userId;
+      await db.insert(applications).values({ eventId: event.id, userId, status });
+    }
+    return { eventId: event.id, members };
+  }
+
+  /*
+   * R-24: the start is the first day's, which is the *earliest* dated one —
+   * see `eventDates` for why it is read that way rather than off day 0. So a
+   * two-day event is reminded about when its first night is close, not when
+   * its last one is.
+   */
+  it("reads the start off the earliest day, not the last and not day 0", async () => {
+    const now = new Date("2026-12-01T12:00:00.000Z");
+    // First night inside the window, second night well outside it.
+    const soon = await eventWith(
+      [new Date(now.getTime() + 20 * HOUR), new Date(now.getTime() + 44 * HOUR)],
+      ["accepted"]
+    );
+    // Both nights outside it, so nothing is due — reading the *last* day
+    // would make this one look five hours away.
+    const later = await eventWith(
+      [new Date(now.getTime() + 60 * HOUR), new Date(now.getTime() + 84 * HOUR)],
+      ["accepted"]
+    );
+    // The same first night as `soon`, stored in the other order: the answer
+    // cannot depend on which row happens to be day 0.
+    const backwards = await eventWith(
+      [new Date(now.getTime() + 44 * HOUR), new Date(now.getTime() + 20 * HOUR)],
+      ["accepted"]
+    );
+
+    await sendDueReminders(now, db);
+
+    expect((await listNotifications(soon.members.accepted, db)).map((row) => row.kind)).toEqual([
+      "event_reminder",
+    ]);
+    expect(
+      (await listNotifications(backwards.members.accepted, db)).map((row) => row.kind)
+    ).toEqual(["event_reminder"]);
+    // 60 hours out is the answer deadline's window, not the reminder's.
+    expect((await listNotifications(later.members.accepted, db)).map((row) => row.kind)).toEqual([
+      "confirmation_due",
+    ]);
+  });
+
+  it("follows the days when a manager moves them", async () => {
+    const now = new Date("2026-12-03T12:00:00.000Z");
+    const { eventId, members } = await eventWith(
+      [new Date(now.getTime() + 20 * HOUR)],
+      ["accepted"]
+    );
+
+    // Moved a week out before the job runs: no reminder is due any more, and
+    // there is no stored copy of the old date to say otherwise.
+    await db
+      .update(eventDays)
+      .set({ startsAt: new Date(now.getTime() + 7 * 24 * HOUR) })
+      .where(eq(eventDays.eventId, eventId));
+
+    await sendDueReminders(now, db);
+    expect(await unreadCount(members.accepted, db)).toBe(0);
+  });
+
+  it("never reminds anybody about an event with no dated day", async () => {
+    const now = new Date("2026-12-05T12:00:00.000Z");
+    const { members } = await eventWith([null], ["accepted"]);
+
+    await sendDueReminders(now, db);
+    expect(await unreadCount(members.accepted, db)).toBe(0);
+  });
+
+  /*
+   * R-97 is "remind me the day before an event **I have a seat in**", so the
+   * queue is not reminded: somebody third in line has nowhere to turn up to,
+   * and "you have a seat — check the time" would be wrong. If a seat frees
+   * they are promoted and told then (R-55).
+   */
+  it("reminds the accepted seats and nobody else", async () => {
+    const now = new Date("2026-12-07T12:00:00.000Z");
+    const { members } = await eventWith(
+      [new Date(now.getTime() + 20 * HOUR)],
+      ["accepted", "waitlisted", "declined", "withdrawn"]
+    );
+
+    await sendDueReminders(now, db);
+
+    expect(await unreadCount(members.accepted, db)).toBe(1);
+    expect(await unreadCount(members.waitlisted, db)).toBe(0);
+    expect(await unreadCount(members.declined, db)).toBe(0);
+    expect(await unreadCount(members.withdrawn, db)).toBe(0);
+  });
+
+  /*
+   * The *ask* keeps the queue, which is the distinction worth pinning: "are
+   * you still coming?" is a question a waitlisted member can answer usefully —
+   * they are who the seat goes to if somebody says no — while "you have a
+   * seat" is not a sentence that is true of them.
+   */
+  it("still asks the queue for an answer, though", async () => {
+    const now = new Date("2026-12-09T12:00:00.000Z");
+    const { members } = await eventWith(
+      [new Date(now.getTime() + 60 * HOUR)],
+      ["accepted", "waitlisted"]
+    );
+
+    await sendDueReminders(now, db);
+
+    expect((await listNotifications(members.waitlisted, db)).map((row) => row.kind)).toEqual([
+      "confirmation_due",
+    ]);
+    expect((await listNotifications(members.accepted, db)).map((row) => row.kind)).toEqual([
+      "confirmation_due",
+    ]);
   });
 });

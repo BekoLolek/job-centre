@@ -42,14 +42,19 @@ vi.mock("next/server", () => ({
   },
 }));
 
-const { announceApplicationDecision, setAnnouncementSettings, setIntegrationSetting } =
-  await import("@/lib/discord");
-const { applicationDecidedMessage, defaultAnnouncementSettings } = await import("@/lib/announce");
+const {
+  announceApplicationDecision,
+  announceEventPublished,
+  setAnnouncementSettings,
+  setIntegrationSetting,
+} = await import("@/lib/discord");
+const { applicationDecidedMessage, defaultAnnouncementSettings, stamp } = await import(
+  "@/lib/announce"
+);
 const { listAudit, recordAudit } = await import("@/lib/audit");
 const { loadDashboard } = await import("@/lib/admin-dashboard");
-const { applyToEvent, createEvent, publishEvent, setApplicationStatus } = await import(
-  "@/lib/events"
-);
+const { applyToEvent, createEvent, publishEvent, setApplicationStatus, setEventDays } =
+  await import("@/lib/events");
 
 let handle: TestDatabase;
 let db: Database;
@@ -119,6 +124,54 @@ async function announced(applicationId: string) {
 function posted(): DiscordMessage[] {
   return fetchStub.mock.calls.map(([, init]) => JSON.parse(String(init.body)) as DiscordMessage);
 }
+
+/*
+ * R-107 / UC-26 4: "System posts to the channel with a link to the event." The
+ * one fact a reader needs before deciding whether to apply is when it is on,
+ * and an event's dates are its days' (R-24) — `events.starts_at` is a dead
+ * column that nothing has written since Task 12, so an announcer reading it
+ * posts an embed with no "Starts" field at all. `announce.test.ts` covers the
+ * message *builder* with a date handed to it; this covers the announcer that
+ * has to find the date.
+ */
+describe("an event published", () => {
+  it("puts the start its days say in the embed (R-107, UC-26 4)", async () => {
+    await switches({ event_published: true });
+    counter += 1;
+    const event = unwrap(
+      await createEvent({ ...PUBLISHABLE, title: `Published ${counter}` }, db)
+    );
+    unwrap(await publishEvent(event.id, db));
+
+    announceEventPublished(event.id);
+    await Promise.all(state.jobs);
+
+    const [message] = posted();
+    expect(message.embeds[0].fields).toContainEqual({
+      name: "Starts",
+      value: stamp(PUBLISHABLE.days[0].startsAt),
+      inline: true,
+    });
+  });
+
+  it("follows the days when a manager moves them", async () => {
+    await switches({ event_published: true });
+    counter += 1;
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Moved ${counter}` }, db));
+    unwrap(await publishEvent(event.id, db));
+    const moved = new Date("2100-02-09T17:30:00.000Z");
+    unwrap(await setEventDays(event.id, [{ startsAt: moved }], db));
+
+    announceEventPublished(event.id);
+    await Promise.all(state.jobs);
+
+    expect(posted()[0].embeds[0].fields).toContainEqual({
+      name: "Starts",
+      value: stamp(moved),
+      inline: true,
+    });
+  });
+});
 
 describe("an application decision", () => {
   it("posts a waitlisting when only the waitlisted switch is on", async () => {

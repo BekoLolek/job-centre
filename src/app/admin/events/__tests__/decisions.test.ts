@@ -52,6 +52,7 @@ vi.mock("next/server", () => ({ after: () => {} }));
 
 const { decideApplicationAction } = await import("../actions");
 const { applyToEvent, createEvent, publishEvent } = await import("@/lib/events");
+const { MIN_CAPACITY } = await import("@/lib/events-policy");
 
 let handle: TestDatabase;
 let db: Database;
@@ -107,18 +108,24 @@ async function awaitingReview(): Promise<{
 }
 
 /**
- * A first-come event with its one seat taken and two people queueing behind it
+ * A first-come event with its last seat taken and two people queueing behind it
  * -- the shape UC-14 5-6 and 3a are both about.
+ *
+ * Two seats rather than one, because two is the fewest R-26 allows
+ * (`MIN_CAPACITY`), and `bystander` is sitting in the other one. What the tests
+ * below are about is the seat `seated` holds and the queue behind it, which is
+ * the same thing either way.
  */
 async function oneSeatAndAQueue(): Promise<{
   eventId: string;
+  bystander: { applicationId: string; userId: string };
   seated: { applicationId: string; userId: string };
   first: { applicationId: string; userId: string };
   second: { applicationId: string; userId: string };
 }> {
   counter += 1;
   const event = await createEvent(
-    { ...PUBLISHABLE, title: `One seat ${counter}`, capacity: 1 },
+    { ...PUBLISHABLE, title: `One seat ${counter}`, capacity: MIN_CAPACITY },
     db
   );
   if (!event.ok) throw new Error(event.error);
@@ -140,6 +147,7 @@ async function oneSeatAndAQueue(): Promise<{
 
   return {
     eventId: event.data.id,
+    bystander: await join(`Bystander ${counter}`, 9),
     seated: await join(`Seated ${counter}`, 10),
     first: await join(`First ${counter}`, 11),
     second: await join(`Second ${counter}`, 12),
@@ -254,8 +262,8 @@ describe("a manager deciding on a full event", () => {
     expect(result.ok).toBe(false);
     expect(!result.ok && result.confirm).toEqual({
       kind: "over_capacity",
-      capacity: 1,
-      accepted: 1,
+      capacity: MIN_CAPACITY,
+      accepted: MIN_CAPACITY,
     });
     expect(await statusOf(first.applicationId)).toBe("waitlisted");
     expect(await auditFor(first.applicationId)).toEqual([]);

@@ -5,13 +5,14 @@ import {
   applications,
   confirmations,
   db as defaultDb,
+  eventDays,
   events,
   notificationDmClaims,
   notificationPrefs,
   notifications,
   users,
 } from "@/db";
-import { CONFIRMATION_LEAD_MS } from "./events-policy";
+import { CONFIRMATION_LEAD_MS, eventDates } from "./events-policy";
 import {
   type PrefOverride,
   channelsFor,
@@ -251,8 +252,21 @@ export async function applicantsOf(
   return [...new Set(rows.map((row) => row.userId))];
 }
 
-/** Everybody holding a seat — accepted, or waiting for one. */
-export async function seatHoldersOf(
+/**
+ * The people who have a seat — **accepted only**.
+ *
+ * R-97 is "remind me the day before an event *I have a seat in*", and the
+ * queue is deliberately not in it: somebody third in line has no seat and
+ * nowhere to turn up to, "you have a seat — check the time" is not true of
+ * them, and a reminder about an event they are not in is the kind of
+ * notification that gets the whole kind switched off (R-104). If a seat frees
+ * they are promoted and told so there and then (R-55, `freeSeat`), which is
+ * the notification that is actually about them.
+ *
+ * This replaces an `accepted`-or-`waitlisted` version. `seatHoldersAwaitingAnswer`
+ * below is the one audience that still keeps the queue, and says why.
+ */
+export async function seatedMembersOf(
   eventId: string,
   database: Database = defaultDb
 ): Promise<string[]> {
@@ -261,11 +275,7 @@ export async function seatHoldersOf(
     .from(applications)
     .where(eq(applications.eventId, eventId));
   return [
-    ...new Set(
-      rows
-        .filter((row) => row.status === "accepted" || row.status === "waitlisted")
-        .map((row) => row.userId)
-    ),
+    ...new Set(rows.filter((row) => row.status === "accepted").map((row) => row.userId)),
   ];
 }
 
@@ -383,6 +393,13 @@ export async function setPref(
  * its hour, must not need to catch an event at exactly the right tick, and the
  * dedupe key means overlapping runs cost one insert attempt each and change
  * nothing. See `REMINDER_WINDOW_MS` for why the window is wider than a day.
+ *
+ * **When an event starts is its first day's start** (R-24): the join below is
+ * what makes "starting soon" mean the same thing here as it does on the hub and
+ * on the member's own page, and an event whose days have been moved is reminded
+ * about on its new date without anything having to be kept in step.
+ * `eventDates` holds the arithmetic — an event with no dated day has no start,
+ * so it is not starting soon and never appears (UC-25 10a).
  */
 export async function eventsStartingSoon(
   within = REMINDER_WINDOW_MS,
@@ -394,24 +411,31 @@ export async function eventsStartingSoon(
       id: events.id,
       title: events.title,
       slug: events.slug,
-      startsAt: events.startsAt,
       status: events.status,
+      dayStartsAt: eventDays.startsAt,
     })
-    .from(events);
+    .from(events)
+    .leftJoin(eventDays, eq(eventDays.eventId, events.id));
 
-  return rows
-    .filter((row) => row.status === "published" || row.status === "live")
-    .filter((row): row is typeof row & { startsAt: Date } => row.startsAt !== null)
-    .filter((row) => {
-      const delta = row.startsAt.getTime() - now.getTime();
-      return delta > 0 && delta <= within;
-    })
-    .map((row) => ({
-      id: row.id,
-      title: row.title,
-      slug: row.slug,
-      startsAt: row.startsAt,
-    }));
+  const byEvent = new Map<
+    string,
+    { id: string; title: string; slug: string; days: Array<{ startsAt: Date | null }> }
+  >();
+  for (const row of rows) {
+    if (row.status !== "published" && row.status !== "live") continue;
+    const bag =
+      byEvent.get(row.id) ?? { id: row.id, title: row.title, slug: row.slug, days: [] };
+    if (row.dayStartsAt !== null) bag.days.push({ startsAt: row.dayStartsAt });
+    byEvent.set(row.id, bag);
+  }
+
+  return [...byEvent.values()].flatMap((event) => {
+    const { startsAt } = eventDates(event.days);
+    if (startsAt === null) return [];
+    const delta = startsAt.getTime() - now.getTime();
+    if (delta <= 0 || delta > within) return [];
+    return [{ id: event.id, title: event.title, slug: event.slug, startsAt }];
+  });
 }
 
 /**
@@ -476,14 +500,18 @@ export const CONFIRMATION_ASK_WINDOW_MS = CONFIRMATION_LEAD_MS + REMINDER_WINDOW
  * Seat holders whose "still coming?" answer is not settled — nobody has
  * answered, or they answered "not sure yet".
  *
- * The audience for the ask, and narrower than `seatHoldersOf` on purpose:
+ * The audience for the ask, and the one place the queue is still included:
+ * "are you still coming?" is a question a waitlisted member can answer
+ * usefully, because they are who the seat goes to if somebody says no — which
+ * is what makes this wider than the day-before reminder's audience
+ * (`seatedMembersOf`, R-97). It is narrower in the other direction, though:
  * telling somebody who has already said "I'll be there" to answer is the kind
  * of notification that gets a switch thrown. A `maybe` *is* unsettled (R-199,
  * UC-13 extensions E4) — it is precisely the answer the deadline is about to
  * freeze — so they are asked again while they can still change it.
  *
  * The left join is filtered in TypeScript rather than in SQL for the same
- * reason `seatHoldersOf` counts statuses that way: one row per applicant is
+ * reason `seatedMembersOf` counts statuses that way: one row per applicant is
  * nothing to carry, and a `where` on an enum literal is one more place the
  * three answers are spelled out.
  */
@@ -525,6 +553,16 @@ export async function seatHoldersAwaitingAnswer(
  * The two never overlap. The ask covers 48h–84h out and the reminder 0–36h, so
  * no event is in both on the same run and nobody gets two notifications about
  * the same event on the same day.
+ *
+ * ## Two audiences, on purpose
+ *
+ * The day-before reminder goes to **accepted seats only** (R-97,
+ * `seatedMembersOf`): it says "you have a seat, check the time", which is not
+ * true of somebody in the queue. The ask keeps the queue in
+ * (`seatHoldersAwaitingAnswer`), because "are you still coming?" is a question
+ * a waitlisted member can answer usefully — they are who the seat goes to if
+ * somebody says no, and an answer frozen two days out is the answer the
+ * running order is built from either way.
  */
 export async function sendDueReminders(
   now: Date = new Date(),
@@ -534,7 +572,8 @@ export async function sendDueReminders(
 
   let delivered = 0;
   for (const event of soon) {
-    const seats = await seatHoldersOf(event.id, database);
+    // Accepted seats only (R-97, UC-25 9) — see `seatedMembersOf`.
+    const seats = await seatedMembersOf(event.id, database);
     if (seats.length === 0) continue;
 
     const when = dayStamp(event.startsAt) === dayStamp(now) ? "today" : "tomorrow";

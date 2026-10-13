@@ -1,12 +1,7 @@
 import { after } from "next/server";
 import { eq } from "drizzle-orm";
 import { db, events } from "@/db";
-import {
-  applicantsOf,
-  everyone,
-  notify,
-  seatHoldersOf,
-} from "./notifications";
+import { applicantsOf, everyone, notify } from "./notifications";
 import { membersPlacedIn } from "./championship-policy";
 import { scoringInputFor } from "./championship-results";
 import { seasonOfEvent } from "./championship-season";

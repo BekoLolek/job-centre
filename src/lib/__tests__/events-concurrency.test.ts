@@ -2,6 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, applications, events } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { MIN_CAPACITY } from "@/lib/events-policy";
 import { applyToEvent, createEvent, publishEvent } from "@/lib/events";
 
 /**
@@ -41,6 +42,23 @@ beforeAll(async () => {
 afterAll(async () => {
   await harness.close();
 });
+
+/**
+ * A published event with its last seat free, and somebody already in the other
+ * one.
+ *
+ * R-26 puts the smallest cap at two seats (`MIN_CAPACITY`), so "two people race
+ * for the last seat" is a two-seat event with one taken rather than a one-seat
+ * event with none. The race is the same one — a single seat, read and written
+ * by two calls at once — with a bystander in the room, so `statuses` below
+ * carries one extra `accepted` that belongs to nobody in the test.
+ */
+async function lastSeatEvent(title: string): Promise<string> {
+  const eventId = await seatedEvent(title, MIN_CAPACITY);
+  const result = await applyToEvent(eventId, await makeUser(db), {}, db);
+  if (!result.ok) throw new Error(result.error);
+  return eventId;
+}
 
 /** A published event with `capacity` seats and nothing else in the way. */
 async function seatedEvent(title: string, capacity: number | null): Promise<string> {
@@ -83,21 +101,22 @@ async function naiveApply(eventId: string, userId: string): Promise<void> {
 
 describe("the control — proving the race is really being run", () => {
   it("double-books the last seat when the read and the write are not one transaction", async () => {
-    const eventId = await seatedEvent("Naive control", 1);
+    const eventId = await lastSeatEvent("Naive control");
     const [a, b] = await Promise.all([makeUser(db), makeUser(db)]);
 
     await Promise.all([naiveApply(eventId, a), naiveApply(eventId, b)]);
 
-    // Both counted zero before either inserted. If these calls had run in
-    // sequence this would be ["accepted", "waitlisted"], and the tests below
-    // would prove nothing at all.
-    expect(await statuses(eventId)).toEqual(["accepted", "accepted"]);
+    // Both counted one seat taken of two before either inserted, so both took
+    // the last one. If these calls had run in sequence this would be
+    // ["accepted", "accepted", "waitlisted"] — two seats filled and the third
+    // applicant queued — and the tests below would prove nothing at all.
+    expect(await statuses(eventId)).toEqual(["accepted", "accepted", "accepted"]);
   });
 });
 
 describe("applyToEvent under concurrency", () => {
   it("gives the last seat to exactly one of two simultaneous applicants", async () => {
-    const eventId = await seatedEvent("One seat, two people", 1);
+    const eventId = await lastSeatEvent("One seat, two people");
     const [a, b] = await Promise.all([makeUser(db), makeUser(db)]);
 
     const results = await Promise.all([
@@ -112,11 +131,12 @@ describe("applyToEvent under concurrency", () => {
     expect(decided.filter((status) => status === "accepted")).toHaveLength(1);
     expect(decided.filter((status) => status === "waitlisted")).toHaveLength(1);
 
-    expect(await statuses(eventId)).toEqual(["accepted", "waitlisted"]);
+    // Plus the bystander's seat, which was taken before the race began.
+    expect(await statuses(eventId)).toEqual(["accepted", "accepted", "waitlisted"]);
   });
 
   it("leaves the loser at the front of the queue rather than nowhere", async () => {
-    const eventId = await seatedEvent("Queue after the race", 1);
+    const eventId = await lastSeatEvent("Queue after the race");
     const [a, b] = await Promise.all([makeUser(db), makeUser(db)]);
 
     await Promise.all([applyToEvent(eventId, a, {}, db), applyToEvent(eventId, b, {}, db)]);

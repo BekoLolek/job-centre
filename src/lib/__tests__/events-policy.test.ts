@@ -4,19 +4,26 @@ import {
   CONFIRMATION_LEAD_MS,
   EVENT_STATUS_FLOW,
   type EventTimingView,
+  MIN_CAPACITY,
   type WaitlistApplication,
   applicationsOpen,
   canTransition,
+  capacityProblem,
   capacityState,
+  changedSetupFields,
+  dayName,
+  daySequenceProblem,
   confirmationDeadline,
   confirmationsOpen,
   eligibility,
   entryMode,
+  eventDates,
   missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
   rankMeetsMinimum,
   recomputeWaitlist,
+  signupWindowProblem,
   waitlistEnabled,
 } from "@/lib/events-policy";
 
@@ -701,5 +708,256 @@ describe("promoteFromWaitlist", () => {
     const promotion = promoteFromWaitlist([application("in", "accepted", 1)], 10);
     expect(promotion.promoted).toEqual([]);
     expect(promotion.seatsLeft).toBe(9);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* When an event runs — derived from its days (R-24)                  */
+/* ------------------------------------------------------------------ */
+
+describe("eventDates", () => {
+  const day = (hours: number | null, label?: string) => ({
+    startsAt: hours === null ? null : hoursFromNow(hours),
+    label,
+  });
+
+  // UC-11 2, and the point of the whole change: the event page's date range,
+  // the hub's countdown and the archive split all read this.
+  it("starts at the first day and ends at the last", () => {
+    expect(eventDates([day(24), day(48), day(72)])).toEqual({
+      startsAt: hoursFromNow(24),
+      endsAt: hoursFromNow(72),
+    });
+  });
+
+  /*
+   * One evening is not a range. Everything that asks "when was this over"
+   * reads `endsAt ?? startsAt` and gets the same answer either way, while
+   * every date range on the site would otherwise print the same instant twice
+   * with an arrow between them.
+   */
+  it("gives a single-day event no end", () => {
+    expect(eventDates([day(24)])).toEqual({ startsAt: hoursFromNow(24), endsAt: null });
+  });
+
+  it("gives an event nobody has scheduled no dates at all", () => {
+    expect(eventDates([])).toEqual({ startsAt: null, endsAt: null });
+    // A day with no time yet is a real state (`event_days.starts_at` is
+    // nullable on purpose) and it is not a date (UC-13 7a).
+    expect(eventDates([day(null), day(null)])).toEqual({ startsAt: null, endsAt: null });
+  });
+
+  it("skips the days whose time is still to be agreed", () => {
+    expect(eventDates([day(24), day(null), day(72)])).toEqual({
+      startsAt: hoursFromNow(24),
+      endsAt: hoursFromNow(72),
+    });
+  });
+
+  /*
+   * `daySequenceProblem` stops a day list being *written* out of order, so
+   * normally the earliest day is also day 0. A row written before that rule
+   * existed can still be the other way round, and an event reporting an end
+   * before its own start would put a backwards range on every screen.
+   */
+  it("reads the earliest and the latest even if the stored rows run backwards", () => {
+    expect(eventDates([day(72), day(24)])).toEqual({
+      startsAt: hoursFromNow(24),
+      endsAt: hoursFromNow(72),
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Setting one up (UC-08 10, 10c)                                     */
+/* ------------------------------------------------------------------ */
+
+describe("capacityProblem", () => {
+  // R-26, and docs/domain-model.md: "seatCap | number | at least 2".
+  it("refuses a cap below two, saying what the minimum is", () => {
+    expect(capacityProblem(1)).toMatch(/at least 2 seats/);
+    expect(capacityProblem(0)).toMatch(/at least 2 seats/);
+    expect(capacityProblem(-4)).toMatch(/at least 2 seats/);
+  });
+
+  it("accepts the minimum and anything above it", () => {
+    expect(capacityProblem(MIN_CAPACITY)).toBeNull();
+    expect(capacityProblem(40)).toBeNull();
+  });
+
+  /*
+   * UC-08 E5 lists "no cap" as something the checklist *advises* about rather
+   * than something that blocks, and the local fixtures have an uncapped LAN in
+   * them. Null is no limit at all, which is not a limit below two.
+   */
+  it("leaves an uncapped event alone", () => {
+    expect(capacityProblem(null)).toBeNull();
+  });
+
+  it("refuses something that is not a whole number of seats", () => {
+    expect(capacityProblem(2.5)).toMatch(/whole number of seats/);
+    expect(capacityProblem(Number.NaN)).toMatch(/whole number of seats/);
+  });
+});
+
+/*
+ * UC-08 E3's label, and the one rule for it: the event page's day list, the
+ * admin's day list and the sequence refusals all name a day with this, so a
+ * refusal that says "Saturday starts before Friday" names the days the reader
+ * is looking at.
+ */
+describe("dayName", () => {
+  it("prefers the label the manager typed", () => {
+    expect(dayName({ startsAt: null, label: "Finals night" }, 2)).toBe("Finals night");
+  });
+
+  it("falls back to the day's number, counting from one", () => {
+    expect(dayName({ startsAt: null, label: null }, 0)).toBe("Day 1");
+    expect(dayName({ startsAt: null }, 3)).toBe("Day 4");
+  });
+
+  /*
+   * A label of spaces is not a label. `label ?? …` — which is what the copies
+   * in the components still do (docs/plan.md, Task 51) — renders it as nothing
+   * at all, so the day on the page has no name beside its time.
+   */
+  it("treats a whitespace-only label as no label", () => {
+    expect(dayName({ startsAt: null, label: "   " }, 0)).toBe("Day 1");
+    // Trimmed, not rejected, when there is something inside it.
+    expect(dayName({ startsAt: null, label: "  Sunday  " }, 1)).toBe("Sunday");
+  });
+});
+
+describe("daySequenceProblem", () => {
+  const day = (hours: number | null, label?: string | null) => ({
+    startsAt: hours === null ? null : hoursFromNow(hours),
+    label,
+  });
+
+  it("accepts days that run in the order they are listed", () => {
+    expect(daySequenceProblem([day(24), day(48), day(72)])).toBeNull();
+  });
+
+  // UC-08 10c, "days overlap". With a start and no length, two days starting
+  // at the same moment is the whole of what overlapping can mean.
+  it("refuses two days that start at the same moment", () => {
+    expect(daySequenceProblem([day(24), day(24)])).toBe(
+      "Day 2 starts at the same time as Day 1. Two days of one event cannot run at once."
+    );
+  });
+
+  it("refuses a day that starts before the one in front of it", () => {
+    expect(daySequenceProblem([day(24), day(72), day(48)])).toBe(
+      "Day 3 starts before Day 2. Put the days in the order they run."
+    );
+  });
+
+  // UC-08 E3: the label is used wherever the day is named, and a refusal is
+  // one of the places a day gets named.
+  it("names the days the way the manager labelled them", () => {
+    expect(daySequenceProblem([day(48, "Saturday"), day(24, "Sunday")])).toBe(
+      "Sunday starts before Saturday. Put the days in the order they run."
+    );
+  });
+
+  it("ignores days whose time is still to be agreed", () => {
+    expect(daySequenceProblem([day(24), day(null), day(48)])).toBeNull();
+    expect(daySequenceProblem([day(null), day(null)])).toBeNull();
+  });
+});
+
+describe("signupWindowProblem", () => {
+  const window = (opens: number | null, closes: number | null) => ({
+    signupOpensAt: opens === null ? null : hoursFromNow(opens),
+    signupClosesAt: closes === null ? null : hoursFromNow(closes),
+  });
+
+  // UC-08 10c, "sign-ups close after the first day starts": R-25's window has
+  // to fit inside the event it is a window onto.
+  it("refuses sign-ups that close after the first day starts", () => {
+    expect(signupWindowProblem(window(0, 48), hoursFromNow(24))).toMatch(
+      /close them no later than the start/i
+    );
+  });
+
+  /*
+   * Inclusive, like every other deadline here — `applicationsOpen` accepts an
+   * application timestamped exactly on the closing time, and "sign up right up
+   * to the minute it starts" is a real intention.
+   */
+  it("allows sign-ups that close exactly as it starts", () => {
+    expect(signupWindowProblem(window(0, 24), hoursFromNow(24))).toBeNull();
+  });
+
+  it("refuses a window that closes before it opens", () => {
+    expect(signupWindowProblem(window(48, 24), hoursFromNow(72))).toMatch(
+      /close before they open/i
+    );
+  });
+
+  it("refuses sign-ups that open after the event has started", () => {
+    expect(signupWindowProblem(window(48, 72), hoursFromNow(24))).toMatch(
+      /nobody could ever apply/i
+    );
+  });
+
+  // An event nobody has scheduled has no first day to be later than, so a
+  // window on it is whatever the manager says it is.
+  it("has nothing to say about an event with no date", () => {
+    expect(signupWindowProblem(window(0, 48), null)).toBeNull();
+  });
+
+  it("has nothing to say when there is no window", () => {
+    expect(signupWindowProblem(window(null, null), hoursFromNow(24))).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Is this save worth telling anybody about? (R-98, UC-08 10b)        */
+/* ------------------------------------------------------------------ */
+
+describe("changedSetupFields", () => {
+  const setup = (over: Record<string, unknown> = {}) => ({
+    title: "Spring Rivals",
+    type: "tournament",
+    description: "A thing",
+    slug: "spring-rivals",
+    gameId: "game-1",
+    capacity: 8,
+    signupOpensAt: hoursFromNow(0),
+    signupClosesAt: hoursFromNow(24),
+    minRankToEnter: null,
+    minRankToCaptain: null,
+    ...over,
+  });
+
+  // The rule behind "notifications only when something actually changed": a
+  // manager who presses Save having touched nothing has produced no news
+  // (UC-08 10b).
+  it("finds nothing in a save that changed nothing", () => {
+    expect(changedSetupFields(setup(), setup())).toEqual([]);
+  });
+
+  it("names the fields that moved", () => {
+    expect(changedSetupFields(setup(), setup({ title: "Autumn Rivals", capacity: 16 }))).toEqual([
+      "title",
+      "capacity",
+    ]);
+  });
+
+  /*
+   * Two `Date` objects for the same instant are the same answer, and `!==` on
+   * them is always true — so comparing them by identity would report a change
+   * on every save, which is the same bug as not comparing at all.
+   */
+  it("compares dates by instant rather than by identity", () => {
+    const again = new Date(hoursFromNow(24).getTime());
+    expect(changedSetupFields(setup(), setup({ signupClosesAt: again }))).toEqual([]);
+    expect(changedSetupFields(setup(), setup({ signupClosesAt: hoursFromNow(25) }))).toEqual([
+      "signupClosesAt",
+    ]);
+    expect(changedSetupFields(setup(), setup({ signupClosesAt: null }))).toEqual([
+      "signupClosesAt",
+    ]);
   });
 });

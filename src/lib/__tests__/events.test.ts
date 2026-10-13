@@ -35,7 +35,7 @@ import {
   updateEvent,
   withdrawApplication,
 } from "@/lib/events";
-import { entryMode } from "@/lib/events-policy";
+import { MIN_CAPACITY, entryMode } from "@/lib/events-policy";
 
 /**
  * The events data layer, against real Postgres.
@@ -140,6 +140,50 @@ async function makeEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow
 async function openEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow> {
   const event = await makeEvent({ ...PUBLISHABLE, ...over });
   return expectOk(await publishEvent(event.id, db));
+}
+
+/**
+ * An open event whose first day — and therefore whose start (R-24) — is
+ * `startsAt`, with a sign-up window that makes sense around it.
+ *
+ * Sign-ups have to close no later than the first day starts (R-25, UC-08 10c),
+ * so a test that moves the date moves the deadline with it rather than keeping
+ * `PUBLISHABLE`'s far-future one. Passing `null` publishes the event with a
+ * date and then takes it away, because UC-09 2 will not publish an event with
+ * no day — which is the only way to get the undated state UC-13 7a is about.
+ */
+async function datedEvent(
+  startsAt: Date | null,
+  over: Partial<CreateEventInput> = {}
+): Promise<EventRow> {
+  const dated = startsAt ?? PUBLISHABLE.days[0].startsAt;
+  const event = await openEvent({
+    days: [{ startsAt: dated }],
+    signupClosesAt: dated,
+    ...over,
+  });
+  if (startsAt !== null) return event;
+
+  expectOk(await setEventDays(event.id, [{ startsAt: null }], db));
+  return { ...event, startsAt: null, endsAt: null };
+}
+
+/**
+ * An open event with **one seat left**, and somebody already in the other.
+ *
+ * R-26's minimum is two seats (`MIN_CAPACITY`), so the smallest capped event
+ * there is has two of them, and "the last seat" is that event with one taken.
+ * The bystander below is what the tests that used to make a one-seat event are
+ * missing: they are about what happens to the *next* applicant, and that is
+ * the same question either way — it just takes one more member to ask it.
+ */
+async function lastSeatEvent(
+  over: Partial<CreateEventInput> = {}
+): Promise<{ event: EventRow; bystander: string }> {
+  const event = await openEvent({ capacity: MIN_CAPACITY, ...over });
+  const bystander = await makeUser(db);
+  expectOk(await applyToEvent(event.id, bystander, { now: NOW }, db));
+  return { event, bystander };
 }
 
 /**
@@ -258,17 +302,26 @@ describe("createEvent", () => {
     expect(expectFail(result).error).toMatch(/close before they open/i);
   });
 
-  it("refuses an event that ends before it starts", async () => {
+  /*
+   * What used to be "refuses an event that ends before it starts" — the two
+   * columns it compared are gone, and the calendar it was protecting is now the
+   * day list (R-24). Same mistake, same refusal, named per day (UC-08 10c).
+   */
+  it("refuses days that run backwards", async () => {
     const result = await createEvent(
-      { title: "Time travel", startsAt: hours(5), endsAt: hours(1) },
+      { title: "Time travel", days: [{ startsAt: hours(5) }, { startsAt: hours(1) }] },
       db
     );
-    expect(expectFail(result).error).toMatch(/end before it starts/i);
+    expect(expectFail(result).error).toMatch(/Day 2 starts before Day 1/i);
+    // UC-08 10c: nothing saved. Not even the event row, which is written
+    // before the days are.
+    const rows = await db.select().from(events).where(eq(events.title, "Time travel"));
+    expect(rows).toHaveLength(0);
   });
 
   it("refuses signups that open after the event has already begun", async () => {
     const result = await createEvent(
-      { title: "Too late", signupOpensAt: hours(5), startsAt: hours(1) },
+      { title: "Too late", signupOpensAt: hours(5), days: [{ startsAt: hours(1) }] },
       db
     );
     expect(expectFail(result).error).toMatch(/nobody could ever apply/i);
@@ -830,7 +883,7 @@ describe("applyToEvent — when applications are open", () => {
   });
 
   it("refuses once the event has started", async () => {
-    const event = await openEvent({ startsAt: hours(-1) });
+    const event = await datedEvent(hours(-1));
     const userId = await makeUser(db);
     expect(expectFail(await applyToEvent(event.id, userId, { now: NOW }, db)).error).toMatch(
       /already started/i
@@ -855,7 +908,7 @@ describe("applyToEvent — when applications are open", () => {
   });
 
   it("queues rather than refusing when a full event keeps its waitlist", async () => {
-    const event = await openEvent({ capacity: 1 });
+    const { event } = await lastSeatEvent();
     const first = await makeUser(db);
     const second = await makeUser(db);
     expectOk(await applyToEvent(event.id, first, { now: NOW }, db));
@@ -866,7 +919,7 @@ describe("applyToEvent — when applications are open", () => {
   });
 
   it("stores nothing when a full first-come event has its waitlist off (R-170, UC-12 E3)", async () => {
-    const event = await openEvent({ capacity: 1, config: { waitlist: false } });
+    const { event, bystander } = await lastSeatEvent({ config: { waitlist: false } });
     const first = await makeUser(db);
     const second = await makeUser(db);
     expectOk(await applyToEvent(event.id, first, { now: NOW }, db));
@@ -874,7 +927,7 @@ describe("applyToEvent — when applications are open", () => {
     const refused = expectFail(await applyToEvent(event.id, second, { now: NOW }, db));
 
     expect(refused.error).toBe("This event is full.");
-    expect(Object.keys(await queueFor(event.id))).toEqual([first]);
+    expect(Object.keys(await queueFor(event.id)).sort()).toEqual([bystander, first].sort());
   });
 
   it("refuses a second application from the same member", async () => {
@@ -1131,14 +1184,22 @@ describe("applyToEvent — the rank gate", () => {
 /* The queue                                                          */
 /* ------------------------------------------------------------------ */
 
-/** An event with one seat, one member in it and two more queued behind. */
+/**
+ * An event with its last seat taken, one member in it and two more queued
+ * behind.
+ *
+ * `bystander` holds the other seat — see `lastSeatEvent` for why there is one:
+ * two seats is the smallest capped event R-26 allows, so a test about the queue
+ * behind a full event has one extra person sitting in it who never moves.
+ */
 async function queuedEvent(): Promise<{
   event: EventRow;
+  bystander: string;
   seated: string;
   first: string;
   second: string;
 }> {
-  const event = await openEvent({ capacity: 1 });
+  const { event, bystander } = await lastSeatEvent();
   const seated = await makeUser(db);
   const first = await makeUser(db);
   const second = await makeUser(db);
@@ -1147,13 +1208,14 @@ async function queuedEvent(): Promise<{
   expectOk(await applyToEvent(event.id, first, { now: hours(1) }, db));
   expectOk(await applyToEvent(event.id, second, { now: hours(2) }, db));
 
-  return { event, seated, first, second };
+  return { event, bystander, seated, first, second };
 }
 
 describe("the waitlist", () => {
   it("seats the first arrivals and queues the rest in order", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["accepted", null],
       [first]: ["waitlisted", 1],
       [second]: ["waitlisted", 2],
@@ -1161,13 +1223,14 @@ describe("the waitlist", () => {
   });
 
   it("promotes the earliest waitlister when the seat frees, and closes the gap", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
 
     const result = expectOk(await withdrawApplication(event.id, seated, db));
     expect(result.application.status).toBe("withdrawn");
     expect(result.promoted.map((row) => row.userId)).toEqual([first]);
 
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["withdrawn", null],
       [first]: ["accepted", null],
       [second]: ["waitlisted", 1],
@@ -1175,7 +1238,7 @@ describe("the waitlist", () => {
   });
 
   it("renumbers from 1 when somebody leaves the middle of the queue", async () => {
-    const event = await openEvent({ capacity: 1 });
+    const { event, bystander } = await lastSeatEvent();
     const seated = await makeUser(db);
     const middle = await makeUser(db);
     const last = await makeUser(db);
@@ -1187,6 +1250,7 @@ describe("the waitlist", () => {
     // Nobody moves up: the person leaving was holding a place, not a seat.
     expect(result.promoted).toEqual([]);
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["accepted", null],
       [middle]: ["withdrawn", null],
       [last]: ["waitlisted", 1],
@@ -1330,7 +1394,7 @@ describe("the waitlist", () => {
   });
 
   it("sends a re-applicant to the back of the queue when the seats have gone", async () => {
-    const event = await openEvent({ capacity: 1 });
+    const { event } = await lastSeatEvent();
     const seated = await makeUser(db);
     const leaver = await makeUser(db);
     const other = await makeUser(db);
@@ -1347,8 +1411,10 @@ describe("the waitlist", () => {
 });
 
 describe("approval entry mode (R-27, UC-12 7b, UC-14)", () => {
+  // The smallest capped event R-26 allows, which is the point: an approval
+  // event's applications are pending whatever the cap says.
   const approvalEvent = (over: Partial<CreateEventInput> = {}) =>
-    openEvent({ capacity: 1, config: { entryMode: "approval" }, ...over });
+    openEvent({ capacity: MIN_CAPACITY, config: { entryMode: "approval" }, ...over });
 
   async function pendingApplication(eventId: string) {
     const userId = await makeUser(db);
@@ -1369,8 +1435,11 @@ describe("approval entry mode (R-27, UC-12 7b, UC-14)", () => {
 
   it("stores pending even when the waitlist is off and every seat is taken", async () => {
     const event = await approvalEvent({ config: { entryMode: "approval", waitlist: false } });
-    const seated = await pendingApplication(event.id);
-    expectOk(await setApplicationStatus(seated.application.id, "accepted", { now: NOW }, db));
+    // Both seats, so the cap really is full when the late one arrives.
+    for (let seat = 0; seat < MIN_CAPACITY; seat += 1) {
+      const seated = await pendingApplication(event.id);
+      expectOk(await setApplicationStatus(seated.application.id, "accepted", { now: NOW }, db));
+    }
 
     const late = await pendingApplication(event.id);
 
@@ -1453,7 +1522,7 @@ describe("approval entry mode (R-27, UC-12 7b, UC-14)", () => {
 
 describe("setApplicationStatus", () => {
   it("declines a queued applicant without promoting anybody", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const queued = rows.find((row) => row.userId === first);
 
@@ -1462,8 +1531,11 @@ describe("setApplicationStatus", () => {
     );
 
     expect(result.promoted).toEqual([]);
-    expect(result.seats.accepted).toBe(1);
+    // Both seats still held: declining somebody who was only queueing frees
+    // nothing.
+    expect(result.seats.accepted).toBe(MIN_CAPACITY);
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["accepted", null],
       [first]: ["declined", null],
       [second]: ["waitlisted", 1],
@@ -1475,7 +1547,7 @@ describe("setApplicationStatus", () => {
   // had to remember to pass, and an admin who closed the banner left the seat
   // empty with two people queueing for it. It is not an option any more.
   it("declining somebody who held a seat gives it to the front of the queue", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const holder = rows.find((row) => row.userId === seated);
 
@@ -1486,6 +1558,7 @@ describe("setApplicationStatus", () => {
     expect(result.promoted.map((row) => row.userId)).toEqual([first]);
     expect(result.seats.seatsLeft).toBe(0);
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["declined", null],
       [first]: ["accepted", null],
       [second]: ["waitlisted", 1],
@@ -1497,7 +1570,7 @@ describe("setApplicationStatus", () => {
   // "Accepted --> Waitlisted"), so it fills it the same way -- and the person
   // who gave it up goes to the back of the queue, not the front.
   it("queueing somebody who held a seat gives it to the front of the queue", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const holder = rows.find((row) => row.userId === seated);
 
@@ -1507,6 +1580,7 @@ describe("setApplicationStatus", () => {
 
     expect(result.promoted.map((row) => row.userId)).toEqual([first]);
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [first]: ["accepted", null],
       [second]: ["waitlisted", 1],
       [seated]: ["waitlisted", 2],
@@ -1519,7 +1593,7 @@ describe("setApplicationStatus", () => {
   // everybody undoes the manager's decision inside the transaction that made
   // it, and the applicant ends the call accepted again.
   it("leaves the only seated applicant on the queue when a manager puts them there", async () => {
-    const event = await openEvent({ capacity: 1 });
+    const event = await openEvent({ capacity: MIN_CAPACITY });
     const userId = await makeUser(db);
     const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
 
@@ -1565,8 +1639,8 @@ describe("setApplicationStatus", () => {
     expect(expectFail(refusal).error).toMatch(/over the cap/i);
     expect(refusal.ok === false && refusal.confirm).toEqual({
       kind: "over_capacity",
-      capacity: 1,
-      accepted: 1,
+      capacity: MIN_CAPACITY,
+      accepted: MIN_CAPACITY,
     });
 
     // The refusal is a question, not a rollback: nothing was written at all.
@@ -1593,12 +1667,12 @@ describe("setApplicationStatus", () => {
     );
 
     expect(result.overCapacity).toBe(true);
-    expect(result.seats.accepted).toBe(2);
-    expect(result.seats.capacity).toBe(1);
+    expect(result.seats.accepted).toBe(MIN_CAPACITY + 1);
+    expect(result.seats.capacity).toBe(MIN_CAPACITY);
     expect(result.application.waitlistPosition).toBeNull();
 
     const [row] = await db.select().from(events).where(eq(events.id, event.id));
-    expect(row.capacity).toBe(1);
+    expect(row.capacity).toBe(MIN_CAPACITY);
   });
 
   // Re-affirming a status is not an accept. A manager saving a decision on
@@ -1611,7 +1685,7 @@ describe("setApplicationStatus", () => {
     const result = expectOk(
       await setApplicationStatus(holder?.id ?? "", "accepted", { now: NOW }, db)
     );
-    expect(result.seats.accepted).toBe(1);
+    expect(result.seats.accepted).toBe(MIN_CAPACITY);
     expect(result.overCapacity).toBe(false);
   });
 
@@ -1739,7 +1813,7 @@ describe("setConfirmation", () => {
   // promoting as in 3a." docs/diagrams/application-state.md draws it as one
   // edge with withdrawing, so this is the same departure by another name.
   it("frees the seat when somebody in it says they are not coming", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const holder = rows.find((row) => row.userId === seated);
 
@@ -1749,6 +1823,7 @@ describe("setConfirmation", () => {
     expect(result.status).toBe("withdrawn");
     expect(result.promoted.map((row) => row.userId)).toEqual([first]);
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["withdrawn", null],
       [first]: ["accepted", null],
       [second]: ["waitlisted", 1],
@@ -1756,7 +1831,7 @@ describe("setConfirmation", () => {
   });
 
   it("keeps the answer on the row it freed, so the admin can see why", async () => {
-    const event = await openEvent({ capacity: 1 });
+    const event = await openEvent({ capacity: MIN_CAPACITY });
     const userId = await makeUser(db);
     const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
 
@@ -1777,7 +1852,7 @@ describe("setConfirmation", () => {
   // There is no seat to give up from the queue, the state diagram has no edge
   // for it, and one tap must not cost somebody a place they may still want.
   it("leaves a waitlisted member in the queue when they say they cannot make it", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const queued = rows.find((row) => row.userId === first);
 
@@ -1786,6 +1861,7 @@ describe("setConfirmation", () => {
     expect(result.status).toBe("waitlisted");
     expect(result.promoted).toEqual([]);
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["accepted", null],
       [first]: ["waitlisted", 1],
       [second]: ["waitlisted", 2],
@@ -1813,7 +1889,7 @@ describe("setConfirmation", () => {
    * not, and against an empty waitlist both answers look identical.
    */
   it("keeps the seat and promotes nobody when somebody says they are not sure", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const holder = rows.find((row) => row.userId === seated);
 
@@ -1823,6 +1899,7 @@ describe("setConfirmation", () => {
     expect(result.status).toBe("accepted");
     expect(result.promoted).toEqual([]);
     expect(await queueFor(event.id)).toEqual({
+      [bystander]: ["accepted", null],
       [seated]: ["accepted", null],
       [first]: ["waitlisted", 1],
       [second]: ["waitlisted", 2],
@@ -1837,7 +1914,7 @@ describe("setConfirmation", () => {
 
   /** An event starting at `startsAt`, applied to by one member at `NOW`. */
   async function datedSeat(startsAt: Date | null) {
-    const event = await openEvent({ startsAt });
+    const event = await datedEvent(startsAt);
     const userId = await makeUser(db);
     const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
     return { event, userId, application };
@@ -1893,9 +1970,13 @@ describe("setConfirmation", () => {
   // UC-13 extensions E3, and the reason locking the answer is acceptable at
   // all: somebody taken ill the day before still gives their seat up.
   it("leaves withdrawing open after the answer has closed", async () => {
-    const event = await openEvent({ startsAt: STARTS, capacity: 1 });
+    // Two seats is the smallest cap R-26 allows, so the seat the withdrawal
+    // frees is the second one and `filler` is sitting in the first.
+    const event = await datedEvent(STARTS, { capacity: MIN_CAPACITY });
+    const filler = await makeUser(db);
     const seated = await makeUser(db);
     const queued = await makeUser(db);
+    expectOk(await applyToEvent(event.id, filler, { now: NOW }, db));
     expectOk(await applyToEvent(event.id, seated, { now: NOW }, db));
     expectOk(await applyToEvent(event.id, queued, { now: hours(1) }, db));
 
@@ -1908,6 +1989,7 @@ describe("setConfirmation", () => {
     const out = expectOk(await withdrawApplication(event.id, seated, db));
     expect(out.promoted.map((row) => row.userId)).toEqual([queued]);
     expect(await queueFor(event.id)).toEqual({
+      [filler]: ["accepted", null],
       [seated]: ["withdrawn", null],
       [queued]: ["accepted", null],
     });
@@ -1927,8 +2009,10 @@ describe("reads for the pages", () => {
   });
 
   it("splits what is coming up from what has been and gone", async () => {
-    const soon = await openEvent({ title: "Coming up", startsAt: hours(48) });
-    const done = await openEvent({ title: "Long gone", startsAt: hours(-48) });
+    // The dates are the days' (R-24), so this is what "soonest first" and the
+    // archive split now read.
+    const soon = await datedEvent(hours(48), { title: "Coming up" });
+    const done = await datedEvent(hours(-48), { title: "Long gone" });
 
     const upcoming = await listEvents({ upcoming: true, now: NOW }, db);
     const past = await listEvents({ upcoming: false, now: NOW }, db);
@@ -1972,13 +2056,16 @@ describe("reads for the pages", () => {
   });
 
   it("lists applicants seated first, then the queue in its own order", async () => {
-    const { event, seated, first, second } = await queuedEvent();
+    const { event, bystander, seated, first, second } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const queued = rows.find((row) => row.userId === second);
     expectOk(await setApplicationStatus(queued?.id ?? "", "declined", { now: NOW }, db));
 
     const applicants = await getApplicationsForEvent(event.id, db);
+    // The two seats in submission order, then the queue, then the decided —
+    // `bystander` holds the first seat (see `lastSeatEvent`).
     expect(applicants.map((row) => [row.userId, row.status])).toEqual([
+      [bystander, "accepted"],
       [seated, "accepted"],
       [first, "waitlisted"],
       [second, "declined"],
@@ -2015,8 +2102,8 @@ describe("reads for the pages", () => {
 
   it("lists a member's own applications with the event attached", async () => {
     const userId = await makeUser(db);
-    const soon = await openEvent({ title: "Mine, soon", startsAt: hours(24) });
-    const later = await openEvent({ title: "Mine, later", startsAt: hours(72) });
+    const soon = await datedEvent(hours(24), { title: "Mine, soon" });
+    const later = await datedEvent(hours(72), { title: "Mine, later" });
     expectOk(await applyToEvent(later.id, userId, { now: NOW }, db));
     expectOk(await applyToEvent(soon.id, userId, { now: NOW }, db));
 
@@ -2124,7 +2211,6 @@ describe("a whole event, end to end", () => {
       minRankToEnter: "Gold III",
       signupOpensAt: hours(-1),
       signupClosesAt: hours(6),
-      startsAt: hours(24),
       days: [
         { label: "Saturday", startsAt: hours(24) },
         { label: "Sunday", startsAt: hours(48) },
@@ -2171,5 +2257,339 @@ describe("a whole event, end to end", () => {
 
     const after = await getEventBySlug(event.slug, { now: NOW }, db);
     expect(after?.seats).toMatchObject({ accepted: 2, waitlisted: 0 });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-08 10c: each rule refused by name, and nothing saved            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The four things a setup save is refused for, and the one thing every one of
+ * them has in common: nothing is written.
+ *
+ * UC-08 10c names them in one line — "sign-ups close after the first day
+ * starts, days overlap, cap below 2, or a choice question has no options" —
+ * and the last of those is already `setEventQuestions`'s ("a pick-one or
+ * pick-any question needs at least one option", tested above). These are the
+ * other three, each asserted twice: the sentence names the problem, and the
+ * row still holds what it held.
+ */
+describe("the setup rules (UC-08 10, 10c)", () => {
+  /** An event with one dated day and a window that closes as it starts. */
+  async function dayAndWindow(startsAt: Date): Promise<EventRow> {
+    return makeEvent({
+      title: `Rules ${titleCounter + 1}`,
+      signupOpensAt: hours(-24),
+      signupClosesAt: startsAt,
+      days: [{ startsAt }],
+    });
+  }
+
+  async function dayTimes(eventId: string): Promise<Array<number | null>> {
+    const rows = await db
+      .select()
+      .from(eventDays)
+      .where(eq(eventDays.eventId, eventId))
+      .orderBy(asc(eventDays.dayIndex));
+    return rows.map((row) => row.startsAt?.getTime() ?? null);
+  }
+
+  /* --- sign-ups close no later than the first day (R-25) ---------- */
+
+  it("refuses a closing time past the first day's start, and saves nothing", async () => {
+    const event = await dayAndWindow(hours(48));
+
+    const refused = expectFail(
+      await updateEvent(event.id, { signupClosesAt: hours(72) }, db)
+    );
+    expect(refused.error).toMatch(/close them no later than the start/i);
+
+    const [row] = await db.select().from(events).where(eq(events.id, event.id));
+    expect(row.signupClosesAt).toEqual(hours(48));
+  });
+
+  // The same rule from the other direction: the pair is what has to make
+  // sense, so whichever save broke it is the one refused. Writing the days and
+  // leaving the window impossible would be the same mistake through the other
+  // door.
+  it("refuses a first day pulled back behind the closing time, and saves nothing", async () => {
+    const event = await dayAndWindow(hours(48));
+
+    const refused = expectFail(
+      await setEventDays(event.id, [{ startsAt: hours(24) }], db)
+    );
+    expect(refused.error).toMatch(/close them no later than the start/i);
+    expect(await dayTimes(event.id)).toEqual([hours(48).getTime()]);
+  });
+
+  it("allows a first day exactly on the closing time", async () => {
+    const event = await dayAndWindow(hours(48));
+    expectOk(await setEventDays(event.id, [{ startsAt: hours(48) }], db));
+    expect(await dayTimes(event.id)).toEqual([hours(48).getTime()]);
+  });
+
+  /* --- days ordered and non-overlapping (R-24) -------------------- */
+
+  it("refuses two days that start at the same moment, and saves nothing", async () => {
+    const event = await dayAndWindow(hours(48));
+
+    const refused = expectFail(
+      await setEventDays(event.id, [{ startsAt: hours(48) }, { startsAt: hours(48) }], db)
+    );
+    expect(refused.error).toMatch(/at the same time as Day 1/i);
+    // Still the one day it had: not the two it was asked for, and not one of
+    // them written before the refusal landed.
+    expect(await dayTimes(event.id)).toEqual([hours(48).getTime()]);
+  });
+
+  it("refuses days that run backwards, and saves nothing", async () => {
+    const event = await dayAndWindow(hours(48));
+
+    const refused = expectFail(
+      await setEventDays(
+        event.id,
+        [{ startsAt: hours(48) }, { startsAt: hours(96), label: "Sunday" }, { startsAt: hours(72) }],
+        db
+      )
+    );
+    expect(refused.error).toMatch(/Day 3 starts before Sunday/i);
+    expect(await dayTimes(event.id)).toEqual([hours(48).getTime()]);
+  });
+
+  it("keeps a day whose time is still to be agreed out of the comparison", async () => {
+    const event = await dayAndWindow(hours(48));
+    expectOk(
+      await setEventDays(
+        event.id,
+        [{ startsAt: hours(48) }, { startsAt: null }, { startsAt: hours(72) }],
+        db
+      )
+    );
+    expect(await dayTimes(event.id)).toEqual([hours(48).getTime(), null, hours(72).getTime()]);
+  });
+
+  /* --- at least two seats (R-26) ---------------------------------- */
+
+  it("refuses a cap below two on creation, and saves nothing", async () => {
+    const refused = expectFail(
+      await createEvent({ title: "Just me", capacity: 1 }, db)
+    );
+    expect(refused.error).toMatch(/at least 2 seats/);
+    expect(await db.select().from(events).where(eq(events.title, "Just me"))).toHaveLength(0);
+  });
+
+  it("refuses a cap below two on an edit, and leaves the cap where it was", async () => {
+    const event = await makeEvent({ title: "Cap edit", capacity: 8 });
+
+    expect(expectFail(await updateEvent(event.id, { capacity: 1 }, db)).error).toMatch(
+      /at least 2 seats/
+    );
+
+    const [row] = await db.select().from(events).where(eq(events.id, event.id));
+    expect(row.capacity).toBe(8);
+  });
+
+  it("takes the minimum, and takes no cap at all", async () => {
+    expect((await makeEvent({ title: "Pair", capacity: MIN_CAPACITY })).capacity).toBe(
+      MIN_CAPACITY
+    );
+    // UC-08 E5: "no cap" is advice, not a refusal — an uncapped event is a
+    // supported setup, and "at least two" must not quietly outlaw it.
+    expect((await makeEvent({ title: "Uncapped", capacity: null })).capacity).toBeNull();
+    const event = await makeEvent({ title: "Cap cleared", capacity: 4 });
+    expect(expectOk(await updateEvent(event.id, { capacity: null }, db)).capacity).toBeNull();
+  });
+
+  /*
+   * A cap of one was legal before R-26's minimum was enforced, so deployed
+   * rows may hold one (which is why there is no database constraint — see
+   * `MIN_CAPACITY`). Such an event still has to be publishable, cancellable
+   * and completable: the rule is checked on the capacity a save is *writing*,
+   * not on the one the row happens to carry.
+   */
+  it("leaves an event that already holds a one-seat cap alone until somebody writes one", async () => {
+    const event = await makeEvent({ ...PUBLISHABLE, title: "Legacy single seat" });
+    await db.update(events).set({ capacity: 1 }).where(eq(events.id, event.id));
+
+    const published = expectOk(await updateEvent(event.id, { status: "published" }, db));
+    expect(published.status).toBe("published");
+    expect(published.capacity).toBe(1);
+
+    const renamed = expectOk(await updateEvent(event.id, { title: "Legacy, renamed" }, db));
+    expect(renamed.capacity).toBe(1);
+
+    // The rest of the lifecycle, which is the whole of what "can still be
+    // published, cancelled and completed" claims: running it, finishing it, and
+    // the reopen that is the one write a finished event accepts (UC-09 6a).
+    expect(expectOk(await updateEvent(event.id, { status: "live" }, db)).status).toBe("live");
+    expect(expectOk(await updateEvent(event.id, { status: "complete" }, db)).status).toBe(
+      "complete"
+    );
+    const reopened = expectOk(await updateEvent(event.id, { status: "live" }, db));
+    expect(reopened.status).toBe("live");
+    expect(reopened.capacity).toBe(1);
+
+    /*
+     * And the save the Basics panel sends: every field on that tab, as the
+     * panel renders them. `saveBasicsAction` leaves the cap out when the
+     * manager did not move it, precisely so this goes through — an
+     * unconditional `capacity: 1` here refuses a rename until the manager
+     * raises the cap, and raising it promotes somebody off the waitlist.
+     */
+    const basics = expectOk(
+      await updateEvent(
+        event.id,
+        {
+          title: "Legacy, described",
+          slug: renamed.slug,
+          type: renamed.type,
+          description: "A typo fixed, nothing else.",
+          bannerUrl: renamed.bannerUrl,
+          gameId: renamed.gameId,
+          config: renamed.config,
+          signupOpensAt: renamed.signupOpensAt,
+          signupClosesAt: renamed.signupClosesAt,
+        },
+        db
+      )
+    );
+    expect(basics.description).toBe("A typo fixed, nothing else.");
+    expect(basics.capacity).toBe(1);
+
+    // Touch the cap, though, and the minimum applies.
+    expect(expectFail(await updateEvent(event.id, { capacity: 1 }, db)).error).toMatch(
+      /at least 2 seats/
+    );
+  });
+
+  // `cancelled` is terminal, so it needs an event of its own rather than a
+  // sixth step above.
+  it("cancels an event holding a one-seat cap", async () => {
+    const event = await makeEvent({ ...PUBLISHABLE, title: "Legacy, called off" });
+    await db.update(events).set({ capacity: 1 }).where(eq(events.id, event.id));
+
+    expectOk(await updateEvent(event.id, { status: "published" }, db));
+    const cancelled = expectOk(await updateEvent(event.id, { status: "cancelled" }, db));
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.capacity).toBe(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* R-24: an event's dates are its days'                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Start and end, derived on every read (Task 12).
+ *
+ * There is no `starts_at` to read any more, so these are the tests that the
+ * answer every screen shows comes from the day list — and, more importantly,
+ * that it *follows* the day list when a manager moves it (UC-08 4). The
+ * columns are still on the row until the follow-up commit drops them, which is
+ * why one of these writes a disagreeing value straight into the database and
+ * checks that nobody believes it.
+ */
+describe("an event's dates come from its days (R-24, UC-11 2)", () => {
+  it("starts at the first day and ends at the last", async () => {
+    const event = await makeEvent({
+      title: "Three nights",
+      signupOpensAt: hours(-24),
+      signupClosesAt: hours(24),
+      days: [
+        { startsAt: hours(24), label: "Friday" },
+        { startsAt: hours(48), label: "Saturday" },
+        { startsAt: hours(72), label: "Sunday" },
+      ],
+    });
+
+    const detail = await getEventBySlug(event.slug, { now: NOW }, db);
+    expect(detail?.startsAt).toEqual(hours(24));
+    expect(detail?.endsAt).toEqual(hours(72));
+    // UC-11 2: the overview lists every day, so the page is given all of them.
+    expect(detail?.days.map((day) => day.label)).toEqual(["Friday", "Saturday", "Sunday"]);
+  });
+
+  it("has no end when it runs for one evening", async () => {
+    const event = await datedEvent(hours(24), { title: "One night" });
+    const detail = await getEventBySlug(event.slug, { now: NOW }, db);
+    expect(detail?.startsAt).toEqual(hours(24));
+    expect(detail?.endsAt).toBeNull();
+  });
+
+  it("moves when the days move", async () => {
+    const event = await datedEvent(hours(24), { title: "Moved" });
+    expectOk(
+      await setEventDays(event.id, [{ startsAt: hours(96) }, { startsAt: hours(120) }], db)
+    );
+
+    const detail = await getEventBySlug(event.slug, { now: NOW }, db);
+    expect(detail?.startsAt).toEqual(hours(96));
+    expect(detail?.endsAt).toEqual(hours(120));
+  });
+
+  /*
+   * The two columns are dead and this is what "dead" has to mean: a value
+   * sitting in them — left behind by a row written before the change, or by
+   * the backfill in drizzle/0020 — must not reach a countdown, a listing order
+   * or the answer deadline. Written straight to the database because nothing in
+   * the library will put a value there any more.
+   */
+  it("ignores a stale value left in the old columns", async () => {
+    const event = await datedEvent(hours(24), { title: "Stale column" });
+    await db
+      .update(events)
+      .set({ startsAt: hours(-500), endsAt: hours(-400) })
+      .where(eq(events.id, event.id));
+
+    const detail = await getEventBySlug(event.slug, { now: NOW }, db);
+    expect(detail?.startsAt).toEqual(hours(24));
+    expect(detail?.endsAt).toBeNull();
+    // And it is still listed as coming up, which reading the column would not
+    // have been (R-40, R-41).
+    const upcoming = await listEvents({ upcoming: true, now: NOW }, db);
+    expect(upcoming.map((row) => row.id)).toContain(event.id);
+  });
+
+  // R-41, UC-10 4: "lists matching published events, soonest first" — ordered
+  // by the first day now, with an event nobody has scheduled last, because it
+  // is not coming up sooner than everything else.
+  it("lists events soonest first, with the undated ones last", async () => {
+    const title = `Order ${Date.now()}`;
+    const late = await datedEvent(hours(200), { title: `${title} late` });
+    const early = await datedEvent(hours(100), { title: `${title} early` });
+    const undated = await datedEvent(null, { title: `${title} undated` });
+
+    const listed = (await listEvents({ status: "published", now: NOW }, db))
+      .filter((row) => row.title.startsWith(title))
+      .map((row) => row.id);
+    expect(listed).toEqual([early.id, late.id, undated.id]);
+  });
+
+  // R-200, UC-13 7: the answer closes two days before the start, and the start
+  // is the first day's — so moving the first day moves the deadline, with no
+  // stored copy to disagree.
+  it("closes the answer two days before the first day, wherever that day moves to", async () => {
+    const event = await datedEvent(hours(100), { title: "Deadline follows" });
+    const userId = await makeUser(db);
+    const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    const first = expectOk(await setConfirmation(application.id, "in", { now: NOW }, db));
+    expect(first.closesAt).toEqual(hours(100 - 48));
+
+    expectOk(await setEventDays(event.id, [{ startsAt: hours(200) }], db));
+    const moved = expectOk(await setConfirmation(application.id, "in", { now: NOW }, db));
+    expect(moved.closesAt).toEqual(hours(200 - 48));
+  });
+
+  // UC-13 7a: an event nobody has scheduled has no deadline at all — and now
+  // that the start is the days' answer, "no start" is "no dated day".
+  it("gives an event with no dated day no deadline", async () => {
+    const event = await datedEvent(null, { title: "No deadline" });
+    const userId = await makeUser(db);
+    const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    const far = new Date("2099-01-01T00:00:00.000Z");
+    expect(expectOk(await setConfirmation(application.id, "in", { now: far }, db)).closesAt).toBeNull();
   });
 });

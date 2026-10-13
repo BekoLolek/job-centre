@@ -70,6 +70,7 @@ import {
   getEventBySlug,
   loadApplicationForm,
 } from "@/lib/events";
+import { dayName } from "@/lib/events-policy";
 import { fieldTypeInfo } from "@/lib/profile-fields";
 import { canSeeEvent } from "@/lib/hosting";
 import { getCurrentUser } from "@/lib/session-guards";
@@ -401,6 +402,38 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
             ))}
           </div>
         </Panel>
+
+        {/* --- Every day of it (R-24, UC-11 2) --------------------- */}
+        {event.days.length > 0 && (
+          <Panel as="section">
+            <Eyebrow className="mb-3">When it runs</Eyebrow>
+            <ul className="space-y-2">
+              {event.days.map((day, index) => (
+                <li
+                  key={day.id}
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair/60 pb-2 last:border-0"
+                >
+                  {/* The label the manager gave it, or "Day N" (UC-08 E3) —
+                      `dayName` is that rule, and the day sequence refusals name
+                      the days with the same function, so a refusal and the page
+                      call a day the same thing. */}
+                  <span className="text-14">{dayName(day, index)}</span>
+                  {/* A client component, like every other instant on this page:
+                      the reader's zone is the only honest one to print in. */}
+                  <EventDateRange
+                    startsAt={day.startsAt}
+                    fallback="Time still to be agreed"
+                    className="ml-auto"
+                  />
+                </li>
+              ))}
+            </ul>
+            <p className="mt-4 text-12 leading-relaxed text-muted">
+              The event&apos;s dates are its days&apos;: it starts when the first one does and
+              ends when the last one does.
+            </p>
+          </Panel>
+        )}
 
         {event.questions.length > 0 && (
           <Panel as="section">

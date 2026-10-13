@@ -30,12 +30,14 @@
  *     scored — which is also what makes UC-34 2e ("the season has not started")
  *     a case rather than a bug.
  *
- *  2. **A season's events run in the order they were played** — `starts_at`
- *     ascending, an undated one last, ties broken by title so the order is
- *     total. `listCountingEvents` returns them alphabetically, which is right
- *     for an admin picking one out of a list and wrong for a page that says
- *     "the last event". Hence the extra read below: the dates are not on the
- *     counting row.
+ *  2. **A season's events run in the order they were played** — earliest
+ *     first, an undated one last, ties broken by title so the order is total.
+ *     `listCountingEvents` returns them alphabetically, which is right for an
+ *     admin picking one out of a list and wrong for a page that says "the last
+ *     event". Hence the extra reads below: neither the counting row nor the
+ *     event row holds a date. An event's start is its first dated day's
+ *     (R-24), so it comes from `event_days`, and the ordering is therefore done
+ *     here rather than with an `order by` — there is no column to name.
  *
  *  3. **The current season is the newest published one.** Two published at
  *     once is possible — a season being wound down beside its successor — and
@@ -104,6 +106,7 @@ import {
   listCountingEvents,
   listCountingEventsIn,
 } from "./championships";
+import { readDatesFor } from "./events";
 import { UNKNOWN_PLAYER, profilesFor } from "./players";
 
 /* ------------------------------------------------------------------ */
@@ -282,10 +285,16 @@ function scoringOf(season: ChampionshipRow): ChampionshipScoring {
 /**
  * Every event counting towards this season, in the order it was played.
  *
- * The counting rows carry the weight; the events carry the dates, the slug and
- * the game, and neither table has the other's. Two reads and a join in memory
- * rather than a third query shape in `./championships`: a season has tens of
- * counting events, and that module's list is an admin's alphabetical one.
+ * The counting rows carry the weight; the events carry the slug and the game,
+ * and neither table has the other's. Two reads and a join in memory rather
+ * than a third query shape in `./championships`: a season has tens of counting
+ * events, and that module's list is an admin's alphabetical one.
+ *
+ * The dates come from neither of them. An event's start is its first dated
+ * day's (R-24), so it is read from `event_days` through `readDatesFor` — one
+ * grouped query for the whole season, not one per event. Only the start is
+ * taken: the page prints a single date per row (`SeasonEvents`), and an end
+ * nothing renders would be a field to keep in step for nobody.
  */
 async function seasonEvents(
   championshipId: string,
@@ -300,7 +309,6 @@ async function seasonEvents(
       slug: events.slug,
       title: events.title,
       status: events.status,
-      startsAt: events.startsAt,
       gameName: games.name,
     })
     .from(events)
@@ -313,6 +321,11 @@ async function seasonEvents(
     );
 
   const detail = new Map(rows.map((row) => [row.id, row]));
+  const dates = await readDatesFor(
+    database,
+    rows.map((row) => row.id)
+  );
+
   const out: SeasonEvent[] = [];
   for (const row of counting) {
     const event = detail.get(row.eventId);
@@ -322,7 +335,9 @@ async function seasonEvents(
       slug: event.slug,
       title: event.title,
       gameName: event.gameName,
-      startsAt: event.startsAt,
+      // Null when no day has a time yet — listed, just without a date, and
+      // `byWhenPlayed` puts it last.
+      startsAt: dates.get(row.eventId)?.startsAt ?? null,
       status: event.status,
       weight: row.weight,
       // The same question `resultsForEvent` asks, asked of the same function:

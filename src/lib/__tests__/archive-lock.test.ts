@@ -251,9 +251,12 @@ const WRITES: Write[] = [
   ["updateEvent: title", false, (f) => updateEvent(f.eventId, { title: "Corrected" }, db)],
   ["updateEvent: description", false, (f) => updateEvent(f.eventId, { description: "New" }, db)],
   [
-    "updateEvent: dates",
+    // The event's own dates are its days' now (R-24), so `setEventDays` below
+    // is the write that moves them; the sign-up window is the date still kept
+    // on the event row.
+    "updateEvent: the sign-up window",
     false,
-    (f) => updateEvent(f.eventId, { endsAt: new Date("2100-01-03T00:00:00Z") }, db),
+    (f) => updateEvent(f.eventId, { signupClosesAt: new Date("2100-01-01T12:00:00Z") }, db),
   ],
   ["updateEvent: capacity", false, (f) => updateEvent(f.eventId, { capacity: 40 }, db)],
   ["updateEvent: rank rules", false, (f) => updateEvent(f.eventId, { minRankToEnter: null }, db)],

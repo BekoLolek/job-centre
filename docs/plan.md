@@ -224,6 +224,29 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] An avatar with an image does not repeat the adjacent name
 - **Depends on:** none.
 
+### Task 50: Drop the two dead date columns, and the index that only reads them (found in Task 12 review)
+
+- **Serves:** R-24 / UC-11 2 — the follow-up Task 12 names in its Files line
+- **Files:** `src/db/schema.ts` (`events.startsAt`, `events.endsAt`, `events_status_starts_at_idx`), new migration, `src/db/__tests__/migrations.test.ts`
+- **Do:** Task 12 stopped reading `events.starts_at`/`ends_at` and drizzle/0020 backfilled a day row from them, so nothing reads or writes either column. Drop both. **Drop `events_status_starts_at_idx` with them:** it indexes `(status, starts_at)`, and now that an event's dates are its days' there is nothing left that filters or orders by that column — the hub's "what is on, soonest first" sorts in TypeScript over `readDatesFor`, so the index is two columns of write cost for a query nobody makes. What the listings actually ask for is status alone, so replace it with an index on `status` if the plans show one is wanted; measure before adding it rather than keeping this one by default. The drop also needs the live rows looked at first (Risks: "Dropping a column that holds live data"): count the events whose `starts_at` disagrees with their first dated day, and decide per row — 0020 deliberately left a partially dated event's day list alone, and an `ends_at` that was never a day's start was never backfilled at all.
+- **Acceptance criteria:**
+  - [ ] `grep -rn "starts_at\|ends_at" src/ drizzle/` shows no reference to the `events` columns outside the migrations that made and dropped them
+  - [ ] The migration test replays the backfill and the drop in order and still proves the backfilled day survives
+  - [ ] `EventRow` no longer carries a `startsAt`/`endsAt` that is not derived, so `withDates` and `withKnownDates` can go
+  - [ ] Whatever index replaces it is justified by a query in the code, named in the docblock
+- **Depends on:** Task 12.
+
+### Task 51: One rule for what a day is called (found in Task 12 review)
+
+- **Serves:** UC-08 E3 / the overview, the schedule, the apply form and `/me/events`
+- **Files:** `src/app/events/[slug]/ScheduleTab.tsx:222`, `src/components/apply/ApplyForm.tsx:378`, `src/components/me/MyEventCard.tsx:344`, their tests
+- **Do:** `dayName` in `src/lib/events-policy.ts` is the rule — the manager's label, or "Day N" — and the day-sequence refusals name days with it, so a refusal and the page agree. Task 12's new overview panel calls it. These three still have their own copy, and it is a *different* rule: `label ?? \`Day N\`` renders a whitespace-only label as a blank where `dayName` renders "Day 1", because `??` only catches null. Call `dayName` from all three. Note they number from `day.dayIndex` rather than the array index, which is the better input — `dayName` takes an index, so pass `day.dayIndex` and keep that behaviour.
+- **Acceptance criteria:**
+  - [ ] `grep -rn "Day \${" src/components src/app` finds no fallback outside `dayName`
+  - [ ] A day labelled `"   "` is called "Day 1" on all four surfaces
+  - [ ] A labelled day is unchanged on all four
+- **Depends on:** Task 12.
+
 ## I. Championship (R-171 to R-198)
 
 Added 2026-09-20. A season of two to four events a month across different games, with one
@@ -348,7 +371,7 @@ bracket corrections safe (R-79).
 ### Task 12: Event dates come from its days
 
 - **Serves:** R-24, R-40, R-41, R-97 / UC-10, UC-11 2, UC-25 9
-- **Files:** `src/lib/events.ts` (`listEvents`, summaries), `src/lib/notifications.ts`, `src/app/page.tsx`, `src/app/events/[slug]/page.tsx`, `src/components/admin/events/BasicsTab.tsx`, `src/db/schema.ts` (+ migration dropping `starts_at`/`ends_at` in a follow-up commit)
+- **Files:** `src/lib/events.ts` (`listEvents`, summaries), `src/lib/notifications.ts`, `src/app/page.tsx`, `src/app/events/[slug]/page.tsx`, `src/components/admin/events/BasicsTab.tsx`, `src/db/schema.ts` (+ migration dropping `starts_at`/`ends_at`, and the index that only reads them, in a follow-up commit — Task 50)
 - **Do:** start = first day's start; end = last day's; overview lists every day. Backfill a day from `starts_at` for any event that has none, then stop reading and drop the columns. Reminders to accepted seats only.
 - **Acceptance criteria:**
   - [ ] Listings, hub, reminders order and filter by derived dates (existing tests pass unchanged in meaning)

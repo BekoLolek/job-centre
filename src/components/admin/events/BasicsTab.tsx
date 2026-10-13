@@ -16,7 +16,7 @@ import {
 import { EVENT_TYPE_SUGGESTIONS, localInput } from "@/components/events";
 import type { EventDetail } from "@/lib/events";
 import type { EntryMode } from "@/db/schema";
-import { entryMode, waitlistEnabled } from "@/lib/events-policy";
+import { MIN_CAPACITY, entryMode, waitlistEnabled } from "@/lib/events-policy";
 import { slugify } from "@/lib/profile-fields";
 import { toInstant, zoneLabel } from "@/lib/time";
 import { saveBasicsAction } from "@/app/admin/events/actions";
@@ -65,8 +65,6 @@ export default function BasicsTab({
   const [waitlist, setWaitlist] = useState(waitlistEnabled(event.config));
   const [signupOpensAt, setSignupOpensAt] = useState(localInput(event.signupOpensAt));
   const [signupClosesAt, setSignupClosesAt] = useState(localInput(event.signupClosesAt));
-  const [startsAt, setStartsAt] = useState(localInput(event.startsAt));
-  const [endsAt, setEndsAt] = useState(localInput(event.endsAt));
 
   const [state, setState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -100,8 +98,6 @@ export default function BasicsTab({
         waitlist,
         signupOpensAt: toInstant(signupOpensAt),
         signupClosesAt: toInstant(signupClosesAt),
-        startsAt: toInstant(startsAt),
-        endsAt: toInstant(endsAt),
       });
 
       if (!result.ok) {
@@ -252,9 +248,12 @@ export default function BasicsTab({
 
         <div>
           <Eyebrow className="mb-2 text-chalk/70">Capacity</Eyebrow>
+          {/* R-26's minimum, UC-08 10c: two seats or none at all. The stepper
+              stops at two so the refusal is something the control cannot reach
+              rather than a message after a save. */}
           <Stepper
             value={capacity}
-            min={1}
+            min={MIN_CAPACITY}
             max={999}
             aria-label="Capacity"
             suffix={capacity === null ? "no limit" : "seats"}
@@ -264,8 +263,9 @@ export default function BasicsTab({
             }}
           />
           <p className="mt-2 text-12 leading-relaxed text-muted">
-            Clear the box for an uncapped event. You can still accept somebody over the cap
-            — the screen will say so rather than refusing.
+            At least {MIN_CAPACITY} seats, or clear the box for an uncapped event. You can
+            still accept somebody over the cap — the screen will say so rather than
+            refusing.
           </p>
         </div>
 
@@ -355,7 +355,7 @@ export default function BasicsTab({
           />
           <Field
             label="Signups close"
-            hint="Leave empty to keep taking them until the event starts."
+            hint="No later than the first day starts. Leave empty to keep taking them until then."
             type="datetime-local"
             value={signupClosesAt}
             onChange={(input) => {
@@ -363,27 +363,17 @@ export default function BasicsTab({
               touch();
             }}
           />
-          <Field
-            label="Event starts"
-            hint="Applications close when this passes, whatever the window says."
-            type="datetime-local"
-            value={startsAt}
-            onChange={(input) => {
-              setStartsAt(input.target.value);
-              touch();
-            }}
-          />
-          <Field
-            label="Event ends"
-            hint="Optional. Used for the date range and the archive."
-            type="datetime-local"
-            value={endsAt}
-            onChange={(input) => {
-              setEndsAt(input.target.value);
-              touch();
-            }}
-          />
         </div>
+
+        {/* R-24: an event starts when its first day does and ends when its last
+            one does, so there is nothing to type here — the Days tab is the one
+            place those times are set, and two boxes that could disagree with it
+            is exactly the bug this removes. */}
+        <p className="text-12 leading-relaxed text-muted">
+          {event.days.length === 0
+            ? "When the event runs comes from its days — add them under Setup → Days."
+            : `When the event runs comes from its ${event.days.length === 1 ? "day" : `${event.days.length} days`}: set the times under Setup → Days.`}
+        </p>
 
         <SaveRow
           state={state}

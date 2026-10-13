@@ -95,7 +95,10 @@ async function makeEvent(
         title: `Preview subject ${titleCounter}`,
         gameId: rivalsId,
         capacity: options.seats === undefined ? 4 : options.seats,
-        startsAt: days(30),
+        // The event starts when its first day does (R-24), and sign-ups have to
+        // close no later than that (UC-08 10c) — so the window is pinned a day
+        // ahead of the days this fixture writes below.
+        signupClosesAt: days(29),
         config: options.config,
       },
       db
@@ -252,6 +255,32 @@ describe("previewEventDays", () => {
       stray.problem
     );
 
+    // UC-08 10c's day rules, which the preview has to carry for the same
+    // reason: a confirm dialog that says a save will go through, over a save
+    // that is refused, is worse than no preview at all.
+    const sameTime = [{ startsAt: days(40) }, { startsAt: days(40) }];
+    const overlapping = await previewEventDays(event.id, sameTime, db);
+    expect(overlapping.problem).toMatch(/at the same time as Day 1/i);
+    expect(expectFail(await setEventDays(event.id, sameTime, db)).error).toBe(
+      overlapping.problem
+    );
+
+    const backwards = [{ startsAt: days(41) }, { startsAt: days(40) }];
+    const outOfOrder = await previewEventDays(event.id, backwards, db);
+    expect(outOfOrder.problem).toMatch(/Day 2 starts before Day 1/i);
+    expect(expectFail(await setEventDays(event.id, backwards, db)).error).toBe(
+      outOfOrder.problem
+    );
+
+    // R-25: this fixture's sign-ups close on day 29, so a first day before
+    // that is the window rule arriving from the days' side.
+    const tooEarly = [{ startsAt: days(28) }];
+    const beforeClose = await previewEventDays(event.id, tooEarly, db);
+    expect(beforeClose.problem).toMatch(/close them no later than the start/i);
+    expect(expectFail(await setEventDays(event.id, tooEarly, db)).error).toBe(
+      beforeClose.problem
+    );
+
     // The event still has the day it started with.
     expect((await dayIds(event.id)).length).toBe(1);
   });
@@ -291,10 +320,12 @@ describe("setApplicationNote", () => {
   });
 
   it("leaves a waitlisted applicant exactly where they were in the queue", async () => {
-    const event = await makeEvent({ seats: 1 });
+    // Two seats — R-26's minimum, so the smallest capped event there is — and
+    // five applicants: two in, three queueing 1-2-3.
+    const event = await makeEvent({ seats: 2 });
 
-    // One seat, four applicants: one in, three queueing 1-2-3.
     const members = await Promise.all([
+      makeUser(db),
       makeUser(db),
       makeUser(db),
       makeUser(db),
@@ -310,24 +341,24 @@ describe("setApplicationNote", () => {
         .map((row) => [row.userId, row.waitlistPosition] as const);
 
     expect(await queue()).toEqual([
-      [members[1], 1],
-      [members[2], 2],
-      [members[3], 3],
+      [members[2], 1],
+      [members[3], 2],
+      [members[4], 3],
     ]);
 
     const front = (await getApplicationsForEvent(event.id, db)).find(
-      (row) => row.userId === members[1]
+      (row) => row.userId === members[2]
     );
     expectOk(await setApplicationNote(front!.id, "asked to be kept informed", db));
 
     // The note landed and nobody moved.
     expect(await queue()).toEqual([
-      [members[1], 1],
-      [members[2], 2],
-      [members[3], 3],
+      [members[2], 1],
+      [members[3], 2],
+      [members[4], 3],
     ]);
     const after = (await getApplicationsForEvent(event.id, db)).find(
-      (row) => row.userId === members[1]
+      (row) => row.userId === members[2]
     );
     expect(after?.note).toBe("asked to be kept informed");
   });
@@ -337,14 +368,21 @@ describe("setApplicationNote", () => {
     // `waitlistPosition` from the back of the queue, so re-saving "waitlisted"
     // on the person at the front costs them their place. Pinned here so the
     // day somebody merges the two functions, this fails loudly.
-    const event = await makeEvent({ seats: 1 });
-    const members = await Promise.all([makeUser(db), makeUser(db), makeUser(db)]);
+    const event = await makeEvent({ seats: 2 });
+    const members = await Promise.all([
+      makeUser(db),
+      makeUser(db),
+      makeUser(db),
+      makeUser(db),
+    ]);
     for (const [index, userId] of members.entries()) {
       expectOk(await applyToEvent(event.id, userId, { now: hours(index) }, db));
     }
 
+    // Two seats gone, so members[2] is at the front of the queue and
+    // members[3] behind them.
     const front = (await getApplicationsForEvent(event.id, db)).find(
-      (row) => row.userId === members[1]
+      (row) => row.userId === members[2]
     );
     expectOk(
       await setApplicationStatus(front!.id, "waitlisted", { note: "hello" }, db)
@@ -353,7 +391,7 @@ describe("setApplicationNote", () => {
     const queue = (await getApplicationsForEvent(event.id, db))
       .filter((row) => row.status === "waitlisted")
       .map((row) => row.userId);
-    expect(queue).toEqual([members[2], members[1]]);
+    expect(queue).toEqual([members[3], members[2]]);
   });
 
   it("says so when the application is gone", async () => {
@@ -432,7 +470,7 @@ describe("countApplicationsByStatus", () => {
   });
 
   it("ignores event ids that do not exist", async () => {
-    const event = await makeEvent({ seats: 1 });
+    const event = await makeEvent({ seats: 2 });
     expectOk(await applyToEvent(event.id, await makeUser(db), { now: NOW }, db));
 
     const counts = await countApplicationsByStatus(

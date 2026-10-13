@@ -295,3 +295,145 @@ describe("the Phase 5 migration", () => {
     await client.close();
   }, PGLITE_BOOT_BUDGET_MS);
 });
+
+describe("the event-days backfill (drizzle/0020)", () => {
+  /**
+   * An event's dates are its days' from Task 12 on, so an event whose dates
+   * only ever lived on the event row would read as one nobody has scheduled:
+   * no date on its card, no countdown, no place in what is coming up, no
+   * reminder the day before, no deadline on the "still coming?" answer. 0020
+   * gives each of them the day it always had.
+   *
+   * Exercised against rows that existed **before** it, which is the only case
+   * that matters and the one a schema-shaped test would miss entirely — the
+   * same reason the Phase 5 handle backfill above boots its own database and
+   * replays the migrations by hand.
+   */
+  it("gives every event whose date only lived on the row a day holding it", async () => {
+    const client = new PGlite();
+    const { MIGRATIONS_FOLDER } = await import("@/db/migrate");
+    const { readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const { readdirSync } = await import("node:fs");
+
+    const run = async (tag: string) => {
+      const sql = readFileSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`), "utf8");
+      for (const statement of sql.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.exec(statement);
+      }
+    };
+
+    // Every migration up to but not including 0020, in order, so the rows
+    // below are written into the schema as it stood before the backfill.
+    const earlier = readdirSync(MIGRATIONS_FOLDER)
+      .filter((name) => name.endsWith(".sql"))
+      .map((name) => name.replace(/\.sql$/, ""))
+      .sort()
+      .filter((tag) => tag < "0020");
+    for (const tag of earlier) await run(tag);
+
+    await client.exec(`insert into events (slug, title, starts_at, ends_at) values
+      ('dated',    'Dated',    '2026-05-01T18:00:00Z', '2026-05-03T22:00:00Z'),
+      ('undated',  'Undated',  null,                   null),
+      ('has-days', 'Has days', '2026-06-01T18:00:00Z', null),
+      ('sketched', 'Sketched', '2026-07-10T18:00:00Z', null),
+      ('partly',   'Partly',   '2026-07-20T18:00:00Z', null)`);
+    await client.exec(`insert into event_days (event_id, day_index, starts_at)
+      select id, 0, '2026-06-02T19:00:00Z' from events where slug = 'has-days'`);
+    /*
+     * The shape the first statement cannot reach, and the reason there is a
+     * second one: a start typed on Basics and a day list sketched with no times
+     * on it ("Fri / Sat, times to be agreed" — `event_days.starts_at` is
+     * nullable precisely for that). "Has any day row" is not "has any dated day
+     * row", so this event was skipped and read as one nobody had scheduled.
+     */
+    await client.exec(`insert into event_days (event_id, day_index, starts_at, label)
+      select id, 0, null, 'Friday' from events where slug = 'sketched'`);
+    await client.exec(`insert into event_days (event_id, day_index, starts_at, label)
+      select id, 1, null, 'Saturday' from events where slug = 'sketched'`);
+    // And the one in between: Day 2 has a time, Day 1 does not. It already has
+    // a date, so it must be left exactly as it is.
+    await client.exec(`insert into event_days (event_id, day_index, starts_at) values
+      ((select id from events where slug = 'partly'), 0, null),
+      ((select id from events where slug = 'partly'), 1, '2026-07-21T19:00:00Z')`);
+
+    await run("0020_event_days_backfill");
+
+    const rows = await client.query<{
+      slug: string;
+      day_index: number | null;
+      starts_at: Date | null;
+    }>(`select e.slug, d.day_index, d.starts_at
+        from events e left join event_days d on d.event_id = e.id
+        order by e.slug, d.day_index`);
+
+    const byEvent = new Map<string, Array<{ index: number | null; at: string | null }>>();
+    for (const row of rows.rows) {
+      const bag = byEvent.get(row.slug) ?? [];
+      bag.push({
+        index: row.day_index,
+        at: row.starts_at === null ? null : new Date(row.starts_at).toISOString(),
+      });
+      byEvent.set(row.slug, bag);
+    }
+
+    // The one the migration is for: a Day 1 holding the start it always had.
+    expect(byEvent.get("dated")).toEqual([{ index: 0, at: "2026-05-01T18:00:00.000Z" }]);
+
+    /*
+     * And the two it must leave alone. An event with no start has nothing to
+     * backfill *from* — it had no dates before and has none after, which is a
+     * supported state — and an event that already has days has already said
+     * when it runs, so its own rows are the answer.
+     */
+    expect(byEvent.get("undated")).toEqual([{ index: null, at: null }]);
+    expect(byEvent.get("has-days")).toEqual([{ index: 0, at: "2026-06-02T19:00:00.000Z" }]);
+
+    /*
+     * The undated-days event: its *first* day gains the start it always had
+     * (an event starts when its first day does, R-24), and the day nobody has
+     * agreed a time for still has none. Without this the event would read as
+     * dateless — and `confirmationsOpen` would answer true for ever on an
+     * event two days away, which is the worst of the things a null start does.
+     */
+    expect(byEvent.get("sketched")).toEqual([
+      { index: 0, at: "2026-07-10T18:00:00.000Z" },
+      { index: 1, at: null },
+    ]);
+
+    // And the partially dated one, which already answers "when does it run"
+    // from its dated day, is untouched — including its undated Day 1.
+    expect(byEvent.get("partly")).toEqual([
+      { index: 0, at: null },
+      { index: 1, at: "2026-07-21T19:00:00.000Z" },
+    ]);
+
+    // Deploys re-run every applied migration, so running it twice must change
+    // nothing rather than giving "dated" a second Day 1.
+    await run("0020_event_days_backfill");
+    const after = await client.query<{ total: string }>(
+      `select count(*)::text as total from event_days`
+    );
+    expect(after.rows[0].total).toBe("6");
+
+    /*
+     * Idempotency where it actually bites: the manager moves the day the
+     * backfill wrote, and the next deploy re-runs the migration. "Ran twice and
+     * nothing changed" would pass even if the update rewrote the same value, so
+     * this is the assertion that proves the guard — the day stays where the
+     * manager put it rather than being pulled back to the dead column.
+     */
+    await client.exec(`update event_days set starts_at = '2026-08-15T20:00:00Z'
+      where day_index = 0
+        and event_id = (select id from events where slug = 'sketched')`);
+    await run("0020_event_days_backfill");
+    const moved = await client.query<{ starts_at: Date }>(
+      `select d.starts_at from event_days d
+       join events e on e.id = d.event_id
+       where e.slug = 'sketched' and d.day_index = 0`
+    );
+    expect(new Date(moved.rows[0].starts_at).toISOString()).toBe("2026-08-15T20:00:00.000Z");
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});

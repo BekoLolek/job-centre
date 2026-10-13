@@ -586,6 +586,42 @@ describe("loadAdminTemplates", () => {
     expect(source?.questions).toBe(3);
   });
 
+  it("dates a source event from its days, and offers an undated one anyway (R-24)", async () => {
+    const dated = expectOk(
+      await createEvent(
+        {
+          title: "Dated source",
+          // R-25: sign-ups close no later than the first day starts.
+          signupClosesAt: new Date("2026-04-01T18:00:00Z"),
+          days: [
+            { startsAt: new Date("2026-04-01T18:00:00Z") },
+            { startsAt: new Date("2026-04-02T18:00:00Z") },
+          ],
+        },
+        db
+      )
+    );
+    // No days at all: a setup an admin has started and not finished timing.
+    const undated = expectOk(await createEvent({ title: "Undated source" }, db));
+
+    /*
+     * The column the screen used to read. Nothing writes it since the dates
+     * became derived (R-24), so asserting it is empty is what makes the date
+     * below provably the days' answer rather than the column's.
+     */
+    const rows = await db.select().from(events);
+    expect(rows.map((row) => row.startsAt)).toEqual([null, null]);
+
+    const view = await loadAdminTemplates(db);
+
+    expect(view.sources.find((row) => row.id === dated.id)?.startsAt).toEqual(
+      new Date("2026-04-01T18:00:00Z")
+    );
+    // Still a candidate — a template is made from an event's questions and
+    // config, neither of which needs a date.
+    expect(view.sources.find((row) => row.id === undated.id)?.startsAt).toBeNull();
+  });
+
   it("offers the profile fields a prefill could point at, keyed", async () => {
     const view = await loadAdminTemplates(db);
     const rank = view.profileFields.find((field) => field.key === "rank");

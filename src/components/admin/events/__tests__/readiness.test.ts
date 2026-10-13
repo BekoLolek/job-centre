@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Database, games, profileFields } from "@/db";
+import { eq } from "drizzle-orm";
+import { type Database, events, games, profileFields } from "@/db";
 import { type TestDatabase, freshDatabase } from "@/db/__tests__/helpers";
 import { RIVALS_RANK_LADDER } from "@/db/seed";
 import {
@@ -74,7 +75,6 @@ async function healthyEvent(over: Parameters<typeof createEvent>[0] = { title: "
         capacity: 8,
         signupOpensAt: at(1),
         signupClosesAt: at(6),
-        startsAt: at(7),
         ...over,
         title: `${over.title || "Readiness"} ${counter}`,
       },
@@ -180,6 +180,27 @@ describe("readiness", () => {
     expect(blockers(checks)).toEqual([]);
   });
 
+  /*
+   * R-26's minimum lives in `capacityProblem`, and this panel reads that one
+   * function rather than holding a copy — the copy it used to hold said
+   * "at least one", so it showed a green "1 seat" check on an event whose cap
+   * the write refuses. A gap, not a blocker: a cap of one was legal before the
+   * minimum existed (`MIN_CAPACITY`), and such an event can still be published,
+   * so disabling the button would be this panel disagreeing with the server the
+   * other way round.
+   */
+  it("flags a legacy one-seat cap as below the minimum, without blocking publishing", async () => {
+    const eventId = await healthyEvent({ title: "One seat" });
+    // Straight to the database: every write refuses to put it there, which is
+    // the whole reason only a legacy row can hold it.
+    await db.update(events).set({ capacity: 1 }).where(eq(events.id, eventId));
+
+    const checks = await checksFor(eventId);
+    expect(levelOf(checks, "capacity")).toBe("warn");
+    expect(detailOf(checks, "capacity")).toMatch(/at least 2 seats/);
+    expect(blockers(checks)).toEqual([]);
+  });
+
   it("mentions the waitlist being switched off", async () => {
     const eventId = await healthyEvent();
     expectOk(await updateEvent(eventId, { config: { waitlist: false } }, db));
@@ -200,9 +221,14 @@ describe("readiness", () => {
 
   it("warns about a missing start date, since applications would never close", async () => {
     const eventId = await healthyEvent();
-    // Only the start date goes: clearing the sign-up window too would now be a
-    // blocker (UC-09 2a), which is a different check.
-    expectOk(await updateEvent(eventId, { startsAt: null }, db));
+    /*
+     * The start date is the first day's (R-24), so taking it away is taking the
+     * time off the day — which is a real state: `event_days.starts_at` is
+     * nullable precisely so "Saturday, time to be agreed" can be sketched. Only
+     * the date goes: dropping the day altogether, or the sign-up window, would
+     * be a blocker (UC-09 2a), which is a different check.
+     */
+    expectOk(await setEventDays(eventId, [{ startsAt: null, label: "Day one" }], db));
 
     const checks = await checksFor(eventId);
     expect(levelOf(checks, "window")).toBe("warn");
