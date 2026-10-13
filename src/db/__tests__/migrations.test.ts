@@ -110,6 +110,38 @@ describe("migrations", () => {
     ]);
   });
 
+  /*
+   * 0019, and the thing that makes it worth a test of its own: it is two
+   * `ALTER TYPE … ADD VALUE` statements, applied inside the one transaction
+   * drizzle wraps every pending migration in. Postgres allows adding a value
+   * there but refuses to *use* one in the same transaction, so a backfill
+   * written into that file would fail the whole deploy rather than just
+   * itself — and `freshDatabase()` above would not have got this far.
+   */
+  it("adds the third “still coming?” answer, appended to the enum", async () => {
+    const result = await ctx.client.query<{ label: string }>(
+      `select e.enumlabel as label from pg_enum e
+       join pg_type t on t.oid = e.enumtypid
+       where t.typname = 'confirmation_state'
+       order by e.enumsortorder`
+    );
+    // Appended, not slotted in: `ADD VALUE` with no `BEFORE` appends, and the
+    // order members are offered the three in is CONFIRMATION_CHOICES, not this.
+    expect(result.rows.map((r) => r.label)).toEqual(["in", "out", "maybe"]);
+  });
+
+  it("adds the answer-deadline reminder as a real notification kind", async () => {
+    const result = await ctx.client.query<{ label: string }>(
+      `select e.enumlabel as label from pg_enum e
+       join pg_type t on t.oid = e.enumtypid
+       where t.typname = 'notification_kind'
+       order by e.enumsortorder`
+    );
+    // A kind is a preference (R-104), so it has to be a declared value rather
+    // than a string a sender invents — a switch nobody can find otherwise.
+    expect(result.rows.map((r) => r.label)).toContain("confirmation_due");
+  });
+
   it("rejects a profile field type outside the enum", async () => {
     await expect(
       ctx.client.query(

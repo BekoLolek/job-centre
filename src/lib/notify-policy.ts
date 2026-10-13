@@ -60,6 +60,22 @@ export const NOTIFICATION_KINDS: readonly KindSpec[] = [
     defaults: { inApp: true, discord: false },
   },
   {
+    kind: "confirmation_due",
+    label: "Answer before it closes",
+    /*
+     * A separate switch from "Starting tomorrow", because it is a separate ask
+     * (R-200, UC-25 10). That one tells you to turn up and arrives the day
+     * before; this one wants an answer and has to arrive before the answer
+     * closes, which is two days before the start — so by the time the other
+     * one lands this one is already too late to be useful. A member may
+     * reasonably want the turn-up nudge and not the paperwork, or the other
+     * way round, and R-104 says that is their call.
+     */
+    blurb: "A few days before an event you have a seat at, while you can still answer “are you still coming?”.",
+    audience: "Seat holders who have not settled their answer",
+    defaults: { inApp: true, discord: false },
+  },
+  {
     kind: "event_updated",
     label: "Event details changed",
     blurb: "When the dates or the description of something you applied to move.",

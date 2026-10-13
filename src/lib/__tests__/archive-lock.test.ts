@@ -278,7 +278,7 @@ const WRITES: Write[] = [
   ],
   ["setApplicationNote", false, (f) => setApplicationNote(f.applicationId, "No show", db)],
   ["setAvailability", false, (f) => setAvailability(f.applicationId, { [f.dayId]: "no" }, db)],
-  ["setConfirmation", false, (f) => setConfirmation(f.applicationId, "out", db)],
+  ["setConfirmation", false, (f) => setConfirmation(f.applicationId, "out", {}, db)],
   /* --- teams and the draft ------------------------------------------ */
   [
     "setTeams",

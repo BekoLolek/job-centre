@@ -31,6 +31,7 @@ import {
   applicationStatusTone,
   availabilityMark,
   availabilityTone,
+  confirmationBadge,
   whenText,
 } from "@/components/events";
 import type { ApplicationStatus, AvailabilityState } from "@/db/schema";
@@ -118,6 +119,18 @@ export default function ApplicantsTab({
   const counts = new Map<Filter, number>([["all", applicants.length]]);
   for (const row of applicants) counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
 
+  /*
+   * Seats whose holder has said they are not sure (R-199, UC-13 extensions E4).
+   *
+   * Only from `accepted`: a maybe from the queue is not an uncertain seat, it
+   * is somebody uncertain about a seat they have not got. Nothing in the site
+   * resolves these — that is the decision (UC-13 5b) — so the number on screen
+   * is the entire mechanism by which a manager knows there is one to resolve.
+   */
+  const unsure = applicants.filter(
+    (row) => row.status === "accepted" && row.confirmation === "maybe"
+  ).length;
+
   const shown = filter === "all" ? applicants : applicants.filter((row) => row.status === filter);
 
   /** Who this decision would move up, for the sentence afterwards. */
@@ -185,6 +198,28 @@ export default function ApplicantsTab({
         </Alert>
       )}
 
+      {/*
+        UC-13 extensions E4, made legible. An unresolved "Not sure" keeps its
+        seat and the site will never take it back — so if nothing says so here,
+        decision and inaction look identical and the seat sits on a maybe until
+        the night. No clock is consulted: the sentence is as true a week out as
+        it is after the answer has closed, and reading `new Date()` during a
+        client render to sharpen the wording would buy a hydration mismatch for
+        an adjective.
+      */}
+      {unsure > 0 && (
+        <Alert tone="union">
+          <span className="block font-medium">
+            {plural(unsure, "seat")} held by somebody who is not sure
+          </span>
+          <span className="mt-1 block opacity-90">
+            They said &quot;not sure yet&quot;, which keeps the seat — nothing here will
+            take it off them, by design. Chase them, or decline and let the queue have
+            it; either way it is your call, not a rule that fires overnight.
+          </span>
+        </Alert>
+      )}
+
       {moved && (
         <Alert tone="success">
           <span className="block font-medium">The seat went to the next in line</span>
@@ -247,6 +282,11 @@ export default function ApplicantsTab({
               valueClassName={(counts.get("pending") ?? 0) > 0 ? "text-union" : "text-muted"}
             />
           )}
+          <StatTile
+            label="Not sure"
+            value={unsure}
+            valueClassName={unsure > 0 ? "text-union" : "text-muted"}
+          />
           <StatTile label="Applications" value={applicants.length} />
           {event.days.length > 0 && (
             <StatTile label="Days" value={event.days.length} valueClassName="text-muted" />
@@ -285,6 +325,14 @@ export default function ApplicantsTab({
             <TableHead>
               <TableHeadCell>Member</TableHeadCell>
               <TableHeadCell>Status</TableHeadCell>
+              {/*
+                UC-14 2 lists the confirmation, and until now the only place it
+                appeared was the expanded row — which means an unresolved "Not
+                sure" (UC-13 extensions E4) was invisible unless the manager
+                opened every applicant one at a time. A decision nobody can see
+                is not a decision they can make.
+              */}
+              <TableHeadCell>Coming?</TableHeadCell>
               <TableHeadCell>Rank</TableHeadCell>
               <TableHeadCell>Submitted</TableHeadCell>
               {event.days.map((day, index) => (
@@ -349,7 +397,8 @@ function ApplicantRow({
   onChanged: () => void;
   onError: (message: string) => void;
 }) {
-  const columns = 5 + event.days.length;
+  const columns = 6 + event.days.length;
+  const badge = confirmationBadge(row.confirmation);
 
   return (
     <>
@@ -377,6 +426,17 @@ function ApplicantRow({
             status={applicationStatusTone(row.status)}
             label={applicationStatusLabel(row.status)}
           />
+        </TableCell>
+
+        <TableCell>
+          {badge ? (
+            <Badge tone={badge.tone}>{badge.label}</Badge>
+          ) : (
+            // Silence, said as silence, and not as a tinted chip: "Not sure"
+            // is an answer and gets a badge, this is the absence of one, and
+            // telling them apart is the whole of R-199.
+            <span className="text-12 text-muted">No answer</span>
+          )}
         </TableCell>
 
         <TableCell>
@@ -469,6 +529,8 @@ function ApplicantDetail({
   const [savingNote, setSavingNote] = useState(false);
   const [savedNote, setSavedNote] = useState(false);
   const [busyDay, setBusyDay] = useState<string | null>(null);
+
+  const badge = confirmationBadge(row.confirmation);
 
   const saveNote = async () => {
     setSavingNote(true);
@@ -620,11 +682,15 @@ function ApplicantDetail({
                 ✓ Saved
               </Eyebrow>
             )}
-            {row.confirmation && (
-              <Badge tone={row.confirmation === "in" ? "success" : "flare"}>
-                Confirmed {row.confirmation}
-              </Badge>
-            )}
+            {/*
+              Three answers, three tones, and words that say what the member
+              said. This used to read `Confirmed {state}` on a success-or-flare
+              tone, which produced "Confirmed out" for somebody who had said
+              the opposite of confirming — and left no tone for "Not sure",
+              which would have been painted as a refusal. See
+              `confirmationBadge`.
+            */}
+            {badge && <Badge tone={badge.tone}>{badge.label}</Badge>}
           </div>
         </div>
       </section>

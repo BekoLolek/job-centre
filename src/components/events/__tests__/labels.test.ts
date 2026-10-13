@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
-import type { EventStatus } from "@/db/schema";
+import type { ConfirmationState, EventStatus } from "@/db/schema";
 import { applicationsOpen } from "@/lib/events-policy";
 import {
+  CONFIRMATION_CHOICES,
   EVENT_TYPE_SUGGESTIONS,
   applicationStatusLabel,
   applicationStatusTone,
   applicationsPill,
   availabilityMark,
   availabilityTone,
+  confirmationBadge,
+  confirmationSaid,
+  confirmationTone,
   eventStatusLabel,
   eventStatusMeaning,
   eventStatusTone,
@@ -165,6 +169,67 @@ describe("availability", () => {
     expect(availabilityTone("maybe")).toBe("text-union");
     expect(availabilityTone("no")).toBe("text-flare");
     expect(availabilityTone(null)).toBe("text-muted");
+  });
+});
+
+/*
+ * "Are you still coming?" — three answers (R-56, R-199).
+ *
+ * The shape that matters is totality: three enum values, and every one of them
+ * has words and a tone. The admin badge in particular used to be a two-branch
+ * ternary, which is how `maybe` would have arrived painted as a refusal.
+ */
+describe("the still-coming answer", () => {
+  const EVERY_ANSWER: ConfirmationState[] = ["in", "maybe", "out"];
+
+  it("offers the three in the order the member reads them", () => {
+    expect(CONFIRMATION_CHOICES.map((choice) => choice.value)).toEqual(["in", "maybe", "out"]);
+    // The unsure answer sits between the two it is unsure between, not at the
+    // end where the enum happens to keep it.
+    expect(CONFIRMATION_CHOICES[1].label).toBe("Not sure yet");
+  });
+
+  it("covers the enum, so a new answer cannot ship without words for it", () => {
+    for (const answer of EVERY_ANSWER) {
+      expect(CONFIRMATION_CHOICES.some((choice) => choice.value === answer)).toBe(true);
+      expect(confirmationSaid(answer)).toMatch(/^[✓~✕] You said/);
+      expect(confirmationBadge(answer)).not.toBeNull();
+    }
+  });
+
+  it("reads each answer back as the member's own", () => {
+    expect(confirmationSaid("in")).toBe("✓ You said you'll be there");
+    expect(confirmationSaid("maybe")).toBe("~ You said you are not sure");
+    expect(confirmationSaid("out")).toBe("✕ You said you cannot make it");
+    // No answer is not an answer, so there is nothing to read back.
+    expect(confirmationSaid(null)).toBeNull();
+    expect(confirmationSaid(undefined)).toBeNull();
+    expect(confirmationSaid("perhaps")).toBeNull();
+  });
+
+  it("tones them like the availability column, union for the unsure one", () => {
+    expect(confirmationTone("in")).toBe("text-success");
+    expect(confirmationTone("maybe")).toBe("text-union");
+    expect(confirmationTone("out")).toBe("text-flare");
+    expect(confirmationTone(null)).toBe("text-muted");
+  });
+
+  it("gives the manager three tones and words that say what was said", () => {
+    expect(confirmationBadge("in")).toEqual({ tone: "success", label: "Coming" });
+    expect(confirmationBadge("maybe")).toEqual({ tone: "union", label: "Not sure" });
+    expect(confirmationBadge("out")).toEqual({ tone: "flare", label: "Not coming" });
+    expect(confirmationBadge(null)).toBeNull();
+  });
+
+  it("gives every answer a tone of its own", () => {
+    // The bug this replaces: a success-or-flare ternary, which would have made
+    // "not sure" indistinguishable from "not coming" on the applicants list.
+    const tones = EVERY_ANSWER.map((answer) => confirmationBadge(answer)?.tone);
+    expect(new Set(tones).size).toBe(EVERY_ANSWER.length);
+    // And none of them says "Confirmed out", which is what it used to say.
+    for (const answer of EVERY_ANSWER) {
+      expect(confirmationBadge(answer)?.label).not.toMatch(/^Confirmed /);
+    }
   });
 });
 

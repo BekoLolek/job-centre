@@ -39,12 +39,16 @@ export { ApplicationsPill, EventStatusPill } from "./EventStatusPill";
 
 export {
   AVAILABILITY_CHOICES,
+  CONFIRMATION_CHOICES,
   EVENT_TYPE_SUGGESTIONS,
   applicationStatusLabel,
   applicationStatusTone,
   applicationsPill,
   availabilityMark,
   availabilityTone,
+  confirmationBadge,
+  confirmationSaid,
+  confirmationTone,
   eventStatusLabel,
   eventStatusMeaning,
   eventStatusTone,

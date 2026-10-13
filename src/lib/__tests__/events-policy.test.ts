@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { ApplicationStatus, EventStatus } from "@/db";
 import {
+  CONFIRMATION_LEAD_MS,
   EVENT_STATUS_FLOW,
   type EventTimingView,
   type WaitlistApplication,
   applicationsOpen,
   canTransition,
   capacityState,
+  confirmationDeadline,
+  confirmationsOpen,
   eligibility,
   entryMode,
   missingToPublish,
@@ -285,6 +288,59 @@ describe("applicationsOpen — the reason, not a boolean", () => {
     expect(waitlistEnabled({})).toBe(true);
     expect(waitlistEnabled({ waitlist: true })).toBe(true);
     expect(waitlistEnabled({ waitlist: false })).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/*
+ * When the "still coming?" answer closes — R-200, UC-13 7, 7a.
+ *
+ * Three things, and the third is the one that bites. The deadline is two days
+ * before the start; the boundary is inclusive, the same way `applicationsOpen`
+ * is inclusive at `signupClosesAt`, so the minute either side of it is worth
+ * pinning separately; and an event with **no start date** has no deadline at
+ * all, which must not collapse into "closed". That last case is a real event in
+ * the local fixtures (`qa-undated-lan`), and reading null as closed locks every
+ * applicant out of an event nobody has scheduled yet.
+ */
+describe("confirmationDeadline and confirmationsOpen — UC-13 7", () => {
+  const STARTS = new Date("2026-03-20T19:00:00Z");
+  const DEADLINE = new Date("2026-03-18T19:00:00Z");
+  const minutesFrom = (at: Date, minutes: number) =>
+    new Date(at.getTime() + minutes * 60_000);
+
+  it("is two days before the start, to the minute", () => {
+    expect(CONFIRMATION_LEAD_MS).toBe(48 * 60 * 60 * 1000);
+    expect(confirmationDeadline(STARTS)).toEqual(DEADLINE);
+  });
+
+  it("is open a minute before the deadline and shut a minute after it", () => {
+    expect(confirmationsOpen(STARTS, minutesFrom(DEADLINE, -1))).toBe(true);
+    expect(confirmationsOpen(STARTS, minutesFrom(DEADLINE, 1))).toBe(false);
+  });
+
+  it("counts an answer landing exactly on the deadline as in time", () => {
+    // Inclusive, like the signup window: "closes at 19:00" accepts 19:00. The
+    // millisecond after is the first one that is late.
+    expect(confirmationsOpen(STARTS, DEADLINE)).toBe(true);
+    expect(confirmationsOpen(STARTS, new Date(DEADLINE.getTime() + 1))).toBe(false);
+  });
+
+  it("stays shut for the whole run-up once it has closed", () => {
+    expect(confirmationsOpen(STARTS, minutesFrom(STARTS, -60))).toBe(false);
+    expect(confirmationsOpen(STARTS, STARTS)).toBe(false);
+  });
+
+  it("gives an event with no start date no deadline, and leaves it answerable", () => {
+    expect(confirmationDeadline(null)).toBeNull();
+    expect(confirmationDeadline(undefined)).toBeNull();
+    // Null is "no deadline", not "the deadline has passed" — the difference
+    // between an unscheduled event members can still answer about and one they
+    // are locked out of for ever.
+    expect(confirmationsOpen(null, NOW)).toBe(true);
+    expect(confirmationsOpen(undefined, NOW)).toBe(true);
+    expect(confirmationsOpen(null, new Date("2099-01-01T00:00:00Z"))).toBe(true);
   });
 });
 

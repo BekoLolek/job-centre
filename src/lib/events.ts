@@ -82,6 +82,8 @@ import {
   applicationsOpen,
   canTransition,
   capacityState,
+  confirmationDeadline,
+  confirmationsOpen,
   eligibility,
   entryMode,
   missingToPublish,
@@ -1928,6 +1930,12 @@ export type ConfirmationOutcome = {
   status: ApplicationStatus;
   /** Whoever the freed seat promoted, so the caller can notify them (R-55). */
   promoted: ApplicationView[];
+  /**
+   * When this answer stops being changeable (R-200, UC-13 7), or null for an
+   * event with no start date. Derived from the event here so the caller never
+   * has a second opinion about it.
+   */
+  closesAt: Date | null;
 };
 
 /**
@@ -1952,12 +1960,38 @@ export type ConfirmationOutcome = {
  * waitlisted member answering "I can't make it" has no seat to give up, the
  * diagram has no such edge, and dropping them out of the queue over one tap
  * would cost them a place they could still want.
+ *
+ * ## "Not sure yet" is not a departure either, and must never become one
+ *
+ * R-199 / UC-13 5b. `maybe` is recorded and nothing else happens: the seat
+ * stays, `freeSeat` is not called, nobody is promoted. That is the whole
+ * point of the answer — an uncertain seat is still a held seat, and what to
+ * do about it is the admin's decision (UC-13 extensions E4), not a rule that
+ * fires while nobody is looking. The condition below names `"out"`
+ * explicitly rather than testing `state !== "in"`, which would have swept
+ * `maybe` straight into the withdrawal path the day it was added.
+ *
+ * ## The answer closes two days before the start
+ *
+ * R-200, UC-13 7, enforced here rather than only on the card. A server action
+ * is a public POST endpoint, so a deadline that lives in the UI is a deadline
+ * anybody can answer past by calling the action directly — the same argument
+ * that puts UC-14 3a's over-cap question in `setApplicationStatus`. The
+ * refusal names withdrawing, because withdrawing is deliberately *not* closed
+ * (R-54): the reason it is acceptable to lock the answer at all is that the
+ * way out stays open.
+ *
+ * An event with no start date has no deadline and stays answerable for ever
+ * (UC-13 7a) — see `confirmationDeadline`.
  */
 export async function setConfirmation(
   applicationId: string,
   state: ConfirmationState,
+  options: { now?: Date } = {},
   database: Database = defaultDb
 ): Promise<EventResult<ConfirmationOutcome>> {
+  const now = options.now ?? new Date();
+
   return database.transaction(async (tx) => {
     const [application] = await tx
       .select()
@@ -1974,6 +2008,13 @@ export async function setConfirmation(
       return fail("That application is not active, so there is nothing to confirm.");
     }
 
+    const closesAt = confirmationDeadline(event.startsAt);
+    if (!confirmationsOpen(event.startsAt, now)) {
+      return fail(
+        "Answers closed two days before this event starts, so this one stands. You can still withdraw if you cannot make it."
+      );
+    }
+
     const confirmedAt = new Date();
     await tx
       .insert(confirmations)
@@ -1984,8 +2025,9 @@ export async function setConfirmation(
       });
 
     // The same departure a withdrawal is, so the same rule fills the seat.
-    // An answer that gives nothing up touches the queue not at all: "I'll be
-    // there" must not rewrite everybody's place in it.
+    // An answer that gives nothing up touches the queue not at all: neither
+    // "I'll be there" nor "Not sure yet" may rewrite everybody's place in it,
+    // and `maybe` in particular must never reach `freeSeat` (UC-13 5b).
     const givingUpASeat = state === "out" && application.status === "accepted";
     let promoted: Application[] = [];
     if (givingUpASeat) {
@@ -2006,6 +2048,7 @@ export async function setConfirmation(
       confirmedAt,
       status: givingUpASeat ? ("withdrawn" as ApplicationStatus) : application.status,
       promoted: await decorate(tx, promoted),
+      closesAt,
     });
   });
 }

@@ -256,6 +256,62 @@ export function applicationsOpen(
 }
 
 /* ------------------------------------------------------------------ */
+/* When the "still coming?" answer closes                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How long before the start the "still coming?" answer closes — two days
+ * (R-200, UC-13 7).
+ *
+ * Two days is the point at which the running order stops being a draft: the
+ * blocks, the teams and who is on which are built from who said they were
+ * coming, and an answer that can still move the night before is an answer none
+ * of that can be built on.
+ */
+export const CONFIRMATION_LEAD_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * The instant the answer closes, or null for an event with no start date.
+ *
+ * **Derived, every read.** There is no `confirmations_close_at` column and
+ * there must never be one, for exactly the reason there is no
+ * `applications_open` column above: a manager who moves the event two days
+ * later has moved the deadline, and a stored copy would still be describing
+ * the old date while the screen, the reminder and the write check disagreed
+ * about which one was true.
+ *
+ * Null is not "closed" and not "open" — it is *no deadline at all*. An event
+ * nobody has scheduled cannot have a cut-off two days before a start it does
+ * not have, and the alternative (treating null as closed) locks members out of
+ * an event that has not been arranged yet.
+ */
+export function confirmationDeadline(startsAt: Date | null | undefined): Date | null {
+  if (!startsAt) return null;
+  return new Date(startsAt.getTime() - CONFIRMATION_LEAD_MS);
+}
+
+/**
+ * Can the member still answer "still coming?" at `now` (R-200, UC-13 5, 7)?
+ *
+ * Inclusive at the deadline, the same way `applicationsOpen` is inclusive at
+ * `signupClosesAt`: an answer timestamped exactly on the deadline is in time,
+ * and the millisecond after it is not. One rule for every deadline on the site
+ * is worth more than a tie-break argument about this one.
+ *
+ * An undated event is always answerable (`confirmationDeadline` null) —
+ * UC-13 7a.
+ *
+ * This decides only the *answer*. Withdrawing is not an answer and is not
+ * governed by it (R-54, UC-13 extensions E3): somebody taken ill the day
+ * before still gives their seat up, and the only reason closing the answer is
+ * acceptable at all is that the way out stays open.
+ */
+export function confirmationsOpen(startsAt: Date | null | undefined, now: Date): boolean {
+  const deadline = confirmationDeadline(startsAt);
+  return deadline === null || now.getTime() <= deadline.getTime();
+}
+
+/* ------------------------------------------------------------------ */
 /* Decisions                                                          */
 /* ------------------------------------------------------------------ */
 

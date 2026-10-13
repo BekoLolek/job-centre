@@ -226,3 +226,71 @@ export function availabilityTone(state: string | null | undefined): string {
   if (state === "no") return "text-flare";
   return "text-muted";
 }
+
+/* ------------------------------------------------------------------ */
+/* "Are you still coming?"                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The three answers, in the order they are offered (R-56, R-199).
+ *
+ * This array is the order, not the enum. `confirmation_state` appends `maybe`
+ * after `out` because `ALTER TYPE … ADD VALUE` appends, and the one place the
+ * order matters to anybody is here: yes, unsure, no, so the uncertain answer
+ * sits between the two it is uncertain between rather than at the end looking
+ * like an afterthought.
+ */
+export const CONFIRMATION_CHOICES = [
+  { value: "in", label: "I'll be there" },
+  { value: "maybe", label: "Not sure yet" },
+  { value: "out", label: "I can't make it" },
+] as const;
+
+/**
+ * The answer read back to the member who gave it.
+ *
+ * Phrased as *theirs* — "You said …" — because after the deadline (R-200,
+ * UC-13 8) this line is the whole section: the chips are gone and this is all
+ * that is left to say what they are held to.
+ */
+const CONFIRMATION_SAID: Record<string, string> = {
+  in: "✓ You said you'll be there",
+  maybe: "~ You said you are not sure",
+  out: "✕ You said you cannot make it",
+};
+
+export function confirmationSaid(state: string | null | undefined): string | null {
+  if (!state) return null;
+  return CONFIRMATION_SAID[state] ?? null;
+}
+
+/** The colour that answer carries, matching `availabilityTone`'s three. */
+export function confirmationTone(state: string | null | undefined): string {
+  if (state === "in") return "text-success";
+  if (state === "maybe") return "text-union";
+  if (state === "out") return "text-flare";
+  return "text-muted";
+}
+
+/**
+ * The answer as a manager's badge — three states, three tones.
+ *
+ * It used to read `Confirmed {state}` on a success-or-flare tone, which gave
+ * "Confirmed out" for somebody who had said the opposite of confirming, and
+ * had no tone left for a third answer: `maybe` would have been painted as a
+ * refusal. So the words say what the member said and `maybe` takes union
+ * blue, the tone this site already uses for "needs you to look at it" —
+ * the unresolved ones are the admin's to resolve (UC-13 extensions E4).
+ */
+const CONFIRMATION_BADGE: Record<string, { tone: "success" | "union" | "flare"; label: string }> = {
+  in: { tone: "success", label: "Coming" },
+  maybe: { tone: "union", label: "Not sure" },
+  out: { tone: "flare", label: "Not coming" },
+};
+
+export function confirmationBadge(
+  state: string | null | undefined
+): { tone: "success" | "union" | "flare"; label: string } | null {
+  if (!state) return null;
+  return CONFIRMATION_BADGE[state] ?? null;
+}

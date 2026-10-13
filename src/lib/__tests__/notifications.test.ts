@@ -4,12 +4,15 @@ import {
   type Database,
   type NotificationKind,
   applications,
+  confirmations,
   events,
   notificationDmClaims,
   users,
 } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { CONFIRMATION_LEAD_MS, confirmationsOpen } from "@/lib/events-policy";
 import {
+  CONFIRMATION_ASK_WINDOW_MS,
   REMINDER_WINDOW_MS,
   channelsFor,
   dayStamp,
@@ -423,6 +426,161 @@ describe("sendDueReminders", () => {
 
     await sendDueReminders(now, db);
     expect(await unreadCount(seat, db)).toBe(0);
+  });
+
+  /*
+   * The day-before reminder and R-200's deadline, which is the conflict this
+   * window had to be re-reasoned around.
+   */
+  it("can only ever arrive after the answer has closed, so it does not ask for one", async () => {
+    // The arithmetic first: 36h < 48h, so an event is inside this window only
+    // once `now` is past `start − 48h`. There is no run of this job that can
+    // reach a member while the answer is still open.
+    expect(REMINDER_WINDOW_MS).toBeLessThan(CONFIRMATION_LEAD_MS);
+
+    const now = new Date("2026-10-14T17:00:00.000Z");
+    const starts = new Date(now.getTime() + REMINDER_WINDOW_MS);
+    const seat = await eventWithSeat(starts);
+    expect(confirmationsOpen(starts, now)).toBe(false);
+
+    await sendDueReminders(now, db);
+    const [sent] = await listNotifications(seat, db);
+    expect(sent.kind).toBe("event_reminder");
+    // So it says the answer is shut and points at the one thing still open
+    // (R-54, UC-13 extensions E3) rather than asking for an answer the write
+    // would refuse.
+    expect(sent.body).toMatch(/has closed/);
+    expect(sent.body).toMatch(/withdraw/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* "Answer before it closes" — R-200, UC-25 10                        */
+/* ------------------------------------------------------------------ */
+
+/*
+ * The second ask, and the window that makes it reach anybody.
+ *
+ * `REMINDER_WINDOW_MS` is 36 hours and R-200's deadline is 48, so the
+ * day-before reminder is structurally too late to ask for an answer. This
+ * window exists to be early instead, and the only interesting thing about it
+ * is whether a once-a-day scheduler can miss it. These tests are the
+ * arithmetic in the docblock, executed.
+ */
+describe("sendDueReminders — the answer deadline", () => {
+  const HOUR = 60 * 60 * 1000;
+  const MINUTE = 60 * 1000;
+
+  /** A published event starting at `startsAt`, with one accepted seat. */
+  async function eventWithSeat(startsAt: Date | null) {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const [event] = await db
+      .insert(events)
+      .values({ slug: `ask-${suffix}`, title: `Ask ${suffix}`, status: "published", startsAt })
+      .returning({ id: events.id });
+    const userId = await makeUser(db);
+    const [application] = await db
+      .insert(applications)
+      .values({ eventId: event.id, userId, status: "accepted" })
+      .returning({ id: applications.id });
+    return { eventId: event.id, userId, applicationId: application.id };
+  }
+
+  async function kindsFor(userId: string): Promise<string[]> {
+    return (await listNotifications(userId, db)).map((row) => row.kind);
+  }
+
+  it("covers a 24h59m gap between runs, with the margin the docblock claims", () => {
+    // The guarantee: some run must fall inside [start − W, start − 48h], an
+    // interval W − 48h long, and consecutive Hobby runs can be 24h59m apart.
+    const reach = CONFIRMATION_ASK_WINDOW_MS - CONFIRMATION_LEAD_MS;
+    expect(reach).toBeGreaterThanOrEqual(24 * HOUR + 59 * MINUTE);
+    // And it is exactly the look-ahead the day-before reminder already uses,
+    // because it is the same problem displaced by the deadline.
+    expect(CONFIRMATION_ASK_WINDOW_MS).toBe(CONFIRMATION_LEAD_MS + REMINDER_WINDOW_MS);
+  });
+
+  it("reaches a seat holder before the deadline even when one run just misses it", async () => {
+    // The worst case the window has to survive: the first run is a minute too
+    // early to see the event at all, and the next one is as late as a daily
+    // cron can legally be.
+    const firstRun = new Date("2026-11-01T12:00:00.000Z");
+    const starts = new Date(firstRun.getTime() + CONFIRMATION_ASK_WINDOW_MS + MINUTE);
+    const secondRun = new Date(firstRun.getTime() + 24 * HOUR + 59 * MINUTE);
+    const { userId } = await eventWithSeat(starts);
+
+    await sendDueReminders(firstRun, db);
+    expect(await kindsFor(userId)).toEqual([]);
+
+    await sendDueReminders(secondRun, db);
+    expect(await kindsFor(userId)).toEqual(["confirmation_due"]);
+    // The whole point: it landed while they could still answer.
+    expect(confirmationsOpen(starts, secondRun)).toBe(true);
+  });
+
+  it("never asks once the answer has closed", async () => {
+    const now = new Date("2026-11-05T12:00:00.000Z");
+    // An hour inside the deadline: still 47 hours from the start, so the
+    // day-before reminder has not fired either. Nothing should be asked.
+    const starts = new Date(now.getTime() + CONFIRMATION_LEAD_MS - HOUR);
+    const { userId } = await eventWithSeat(starts);
+
+    await sendDueReminders(now, db);
+    expect(await kindsFor(userId)).toEqual([]);
+  });
+
+  it("asks nothing about an event with no start date, which has no deadline", async () => {
+    const { userId } = await eventWithSeat(null);
+    await sendDueReminders(new Date("2026-11-07T12:00:00.000Z"), db);
+    expect(await kindsFor(userId)).toEqual([]);
+  });
+
+  it("does not ask twice when two runs both see the event", async () => {
+    const firstRun = new Date("2026-11-09T12:00:00.000Z");
+    const starts = new Date(firstRun.getTime() + 80 * HOUR);
+    const { userId } = await eventWithSeat(starts);
+
+    await sendDueReminders(firstRun, db);
+    await sendDueReminders(new Date(firstRun.getTime() + 24 * HOUR), db);
+    expect(await kindsFor(userId)).toEqual(["confirmation_due"]);
+  });
+
+  it("leaves alone anybody who has already settled their answer", async () => {
+    const now = new Date("2026-11-12T12:00:00.000Z");
+    const starts = new Date(now.getTime() + 60 * HOUR);
+
+    const settled = await eventWithSeat(starts);
+    await db
+      .insert(confirmations)
+      .values({ applicationId: settled.applicationId, state: "in" });
+
+    await sendDueReminders(now, db);
+    expect(await kindsFor(settled.userId)).toEqual([]);
+  });
+
+  it("asks again anybody still sitting on a maybe", async () => {
+    const now = new Date("2026-11-14T12:00:00.000Z");
+    const starts = new Date(now.getTime() + 60 * HOUR);
+
+    const unsure = await eventWithSeat(starts);
+    await db
+      .insert(confirmations)
+      .values({ applicationId: unsure.applicationId, state: "maybe" });
+
+    await sendDueReminders(now, db);
+    // A maybe is exactly what the deadline is about to freeze (R-199, UC-13
+    // extensions E4), so it is unsettled and gets the ask.
+    expect(await kindsFor(unsure.userId)).toEqual(["confirmation_due"]);
+  });
+
+  it("sends people to the page that can take the answer", async () => {
+    const now = new Date("2026-11-16T12:00:00.000Z");
+    const { userId } = await eventWithSeat(new Date(now.getTime() + 60 * HOUR));
+
+    await sendDueReminders(now, db);
+    const [sent] = await listNotifications(userId, db);
+    expect(sent.href).toBe("/me/events");
+    expect(sent.title).toMatch(/^Are you still coming to /);
   });
 });
 

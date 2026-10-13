@@ -26,6 +26,7 @@ import {
   plural,
 } from "@/components/ui";
 import { getEventById, getMyApplications } from "@/lib/events";
+import { confirmationDeadline, confirmationsOpen } from "@/lib/events-policy";
 import { requireUser } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -93,6 +94,13 @@ export default async function MyEventsPage({
         })),
         availability: application.availability,
         confirmation: application.confirmation,
+        // R-200, UC-13 7. Derived from the event's start on this read, like
+        // every other timing answer on the page — the instant goes to the
+        // client unformatted, and the open/closed decision is made here
+        // against the server clock so the card never offers an answer the
+        // write is about to refuse.
+        confirmationClosesAt: confirmationDeadline(event.startsAt)?.toISOString() ?? null,
+        confirmationsOpen: confirmationsOpen(event.startsAt, now),
         past,
         // Eligibility is left out deliberately: it costs a read per event and
         // only changes the wording for somebody who has withdrawn and might

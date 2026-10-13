@@ -103,6 +103,13 @@ export type ConfirmationOutcome = {
  *
  * The status comes back because the answer can change it: the card has to stop
  * calling this application accepted the moment it is not.
+ *
+ * The two-day deadline (R-200, UC-13 7) is **not** checked here. It belongs to
+ * the event, not to the session, so it is enforced inside `setConfirmation`,
+ * under the same row lock that reads the event's start — the card hides the
+ * chips as well, but hiding is a courtesy and this endpoint is a public POST.
+ * What is here is the one thing the library deliberately cannot know: whose
+ * application this is.
  */
 export async function setMyConfirmationAction(
   applicationId: string,

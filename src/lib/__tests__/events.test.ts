@@ -1727,7 +1727,7 @@ describe("setConfirmation", () => {
     const userId = await makeUser(db);
     const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
 
-    const result = expectOk(await setConfirmation(application.id, "in", db));
+    const result = expectOk(await setConfirmation(application.id, "in", { now: NOW }, db));
     expect(result.state).toBe("in");
     expect(result.status).toBe("accepted");
 
@@ -1743,7 +1743,7 @@ describe("setConfirmation", () => {
     const rows = await rowsFor(event.id);
     const holder = rows.find((row) => row.userId === seated);
 
-    const result = expectOk(await setConfirmation(holder?.id ?? "", "out", db));
+    const result = expectOk(await setConfirmation(holder?.id ?? "", "out", { now: NOW }, db));
 
     expect(result.state).toBe("out");
     expect(result.status).toBe("withdrawn");
@@ -1760,7 +1760,7 @@ describe("setConfirmation", () => {
     const userId = await makeUser(db);
     const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
 
-    expectOk(await setConfirmation(application.id, "out", db));
+    expectOk(await setConfirmation(application.id, "out", { now: NOW }, db));
 
     const [view] = await getApplicationsForEvent(event.id, db);
     expect(view.status).toBe("withdrawn");
@@ -1771,7 +1771,7 @@ describe("setConfirmation", () => {
     const { event, first } = await queuedEvent();
     const rows = await rowsFor(event.id);
     const queued = rows.find((row) => row.userId === first);
-    expect(expectOk(await setConfirmation(queued?.id ?? "", "in", db)).state).toBe("in");
+    expect(expectOk(await setConfirmation(queued?.id ?? "", "in", { now: NOW }, db)).state).toBe("in");
   });
 
   // There is no seat to give up from the queue, the state diagram has no edge
@@ -1781,7 +1781,7 @@ describe("setConfirmation", () => {
     const rows = await rowsFor(event.id);
     const queued = rows.find((row) => row.userId === first);
 
-    const result = expectOk(await setConfirmation(queued?.id ?? "", "out", db));
+    const result = expectOk(await setConfirmation(queued?.id ?? "", "out", { now: NOW }, db));
 
     expect(result.status).toBe("waitlisted");
     expect(result.promoted).toEqual([]);
@@ -1798,9 +1798,119 @@ describe("setConfirmation", () => {
     const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
     expectOk(await withdrawApplication(event.id, userId, db));
 
-    expect(expectFail(await setConfirmation(application.id, "in", db)).error).toMatch(
+    expect(expectFail(await setConfirmation(application.id, "in", { now: NOW }, db)).error).toMatch(
       /not active/i
     );
+  });
+
+  /*
+   * UC-13 5b: "Applicant answers 'Not sure yet' - System records it and
+   * changes nothing else: the seat is still theirs and nobody is promoted."
+   *
+   * The queued fixture, not a lone applicant, because the thing that must not
+   * happen needs somebody for it to happen *to*. `out` from this exact seat
+   * promotes `first` two tests above; the whole of R-199 is that `maybe` does
+   * not, and against an empty waitlist both answers look identical.
+   */
+  it("keeps the seat and promotes nobody when somebody says they are not sure", async () => {
+    const { event, seated, first, second } = await queuedEvent();
+    const rows = await rowsFor(event.id);
+    const holder = rows.find((row) => row.userId === seated);
+
+    const result = expectOk(await setConfirmation(holder?.id ?? "", "maybe", { now: NOW }, db));
+
+    expect(result.state).toBe("maybe");
+    expect(result.status).toBe("accepted");
+    expect(result.promoted).toEqual([]);
+    expect(await queueFor(event.id)).toEqual({
+      [seated]: ["accepted", null],
+      [first]: ["waitlisted", 1],
+      [second]: ["waitlisted", 2],
+    });
+
+    // And the admin can see it, which is the point of recording it at all.
+    const views = await getApplicationsForEvent(event.id, db);
+    expect(views.find((view) => view.userId === seated)?.confirmation).toBe("maybe");
+  });
+
+  /* --- the deadline (R-200, UC-13 7, 5c) -------------------------- */
+
+  /** An event starting at `startsAt`, applied to by one member at `NOW`. */
+  async function datedSeat(startsAt: Date | null) {
+    const event = await openEvent({ startsAt });
+    const userId = await makeUser(db);
+    const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+    return { event, userId, application };
+  }
+
+  const STARTS = new Date("2026-04-20T19:00:00.000Z");
+  const DEADLINE = new Date("2026-04-18T19:00:00.000Z");
+  const MINUTE = 60_000;
+
+  it("reports when the answer closes, so the caller never computes it twice", async () => {
+    const { application } = await datedSeat(STARTS);
+    const result = expectOk(await setConfirmation(application.id, "in", { now: NOW }, db));
+    expect(result.closesAt).toEqual(DEADLINE);
+  });
+
+  it("accepts an answer landing exactly on the deadline", async () => {
+    const { application } = await datedSeat(STARTS);
+    expect(expectOk(await setConfirmation(application.id, "in", { now: DEADLINE }, db)).state).toBe(
+      "in"
+    );
+  });
+
+  // UC-13 5c. The card stops offering the chips at the deadline, but the action
+  // is a public POST, so the refusal has to be here or it is nowhere.
+  it("refuses a minute after the deadline and leaves the last answer standing", async () => {
+    const { event, application } = await datedSeat(STARTS);
+    expectOk(await setConfirmation(application.id, "in", { now: new Date(DEADLINE.getTime() - MINUTE) }, db));
+
+    const late = expectFail(
+      await setConfirmation(application.id, "out", { now: new Date(DEADLINE.getTime() + MINUTE) }, db)
+    );
+    expect(late.error).toMatch(/closed two days before/i);
+    // Nothing stored, and in particular the seat is still held: a refused
+    // "I can't make it" must not half-happen.
+    const [view] = await getApplicationsForEvent(event.id, db);
+    expect(view.confirmation).toBe("in");
+    expect(view.status).toBe("accepted");
+  });
+
+  // UC-13 7a, and `qa-undated-lan` in the local fixtures. An event nobody has
+  // scheduled has no deadline, so reading its null start as "closed" would lock
+  // its applicants out forever.
+  it("still lets a member answer an event with no start date", async () => {
+    const { application } = await datedSeat(null);
+
+    const far = new Date("2099-01-01T00:00:00.000Z");
+    expect(expectOk(await setConfirmation(application.id, "maybe", { now: far }, db)).state).toBe(
+      "maybe"
+    );
+    expect(expectOk(await setConfirmation(application.id, "in", { now: far }, db)).closesAt).toBeNull();
+  });
+
+  // UC-13 extensions E3, and the reason locking the answer is acceptable at
+  // all: somebody taken ill the day before still gives their seat up.
+  it("leaves withdrawing open after the answer has closed", async () => {
+    const event = await openEvent({ startsAt: STARTS, capacity: 1 });
+    const seated = await makeUser(db);
+    const queued = await makeUser(db);
+    expectOk(await applyToEvent(event.id, seated, { now: NOW }, db));
+    expectOk(await applyToEvent(event.id, queued, { now: hours(1) }, db));
+
+    const rows = await rowsFor(event.id);
+    const holder = rows.find((row) => row.userId === seated);
+    expectFail(
+      await setConfirmation(holder?.id ?? "", "out", { now: new Date(STARTS.getTime() - MINUTE) }, db)
+    );
+
+    const out = expectOk(await withdrawApplication(event.id, seated, db));
+    expect(out.promoted.map((row) => row.userId)).toEqual([queued]);
+    expect(await queueFor(event.id)).toEqual({
+      [seated]: ["withdrawn", null],
+      [queued]: ["accepted", null],
+    });
   });
 });
 

@@ -62,6 +62,7 @@ path of each use case is its acceptance test; every alternate and error flow get
 | R-22, R-125, R-126, R-127, R-128, R-129, R-130 | UC-28 |
 | R-141 | UC-29 |
 | R-142 | UC-30 |
+| R-199, R-200 | UC-13, UC-13 extensions, UC-25 |
 
 ---
 
@@ -435,7 +436,7 @@ path of each use case is its acceptance test; every alternate and error flow get
 ## UC-13: Manage my application
 
 **Actor:** Applicant
-**Requirements covered:** R-52, R-53, R-54, R-55, R-56, R-60
+**Requirements covered:** R-52, R-53, R-54, R-55, R-56, R-60, R-199, R-200
 **Trigger:** Applicant checks on or changes an application.
 
 **Preconditions**
@@ -446,19 +447,24 @@ path of each use case is its acceptance test; every alternate and error flow get
 2. System shows their next event, open applications with status and position, and to-dos (unanswered changed questions, unconfirmed attendance).
 3. Applicant changes an answer while sign-ups are open.
 4. System saves it.
-5. Close to the date, applicant confirms they are coming.
-6. System records it.
+5. Close to the date, applicant answers "are you still coming?" with "I'll be there", "Not sure yet" or "I can't make it".
+6. System records it, and says when the answer closes.
+7. Two days before the event starts, the answer closes.
+8. System shows their last answer and stops offering the choice; withdrawing is still offered.
 
 **Outcome**
-- Answers and confirmation stored; managers see them (UC-14).
+- Answers and confirmation stored; managers see them (UC-14). After step 7 the confirmation cannot change, so the running order is built on answers that will not move.
 
 **Alternate flows**
 - **3a.** Applicant withdraws - System marks it withdrawn; if they held a seat, the first waitlisted applicant is moved into it and notified.
 - **5a.** Applicant says they are not coming - System frees their seat, promoting as in 3a.
+- **5b.** (R-199) Applicant answers "Not sure yet" - System records it and changes nothing else: the seat is still theirs and nobody is promoted.
+- **7a.** (R-200) Event has no start date - nothing closes; the answer stays open until a date is set.
 
 **Error flows**
 - **4a.** Sign-ups closed - System refuses edits; withdrawing is still allowed.
 - **3b.** Event complete - System refuses every change.
+- **5c.** (R-200) Applicant answers after the deadline - System refuses and stores nothing; their last answer stands. The page stopped offering the choice at step 8, so this only happens to a request that did not come from it.
 
 ---
 
@@ -791,7 +797,7 @@ path of each use case is its acceptance test; every alternate and error flow get
 ## UC-25: Receive notifications
 
 **Actor:** Member; Scheduler
-**Requirements covered:** R-96, R-97, R-98, R-99, R-100, R-102, R-103, R-104, R-105, R-106
+**Requirements covered:** R-96, R-97, R-98, R-99, R-100, R-102, R-103, R-104, R-105, R-106, R-200
 **Trigger:** Something the member may care about happens, or the scheduler wakes.
 
 **Preconditions**
@@ -807,6 +813,7 @@ path of each use case is its acceptance test; every alternate and error flow get
 7. System saves the preferences.
 8. Scheduler wakes.
 9. System finds events starting within a day and notifies each seat holder once.
+10. (R-200) The same wake finds events whose answer still closes in the future (UC-13 7) and asks each seat holder once to answer before it does, early enough that a once-a-day scheduler cannot miss the window.
 
 **Outcome**
 - Notifications stored per member, never duplicated for the same happening; preferences honoured.
@@ -815,11 +822,14 @@ path of each use case is its acceptance test; every alternate and error flow get
 - **2a.** Kind is event changed/cancelled/questions changed - recipients are that event's applicants.
 - **2b.** Kind is application or host decision - it cannot be switched off.
 - **2c.** Member opted in to DMs for the kind - System also sends a Discord DM.
+- **9b.** (R-200) The day-before reminder lands after the answer has closed, so it does not ask for one: it says the answer is closed and points at withdrawing, which is still open (UC-13 extensions E3).
+- **10a.** (R-200) Event has no start date, so it has no deadline (UC-13 7a) - nothing to ask about, and nothing is sent.
 
 **Error flows**
 - **2d.** Discord DM fails (bot not configured, DMs closed) - in-site notification still stored; nothing retried endlessly.
 - **8a.** Scheduler call without the correct secret, or no secret configured - System refuses; nothing sent.
 - **9a.** Scheduler wakes twice in the window - no member is reminded twice.
+- **10b.** Scheduler wakes twice while the deadline is still ahead - no member is asked twice.
 
 ---
 
@@ -943,10 +953,12 @@ cases of their own.
 
 ## UC-13 extensions: Manage my application
 
-**Requirements covered:** R-123, R-124
+**Requirements covered:** R-123, R-124, R-199, R-200
 
 - **E1.** At step 2, System also lists events taking applications that the member has not applied to.
 - **E2.** At step 2, System shows how many of the member's profile details are answered, linking the profile.
+- **E3.** (R-200) At step 5, the deadline has already passed and the applicant answers anyway - System refuses, stores nothing and leaves their last answer standing. Withdrawing is still allowed, as at 4a: somebody taken ill the day before still gives up their seat.
+- **E4.** (R-199) At step 7, a "Not sure yet" is still unresolved when the deadline passes - System keeps the seat and promotes nobody. The applicants list (UC-14 2) counts the unresolved ones so a manager can chase them or give the seat away by hand (UC-14 5).
 
 ## UC-14 extensions: Decide on applicants
 

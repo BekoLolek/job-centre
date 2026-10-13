@@ -134,6 +134,13 @@
       "when": 1790130718015,
       "tag": "0018_host_application_one_pending",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791916012948,
+      "tag": "0019_confirmation_maybe",
+      "breakpoints": true
     }
   ]
 }

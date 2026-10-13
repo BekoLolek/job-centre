@@ -3,6 +3,7 @@ import {
   type Database,
   type NotificationKind,
   applications,
+  confirmations,
   db as defaultDb,
   events,
   notificationDmClaims,
@@ -10,6 +11,7 @@ import {
   notifications,
   users,
 } from "@/db";
+import { CONFIRMATION_LEAD_MS } from "./events-policy";
 import {
   type PrefOverride,
   channelsFor,
@@ -426,16 +428,108 @@ export async function eventsStartingSoon(
 export const REMINDER_WINDOW_MS = 36 * 60 * 60 * 1000;
 
 /**
- * Send the day-before reminders. Idempotent, so it may run as often as you like.
+ * How far ahead the *answer* ask looks — 84 hours (R-200, UC-25 10).
  *
- * The key carries the event and nothing else, so an event is reminded about
- * once however many times the job runs — including across a redeploy, which a
- * job holding its state in memory would get wrong.
+ * ## The problem the number solves
+ *
+ * R-200 closes the "still coming?" answer at `CONFIRMATION_LEAD_MS` — 48 hours
+ * — before the start. The day-before reminder above looks 36 hours ahead, and
+ * 36 is less than 48, so **every** run of it fires after the answer has already
+ * closed: an event is only inside that window once `now > T − 48h`. It can tell
+ * you to turn up; it can no longer ask you anything. Something has to reach the
+ * member *before* T − 48h, and it has to do so from the same once-a-day cron.
+ *
+ * ## The arithmetic, the same way `REMINDER_WINDOW_MS` does it
+ *
+ * Let T be the start, D = T − 48h the deadline, and W this window, so a run at
+ * time `r` picks the event up while `48h < T − r ≤ W`.
+ *
+ * For the ask to be guaranteed to land in time, some run must fall inside
+ * `[T − W, D]` — late enough to see the event, early enough to still be before
+ * the deadline. That interval is `W − 48h` long. Hobby cron fires once a day
+ * and only promises the hour, so consecutive runs can be **24h59m** apart;
+ * a closed interval is certain to contain a run only once it is at least that
+ * long. So:
+ *
+ *     W − 48h ≥ 24h59m   →   W ≥ 72h59m
+ *
+ * 84 hours is `48h + 36h`: the deadline, plus the look-ahead the day-before
+ * reminder already uses. That is not a coincidence dressed up as a reason — it
+ * is the *same* problem displaced by 48 hours, because "reach somebody before
+ * T − 48h" is "reach somebody before T" with the clock moved, and 36h was
+ * already chosen to cover a 24h59m gap with room to spare. It leaves the same
+ * 11h01m of slack, and from the midday run in `vercel.json` it means an event
+ * starting the day after tomorrow or the day after that is asked about today.
+ *
+ * The lower bound matters as much as the upper one: the window starts *at* the
+ * deadline, so an event already inside 48 hours is never asked. The one
+ * notification that would be a lie — "answer before it closes", sent after it
+ * closed — is the one this window cannot produce.
+ *
+ * Overlap is free, as above: the dedupe key is the kind and the event, so the
+ * two or three runs that see the same event between T − 84h and T − 48h write
+ * one notification (UC-25 10b).
+ */
+export const CONFIRMATION_ASK_WINDOW_MS = CONFIRMATION_LEAD_MS + REMINDER_WINDOW_MS;
+
+/**
+ * Seat holders whose "still coming?" answer is not settled — nobody has
+ * answered, or they answered "not sure yet".
+ *
+ * The audience for the ask, and narrower than `seatHoldersOf` on purpose:
+ * telling somebody who has already said "I'll be there" to answer is the kind
+ * of notification that gets a switch thrown. A `maybe` *is* unsettled (R-199,
+ * UC-13 extensions E4) — it is precisely the answer the deadline is about to
+ * freeze — so they are asked again while they can still change it.
+ *
+ * The left join is filtered in TypeScript rather than in SQL for the same
+ * reason `seatHoldersOf` counts statuses that way: one row per applicant is
+ * nothing to carry, and a `where` on an enum literal is one more place the
+ * three answers are spelled out.
+ */
+export async function seatHoldersAwaitingAnswer(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<string[]> {
+  const rows = await database
+    .select({
+      userId: applications.userId,
+      status: applications.status,
+      answer: confirmations.state,
+    })
+    .from(applications)
+    .leftJoin(confirmations, eq(confirmations.applicationId, applications.id))
+    .where(eq(applications.eventId, eventId));
+
+  return [
+    ...new Set(
+      rows
+        .filter((row) => row.status === "accepted" || row.status === "waitlisted")
+        .filter((row) => row.answer === null || row.answer === "maybe")
+        .map((row) => row.userId)
+    ),
+  ];
+}
+
+/**
+ * Send what a scheduler wake owes people: the day-before reminder (R-97,
+ * UC-25 9) and the ask for an answer before it closes (R-200, UC-25 10).
+ *
+ * Idempotent, so it may run as often as you like. The key carries the kind and
+ * the event and nothing else, so an event is reminded about once and asked
+ * about once however many times the job runs — including across a redeploy,
+ * which a job holding its state in memory would get wrong. Two kinds rather
+ * than one is also what keeps those two keys apart: on one kind, whichever
+ * message arrived first would silently swallow the other.
+ *
+ * The two never overlap. The ask covers 48h–84h out and the reminder 0–36h, so
+ * no event is in both on the same run and nobody gets two notifications about
+ * the same event on the same day.
  */
 export async function sendDueReminders(
   now: Date = new Date(),
   database: Database = defaultDb
-): Promise<{ events: number; delivered: number }> {
+): Promise<{ events: number; delivered: number; asking: number; asked: number }> {
   const soon = await eventsStartingSoon(REMINDER_WINDOW_MS, now, database);
 
   let delivered = 0;
@@ -449,7 +543,17 @@ export async function sendDueReminders(
         kind: "event_reminder",
         userIds: seats,
         title: `${event.title} starts ${when}`,
-        body: "You have a seat. Check the time and let an admin know if you cannot make it.",
+        /*
+         * It does not ask "are you still coming?" any more, and cannot: this
+         * window ends 36 hours out and R-200 closed the answer at 48, so every
+         * reminder this job sends arrives after the answer is already fixed
+         * (UC-25 9b). Asking anyway would be asking for something the write
+         * refuses. What is still true, and still worth saying the night before,
+         * is the way out — withdrawing is deliberately open right up to the
+         * start (R-54, UC-13 extensions E3), and it is the only thing left that
+         * helps anybody else.
+         */
+        body: "You have a seat — check the time. The “still coming?” answer has closed, so there is nothing left to confirm; if you cannot make it, withdraw and your seat goes straight to whoever is next in the queue.",
         href: `/events/${event.slug}`,
         eventId: event.id,
         subject: event.id,
@@ -459,5 +563,39 @@ export async function sendDueReminders(
     delivered += result.delivered;
   }
 
-  return { events: soon.length, delivered };
+  /*
+   * Events past the deadline are excluded by the lower bound, not by a second
+   * check: `eventsStartingSoon` already drops anything that has started, and
+   * `> CONFIRMATION_LEAD_MS` drops anything whose answer has closed. An event
+   * with no start date has no deadline (UC-13 7a) and never appears here at all
+   * — `eventsStartingSoon` cannot see a null start — which is right, because
+   * there is no closing time to warn anybody about (UC-25 10a).
+   */
+  const closing = (
+    await eventsStartingSoon(CONFIRMATION_ASK_WINDOW_MS, now, database)
+  ).filter((event) => event.startsAt.getTime() - now.getTime() > CONFIRMATION_LEAD_MS);
+
+  let asked = 0;
+  for (const event of closing) {
+    const waiting = await seatHoldersAwaitingAnswer(event.id, database);
+    if (waiting.length === 0) continue;
+
+    const result = await notify(
+      {
+        kind: "confirmation_due",
+        userIds: waiting,
+        title: `Are you still coming to ${event.title}?`,
+        body: "The answer closes two days before it starts. Say you will be there, that you cannot make it, or that you are not sure yet — after that it stands, though you can still withdraw.",
+        // `/me/events` rather than the event page: the chips are there, and an
+        // ask that lands you somewhere you cannot answer is half an ask.
+        href: "/me/events",
+        eventId: event.id,
+        subject: event.id,
+      },
+      database
+    );
+    asked += result.delivered;
+  }
+
+  return { events: soon.length, delivered, asking: closing.length, asked };
 }

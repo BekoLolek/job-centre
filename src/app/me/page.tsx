@@ -24,6 +24,7 @@ import {
   applicationStatusTone,
   viewerAction,
 } from "@/components/events";
+import { confirmationTodo } from "@/components/me/todos";
 import {
   Avatar,
   Badge,
@@ -48,7 +49,13 @@ export const metadata = {
   title: "Your dashboard · Job Centre Events",
 };
 
-/** How close an event has to be before "are you still coming?" is a to-do. */
+/**
+ * How close an event has to be before "are you still coming?" is a to-do.
+ *
+ * Seven days, against R-200's two-day deadline, so the nudge has five days on
+ * screen before the answer closes — and it is a ceiling, not a schedule: the
+ * loop below stops showing it the moment the answer can no longer be given.
+ */
 const CONFIRM_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export default async function MePage() {
@@ -98,19 +105,34 @@ export default async function MePage() {
     });
   }
 
+  // Whether each seat still owes an answer, and which kind — the rule is in
+  // `confirmationTodo` (R-199, R-200), which is also where the reasoning for
+  // the two new cases is written down.
   for (const row of live) {
     const event = row.event;
-    const starts = event.startsAt;
+    const todo = confirmationTodo({
+      status: row.status,
+      confirmation: row.confirmation,
+      startsAt: event.startsAt,
+      within: CONFIRM_WINDOW_MS,
+      now,
+    });
 
-    if (row.status === "accepted" && row.confirmation === null && starts) {
-      if (starts.getTime() - now.getTime() <= CONFIRM_WINDOW_MS) {
-        todos.push({
-          label: `Confirm you are coming to ${event.title}`,
-          detail: "It is close enough that the admin needs to know who is actually turning up.",
-          href: "/me/events",
-          action: "Answer it",
-        });
-      }
+    if (todo === "answer") {
+      todos.push({
+        label: `Confirm you are coming to ${event.title}`,
+        detail: "It is close enough that the admin needs to know who is actually turning up.",
+        href: "/me/events",
+        action: "Answer it",
+      });
+    } else if (todo === "settle") {
+      todos.push({
+        label: `Settle whether you are coming to ${event.title}`,
+        detail:
+          "You said you were not sure. Your seat is still yours, and nothing will take it — but the running order is built from who is actually coming, and only you can turn this into a yes or a no.",
+        href: "/me/events",
+        action: "Settle it",
+      });
     }
   }
 

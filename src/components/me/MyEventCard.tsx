@@ -6,12 +6,15 @@ import { useState } from "react";
 import type { ApplyDay } from "@/components/apply/ApplyForm";
 import {
   AVAILABILITY_CHOICES,
+  CONFIRMATION_CHOICES,
   EventAction,
   EventDateRange,
   EventSeats,
   EventStatusPill,
   applicationStatusLabel,
   applicationStatusTone,
+  confirmationSaid,
+  confirmationTone,
   eventTypeLabel,
   type ViewerAction,
 } from "@/components/events";
@@ -69,6 +72,27 @@ import {
  * thing. From the *queue* it is only an answer: there is no seat to give up,
  * the state diagram has no edge for it, and one tap must not cost somebody a
  * place they may still want.
+ *
+ * ## "Not sure yet" asks nothing, because it costs nothing
+ *
+ * R-199, UC-13 5b. The third answer saves on the tap like "I'll be there"
+ * does: it keeps the seat, promotes nobody and can be changed again until the
+ * deadline, so a dialog would be asking permission for a no-op. The only chip
+ * that interrupts is the one that gives a seat away.
+ *
+ * ## After the deadline the section is a statement, not a question
+ *
+ * R-200, UC-13 7-8. Two days before the start the chips go and the member's
+ * last answer stays, read back as theirs. The server refuses a late answer
+ * whatever this card renders (`setConfirmation`) — what the card decides is
+ * only whether to offer something that would be refused, and offering it would
+ * be the worse bug of the two.
+ *
+ * **Withdraw is untouched by that**, and that is the reason closing the answer
+ * is acceptable at all (R-54, UC-13 extensions E3). Somebody taken ill the day
+ * before an event cannot tell the organisers "I can't make it" any more, but
+ * they can still give the seat up, which is the part that matters to everybody
+ * else. The deadline governs the *answer*, never the way out.
  */
 
 export type MyEventRow = {
@@ -87,6 +111,20 @@ export type MyEventRow = {
   days: ApplyDay[];
   availability: Record<string, AvailabilityState>;
   confirmation: ConfirmationState | null;
+  /**
+   * When the "still coming?" answer closes (R-200), as an ISO instant — null
+   * for an event with no start date, which has no deadline at all (UC-13 7a).
+   * Never formatted on the server; `EventDateRange` renders it in the reader's
+   * own zone.
+   */
+  confirmationClosesAt: string | null;
+  /**
+   * Whether that deadline is still ahead, decided on the server against the
+   * same clock the write will use. A boolean rather than a comparison done
+   * here, because a client clock that is two days out would otherwise offer a
+   * member an answer the server is about to refuse.
+   */
+  confirmationsOpen: boolean;
   /** True once the event has been and gone; nothing left to change. */
   past: boolean;
   /** What this member's next move is, computed on the server. */
@@ -115,6 +153,9 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
 
   /** Somebody is queueing, and this seat is what they are queueing for. */
   const freesASeat = row.status === "accepted" && row.seats.waitlisted > 0;
+
+  /** Their own answer, read back to them — the whole section once it closes. */
+  const said = confirmationSaid(confirmation);
 
   const saveAvailability = async (next: Record<string, AvailabilityState>) => {
     const before = availability;
@@ -338,51 +379,78 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
               <Eyebrow>
                 {row.status === "accepted" ? "Are you still coming?" : "Still want a seat?"}
               </Eyebrow>
-              {confirmation && (
-                <span
-                  className={cx(
-                    "text-12",
-                    confirmation === "in" ? "text-success" : "text-flare"
-                  )}
-                >
-                  {confirmation === "in" ? "✓ Confirmed" : "✕ You said you cannot make it"}
-                </span>
-              )}
+              {said && <span className={cx("text-12", confirmationTone(confirmation))}>{said}</span>}
             </div>
 
-            <ChoiceRow>
-              <ChoiceChip
-                selected={confirmation === "in"}
-                disabled={busy}
-                onClick={() => void saveConfirmation("in")}
-              >
-                I&apos;ll be there
-              </ChoiceChip>
-              <ChoiceChip
-                selected={confirmation === "out"}
-                disabled={busy}
-                onClick={() => {
-                  // From a seat this gives the seat up (UC-13 5a), so it asks
-                  // first, through the dialog that already explains the cost.
-                  if (row.status === "accepted") setAsking("not_coming");
-                  else void saveConfirmation("out");
-                }}
-              >
-                I can&apos;t make it
-              </ChoiceChip>
-            </ChoiceRow>
+            {row.confirmationsOpen ? (
+              <>
+                <ChoiceRow>
+                  {CONFIRMATION_CHOICES.map((choice) => (
+                    <ChoiceChip
+                      key={choice.value}
+                      selected={confirmation === choice.value}
+                      disabled={busy}
+                      onClick={() => {
+                        // Only one of the three costs anything: from a seat,
+                        // "I can't make it" gives it up (UC-13 5a), so it goes
+                        // through the dialog that already explains the cost.
+                        // "Not sure yet" (UC-13 5b) and "I'll be there" change
+                        // nothing but the answer, so they save on the tap.
+                        if (choice.value === "out" && row.status === "accepted") {
+                          setAsking("not_coming");
+                        } else {
+                          void saveConfirmation(choice.value);
+                        }
+                      }}
+                    >
+                      {choice.label}
+                    </ChoiceChip>
+                  ))}
+                </ChoiceRow>
 
-            <p className="text-12 leading-relaxed text-muted">
-              {row.status === "accepted"
-                ? freesASeat
-                  ? `Saying you cannot make it frees your seat — the first of the ${plural(row.seats.waitlisted, "person", "people")} waiting takes it straight away.`
-                  : "Saying you cannot make it frees your seat. You can apply again while signups are open, and your answers are kept."
-                : "This just tells the organisers. You keep your place in the queue either way."}
-            </p>
+                <p className="text-12 leading-relaxed text-muted">
+                  {row.status === "accepted"
+                    ? freesASeat
+                      ? `Saying you cannot make it frees your seat — the first of the ${plural(row.seats.waitlisted, "person", "people")} waiting takes it straight away. "Not sure yet" keeps it.`
+                      : `Saying you cannot make it frees your seat. You can apply again while signups are open, and your answers are kept. "Not sure yet" keeps it.`
+                    : "This just tells the organisers. You keep your place in the queue whichever you pick."}
+                </p>
+
+                {row.confirmationClosesAt && (
+                  <p className="text-12 leading-relaxed text-muted">
+                    You can change this until{" "}
+                    <EventDateRange
+                      startsAt={row.confirmationClosesAt}
+                      className="inline"
+                    />
+                    , two days before the start. After that it stands — though you can
+                    still withdraw.
+                  </p>
+                )}
+              </>
+            ) : (
+              <p className="text-12 leading-relaxed text-muted">
+                {said
+                  ? "Answers closed "
+                  : "You did not answer, and answers closed "}
+                <EventDateRange startsAt={row.confirmationClosesAt} className="inline" />
+                , two days before the start, so the organisers can build the running
+                order on answers that will not move.{" "}
+                {said
+                  ? "If you can no longer make it, withdraw below — that still works."
+                  : "Your seat is still yours. If you cannot make it, withdraw below."}
+              </p>
+            )}
           </section>
         )}
 
         {/* --- Withdraw -------------------------------------------- */}
+        {/*
+          `editable` deliberately does not consult the answer deadline. R-54 is
+          not an answer, and UC-13 extensions E3 keeps it open after R-200's
+          cut-off: the day before an event, giving a seat up is the one thing
+          still worth doing with it.
+        */}
         {editable && (
           <div className="flex flex-wrap items-center gap-4 border-t border-hair pt-4">
             <Button

@@ -302,6 +302,18 @@ where you finished in each counting event, so different games can share one tabl
 | R-197 | As an admin, I want new standings announced in the Discord channel after a counting event, so that the server follows the season. | Could | Switchable (R-108) |
 | R-198 | As a visitor, I want a player's championship history on their profile, so that their seasons are in one place. | Could | Extends R-13 |
 
+### Attendance, closed (added 2026-10-13)
+
+R-56's "still coming?" has two answers and no closing time. Both are gaps. A member who is
+genuinely unsure has only the two answers that are wrong for them, so they say nothing, and
+silence is indistinguishable from not having looked. And an answer that can still change the
+night before is an answer the running order cannot be built on. These two close both.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-199 | As an applicant, I want to say I am not sure I can come, so that the organisers know a seat is uncertain rather than guessing from my silence. | Should | A third answer alongside R-56's two. It never frees the seat; only R-54 and "I can't make it" do |
+| R-200 | As an admin, I want the "still coming?" answer to close two days before the event starts, so that the running order is built on answers that will not change. | Should | Withdrawing (R-54) stays open after it — somebody taken ill the day before still gives up their seat. An event with no start date has no deadline |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints

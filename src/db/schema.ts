@@ -697,6 +697,18 @@ export const notificationKind = pgEnum("notification_kind", [
    * thrown and never thrown back.
    */
   "standings_changed",
+  /**
+   * The "still coming?" answer is about to close (R-200, UC-25 10).
+   *
+   * A kind of its own rather than a second `event_reminder`, for two reasons.
+   * The dedupe key is the kind and the subject, so sharing a kind with the
+   * day-before reminder would make whichever arrived first swallow the other
+   * for the same event. And a kind is a switch (R-104): "the day before, so
+   * you turn up" and "answer before it closes" are different asks that a
+   * member may reasonably want separately, and one blurb cannot describe both
+   * honestly.
+   */
+  "confirmation_due",
 ]);
 
 export type NotificationKind = (typeof notificationKind.enumValues)[number];
@@ -1289,8 +1301,28 @@ export const availabilityExceptions = pgTable(
   ]
 );
 
-/** The "still coming?" answer, asked closer to the date (§2). */
-export const confirmationState = pgEnum("confirmation_state", ["in", "out"]);
+/**
+ * The "still coming?" answer, asked closer to the date (§2, R-56).
+ *
+ * Three answers, not two (R-199). "Not sure yet" exists because the two it
+ * joins are both wrong for somebody who genuinely does not know, and the
+ * answer they give instead is silence — which reads identically to not having
+ * looked. An uncertain seat the organisers can see is worth more than a
+ * certain-looking one they cannot.
+ *
+ * `maybe` is appended rather than slotted between `in` and `out`, because
+ * `ALTER TYPE … ADD VALUE` without a `BEFORE`/`AFTER` appends and nothing
+ * depends on the order: the order members are offered the three in is
+ * `CONFIRMATION_CHOICES` in `src/components/events/labels.ts`, and no query
+ * sorts or compares this column. Same reasoning as `standings_changed` on
+ * `notification_kind` (drizzle/0016_standings_changed.sql).
+ *
+ * What `maybe` is *not* is a departure. `out` from a seat frees it (UC-13 5a);
+ * `maybe` never frees anything and never promotes anybody (UC-13 5b) — the
+ * admin decides what an unresolved one is worth, and `setConfirmation` is
+ * where that is enforced.
+ */
+export const confirmationState = pgEnum("confirmation_state", ["in", "out", "maybe"]);
 
 export type ConfirmationState = (typeof confirmationState.enumValues)[number];
 
