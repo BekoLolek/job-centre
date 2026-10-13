@@ -194,7 +194,7 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 
 ### Task 47: The question dialog still says answers will be cleared (found in Task 14)
 
-- **Serves:** R-10 / UC-03 5a
+- **Serves:** R-09 / UC-03 5a
 - **Files:** `src/components/admin/QuestionDialog.tsx`, `src/components/admin/QuestionList.tsx`
 - **Do:** Task 14 made retiring a question keep every answer, and made editing one stop stranding them - but those two files were outside its scope, so `QuestionDialog`'s confirmation still warns that answers "will be cleared". It now means the opposite of what happens. Rewrite the copy, and move the retire control onto the question row where it belongs, instead of the separate panel Task 14 had to put it in.
 - **Acceptance criteria:**

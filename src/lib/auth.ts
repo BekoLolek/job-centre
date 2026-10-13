@@ -311,10 +311,35 @@ function rejectTo(error: string): string {
   return `${SIGN_IN_PATH}?error=${error}`;
 }
 
+/**
+ * Discord's issuer, and why this line exists.
+ *
+ * Discord returns an `iss` parameter on the OAuth callback. `@auth/core`
+ * validates it, and its built-in Discord provider declares no issuer, so the
+ * check runs against a placeholder:
+ *
+ *   `issuer: provider.issuer ?? "https://authjs.dev", // TODO: review fallback`
+ *   — node_modules/@auth/core/lib/actions/callback/oauth/callback.js:50
+ *
+ * Every sign-in then died in the callback with
+ * `unexpected "iss" (issuer) response parameter value`, reported to the member
+ * as the catch-all `Configuration` because `CallbackRouteError` is not one of
+ * the error types Auth.js will name in public. Nothing in this repo caused it
+ * and nothing in this repo could have prevented it — the value simply has to
+ * be stated.
+ *
+ * `https://discord.com` is Discord's own answer, from
+ * https://discord.com/.well-known/openid-configuration, not a guess. A version
+ * of `@auth/core` that sets it in the provider makes this line redundant but
+ * not wrong, since it would then be setting the same value.
+ */
+const DISCORD_ISSUER = "https://discord.com";
+
 function discordProvider(env: AuthEnv) {
   return Discord({
     clientId: env.DISCORD_CLIENT_ID,
     clientSecret: env.DISCORD_CLIENT_SECRET,
+    issuer: DISCORD_ISSUER,
     authorization: { params: { scope: DISCORD_SCOPES } },
     /**
      * The row a brand-new member is created with. The adapter drops `id` (the

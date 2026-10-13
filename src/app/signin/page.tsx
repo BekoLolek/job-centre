@@ -107,16 +107,29 @@ const EXPLANATIONS: Record<string, Explanation> = {
     title: "Sign-in was refused",
     body: "Your account isn't allowed in. If you've just joined the server, try again.",
   },
+  /*
+   * Auth.js's catch-all, not a diagnosis.
+   *
+   * `node_modules/@auth/core/index.js:131` reads
+   * `const type = isClientSafeErrorType ? error.type : "Configuration"` — so
+   * every error it is not willing to name in public arrives here: a failed
+   * database write, a bad credential, a provider that misbehaved. The old copy
+   * here guessed between two of those and told the reader to run a migration,
+   * which is wrong advice for most of the cases that reach it, and is not a
+   * sentence a member can act on anyway.
+   *
+   * So: say that it is ours, not theirs, and stop. Auth.js already writes the
+   * real cause to the server log itself — `[auth][error]`, `[auth][cause]` and
+   * `[auth][details]`, which is how the Discord issuer bug in `src/lib/auth.ts`
+   * was found — and that log, not this page, is what an admin reads.
+   */
   Configuration: {
-    tone: "union",
-    title: "Sign-in could not complete",
+    tone: "flare",
+    title: "Something went wrong at our end",
     body:
-      "Auth.js reports a configuration error. It means one of two things, and the second " +
-      "is the likelier one after a deploy: either the Discord client id, secret, " +
-      "AUTH_SECRET or redirect URI is wrong for this host — or the database schema is " +
-      "behind the code and something the sign-in writes does not exist yet. Auth.js " +
-      "cannot tell those apart, so it reports both as this. Run npm run db:migrate " +
-      "against the deployed database before touching the credentials.",
+      "Sign-in could not be completed, and it is not something you did — nothing was " +
+      "stored and you have not been signed in. Please try again in a moment. If it " +
+      "keeps happening, tell an admin: the site has written down what went wrong.",
   },
   OAuthAccountNotLinked: {
     tone: "union",

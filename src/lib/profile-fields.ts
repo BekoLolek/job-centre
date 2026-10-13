@@ -393,8 +393,10 @@ export function parseProfileValue(field: FieldShape, raw: unknown): ParseResult 
  *
  * The question an admin edit raises: retyping a `select` as a `number`, or
  * deleting the option half the server picked, leaves rows behind that no longer
- * parse. `/admin/games` counts these before the edit and clears them after, so
- * nothing silently rots in the database.
+ * parse. `/admin/games` counts these before the edit and tells the admin how
+ * many there are - and then keeps every one of them (R-09, UC-03 5a). Nothing
+ * is thrown away: the row stays, the question as rewritten cannot read it, and
+ * putting the old definition back makes it readable again.
  */
 export function valueStillValid(field: FieldShape, value: ProfileValue): boolean {
   if (value === null) return false;
