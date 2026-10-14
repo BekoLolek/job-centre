@@ -2,6 +2,8 @@ import { asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   type Database,
+  applications,
+  eventDays,
   eventQuestions,
   eventTemplates,
   events,
@@ -24,6 +26,7 @@ import {
   updateTemplate,
 } from "@/lib/admin-templates";
 import {
+  TEMPLATE_OMITS,
   cleanTemplateType,
   describeTemplate,
   normaliseTemplateConfig,
@@ -541,6 +544,147 @@ describe("createTemplateFromEvent", () => {
 
     const [after] = await db.select().from(events).where(eq(events.id, made.id));
     expect(after.config.teams).toBe(4);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-08 10a — saving an event's setup as a template                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The editor's "Save as template" (R-22 / UC-08 10a), from the library's side.
+ *
+ * The button in `EventEditor.tsx` calls `createTemplateFromEventAction`, which
+ * calls `createTemplateFromEvent` — so what the editor captures is what this
+ * function captures, and the acceptance criterion ("a template from an event
+ * reproduces its setup on a new event") is a claim about this round trip.
+ *
+ * The round trip above already pins the game, the type, the questions and the
+ * prefill. These add the sign-up rules, which nothing was checking, and they
+ * pin the two sides of "a setup, not an event": the settings do come across,
+ * and the applicants do not.
+ */
+describe("a template saved from an event (UC-08 10a)", () => {
+  /** An approval event with the waitlist off, one applicant and a cap. */
+  async function anEventThatRan() {
+    const event = expectOk(
+      await createEvent(
+        {
+          title: "Rivals Autumn Cup",
+          gameId: rivalsId,
+          capacity: 16,
+          minRankToEnter: RIVALS_RANK_LADDER[2],
+          minRankToCaptain: RIVALS_RANK_LADDER[4],
+          days: [{ startsAt: new Date("2026-03-07T18:00:00Z"), label: "Group stage" }],
+          config: {
+            // R-27 and R-170: how people get in, which is the part of the setup
+            // most worth not retyping.
+            entryMode: "approval",
+            waitlist: false,
+            teams: 6,
+            draft: true,
+            bracket: true,
+            format: { concurrentLobbies: 3, bestOf: 3 },
+          },
+        },
+        db
+      )
+    );
+
+    expectOk(
+      await setEventQuestions(
+        event.id,
+        [{ label: "In-game name", type: "text", required: true }],
+        db
+      )
+    );
+
+    const [member] = await db
+      .insert(users)
+      .values({ discordId: `applicant-${event.id}`, displayName: "An applicant" })
+      .returning({ id: users.id });
+    await db
+      .insert(applications)
+      .values({ eventId: event.id, userId: member.id, status: "accepted" });
+
+    return event;
+  }
+
+  it("reproduces the sign-up and format settings on a new event", async () => {
+    const source = await anEventThatRan();
+    const template = expectOk(
+      await createTemplateFromEvent(source.id, { name: "Rivals, by approval" }, db)
+    );
+
+    const next = expectOk(
+      await createEvent({ title: "Rivals Winter Cup", templateId: template.id }, db)
+    );
+
+    // Every knob that decides how the event runs, through both hops.
+    expect(next.type).toBe(source.type);
+    expect(next.gameId).toBe(rivalsId);
+    expect(next.config.entryMode).toBe("approval");
+    expect(next.config.waitlist).toBe(false);
+    expect(next.config.teams).toBe(6);
+    expect(next.config.draft).toBe(true);
+    expect(next.config.bracket).toBe(true);
+    expect(next.config.format).toEqual({ concurrentLobbies: 3, bestOf: 3 });
+
+    const questions = await db
+      .select()
+      .from(eventQuestions)
+      .where(eq(eventQuestions.eventId, next.id));
+    expect(questions.map((question) => question.label)).toEqual(["In-game name"]);
+  });
+
+  it("carries a setup and not an event: no applicants come with it", async () => {
+    const source = await anEventThatRan();
+    const template = expectOk(
+      await createTemplateFromEvent(source.id, { name: "Rivals, again" }, db)
+    );
+
+    const next = expectOk(
+      await createEvent({ title: "Rivals Spring Cup", templateId: template.id }, db)
+    );
+
+    // Structurally impossible rather than merely omitted — applications,
+    // teams, lots and matches are their own tables and a template is one row
+    // of config and one of questions. Asserted anyway, because "impossible"
+    // is a claim about today's shape.
+    const theirs = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.eventId, next.id));
+    expect(theirs).toEqual([]);
+    expect(JSON.stringify(template.config)).not.toContain("applicant");
+  });
+
+  it("leaves the days, the cap and the rank thresholds behind, as TEMPLATE_OMITS says", async () => {
+    const source = await anEventThatRan();
+    const template = expectOk(
+      await createTemplateFromEvent(source.id, { name: "Rivals, no dates" }, db)
+    );
+
+    const next = expectOk(
+      await createEvent({ title: "Rivals, undated", templateId: template.id }, db)
+    );
+
+    /*
+     * Pinned deliberately, not accepted as whatever falls out. docs/plan.md
+     * Task 13 asks for the days, the cap and the rank thresholds to come
+     * across as well; they cannot without either new columns on
+     * `event_templates` or `createEvent` learning to apply them out of the
+     * template, and this is the line that has to change when one of those
+     * lands. Until then `TEMPLATE_OMITS` is what the two screens promise, and
+     * this is that promise kept.
+     */
+    expect(TEMPLATE_OMITS).toContain("capacity");
+    expect(next.capacity).toBeNull();
+    expect(next.minRankToEnter).toBeNull();
+    expect(next.minRankToCaptain).toBeNull();
+    expect(await db.select().from(eventDays).where(eq(eventDays.eventId, next.id))).toEqual(
+      []
+    );
   });
 });
 

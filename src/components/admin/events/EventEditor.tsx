@@ -1,7 +1,18 @@
 "use client";
 
-import { useState } from "react";
-import { Badge, Button, Eyebrow, Icon, Panel, Tabs, cx, plural } from "@/components/ui";
+import { useState, useTransition } from "react";
+import {
+  Alert,
+  Badge,
+  Button,
+  Eyebrow,
+  Field,
+  Icon,
+  Panel,
+  Tabs,
+  cx,
+  plural,
+} from "@/components/ui";
 import { EventDateRange, EventSeats, EventStatusPill, eventTypeLabel } from "@/components/events";
 import type { ApplicantView, EventDetail } from "@/lib/events";
 import ApplicantsTab from "./ApplicantsTab";
@@ -17,8 +28,13 @@ import QuestionsTab from "./QuestionsTab";
 import ResultsTab from "./ResultsTab";
 import ScheduleTab from "./ScheduleTab";
 import TeamsTab from "./TeamsTab";
-import UnsavedChangesProvider, { useNavigationLock } from "./UnsavedChanges";
+import UnsavedChangesProvider, { useIsDirty, useNavigationLock } from "./UnsavedChanges";
 import type { SetupKey, TabKey } from "./tabs";
+// The pure half of the templates library, deliberately: `@/lib/admin-templates`
+// builds every Drizzle table at import time and a client bundle has no use for
+// any of it.
+import { TEMPLATE_OMITS } from "@/lib/admin-templates-policy";
+import { createTemplateFromEventAction } from "@/app/admin/templates/actions";
 import type {
   ChampionshipTabData,
   DraftTabData,
@@ -63,6 +79,12 @@ import type {
  * remount — `resetKey` changes, React throws the subtree away, and every panel
  * seeds itself from props again. That resets fields nobody thought to list,
  * which a hand-written undo would not.
+ *
+ * ## Saving the setup as a template
+ *
+ * UC-08 10a, and **admins only** — see {@link SaveAsTemplate}. The header is
+ * where it goes rather than one of the Setup panels, because what it captures
+ * is the event as a whole and not the panel you happen to be looking at.
  */
 
 export default function EventEditor(props: EventEditorProps) {
@@ -101,6 +123,17 @@ type EventEditorProps = {
   maxQuestions: number;
   /** `MAX_STAGES`, for the same reason — `src/lib/format.ts` reaches Postgres. */
   maxStages: number;
+  /**
+   * Whether the reader is an admin, rather than a host who was given this one
+   * event (R-22 / UC-08 10a).
+   *
+   * Only "Save as template" reads it, and only to decide whether to offer
+   * itself: the refusal that matters is the server's, in
+   * `createTemplateFromEventAction`. Optional and **false when absent**, so a
+   * caller that has not thought about it hides an admin control rather than
+   * showing one — see {@link showsSaveAsTemplate}.
+   */
+  isAdmin?: boolean;
 };
 
 function EditorBody({
@@ -116,6 +149,7 @@ function EditorBody({
   maxDays,
   maxQuestions,
   maxStages,
+  isAdmin,
   resetKey,
 }: EventEditorProps & { resetKey: number }) {
   // Seeded from the URL, then owned here. Deep-linking is what makes an admin
@@ -180,6 +214,8 @@ function EditorBody({
             )}
           </div>
         </div>
+
+        <SaveAsTemplate eventId={event.id} title={event.title} isAdmin={isAdmin} />
       </Panel>
 
       {/* --- The rail ----------------------------------------------- */}
@@ -392,6 +428,166 @@ function RailLink({
       )}
       {dot && <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-flare" />}
     </button>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Save as template (UC-08 10a)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether to offer "Save as template" at all (R-22 / UC-08 10a).
+ *
+ * `=== true` rather than a truthiness check, so an absent prop — a caller that
+ * has not been told who is reading — hides the control instead of offering an
+ * admin's button to a host. Exported because which readers are offered an
+ * admin-only control is a fact about the product rather than about rendering,
+ * and it is the half of this that a Node test can hold on to.
+ *
+ * This is **not** the authorisation. `createTemplateFromEventAction` is, and it
+ * is `requireAdmin()`: a host who finds the action some other way is refused by
+ * the server, which is the only refusal that counts. Hiding the control is so a
+ * host is not shown a button that would bounce them to the sign-in page.
+ */
+export function showsSaveAsTemplate(isAdmin: boolean | undefined): boolean {
+  return isAdmin === true;
+}
+
+/**
+ * Turn this event's setup into a template, from the editor (UC-08 10a, UC-28 3a).
+ *
+ * ## Why it is admin-only, and where that is decided
+ *
+ * A host is given one event. Minting a template changes what *every* future
+ * event starts from, which is an admin's decision about the site and not a
+ * manager's decision about their evening — so R-22 says admin, and UC-08 10a
+ * says so again in brackets.
+ *
+ * The server action is where that is enforced, and it is worth saying why it is
+ * sound rather than assuming it: the row being written is a new
+ * `event_templates` row, which belongs to nobody in particular, so the question
+ * is simply "is this reader an admin" and `requireAdmin()` answers it. The
+ * `eventId` travelling alongside is only *read*. If this ever wrote to the
+ * event as well, `requireAdmin` would not be enough on its own and the event
+ * would have to be authorised from its own row — `src/lib/event-scope.ts` is
+ * the standing note on that, and the rule it states is **authorise on the row
+ * you are about to write, never on an id beside it**.
+ *
+ * ## Why a dirty editor is refused
+ *
+ * The template is built from the event *as stored* — `createTemplateFromEvent`
+ * reads it back out of Postgres. Minting one while a panel has unsaved edits
+ * would quietly capture the old setup and nothing on screen would say so, so
+ * the attempt goes through the same lock as a tab switch and flashes the
+ * unsaved-changes bar instead.
+ *
+ * ## What it carries
+ *
+ * Exactly what `createTemplateFromEvent` carries, and the omissions are named
+ * on screen from `TEMPLATE_OMITS` — the same list `/admin/templates` prints —
+ * rather than described again here, so the two screens cannot drift apart. A
+ * template is a *setup*: no applicants, no teams, no results.
+ *
+ * Exported for its own test. It renders nothing at all for a host, which is the
+ * assertion worth having: the gate and the markup are tested together, because
+ * a gate nothing consults is not a gate.
+ */
+export function SaveAsTemplate({
+  eventId,
+  title,
+  isAdmin,
+}: {
+  eventId: string;
+  title: string;
+  isAdmin: boolean | undefined;
+}) {
+  const guard = useNavigationLock();
+  const dirty = useIsDirty();
+  const [pending, startTransition] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [made, setMade] = useState<string | null>(null);
+
+  const save = () => {
+    setError(null);
+    setMade(null);
+    startTransition(async () => {
+      const result = await createTemplateFromEventAction(eventId, {
+        name: name.trim() || undefined,
+      });
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setMade(result.data.name);
+      setName("");
+      setOpen(false);
+    });
+  };
+
+  // After the hooks, never before them: the same component must run the same
+  // hooks on every render of the same mount.
+  if (!showsSaveAsTemplate(isAdmin)) return null;
+
+  return (
+    <div className="mt-4 border-t border-hair pt-4">
+      {!open && (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button size="sm" onClick={() => guard(() => setOpen(true))}>
+            Save as template
+          </Button>
+          {made ? (
+            <p className="text-12 text-muted">
+              Saved as “{made}”. It is in the create-event picker now.
+            </p>
+          ) : (
+            <p className="text-12 text-muted">
+              {dirty
+                ? "Save or discard your changes first — a template is made from the event as stored."
+                : "Starts the next event of this shape from this one's setup."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {open && (
+        <div>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field
+              label="Template name"
+              hint="Defaults to this event's title. Rename it on the templates page later."
+              value={name}
+              maxLength={80}
+              placeholder={title}
+              wrapperClassName="flex-1 min-w-[14rem]"
+              onChange={(field) => setName(field.target.value)}
+            />
+            <Button variant="union" disabled={pending} onClick={save}>
+              {pending ? "Saving…" : "Make template"}
+            </Button>
+            <Button
+              disabled={pending}
+              onClick={() => {
+                setOpen(false);
+                setError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+
+          <p className="mt-3 text-12 leading-relaxed text-muted">
+            Carried over: the kind, the game, the whole question set and the format and
+            sign-up settings. Not carried over: {TEMPLATE_OMITS.join(", ")} — nor the
+            applicants, the teams or the results, which belong to this event and not to a
+            shape you reuse.
+          </p>
+
+          {error && <Alert className="mt-3">{error}</Alert>}
+        </div>
+      )}
+    </div>
   );
 }
 

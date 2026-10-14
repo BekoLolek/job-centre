@@ -37,7 +37,7 @@ import type {
   ConfirmationState,
   EventStatus,
 } from "@/db/schema";
-import type { CapacityState } from "@/lib/events-policy";
+import { type CapacityState, dayName } from "@/lib/events-policy";
 import {
   setMyAvailabilityAction,
   setMyConfirmationAction,
@@ -341,7 +341,18 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
                   className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
                 >
                   <div className="min-w-40">
-                    <div className="text-14">{day.label ?? `Day ${day.dayIndex + 1}`}</div>
+                    {/* `dayName` is the one rule for what a day is called
+                        (UC-08 E3), numbered from the stored `dayIndex` rather
+                        than this row's position. */}
+                    <div className="text-14">
+                      {dayName(
+                        {
+                          startsAt: day.startsAt === null ? null : new Date(day.startsAt),
+                          label: day.label,
+                        },
+                        day.dayIndex
+                      )}
+                    </div>
                     <EventDateRange
                       startsAt={day.startsAt}
                       fallback="Time to be confirmed"

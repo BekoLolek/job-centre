@@ -49,6 +49,8 @@ import {
   type AvailabilityState,
   type ConfirmationState,
   type Database,
+  type EntryRule,
+  type EntryWaiverRow,
   type EventConfig,
   type EventDay,
   type EventQuestion,
@@ -63,6 +65,7 @@ import {
   availability,
   confirmations,
   db as defaultDb,
+  entryWaivers,
   eventDays,
   eventQuestions,
   eventTemplates,
@@ -79,8 +82,11 @@ import {
   type DayView,
   type Eligibility,
   type EventDates,
+  type EventGateView,
   type PublishView,
   type SetupField,
+  type WaivedRules,
+  NO_WAIVERS,
   PUBLISH_REQUIREMENT_TEXT,
   applicationsOpen,
   canTransition,
@@ -97,6 +103,7 @@ import {
   promoteFromWaitlist,
   recomputeWaitlist,
   signupWindowProblem,
+  waivedRulesFrom,
 } from "./events-policy";
 import {
   type FieldShape,
@@ -222,6 +229,16 @@ export type ApplicantView = ApplicationView & {
   /** Their recorded rank for this event's game, if it has one. */
   rank: string | null;
   eligibility: Eligibility;
+  /**
+   * Which rules a manager has waived for them on this event (R-59).
+   *
+   * Next to `eligibility` rather than folded into it, because the two answer
+   * different questions: `eligibility.enterWaived` says a waiver is what makes
+   * them eligible, this says a waiver *exists* — which is what a screen offering
+   * to withdraw one has to know, including when the member has since climbed
+   * the ladder and no longer needs it.
+   */
+  waived: WaivedRules;
 };
 
 export type MyApplicationView = ApplicationView & {
@@ -234,6 +251,8 @@ export type ApplicationFormView = {
   event: EventDetail;
   state: ApplicationsState;
   eligibility: Eligibility;
+  /** Which of the two rules a manager has waived for them here (R-59). */
+  waived: WaivedRules;
   /** The member's rank for this event's game, as recorded on their profile. */
   rank: string | null;
   questions: PrefilledQuestionView[];
@@ -506,6 +525,86 @@ async function memberRanks(
     if ((best.get(row.userId) ?? Number.MAX_SAFE_INTEGER) <= rank) continue;
     best.set(row.userId, rank);
     out.set(row.userId, row.value);
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Entry waivers (R-59 / UC-14 3b)                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The waivers granted on one event, optionally narrowed to some of its members.
+ *
+ * Always filtered by `eventId` and never by waiver id alone. A waiver is
+ * identified by (event, member, rule) and every caller already knows which
+ * event it is asking about, so there is no read here that could be pointed at
+ * another event's row by a stale or forged id — the rule `event-scope.ts`
+ * states for writes, applied to the reads that decide them.
+ */
+async function readWaivers(
+  database: Database,
+  eventId: string,
+  userIds?: readonly string[]
+): Promise<EntryWaiverRow[]> {
+  if (userIds && userIds.length === 0) return [];
+  return database
+    .select()
+    .from(entryWaivers)
+    .where(
+      and(
+        eq(entryWaivers.eventId, eventId),
+        userIds ? inArray(entryWaivers.userId, [...userIds]) : undefined
+      )
+    );
+}
+
+/** One member's standing against one event's two rank rules. */
+export type MemberGate = {
+  /** Their recorded rank for this event's game, if it has one. */
+  rank: string | null;
+  /** What a manager has waived for them on this event. */
+  waived: WaivedRules;
+  eligibility: Eligibility;
+};
+
+/**
+ * The rank gate for a list of members on one event — ladder, ranks and waivers.
+ *
+ * The single place that assembles the three reads an eligibility answer needs,
+ * because there are now four callers of it (the applicant list, the member's
+ * own form, `applyToEvent` and `setCaptains`) and a second assembly is a second
+ * chance for one of them to forget the waivers and refuse somebody a manager
+ * has already let in.
+ *
+ * Exported for `src/lib/draft.ts`, which needs exactly this answer inside
+ * `setCaptains`'s transaction and must not grow its own copy of the ladder and
+ * rank reads to get it.
+ */
+export async function gatesFor(
+  database: Database,
+  event: { id: string; gameId: string | null } & EventGateView,
+  userIds: readonly string[]
+): Promise<Map<string, MemberGate>> {
+  const out = new Map<string, MemberGate>();
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return out;
+
+  const [game, ranks, waivers] = await Promise.all([
+    readGame(database, event.gameId),
+    memberRanks(database, event.gameId, ids),
+    readWaivers(database, event.id, ids),
+  ]);
+  const ladder = game?.rankLadder ?? [];
+
+  for (const userId of ids) {
+    const rank = ranks.get(userId) ?? null;
+    const waived = waivedRulesFrom(waivers.filter((row) => row.userId === userId));
+    out.set(userId, {
+      rank,
+      waived,
+      eligibility: eligibility(event, { rank }, ladder, waived),
+    });
   }
   return out;
 }
@@ -1649,6 +1748,223 @@ async function clearOrphanedAnswers(
 }
 
 /* ------------------------------------------------------------------ */
+/* Waiving an entry rule (R-59 / UC-14 3b)                            */
+/* ------------------------------------------------------------------ */
+
+/** A waiver with the names the admin screens and the audit line want. */
+export type EntryWaiverView = EntryWaiverRow & {
+  member: { id: string; displayName: string | null; handle: string | null };
+  /** The manager's name as it reads now; null once their account is gone. */
+  grantedByName: string | null;
+};
+
+/** Name rows for a waiver list, in one query per role. */
+async function decorateWaivers(
+  database: Database,
+  rows: readonly EntryWaiverRow[]
+): Promise<EntryWaiverView[]> {
+  if (rows.length === 0) return [];
+  const ids = [
+    ...new Set([
+      ...rows.map((row) => row.userId),
+      ...rows.map((row) => row.waivedBy).filter((id): id is string => id !== null),
+    ]),
+  ];
+  const people = await database
+    .select({
+      id: users.id,
+      displayName: users.displayName,
+      name: users.name,
+      handle: users.handle,
+    })
+    .from(users)
+    .where(inArray(users.id, ids));
+  const byId = new Map(people.map((person) => [person.id, person]));
+
+  return rows.map((row) => {
+    const member = byId.get(row.userId);
+    const granter = row.waivedBy ? byId.get(row.waivedBy) : undefined;
+    return {
+      ...row,
+      member: {
+        id: row.userId,
+        displayName: member?.displayName ?? member?.name ?? null,
+        handle: member?.handle ?? null,
+      },
+      grantedByName: granter?.displayName ?? granter?.name ?? null,
+    };
+  });
+}
+
+/** Every waiver on one event, newest first — the admin panel's read. */
+export async function listEntryWaivers(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<EntryWaiverView[]> {
+  const rows = await readWaivers(database, eventId);
+  const views = await decorateWaivers(database, rows);
+  return views.sort((a, b) => b.waivedAt.getTime() - a.waivedAt.getTime());
+}
+
+/**
+ * One member by their public handle — `/players/[handle]`.
+ *
+ * The lookup behind "waive it for somebody who cannot apply yet". A manager
+ * letting a filler in (R-59's "so that a filler can play") knows who they mean
+ * and can read the handle off that person's profile or ask them for it; what
+ * they do not have is a list of every member on the site, and an admin screen
+ * that handed a *host* one would be a disclosure this feature has no need to
+ * make. A handle is already public — it is in the URL of a profile page.
+ *
+ * Returns null rather than failing: the caller turns it into the sentence.
+ */
+export async function findMemberByHandle(
+  handle: string,
+  database: Database = defaultDb
+): Promise<{ id: string; displayName: string | null; handle: string | null } | null> {
+  // "@beko", " beko " and "Beko" are all the same member: handles are minted
+  // lower-case by `handleBase`, and the leading @ is how Discord writes one.
+  const wanted = handle.trim().replace(/^@+/, "").toLowerCase();
+  if (!wanted) return null;
+
+  const [row] = await database
+    .select({ id: users.id, displayName: users.displayName, name: users.name, handle: users.handle })
+    .from(users)
+    .where(eq(users.handle, wanted))
+    .limit(1);
+  return row
+    ? { id: row.id, displayName: row.displayName ?? row.name ?? null, handle: row.handle }
+    : null;
+}
+
+/**
+ * Let one member past one of this event's rank rules (R-59 / UC-14 3b).
+ *
+ * ## Why this takes an event and a member and nothing else
+ *
+ * The row it writes *is* (event, member, rule), so the caller's authorisation —
+ * `requireEventManager(eventId)` in the action — is a check on the row being
+ * written rather than on an id beside it, which is the rule `event-scope.ts`
+ * sets out. There is deliberately no "waive by waiver id" and no "waive by
+ * application id": either would make the event a second, unverified argument,
+ * and a host of event A holding a waiver id from event B would be exactly the
+ * escalation that file exists to describe.
+ *
+ * ## Why it can be granted before an application exists
+ *
+ * Because it has to be. `applyToEvent` refuses a below-rank member before
+ * anything is stored, so for the `enter` rule there is no application to attach
+ * the decision to at the moment it is needed — the Gate-2 amendment to UC-12 2a
+ * and UC-14 3b in docs/plan.md. Nothing here reads `applications`.
+ *
+ * ## Granting twice is granting once
+ *
+ * The unique constraint makes a repeat grant the same decision, and the
+ * conflict is a no-op rather than a refresh: the *first* manager to decide is
+ * the one the row should name, and overwriting `waived_by` on a second click
+ * would rewrite who made a decision that was already made. The existing row
+ * comes back, so a caller cannot tell the difference and a double-submitted
+ * form does not produce an error anybody has to read.
+ *
+ * `created` is how a caller tells the two apart anyway — and it is **Postgres'
+ * answer, not a guess from a read beforehand**. `onConflictDoNothing()
+ * .returning()` hands back the inserted row or nothing at all, decided inside
+ * the one statement, so two managers clicking at the same moment get one `true`
+ * and one `false` however their reads interleaved. The action layer logs on
+ * `created`, which is what keeps one decision to one audit line (the mirror of
+ * `removed` in {@link revokeEntryWaiver}).
+ *
+ * A finished event refuses this like every other write (UC-09 6b): a waiver
+ * changes who could have played in it, and the record of a finished event is
+ * closed until somebody reopens it.
+ */
+export async function waiveEntryRule(
+  eventId: string,
+  userId: string,
+  rule: EntryRule,
+  options: { by?: string | null; now?: Date } = {},
+  database: Database = defaultDb
+): Promise<EventResult<EntryWaiverView & { created: boolean }>> {
+  const event = await readEvent(database, eventId);
+  if (!event) return fail("That event no longer exists.");
+  const locked = lockRefusal(event);
+  if (locked) return fail(locked);
+
+  const [member] = await database
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (!member) return fail("We do not have an account for that member.");
+
+  const inserted = await database
+    .insert(entryWaivers)
+    .values({ eventId, userId, rule, waivedBy: options.by ?? null, waivedAt: options.now })
+    .onConflictDoNothing({
+      target: [entryWaivers.eventId, entryWaivers.userId, entryWaivers.rule],
+    })
+    .returning({ id: entryWaivers.id });
+  const created = inserted.length > 0;
+
+  // Re-read rather than returning what was inserted: on the repeat the insert
+  // comes back empty, and the row that is *there* — the first manager's — is
+  // the answer. `created` above is the one thing the read cannot tell us.
+  const [row] = await database
+    .select()
+    .from(entryWaivers)
+    .where(
+      and(
+        eq(entryWaivers.eventId, eventId),
+        eq(entryWaivers.userId, userId),
+        eq(entryWaivers.rule, rule)
+      )
+    )
+    .limit(1);
+  if (!row) return fail("That waiver could not be recorded. Nothing was changed.");
+
+  const [view] = await decorateWaivers(database, [row]);
+  return withData({ ...view, created });
+}
+
+/**
+ * Withdraw a waiver (and with it the decision it recorded).
+ *
+ * Keyed on (event, member, rule) and never on the waiver's own id, for the
+ * reason set out above and one more besides: a delete by id authorised against
+ * a browser-supplied event would let a host of event A withdraw event B's
+ * waiver. With the event in the `where` clause the worst a wrong id can do is
+ * match nothing.
+ *
+ * `removed` is false when there was nothing to withdraw, which is not an error
+ * — two managers clicking the same button is not a failure anybody should read
+ * a message about.
+ */
+export async function revokeEntryWaiver(
+  eventId: string,
+  userId: string,
+  rule: EntryRule,
+  database: Database = defaultDb
+): Promise<EventResult<{ removed: boolean }>> {
+  const event = await readEvent(database, eventId);
+  if (!event) return fail("That event no longer exists.");
+  const locked = lockRefusal(event);
+  if (locked) return fail(locked);
+
+  const gone = await database
+    .delete(entryWaivers)
+    .where(
+      and(
+        eq(entryWaivers.eventId, eventId),
+        eq(entryWaivers.userId, userId),
+        eq(entryWaivers.rule, rule)
+      )
+    )
+    .returning({ id: entryWaivers.id });
+
+  return withData({ removed: gone.length > 0 });
+}
+
+/* ------------------------------------------------------------------ */
 /* Applying                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -1729,7 +2045,12 @@ export async function applyToEvent(
     if (!state.open) return fail(state.message);
 
     const rank = await memberRank(tx, event.gameId, userId);
-    const gate = eligibility(event, { rank }, ladder);
+    // UC-12 2a: below the bar *and* nobody has waived it. The waivers are read
+    // inside the same lock as everything else, so a waiver granted while this
+    // application was being filled in is either seen by it or lands after it,
+    // never half-seen.
+    const waived = waivedRulesFrom(await readWaivers(tx, eventId, [userId]));
+    const gate = eligibility(event, { rank }, ladder, waived);
     if (!gate.canEnter) return fail(gate.enterReason);
 
     const questions = await readQuestions(tx, eventId);
@@ -2594,8 +2915,7 @@ export async function getApplicationsForEvent(
   const rows = await readApplications(database, eventId);
   if (rows.length === 0) return [];
 
-  const [game, views, members, ranks] = await Promise.all([
-    readGame(database, event.gameId),
+  const [views, members, gates] = await Promise.all([
     decorate(database, rows),
     database
       .select({
@@ -2611,14 +2931,16 @@ export async function getApplicationsForEvent(
           rows.map((row) => row.userId)
         )
       ),
-    memberRanks(
+    // One assembly of ladder + ranks + waivers, shared with the apply page and
+    // with `setCaptains`, so the verdict this table shows is the verdict the
+    // writes enforce (R-59 / UC-14 3b).
+    gatesFor(
       database,
-      event.gameId,
+      event,
       rows.map((row) => row.userId)
     ),
   ]);
 
-  const ladder = game?.rankLadder ?? [];
   const memberById = new Map(members.map((member) => [member.id, member]));
   const rank: Record<ApplicationStatus, number> = {
     accepted: 0,
@@ -2630,7 +2952,7 @@ export async function getApplicationsForEvent(
 
   return views
     .map((view): ApplicantView => {
-      const memberRankValue = ranks.get(view.userId) ?? null;
+      const gate = gates.get(view.userId);
       return {
         ...view,
         member: memberById.get(view.userId) ?? {
@@ -2639,8 +2961,9 @@ export async function getApplicationsForEvent(
           avatarUrl: null,
           discordId: null,
         },
-        rank: memberRankValue,
-        eligibility: eligibility(event, { rank: memberRankValue }, ladder),
+        rank: gate?.rank ?? null,
+        eligibility: gate?.eligibility ?? eligibility(event, { rank: null }, []),
+        waived: gate?.waived ?? NO_WAIVERS,
       };
     })
     .sort((a, b) => {
@@ -2728,7 +3051,12 @@ export async function loadApplicationForm(
   if (!event) return null;
 
   const view = await detail(database, event, now);
-  const rank = await memberRank(database, event.gameId, userId);
+  // UC-12 2: the gate is shown before the questions, so the page needs the same
+  // answer the write will reach — ladder, recorded rank *and* waivers (UC-12 2a).
+  const gate = userId
+    ? (await gatesFor(database, event, [userId])).get(userId)
+    : undefined;
+  const rank = gate?.rank ?? null;
 
   const [mine] = userId
     ? await database
@@ -2757,7 +3085,8 @@ export async function loadApplicationForm(
   return {
     event: view,
     state: view.applicationsState,
-    eligibility: eligibility(event, { rank }, view.rankLadder),
+    eligibility: gate?.eligibility ?? eligibility(event, { rank }, view.rankLadder),
+    waived: gate?.waived ?? NO_WAIVERS,
     rank,
     questions,
     availability: application?.availability ?? {},

@@ -24,7 +24,13 @@
  * passes with nobody looking. The same goes for "seats left": derived, always.
  */
 
-import type { ApplicationStatus, EntryMode, EventConfig, EventStatus } from "@/db/schema";
+import type {
+  ApplicationStatus,
+  EntryMode,
+  EntryRule,
+  EventConfig,
+  EventStatus,
+} from "@/db/schema";
 
 /* ------------------------------------------------------------------ */
 /* Status                                                             */
@@ -113,11 +119,24 @@ export type EventDates = {
  * "Day 2", or the label the manager gave it (UC-08 E3).
  *
  * A *trimmed* label, so a day labelled with spaces is still called "Day 2"
- * rather than nothing at all. `daySequenceProblem` below names days with this,
- * and so does the event page's day list, which is what makes a refusal
- * ("Saturday starts before Friday") and the page agree about what a day is
- * called. Three other components still have their own `label ?? …` copy, which
- * is the weaker rule; porting them is docs/plan.md, Task 51.
+ * rather than nothing at all — the difference from the `label ?? \`Day N\``
+ * copies that used to sit in the components, which only caught `null` and
+ * rendered the spaces as a blank.
+ *
+ * **Every surface that names a day calls this**: the event overview, the
+ * schedule, the apply form, a member's own event card, the applicants drawer —
+ * and `daySequenceProblem` below, which is what makes a refusal ("Saturday
+ * starts before Friday") and the page agree about what a day is called.
+ * `src/components/__tests__/day-names.test.ts` renders each of them.
+ *
+ * **`index` is the day's stored `dayIndex`**, and every screen passes that
+ * rather than the day's position in whatever array it happens to hold. The two
+ * agree only while the list is whole and in order; pass the position and
+ * filtering or reordering the list renames every day on that screen. The one
+ * caller that passes a position is `daySequenceProblem` below, which names days
+ * in a list that is *about to be saved* — `setEventDays` writes each day's
+ * index from its position, so there the position is the `dayIndex` the day is
+ * about to have, and there is no stored one to read yet.
  */
 export function dayName(day: DayView, index: number): string {
   const label = typeof day.label === "string" ? day.label.trim() : "";
@@ -739,6 +758,43 @@ export type MemberRankView = {
   rank: string | null;
 };
 
+/* ------------------------------------------------------------------ */
+/* Waivers (R-59 / UC-14 3b)                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which of the two rules a manager has waived for one member on one event.
+ *
+ * A pair of booleans rather than the rows themselves: by the time a gate is
+ * being evaluated the only question left is "was this rule waived", and who
+ * granted it and when belong to the screens that *report* a waiver and to the
+ * audit log, not to the comparison. `entry_waivers` is unique on
+ * (event, member, rule), so there is never more than one row to fold in.
+ */
+export type WaivedRules = {
+  readonly enter: boolean;
+  readonly captain: boolean;
+};
+
+/**
+ * Nobody has waived anything — the ordinary case, and the default.
+ *
+ * Frozen, and the fields above are `readonly`, because this one object is the
+ * default argument of {@link eligibility} and is therefore *shared by every
+ * caller that passes nothing*. A single `waived.enter = true` anywhere would
+ * not be a local mistake; it would hand every unwaived member on the site a
+ * waiver for the life of the process.
+ */
+export const NO_WAIVERS: WaivedRules = Object.freeze({ enter: false, captain: false });
+
+/** Fold a member's `entry_waivers` rows into the pair the gate reads. */
+export function waivedRulesFrom(rows: readonly { rule: EntryRule }[]): WaivedRules {
+  return {
+    enter: rows.some((row) => row.rule === "enter"),
+    captain: rows.some((row) => row.rule === "captain"),
+  };
+}
+
 export type Eligibility = {
   canEnter: boolean;
   /** One sentence, for the member. */
@@ -748,6 +804,31 @@ export type Eligibility = {
   /** The underlying comparisons, for a UI that wants to be more specific. */
   enterCheck: RankCheck;
   captainCheck: RankCheck;
+  /**
+   * True when a manager's waiver is the *only* reason they are eligible — the
+   * rank comparison itself failed (UC-12 2a's "and no manager has waived it
+   * for them on this event").
+   *
+   * Separate from `canEnter` / `canCaptain` because a screen has to be able to
+   * say *why* somebody is in: "you clear it" and "a manager let you past it"
+   * are different sentences, and a waiver rendered as though the member met the
+   * bar hides the one fact a manager may later want to revisit.
+   */
+  enterWaived: boolean;
+  captainWaived: boolean;
+  /**
+   * The captain rule on its own, waiver included — **what `setCaptains`
+   * enforces** (R-59 / UC-15 3a).
+   *
+   * `canCaptain` folds in the entry rule, because nobody who cannot get into an
+   * event can lead a team in it, and that is the right answer for a member
+   * reading a public page. It is the wrong one for the captain picker: its
+   * candidates are *accepted applicants*, so entry has already been decided by
+   * a manager (`setApplicationStatus` accepts anybody), and refusing a captain
+   * over an entry bar that acceptance already settled would make the server
+   * refuse — and the override dialog fire — for a rule nobody is enforcing.
+   */
+  meetsCaptainRule: boolean;
 };
 
 /**
@@ -757,32 +838,57 @@ export type Eligibility = {
  * team in it, so a failed entry check is reported as the captain reason too
  * rather than showing two contradictory messages.
  *
- * Neither answer is a wall. §8.3 is explicit that an admin override must exist,
- * and it does: `setApplicationStatus` lets an admin accept anybody. This is the
- * guidance that stops someone wasting their time, not the enforcement.
+ * ## Where the override lives
+ *
+ * This used to end with a note that neither answer is a wall, because §8.3
+ * requires an override and `setApplicationStatus` provides one by letting an
+ * admin accept anybody. That is still true of *acceptance*, and it was never
+ * the whole of R-59: the override for the rank rules themselves is the `waived`
+ * argument — a recorded decision read from `entry_waivers` — and it is what
+ * lets a below-rank member apply at all (UC-12 2a) and a below-bar captain be
+ * saved (UC-15 3a). A caller that passes nothing gets the unwaived answer,
+ * which is the right default for every pure-rules caller with no database to
+ * read waivers from.
  */
 export function eligibility(
   event: EventGateView,
   member: MemberRankView,
-  ladder: readonly string[]
+  ladder: readonly string[],
+  waived: WaivedRules = NO_WAIVERS
 ): Eligibility {
   const enterCheck = rankMeetsMinimum(member.rank, event.minRankToEnter, ladder);
   const captainCheck = rankMeetsMinimum(member.rank, event.minRankToCaptain, ladder);
 
-  const canEnter = enterCheck.ok;
-  const canCaptain = canEnter && captainCheck.ok;
+  // A waiver on a rule the member already clears is not "waived": it changes
+  // no answer, and reporting it would tell a manager a gate was overridden
+  // when nobody was ever stopped by it.
+  const enterWaived = !enterCheck.ok && waived.enter;
+  const captainWaived = !captainCheck.ok && waived.captain;
+
+  const canEnter = enterCheck.ok || enterWaived;
+  const meetsCaptainRule = captainCheck.ok || captainWaived;
+  const canCaptain = canEnter && meetsCaptainRule;
 
   return {
     canEnter,
-    enterReason: enterCheck.ok ? "You can apply to this event." : enterCheck.message,
+    enterReason: enterWaived
+      ? "A manager has waived this event's entry requirement for you, so you can apply."
+      : enterCheck.ok
+        ? "You can apply to this event."
+        : enterCheck.message,
     canCaptain,
     captainReason: !canEnter
       ? enterCheck.message
-      : captainCheck.ok
-        ? "You can captain a team in this event."
-        : captainCheck.message,
+      : captainWaived
+        ? "A manager has waived this event's captain requirement for you."
+        : captainCheck.ok
+          ? "You can captain a team in this event."
+          : captainCheck.message,
     enterCheck,
     captainCheck,
+    enterWaived,
+    captainWaived,
+    meetsCaptainRule,
   };
 }
 

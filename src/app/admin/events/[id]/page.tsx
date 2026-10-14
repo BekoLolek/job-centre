@@ -219,6 +219,15 @@ export default async function AdminEventPage({
       <Page className="space-y-6">
         <EventEditor
           event={event}
+          /*
+           * Admin, not manager. `requireEventManager` admits the event's own
+           * host as well, and a host may run this one event without being able
+           * to mint a template for every future one (R-22, UC-08 10a) - so the
+           * editor is told who is reading rather than being left to assume.
+           * `getCurrentUser` is server-only, and a server page handing the flag
+           * down is how `NavMenu`, `PollList` and `SuggestionBox` all do it.
+           */
+          isAdmin={manager.isAdmin}
           initialTab={tabFrom(tab)}
           initialSetup={setupFrom(tab)}
           applicants={applicants}

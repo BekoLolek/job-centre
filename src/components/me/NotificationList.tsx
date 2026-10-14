@@ -40,15 +40,35 @@ import {
  * wants to turn a notification off is the moment they are looking at one they
  * did not want, and making them hunt for a settings page is how a mute button
  * goes unused and an integration gets muted at the Discord end instead.
+ *
+ * **One page of the list, and links to the others.** The cursor is in the
+ * address, so the component holds no page state: the only state here is the
+ * optimistic read mark, which is what keeps "following one marks it read"
+ * instant on whichever page it is read from (UC-25 5). Marking read is keyed
+ * on the notification and its owner, so it is the same operation on page four
+ * as on page one.
  */
 
 export default function NotificationList({
   initial,
+  unread: unreadTotal,
+  olderHref = null,
+  newestHref = null,
   prefs,
   discordAvailable,
   hasDiscordAccount,
 }: {
   initial: Notification[];
+  /**
+   * Unread across every page, not just this one (R-103). Counted on the
+   * server, because the rows on screen are 30 of however many there are and a
+   * "you are all caught up" worked out from them is a lie on page two.
+   */
+  unread: number;
+  /** The page after this one, when there is one (UC-25 4). */
+  olderHref?: string | null;
+  /** Back to the newest — only while this is not already it. */
+  newestHref?: string | null;
   prefs: Array<KindSpec & { channels: NotificationChannels }>;
   /** Whether a bot token exists at all — see `discord-dm.ts`. */
   discordAvailable: boolean;
@@ -56,21 +76,81 @@ export default function NotificationList({
 }) {
   const router = useRouter();
   const [rows, setRows] = useState(initial);
+  const [unread, setUnread] = useState(unreadTotal);
   const [error, setError] = useState<string | null>(null);
 
-  const unread = rows.filter((row) => row.readAt === null).length;
-
+  /**
+   * Mark one read: optimistically here, then on the server.
+   *
+   * **The optimistic write has to be undone when the server refuses it**, the
+   * way `flip` undoes a switch below. `rows` and `unread` are this component's
+   * own state, seeded from props and never reconciled with them, so the
+   * `router.refresh()` that follows cannot repair them — a failure left the row
+   * shown read, the badge one below the truth, and nothing on screen to say so.
+   * That is a notification the member never reads, on a page that has stopped
+   * telling them there is one.
+   */
   const readOne = async (id: string) => {
+    // Read before the optimistic write, so a second click on a row already
+    // marked read here does not take the count down twice — and so the undo
+    // puts back the mark that was there rather than clearing one that was.
+    const wasReadAt = rows.find((row) => row.id === id)?.readAt ?? null;
+    const wasUnread = rows.some((row) => row.id === id && row.readAt === null);
+
+    const rollBack = () => {
+      setRows((current) =>
+        current.map((row) => (row.id === id ? { ...row, readAt: wasReadAt } : row))
+      );
+      if (wasUnread) setUnread((current) => current + 1);
+    };
+
+    setError(null);
     setRows((current) =>
       current.map((row) => (row.id === id ? { ...row, readAt: new Date() } : row))
     );
-    await markReadAction(id);
+    // The count is the server's, so it is adjusted rather than recomputed: the
+    // unread rows on other pages are not here to be counted.
+    if (wasUnread) setUnread((current) => Math.max(0, current - 1));
+
+    try {
+      const result = await markReadAction(id);
+      if (!result.ok) {
+        rollBack();
+        setError(result.error);
+        return;
+      }
+    } catch {
+      rollBack();
+      setError("Could not reach the server. That one is still unread.");
+      return;
+    }
     router.refresh();
   };
 
+  /** The same, for every row at once — and undone the same way if it fails. */
   const readAll = async () => {
+    const wasRows = rows;
+    const wasUnread = unread;
+
+    setError(null);
     setRows((current) => current.map((row) => ({ ...row, readAt: row.readAt ?? new Date() })));
-    await markAllReadAction();
+    // Every page's worth, which is what `markAllRead` does on the server.
+    setUnread(0);
+
+    try {
+      const result = await markAllReadAction();
+      if (!result.ok) {
+        setRows(wasRows);
+        setUnread(wasUnread);
+        setError(result.error);
+        return;
+      }
+    } catch {
+      setRows(wasRows);
+      setUnread(wasUnread);
+      setError("Could not reach the server. Nothing was marked read.");
+      return;
+    }
     router.refresh();
   };
 
@@ -100,6 +180,21 @@ export default function NotificationList({
             {rows.map((row) => (
               <Row key={row.id} row={row} onRead={() => void readOne(row.id)} />
             ))}
+          </div>
+        )}
+
+        {(olderHref || newestHref) && (
+          <div className="flex flex-wrap items-center gap-3 pt-1">
+            {olderHref && (
+              <Button size="sm" href={olderHref}>
+                Older
+              </Button>
+            )}
+            {newestHref && (
+              <Button size="sm" href={newestHref}>
+                Back to the newest
+              </Button>
+            )}
           </div>
         )}
       </div>

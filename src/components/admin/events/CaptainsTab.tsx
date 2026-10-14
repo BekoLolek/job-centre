@@ -18,6 +18,7 @@ import {
 import { RosterList, TeamCard } from "@/components/draft";
 import type { ApplicantView, EventDetail } from "@/lib/events";
 import { saveCaptainsAction } from "@/app/admin/events/draft-actions";
+import { waiveEntryRuleAction } from "@/app/admin/events/waiver-actions";
 import SaveRow, { type SaveState } from "./SaveRow";
 import type { DraftTabData } from "./types";
 
@@ -33,7 +34,7 @@ import type { DraftTabData } from "./types";
  * ("roster target 6, so each captain leaves 5 to draft") and shows the captain
  * sitting on the roster the moment they are chosen.
  *
- * ## The rank gate is guidance, and the override is deliberate
+ * ## The rank gate is enforced by the server, and the override is a waiver
  *
  * `getApplicationsForEvent` already answers "does this person clear
  * `minRankToCaptain`" per applicant, and that answer is shown rather than
@@ -44,6 +45,16 @@ import type { DraftTabData } from "./types";
  * want the Gold player who is filling in for a mate. So somebody below the bar
  * can be made captain, but not by accident — the save stops and names them, and
  * the admin has to say yes to the specific people.
+ *
+ * What that confirmation *does* changed with R-59. It used to be the whole of
+ * the rule: this screen asked, and then sent the identical payload either way,
+ * so `setCaptains` accepted a captain the event forbade and a POST that never
+ * loaded this file was never asked anything. Now `setCaptains` refuses, and the
+ * only thing that opens the gate is an `entry_waivers` row — so confirming here
+ * writes one, through `waiveEntryRuleAction`, which records who decided and
+ * logs it. The dialog went from being the rule to being the way a manager
+ * reaches it, which is the only arrangement in which a direct call is refused
+ * too.
  *
  * The one thing that genuinely *is* a wall is acceptance. `setCaptains` refuses
  * anybody who is not an accepted applicant, and it is right to: the override
@@ -101,9 +112,21 @@ export default function CaptainsTab({
   };
 
   const chosen = Object.values(picks).filter((userId) => userId !== null).length;
+  /*
+   * Who the server would refuse (R-59 / UC-15 3a).
+   *
+   * `meetsCaptainRule` and not `canCaptain`: these are accepted applicants, so
+   * the entry rule has already been settled by whoever accepted them, and
+   * `setCaptains` enforces the captain rule alone. Asking the manager to
+   * override a rule the server is not holding would be a dialog that cannot be
+   * dismissed by picking anybody.
+   *
+   * Somebody who already has a waiver is not in this list, because the waiver
+   * is already folded into the verdict `getApplicationsForEvent` handed us.
+   */
   const ineligible = Object.values(picks)
     .map(applicantOf)
-    .filter((row): row is ApplicantView => row !== null && !row.eligibility.canCaptain);
+    .filter((row): row is ApplicantView => row !== null && !row.eligibility.meetsCaptainRule);
 
   const attemptSave = () => {
     if (ineligible.length > 0) {
@@ -113,12 +136,32 @@ export default function CaptainsTab({
     void commit();
   };
 
-  const commit = async () => {
+  /**
+   * Save the captains, first recording a waiver for anybody the manager has
+   * just said may captain anyway.
+   *
+   * The order matters: `setCaptains` refuses a below-bar captain, and the only
+   * thing that opens that gate is an `entry_waivers` row. So the override is
+   * not a flag on this request — there is no flag to send — it is a separate,
+   * audited write that the save then finds in the database. A direct POST to
+   * `saveCaptainsAction` skipping this screen is refused exactly as it should
+   * be.
+   */
+  const commit = async (waiveFor: readonly ApplicantView[] = []) => {
     setOverride(null);
     setState("saving");
     setError(null);
     setErrors({});
     try {
+      for (const row of waiveFor) {
+        const waived = await waiveEntryRuleAction(eventId, row.member.id, "captain");
+        if (!waived.ok) {
+          setError(waived.error);
+          setState("error");
+          return;
+        }
+      }
+
       const result = await saveCaptainsAction(
         eventId,
         data.teams.map((team) => ({ teamId: team.id, userId: picks[team.id] ?? null }))
@@ -173,7 +216,7 @@ export default function CaptainsTab({
           <StatTile label="Accepted applicants" value={accepted.length} />
           <StatTile
             label="Clear the captain bar"
-            value={accepted.filter((row) => row.eligibility.canCaptain).length}
+            value={accepted.filter((row) => row.eligibility.meetsCaptainRule).length}
             valueClassName="text-muted"
           />
           <StatTile
@@ -248,7 +291,11 @@ export default function CaptainsTab({
                           <option key={option.id} value={option.member.id}>
                             {nameOf(option)}
                             {option.rank ? ` · ${option.rank}` : " · no rank recorded"}
-                            {option.eligibility.canCaptain ? "" : " · below the bar"}
+                            {option.eligibility.captainWaived
+                              ? " · waived"
+                              : option.eligibility.meetsCaptainRule
+                                ? ""
+                                : " · below the bar"}
                           </option>
                         ))}
                       </Select>
@@ -257,7 +304,7 @@ export default function CaptainsTab({
                         <p
                           className={cx(
                             "text-12 leading-relaxed",
-                            row.eligibility.canCaptain ? "text-muted" : "text-union"
+                            row.eligibility.meetsCaptainRule ? "text-muted" : "text-union"
                           )}
                         >
                           {row.eligibility.captainReason}
@@ -353,7 +400,7 @@ export default function CaptainsTab({
               size="sm"
               variant="union"
               disabled={state === "saving"}
-              onClick={() => void commit()}
+              onClick={() => void commit(override ?? [])}
             >
               {state === "saving" ? "Saving…" : "Yes, they captain anyway"}
             </Button>
@@ -366,6 +413,11 @@ export default function CaptainsTab({
               This event asks for {event.minRankToCaptain ?? "a minimum rank"} to captain.
               Nothing stops you — sometimes you want the Gold player who is filling in for a
               mate — but it should be a decision, not a mis-click.
+              <span className="mt-2 block opacity-90">
+                Confirming records a waiver against your name for each person below, which is
+                what lets the save through and what the audit log will show. You can withdraw
+                one on the Applicants tab.
+              </span>
             </Alert>
 
             <ul className="space-y-2">

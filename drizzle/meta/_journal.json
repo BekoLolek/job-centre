@@ -148,6 +148,13 @@
       "when": 1791921237999,
       "tag": "0020_event_days_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1791929226929,
+      "tag": "0021_entry_waivers",
+      "breakpoints": true
     }
   ]
 }

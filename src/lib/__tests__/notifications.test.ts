@@ -8,21 +8,32 @@ import {
   eventDays,
   events,
   notificationDmClaims,
+  notifications,
   users,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import {
+  type TestDatabase,
+  freshDatabase,
+  makeHost,
+  makeUser,
+} from "@/db/__tests__/helpers";
 import { CONFIRMATION_LEAD_MS, confirmationsOpen } from "@/lib/events-policy";
 import {
   CONFIRMATION_ASK_WINDOW_MS,
+  PAGE_SIZE,
   REMINDER_WINDOW_MS,
   channelsFor,
   dayStamp,
   dedupeKey,
+  destinationFor,
+  encodeNotificationCursor,
   getPrefs,
   listNotifications,
   markAllRead,
   markRead,
+  notificationPage,
   notify,
+  parseNotificationCursor,
   sendDueReminders,
   setPref,
   unreadCount,
@@ -326,6 +337,404 @@ describe("reading", () => {
     await markAllRead(userId, db);
     expect(await unreadCount(userId, db)).toBe(0);
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* Following one to the event — UC-25 4-5, R-32                       */
+/* ------------------------------------------------------------------ */
+
+describe("where a notification leads", () => {
+  /** A published event, which is what every member can see. */
+  async function makeEvent(
+    status: "published" | "draft" = "published"
+  ): Promise<{ id: string; slug: string }> {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const [row] = await db
+      .insert(events)
+      .values({ slug: `link-${suffix}`, title: `Link ${suffix}`, status })
+      .returning({ id: events.id, slug: events.slug });
+    return row;
+  }
+
+  it("takes a member to the event it is about (UC-25 5)", async () => {
+    const userId = await makeUser(db);
+    const event = await makeEvent();
+
+    await notify(
+      {
+        kind: "event_published",
+        userIds: [userId],
+        title: "A new event",
+        href: `/events/${event.slug}`,
+        eventId: event.id,
+        subject: event.id,
+      },
+      db
+    );
+
+    const [row] = await listNotifications(userId, db);
+    expect(row.href).toBe(`/events/${event.slug}`);
+  });
+
+  it("takes them to the address the event has today, not the one it had", async () => {
+    // A manager may change an event's web address (UC-08 E2). The href stored
+    // when the notification was sent is a copy of a thing that moved, so
+    // following a week-old notification would otherwise be a 404.
+    const userId = await makeUser(db);
+    const event = await makeEvent();
+    await notify(
+      {
+        kind: "event_published",
+        userIds: [userId],
+        title: "Renamed event",
+        href: `/events/${event.slug}`,
+        eventId: event.id,
+        subject: event.id,
+      },
+      db
+    );
+
+    await db.update(events).set({ slug: "moved-along" }).where(eq(events.id, event.id));
+
+    const [row] = await listNotifications(userId, db);
+    expect(row.href).toBe("/events/moved-along");
+  });
+
+  it("keeps a destination that is deliberately not the event page", async () => {
+    // The ask for an answer goes to `/me/events`, where the answer can be
+    // given — an ask that lands you somewhere you cannot answer is half an ask.
+    const userId = await makeUser(db);
+    const event = await makeEvent();
+    await notify(
+      {
+        kind: "confirmation_due",
+        userIds: [userId],
+        title: "Are you still coming?",
+        href: "/me/events",
+        eventId: event.id,
+        subject: event.id,
+      },
+      db
+    );
+
+    const [row] = await listNotifications(userId, db);
+    expect(row.href).toBe("/me/events");
+  });
+
+  it("still lists a notification that is about no event and leads nowhere", async () => {
+    // The link is not mandatory: a notification is a sentence first. One with
+    // nothing to follow must still be read, not swallowed.
+    const userId = await makeUser(db);
+    await notify(
+      { kind: "poll_posted", userIds: [userId], title: "There's a new poll", subject: "nowhere" },
+      db
+    );
+
+    const [row] = await listNotifications(userId, db);
+    expect(row.title).toBe("There's a new poll");
+    expect(row.href).toBeNull();
+  });
+
+  it("does not offer an unpublished event to somebody who may not see it (R-32)", async () => {
+    // The event page answers not found to a member for a draft event, so a
+    // link to it is a dead end — and the row it is on is not. The notification
+    // stays; only the link goes.
+    const userId = await makeUser(db);
+    const event = await makeEvent("draft");
+    await notify(
+      {
+        kind: "event_updated",
+        userIds: [userId],
+        title: "Pulled back to a draft",
+        href: `/events/${event.slug}`,
+        eventId: event.id,
+        subject: event.id,
+      },
+      db
+    );
+
+    const [row] = await listNotifications(userId, db);
+    expect(row.title).toBe("Pulled back to a draft");
+    expect(row.href).toBeNull();
+  });
+
+  it("still links the event's own host, for whom the page is there", async () => {
+    // Same row, same draft event, different reader: `canSeeEvent` is the one
+    // rule, so the link follows the permission rather than guessing at it.
+    const host = await makeUser(db);
+    const event = await makeEvent("draft");
+    await makeHost(db, event.id, host);
+    await notify(
+      {
+        kind: "event_updated",
+        userIds: [host],
+        title: "Your draft moved",
+        href: `/events/${event.slug}`,
+        eventId: event.id,
+        subject: event.id,
+      },
+      db
+    );
+
+    const [row] = await listNotifications(host, db);
+    expect(row.href).toBe(`/events/${event.slug}`);
+  });
+
+  it("links an admin to a draft event, who may see every one", async () => {
+    const admin = await makeUser(db);
+    await db.update(users).set({ isAdmin: true }).where(eq(users.id, admin));
+    const event = await makeEvent("draft");
+    await notify(
+      {
+        kind: "event_updated",
+        userIds: [admin],
+        title: "A draft an admin may read",
+        href: `/events/${event.slug}`,
+        eventId: event.id,
+        subject: event.id,
+      },
+      db
+    );
+
+    const { rows } = await notificationPage(admin, { isAdmin: true }, db);
+    expect(rows[0].href).toBe(`/events/${event.slug}`);
+  });
+
+  it("drops the link when the event behind it has gone", () => {
+    // `notifications.event_id` cascades, so a hard-deleted event takes its
+    // notifications with it and this is unreachable through the database —
+    // which is exactly why it is pinned here instead: the rule the resolver
+    // follows is "no event, no link", not "trust the stored path".
+    expect(destinationFor({ href: "/events/gone", eventId: "e1", eventSlug: null }, true)).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Paging — UC-25 4                                                   */
+/* ------------------------------------------------------------------ */
+
+describe("paging the list", () => {
+  /**
+   * `count` notifications for one member, oldest first, a second apart.
+   *
+   * Written straight in rather than through `notify`, because `created_at`
+   * defaults to `now()` — which is the *transaction's* clock, so a loop of
+   * sends inside one test can tie — and these tests are about the order.
+   */
+  async function stack(
+    userId: string,
+    count: number,
+    at: (index: number) => Date = (index) =>
+      new Date(Date.UTC(2026, 2, 1, 12, 0, index))
+  ): Promise<void> {
+    await db.insert(notifications).values(
+      Array.from({ length: count }, (_, index) => ({
+        userId,
+        kind: "poll_posted" as NotificationKind,
+        title: `Note ${index}`,
+        dedupeKey: `stack-${userId}-${index}`,
+        createdAt: at(index),
+      }))
+    );
+  }
+
+  const idsOf = (rows: Array<{ id: string }>) => rows.map((row) => row.id);
+
+  it("hands back thirty and a way to ask for the rest", async () => {
+    const userId = await makeUser(db);
+    await stack(userId, PAGE_SIZE + 1);
+
+    const first = await notificationPage(userId, {}, db);
+    expect(first.rows).toHaveLength(PAGE_SIZE);
+    expect(first.next).not.toBeNull();
+
+    const second = await notificationPage(userId, { after: first.next }, db);
+    expect(second.rows).toHaveLength(1);
+    // Nothing beyond it, and nothing said there is.
+    expect(second.next).toBeNull();
+
+    const seen = [...idsOf(first.rows), ...idsOf(second.rows)];
+    expect(new Set(seen).size).toBe(PAGE_SIZE + 1);
+  });
+
+  it("stays newest first across the break", async () => {
+    const userId = await makeUser(db);
+    await stack(userId, PAGE_SIZE + 2);
+
+    const first = await notificationPage(userId, {}, db);
+    const second = await notificationPage(userId, { after: first.next }, db);
+    const titles = [...first.rows, ...second.rows].map((row) => row.title);
+
+    // Note 31 down to Note 0: the second page carries on where the first
+    // stopped rather than starting again.
+    expect(titles[0]).toBe(`Note ${PAGE_SIZE + 1}`);
+    expect(titles.at(-1)).toBe("Note 0");
+  });
+
+  it("loses and repeats nothing when a notification arrives between pages", async () => {
+    // The failure a `limit`/`offset` pair gives you for free: the list grows at
+    // the *head*, so by the time page two is asked for, "skip 30" skips a
+    // different thirty — the row that was thirtieth is now thirty-first, comes
+    // back a second time, and the one after it is never shown at all.
+    const userId = await makeUser(db);
+    await stack(userId, PAGE_SIZE + 1);
+
+    const first = await notificationPage(userId, {}, db);
+
+    // Somebody posts a poll while the member is reading page one.
+    await notify(
+      { kind: "poll_posted", userIds: [userId], title: "Arrived mid-page", subject: "mid" },
+      db
+    );
+
+    const second = await notificationPage(userId, { after: first.next }, db);
+    const seen = [...idsOf(first.rows), ...idsOf(second.rows)];
+
+    expect(new Set(seen).size).toBe(seen.length);
+    expect(seen).toHaveLength(PAGE_SIZE + 1);
+    // The oldest of the original run is the one an offset would have skipped.
+    expect([...first.rows, ...second.rows].map((row) => row.title)).toContain("Note 0");
+    // And the arrival is on neither page: it is newer than page one's cursor,
+    // so it is where it belongs — at the top, next time the newest is asked for.
+    expect([...first.rows, ...second.rows].map((row) => row.title)).not.toContain(
+      "Arrived mid-page"
+    );
+    expect(idsOf((await notificationPage(userId, {}, db)).rows)).toHaveLength(PAGE_SIZE);
+    expect((await notificationPage(userId, {}, db)).rows[0].title).toBe("Arrived mid-page");
+  });
+
+  it("pages a run written in one transaction, which shares a timestamp", async () => {
+    // `now()` is the transaction's clock, so a fan-out writes the same
+    // `created_at` on every row. A cursor on the timestamp alone cannot tell
+    // the tied rows apart: it either skips the rest of the tie or repeats it.
+    const same = new Date("2026-04-02T09:00:00.000Z");
+    const userId = await makeUser(db);
+    await stack(userId, PAGE_SIZE + 5, () => same);
+
+    const first = await notificationPage(userId, {}, db);
+    const second = await notificationPage(userId, { after: first.next }, db);
+    const seen = [...idsOf(first.rows), ...idsOf(second.rows)];
+
+    expect(seen).toHaveLength(PAGE_SIZE + 5);
+    expect(new Set(seen).size).toBe(PAGE_SIZE + 5);
+  });
+
+  it("promises no next page when the count lands exactly on one", async () => {
+    const userId = await makeUser(db);
+    await stack(userId, PAGE_SIZE);
+
+    const page = await notificationPage(userId, {}, db);
+    expect(page.rows).toHaveLength(PAGE_SIZE);
+    // The extra row read is what answers this without a second count(*).
+    expect(page.next).toBeNull();
+  });
+
+  it("keeps following one marking it read, on a later page (UC-25 5)", async () => {
+    const userId = await makeUser(db);
+    await stack(userId, PAGE_SIZE + 1);
+    expect(await unreadCount(userId, db)).toBe(PAGE_SIZE + 1);
+
+    const first = await notificationPage(userId, {}, db);
+    const second = await notificationPage(userId, { after: first.next }, db);
+    await markRead(userId, second.rows[0].id, db);
+
+    expect(await unreadCount(userId, db)).toBe(PAGE_SIZE);
+    const again = await notificationPage(userId, { after: first.next }, db);
+    expect(again.rows[0].readAt).not.toBeNull();
+  });
+
+  it("shows one member's notifications and nobody else's, however it is paged", async () => {
+    const mine = await makeUser(db);
+    const theirs = await makeUser(db);
+    await stack(mine, PAGE_SIZE + 1);
+    await stack(theirs, 3);
+
+    const first = await notificationPage(mine, {}, db);
+    const second = await notificationPage(mine, { after: first.next }, db);
+    expect(first.rows).toHaveLength(PAGE_SIZE);
+    expect(second.rows).toHaveLength(1);
+    expect(second.next).toBeNull();
+  });
+
+  it("carries a cursor through a link and back", () => {
+    const cursor = { createdAt: new Date("2026-05-06T07:08:09.010Z"), id: crypto.randomUUID() };
+    const parsed = parseNotificationCursor(encodeNotificationCursor(cursor));
+
+    expect(parsed?.id).toBe(cursor.id);
+    expect(parsed?.createdAt.toISOString()).toBe(cursor.createdAt.toISOString());
+  });
+
+  /**
+   * Timestamps `new Date()` accepts and Postgres does not, each with a real
+   * uuid so that the uuid half cannot be what saves us.
+   *
+   * The first three are the ones that matter: every one is a valid JS `Date`,
+   * so a `NaN` check passes them straight into the query, and every one is
+   * refused by Postgres by return of post — "date/time field value out of
+   * range", "time zone displacement out of range", "invalid input syntax for
+   * type timestamp with time zone". `/me/notifications` renders with no
+   * try/catch, so each of them was a 500 on a member's own page. The fourth is
+   * the quieter one: `Jan 1 0001` parses to a real date, so junk became a
+   * *working* cursor and paged somebody through their own list from an address
+   * that none of our links could have produced.
+   */
+  const HOSTILE_STAMPS = [
+    "0000-01-01T00:00:00.000Z",
+    "+275760-09-13T00:00:00.000Z",
+    "-000001-01-01T00:00:00.000Z",
+    "Jan 1 0001",
+  ];
+
+  it("treats an address that is not a cursor as the newest page", async () => {
+    // A hand-edited `?before=` ends up in a uuid comparison and a timestamptz
+    // comparison, where anything either type refuses is a Postgres error rather
+    // than an empty page.
+    for (const raw of [
+      undefined,
+      "",
+      "rubbish",
+      "_",
+      "2026-05-06T07:08:09.010Z_not-a-uuid",
+      "not-a-date_0f14e2a6-0f14-4f14-8f14-0f14e2a60f14",
+      ...HOSTILE_STAMPS.map((stamp) => `${stamp}_0f14e2a6-0f14-4f14-8f14-0f14e2a60f14`),
+      ["a", "b"],
+    ]) {
+      expect(parseNotificationCursor(raw)).toBeNull();
+    }
+
+    const userId = await makeUser(db);
+    await stack(userId, 2);
+    const page = await notificationPage(
+      userId,
+      { after: parseNotificationCursor("rubbish") },
+      db
+    );
+    expect(page.rows).toHaveLength(2);
+  });
+
+  /*
+   * The parse above is where the fix is, but the page is where the bug was:
+   * each of these reached the query as a `Date` Postgres then threw on, and
+   * `/me/notifications` has no try/catch to turn that into anything a member
+   * can read. So each one runs the whole way through `notificationPage`,
+   * against real Postgres — the honest answer to an address that does not mean
+   * anything is page one, not a 500.
+   *
+   * One case per string rather than a loop in one case: they fail for four
+   * different reasons, and a loop would only ever report the first.
+   */
+  it.each(HOSTILE_STAMPS)(
+    "answers ?before=%s with the newest page rather than a 500",
+    async (stamp) => {
+      const userId = await makeUser(db);
+      await stack(userId, 3);
+
+      const after = parseNotificationCursor(`${stamp}_0f14e2a6-0f14-4f14-8f14-0f14e2a60f14`);
+      const page = await notificationPage(userId, { after }, db);
+
+      expect(page.rows).toHaveLength(3);
+    }
+  );
 });
 
 describe("preferences round-trip", () => {

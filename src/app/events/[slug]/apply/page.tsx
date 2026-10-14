@@ -9,12 +9,21 @@
  *
  * ## The gate is shown before the form, never after it
  *
- * `applyToEvent` refuses anybody below `min_rank_to_enter`. Being told "you
- * need Platinum III, you are Gold I" *after* filling a form in is exactly the
- * friction §8.3 exists to remove, so the requirement is on screen before the
- * form is — and when it is not met, instead of it. The message is the gate's
- * own (`eligibility().enterReason`), so the page and the write can never
- * disagree about why.
+ * `applyToEvent` refuses anybody below `min_rank_to_enter` for whom no manager
+ * has waived it (UC-12 2a). Being told "you need Platinum III, you are Gold I"
+ * *after* filling a form in is exactly the friction §8.3 exists to remove, so
+ * the requirement is on screen before the form is — and when it is not met,
+ * instead of it. The message is the gate's own
+ * (`eligibility().enterReason`), so the page and the write can never disagree
+ * about why.
+ *
+ * **Both** rules are listed, each with this member's standing against it
+ * (UC-12 2) — the captain rule included, because it is the one that matters
+ * most to somebody who came to lead a team and it used to be something they
+ * learned about from a manager after they had applied. A rule a waiver has
+ * opened (R-59) says so in those words: "waived for you" is a different fact
+ * from "you clear it", and the member is entitled to know which one is keeping
+ * them in.
  *
  * ## Everything else that would waste their time is also checked first
  *
@@ -98,6 +107,41 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
 
   const declined = application?.status === "declined";
   const blocked = !form.eligibility.canEnter;
+
+  /*
+   * Both of §8.3's rules, and this member's standing against each (UC-12 2).
+   *
+   * The entry rule used to be the only one on this page, which made the
+   * captain rule something a member found out about from a manager after
+   * applying — and it is the rule most likely to matter to somebody who came
+   * to captain a team. Only rules the event actually sets are listed: a row
+   * saying "no minimum" is noise, and an event with neither drops the panel.
+   *
+   * Every verdict is `form.eligibility`'s, so this page and `applyToEvent`
+   * cannot disagree about who is in — including when the reason they are in is
+   * a waiver (R-59), which gets its own wording rather than being painted as
+   * though they met the bar.
+   */
+  const rules = [
+    {
+      label: "To enter",
+      minRank: event.minRankToEnter,
+      met: form.eligibility.enterCheck.ok,
+      waived: form.eligibility.enterWaived,
+      message: form.eligibility.enterWaived
+        ? form.eligibility.enterReason
+        : form.eligibility.enterCheck.message,
+    },
+    {
+      label: "To captain",
+      minRank: event.minRankToCaptain,
+      met: form.eligibility.captainCheck.ok,
+      waived: form.eligibility.captainWaived,
+      message: form.eligibility.captainWaived
+        ? form.eligibility.captainReason
+        : form.eligibility.captainCheck.message,
+    },
+  ].filter((rule): rule is typeof rule & { minRank: string } => Boolean(rule.minRank));
   /** The reason applications are shut, or null when they are open. */
   const closedBecause = form.state.open ? null : form.state.message;
   /** Open, but every seat is taken — so this application joins the queue (§14). */
@@ -152,27 +196,43 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
           </div>
         </Panel>
 
-        {/* --- The entry rule, said before anything is filled in ------ */}
-        {event.minRankToEnter && (
+        {/* --- Both entry rules, said before anything is filled in ---- */}
+        {rules.length > 0 && (
           <Panel as="section" className={blocked ? "border-flare/50" : undefined}>
             <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
-              <Eyebrow>Entry requirement</Eyebrow>
-              <span className="text-14">
-                <span className="text-union">{event.minRankToEnter}</span> or above
-              </span>
+              <Eyebrow>{rules.length === 1 ? "Entry requirement" : "Entry requirements"}</Eyebrow>
               <span className="text-14 text-muted">
                 Your recorded rank:{" "}
-                <span className={blocked ? "text-flare" : "text-success"}>
+                <span className={form.rank ? "text-chalk" : "text-muted"}>
                   {form.rank ?? "not set"}
                 </span>
               </span>
-              <span className={blocked ? "ml-auto text-flare" : "ml-auto text-success"}>
-                {blocked ? "✕ Below the bar" : "✓ You clear it"}
-              </span>
             </div>
-            <p className="mt-3 border-t border-hair pt-3 text-12 leading-relaxed text-muted">
-              {form.eligibility.enterCheck.message}
-            </p>
+
+            <dl className="mt-3 space-y-2 border-t border-hair pt-3">
+              {rules.map((rule) => (
+                <div key={rule.label} className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                  <dt className="eyebrow min-w-[9rem] text-chalk/70">{rule.label}</dt>
+                  <dd className="min-w-0 flex-1 text-14">
+                    <span className="text-union">{rule.minRank}</span> or above
+                    <span className="mt-1 block text-12 leading-relaxed text-muted">
+                      {rule.message}
+                    </span>
+                  </dd>
+                  <dd
+                    className={
+                      rule.waived
+                        ? "text-14 text-union"
+                        : rule.met
+                          ? "text-14 text-success"
+                          : "text-14 text-flare"
+                    }
+                  >
+                    {rule.waived ? "✓ Waived for you" : rule.met ? "✓ You clear it" : "✕ Below the bar"}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </Panel>
         )}
 

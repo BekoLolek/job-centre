@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
   type Database,
   type NotificationKind,
@@ -13,6 +13,7 @@ import {
   users,
 } from "@/db";
 import { CONFIRMATION_LEAD_MS, eventDates } from "./events-policy";
+import { canSeeEvent } from "./hosting";
 import {
   type PrefOverride,
   channelsFor,
@@ -283,12 +284,170 @@ export async function seatedMembersOf(
 /* Reading                                                            */
 /* ------------------------------------------------------------------ */
 
-export async function listNotifications(
+/**
+ * Where the next page starts: the last row of the one before it.
+ *
+ * A **keyset**, not an offset, and that is the whole point of the type. This
+ * list grows at the head — a notification arrives while somebody is reading —
+ * so "skip the first thirty" names a different thirty every second: the row
+ * that was thirtieth when page one was drawn is thirty-first by the time page
+ * two is asked for, and an offset of 30 therefore *shows it twice* and shows
+ * the one after it never. The row you have already seen cannot move relative
+ * to itself, so the page after it is asked for as "older than this row" and no
+ * arrival between the two requests can lose or repeat anything.
+ *
+ * Both halves are needed. `created_at` alone is not unique — two notifications
+ * written in one transaction share it to the microsecond, because `now()` is
+ * the transaction's clock — so a cursor on the timestamp would skip whichever
+ * of a tied pair fell on the boundary. The id breaks the tie, and the sort is
+ * `(created_at desc, id desc)` so that the comparison and the order agree.
+ */
+export type NotificationCursor = { createdAt: Date; id: string };
+
+export type NotificationPage = {
+  rows: Notification[];
+  /** Pass to {@link notificationPage} for the page after this one; `null` ends it. */
+  next: NotificationCursor | null;
+};
+
+export type NotificationPageOptions = {
+  /** The cursor from the previous page; absent means the newest. */
+  after?: NotificationCursor | null;
+  limit?: number;
+  /** The reader's own admin flag, for the visibility check below (R-32). */
+  isAdmin?: boolean;
+};
+
+/** A cursor as it travels in a link. ISO and a uuid, neither containing a `_`. */
+const CURSOR_SEPARATOR = "_";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Exactly what {@link encodeNotificationCursor} writes: `Date.toISOString()`
+ * for any year from 0000 to 9999, and nothing else.
+ *
+ * The timestamp half is anchored to this shape rather than handed to
+ * `new Date()` and checked for `NaN`, because the two are nothing like the same
+ * test — see {@link parseNotificationCursor}.
+ */
+const STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+export function encodeNotificationCursor(cursor: NotificationCursor): string {
+  return `${cursor.createdAt.toISOString()}${CURSOR_SEPARATOR}${cursor.id}`;
+}
+
+/**
+ * A cursor out of a query string, or `null` for "start at the newest".
+ *
+ * Nothing is trusted: a hand-edited `?before=` is a stranger's string on its
+ * way into a `uuid` comparison and a `timestamptz` comparison, where anything
+ * either type refuses is a Postgres error rather than an empty page — and
+ * `/me/notifications` renders the page with no try/catch, so that error is a
+ * 500 on a member's own page. Both halves are therefore checked here, and a
+ * cursor that fails either is not a cursor — the reader gets page one, which is
+ * the honest answer to an address that does not mean anything.
+ *
+ * **The timestamp half is checked by shape, not by `NaN`.** `new Date()`
+ * swallows far more than it rejects, and three of the strings it accepts are
+ * ones Postgres refuses outright: `0000-01-01T00:00:00.000Z` ("date/time field
+ * value out of range"), `+275760-09-13T00:00:00.000Z` ("time zone displacement
+ * out of range") and `-000001-01-01T00:00:00.000Z` ("invalid input syntax").
+ * Others it accepts quietly — `Jan 1 0001` is a real `Date`, so junk would
+ * become a working cursor and page a member through a list from an address that
+ * never came from one of our links. So the stamp has to *be* what we wrote:
+ * {@link STAMP}'s shape, which excludes the expanded-year forms, and a year at
+ * or after 1970, which excludes the rest. Nothing older than the epoch can be
+ * a row's `created_at`, so nothing is lost by refusing it.
+ */
+export function parseNotificationCursor(
+  raw: string | string[] | undefined | null
+): NotificationCursor | null {
+  if (typeof raw !== "string") return null;
+  const cut = raw.indexOf(CURSOR_SEPARATOR);
+  if (cut <= 0) return null;
+
+  const stamp = raw.slice(0, cut);
+  const createdAt = new Date(stamp);
+  const id = raw.slice(cut + 1);
+  if (!STAMP.test(stamp) || Number.isNaN(createdAt.getTime()) || createdAt.getTime() < 0) {
+    return null;
+  }
+  if (!UUID.test(id)) return null;
+  return { createdAt, id };
+}
+
+/**
+ * An event path only this module builds, so there is one spelling of it.
+ *
+ * The *shape* is also how a stored href is recognised as an event's own page —
+ * see {@link destinationFor}. It is deliberately exact: one segment, no query
+ * and no fragment, so `/me/events` and `/admin/events/…` are not it.
+ */
+const EVENT_PATH = /^\/events\/[^/?#]+$/;
+
+type StoredRow = {
+  href: string | null;
+  eventId: string | null;
+  eventSlug: string | null;
+};
+
+/**
+ * Where following a notification takes you, decided now rather than when it
+ * was sent (UC-25 5).
+ *
+ * Three rules, in order:
+ *
+ *  - **Not about an event** — a poll, a host decision with nowhere to go — so
+ *    the stored destination is the only one there is. `null` stays `null`: a
+ *    notification is a sentence that may be worth reading on its own, and the
+ *    list renders one with nowhere to go as plain text rather than dropping it.
+ *  - **About an event, and the destination is that event's page.** Built from
+ *    the event's *current* slug, because an address a manager changed
+ *    (UC-08 E2) would otherwise leave every notification already sent pointing
+ *    at a 404 — the stored href is a copy of a mutable thing, which is what
+ *    makes deriving it the fix rather than a nicety. A row written before this
+ *    rule existed has the old path stored, so the path's shape is read as
+ *    "the event" too, and it is corrected the same way.
+ *  - **About an event, but pointing somewhere else on purpose** —
+ *    `/me/events` takes the answer an event page cannot — so that is kept.
+ *
+ * And over all of it: **a draft event is not linked to** (R-32). The event page
+ * answers not found to anybody but a manager, so a link to it would be a
+ * dead end rather than a leak; `visible` is false either because the reader may
+ * not see it or because the join found no event at all, and both cases drop the
+ * link and keep the row. A manager of that event still gets the link, because
+ * for them the page is there.
+ *
+ * Exported for one test, deliberately: the "no event, no link" rule above
+ * cannot be reached through {@link notificationPage}, because
+ * `notifications.event_id` cascades and a hard-deleted event takes its
+ * notifications with it. The rule still has to hold — it is what stops a stored
+ * path being trusted — so it is pinned on the function itself.
+ */
+export function destinationFor(row: StoredRow, visible: boolean): string | null {
+  if (row.eventId === null) return row.href;
+  if (row.href !== null && !EVENT_PATH.test(row.href)) return row.href;
+  return visible && row.eventSlug !== null ? `/events/${row.eventSlug}` : null;
+}
+
+/**
+ * One page of somebody's notifications, newest first, each with wherever it
+ * leads today (UC-25 4-5, R-96 to R-104).
+ *
+ * `limit + 1` rows are read and the extra one is dropped: that is how `next`
+ * can promise there is a page after this without a second `count(*)` over a
+ * table that is only going to grow.
+ */
+export async function notificationPage(
   userId: string,
-  database: Database = defaultDb,
-  limit = PAGE_SIZE
-): Promise<Notification[]> {
-  return database
+  options: NotificationPageOptions = {},
+  database: Database = defaultDb
+): Promise<NotificationPage> {
+  const limit = Math.max(1, options.limit ?? PAGE_SIZE);
+  const after = options.after ?? null;
+
+  const mine = eq(notifications.userId, userId);
+  const rows = await database
     .select({
       id: notifications.id,
       kind: notifications.kind,
@@ -298,11 +457,91 @@ export async function listNotifications(
       eventId: notifications.eventId,
       readAt: notifications.readAt,
       createdAt: notifications.createdAt,
+      eventSlug: events.slug,
+      eventStatus: events.status,
     })
     .from(notifications)
-    .where(eq(notifications.userId, userId))
-    .orderBy(desc(notifications.createdAt))
-    .limit(limit);
+    .leftJoin(events, eq(events.id, notifications.eventId))
+    .where(
+      after
+        ? and(
+            mine,
+            or(
+              lt(notifications.createdAt, after.createdAt),
+              and(eq(notifications.createdAt, after.createdAt), lt(notifications.id, after.id))
+            )
+          )
+        : mine
+    )
+    .orderBy(desc(notifications.createdAt), desc(notifications.id))
+    .limit(limit + 1);
+
+  const page = rows.slice(0, limit);
+  const last = page.at(-1);
+  const next =
+    rows.length > limit && last ? { createdAt: last.createdAt, id: last.id } : null;
+
+  /*
+   * One permission question per draft event on the page, not per row, and
+   * usually none at all: every other status is public, so the loop is skipped
+   * entirely on an ordinary page. `canSeeEvent` is the site's one answer to
+   * "may this person see this event" — the same function the event page itself
+   * asks — so a notification cannot become a way round a rule the page keeps.
+   */
+  const viewer = { id: userId, isAdmin: options.isAdmin ?? false };
+  // Only draft event ids ever go in, so a row with no event is never in it and
+  // can be asked about without a second null check — `destinationFor` returns
+  // the stored href on that row before it looks at `visible` at all.
+  const unseeable = new Set<string | null>();
+  const drafts = [
+    ...new Set(
+      page
+        .filter((row) => row.eventStatus === "draft" && row.eventId !== null)
+        .map((row) => row.eventId as string)
+    ),
+  ];
+  for (const eventId of drafts) {
+    if (!(await canSeeEvent(viewer, { id: eventId, status: "draft" }, database))) {
+      unseeable.add(eventId);
+    }
+  }
+
+  return {
+    rows: page.map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      title: row.title,
+      body: row.body,
+      href: destinationFor(row, !unseeable.has(row.eventId)),
+      eventId: row.eventId,
+      readAt: row.readAt,
+      createdAt: row.createdAt,
+    })),
+    next,
+  };
+}
+
+/**
+ * The newest `limit` of somebody's notifications and nothing about paging —
+ * **a test convenience, with no caller in the site.**
+ *
+ * Every screen that reads notifications reads them through
+ * {@link notificationPage}, because every one of them needs the cursor: that is
+ * what paging in the address costs (UC-25 4). What is left here is the shape a
+ * test wants — "what has this member been told", without unwrapping a `next`
+ * nothing asserts on — and it is kept for that, not because something renders
+ * it. Note the consequence: it passes no `isAdmin`, which is the same thing as
+ * passing `false`, so a draft event's
+ * notification comes back with no link however it was read. A screen is not
+ * free to call this; it would silently take a manager's link away.
+ */
+export async function listNotifications(
+  userId: string,
+  database: Database = defaultDb,
+  limit = PAGE_SIZE
+): Promise<Notification[]> {
+  const { rows } = await notificationPage(userId, { limit }, database);
+  return rows;
 }
 
 export async function unreadCount(

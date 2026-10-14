@@ -408,7 +408,7 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
           <Panel as="section">
             <Eyebrow className="mb-3">When it runs</Eyebrow>
             <ul className="space-y-2">
-              {event.days.map((day, index) => (
+              {event.days.map((day) => (
                 <li
                   key={day.id}
                   className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair/60 pb-2 last:border-0"
@@ -416,8 +416,14 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
                   {/* The label the manager gave it, or "Day N" (UC-08 E3) —
                       `dayName` is that rule, and the day sequence refusals name
                       the days with the same function, so a refusal and the page
-                      call a day the same thing. */}
-                  <span className="text-14">{dayName(day, index)}</span>
+                      call a day the same thing. Numbered from the stored
+                      `dayIndex`, like every other surface: the array position
+                      is the same number only while the list is whole and in
+                      order, and `moveDaysInto` parks a row on
+                      `SCRATCH_DAY_INDEX` to break a rotation cycle, so a
+                      failure part-way through leaves a gap this panel alone
+                      would renumber every day after. */}
+                  <span className="text-14">{dayName(day, day.dayIndex)}</span>
                   {/* A client component, like every other instant on this page:
                       the reader's zone is the only honest one to print in. */}
                   <EventDateRange

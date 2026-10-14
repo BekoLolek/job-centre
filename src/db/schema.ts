@@ -1233,6 +1233,78 @@ export const availability = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Entry waivers (§8.3, R-59)                                         */
+/* ------------------------------------------------------------------ */
+
+/** Which of §8.3's two rank rules one waiver lets a member past. */
+export const entryRule = pgEnum("entry_rule", ["enter", "captain"]);
+
+export type EntryRule = (typeof entryRule.enumValues)[number];
+
+/**
+ * A manager's decision that one member may enter, or captain, despite this
+ * event's rank rule (R-59 / UC-14 3b).
+ *
+ * ## Why this hangs off the member and not off the application
+ *
+ * UC-12 2a was written as a waiver on an application, and the Gate-2 amendment
+ * (docs/plan.md, "Spec amendments proposed") moves it here, for a reason the
+ * code makes unarguable: `applyToEvent` refuses a below-rank member *before*
+ * anything is stored, so there is no application to hang a waiver on at the
+ * moment somebody needs one. "Before or after they apply" is therefore not a
+ * convenience — it is the only shape in which the enter-rule half of R-59 can
+ * work at all. The domain model records the same identity: event + member +
+ * rule (docs/domain-model.md, EntryWaiver).
+ *
+ * ## It stores the rule, never the rank
+ *
+ * `rule` is `enter` or `captain` — not the threshold the member was let past.
+ * Entry rules read a game's ladder, and a ladder is editable: an admin can
+ * retire `Platinum III` or reorder the whole thing (`LadderEditor`), and the
+ * event's own threshold can be changed on the Entry rules tab afterwards. A
+ * waiver that stored "past Platinum III" would quietly stop matching the rule
+ * it was granted against and the member would be refused again, without
+ * anybody deciding that. What a manager actually decided is "this person is in
+ * regardless of the bar", and that is what is written down, so it survives
+ * every later edit to the bar.
+ *
+ * ## Columns
+ *
+ * `waived_by` is `set null` rather than cascade: losing an admin's account must
+ * not quietly re-close a gate somebody was let through months ago. Who it was
+ * also survives in the audit log, which is written by the action layer and is
+ * append-only.
+ *
+ * The unique constraint is the whole of "waived or not": a second grant of the
+ * same rule for the same member on the same event is the same decision, so the
+ * writer upserts onto it rather than stacking rows that would then have to be
+ * counted.
+ */
+export const entryWaivers = pgTable(
+  "entry_waivers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    rule: entryRule("rule").notNull(),
+    /** The manager who decided. Null only once their account is gone. */
+    waivedBy: uuid("waived_by").references(() => users.id, { onDelete: "set null" }),
+    waivedAt: instant("waived_at").notNull().defaultNow(),
+  },
+  (table) => [
+    unique("entry_waivers_event_user_rule_uniq").on(table.eventId, table.userId, table.rule),
+    // Every read is "what has been waived on this event" — the applicant list,
+    // the captain picker — or that same question narrowed to one member.
+    index("entry_waivers_event_id_idx").on(table.eventId),
+    index("entry_waivers_user_id_idx").on(table.userId),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
 /* General availability                                               */
 /* ------------------------------------------------------------------ */
 
@@ -2444,6 +2516,7 @@ export type NewEventQuestion = typeof eventQuestions.$inferInsert;
 export type Application = typeof applications.$inferSelect;
 export type NewApplication = typeof applications.$inferInsert;
 export type AvailabilityRow = typeof availability.$inferSelect;
+export type EntryWaiverRow = typeof entryWaivers.$inferSelect;
 export type AvailabilityRuleRow = typeof availabilityRules.$inferSelect;
 export type AvailabilityExceptionRow = typeof availabilityExceptions.$inferSelect;
 export type Confirmation = typeof confirmations.$inferSelect;

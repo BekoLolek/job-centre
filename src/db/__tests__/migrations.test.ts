@@ -61,6 +61,9 @@ describe("migrations", () => {
       "draft_configs",
       "draft_lots",
       "draft_pool_entries",
+      // R-59: a manager's decision that one member may enter, or captain,
+      // despite this event's rank rule. drizzle/0021.
+      "entry_waivers",
       "event_days",
       "event_hosts",
       "event_questions",
@@ -142,6 +145,38 @@ describe("migrations", () => {
     expect(result.rows.map((r) => r.label)).toContain("confirmation_due");
   });
 
+  /*
+   * 0021. The other two enums above are tested because a kind or an answer has
+   * to be a declared value rather than a string a caller invents; the rule a
+   * waiver records is the same kind of thing, and more so — it is what decides
+   * who may play. `enter` and `captain` are the whole of R-59, and a third
+   * spelling arriving from anywhere would be a waiver nothing in the site knows
+   * how to read.
+   */
+  it("creates the waivable rule as a real Postgres enum", async () => {
+    const result = await ctx.client.query<{ label: string }>(
+      `select e.enumlabel as label from pg_enum e
+       join pg_type t on t.oid = e.enumtypid
+       where t.typname = 'entry_rule'
+       order by e.enumsortorder`
+    );
+    expect(result.rows.map((r) => r.label)).toEqual(["enter", "captain"]);
+  });
+
+  it("rejects a rule outside the enum, in the database", async () => {
+    /*
+     * Matched on the message, not just on "it threw": the row below also has
+     * two foreign keys to satisfy, so a plain `rejects.toThrow()` would pass
+     * for a `event_id` that does not exist and tell us nothing about the enum.
+     */
+    await expect(
+      ctx.client.query(
+        `insert into entry_waivers (event_id, user_id, rule)
+         values (gen_random_uuid(), gen_random_uuid(), 'spectate')`
+      )
+    ).rejects.toThrow(/invalid input value for enum entry_rule/i);
+  });
+
   it("rejects a profile field type outside the enum", async () => {
     await expect(
       ctx.client.query(
@@ -164,7 +199,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(42);
+    expect(await tableNames(ctx.client)).toHaveLength(43);
   });
 
   it("ships the default points table a new championship starts with", async () => {

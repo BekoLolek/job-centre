@@ -236,6 +236,19 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] Whatever index replaces it is justified by a query in the code, named in the docblock
 - **Depends on:** Task 12.
 
+### Task 52: A template carries the whole setup (left over from Task 13)
+
+- **Serves:** R-22 / UC-08 10a, UC-28 3a
+- **Files:** `src/db/schema.ts` (+ migration on `event_templates`), `src/lib/admin-templates.ts`, `src/lib/events.ts` (`createEvent`), `src/app/admin/events/actions.ts` (`createEventAction`), `src/components/admin/events/EventEditor.tsx` (`TEMPLATE_OMITS`), tests
+- **Do:** Task 13 captures the type, the game, `config` (so format, entry mode and the waitlist switch) and the questions, and proves they reproduce. It does **not** capture the days, the capacity or the two rank thresholds, and could not: those are columns on `events`, not keys in `config`, so `createEvent` reads them from its own input and never from the template. The only migration-free route - stashing them in `event_templates.config.setup` - is a trap, because `createEvent` copies `config` wholesale, so every event made from such a template would carry a dead second copy of its own capacity alongside the column. That is a stored duplicate of a derived fact, which this project does not do.
+  So: give `event_templates` real columns for them, teach `createEvent` to apply a template's setup where its input is silent, and shorten `TEMPLATE_OMITS` to what is genuinely left behind. Task 13 pinned the current promise in a test (`leaves the days, the cap and the rank thresholds behind, as TEMPLATE_OMITS says`) - that test is the one to rewrite, and it names itself as such.
+- **Acceptance criteria:**
+  - [ ] A template made from an event reproduces its days, capacity and both rank thresholds on a new event
+  - [ ] `TEMPLATE_OMITS` lists only what is still left behind, and the editor and `/admin/templates` print the same list
+  - [ ] Nothing is stored twice: a new event's capacity lives in its column and nowhere else
+  - [ ] The migration states what it does with templates that predate the columns
+- **Depends on:** Task 13. Needs a migration and `src/lib/events.ts`, so it must not run beside a task holding either.
+
 ### Task 51: One rule for what a day is called (found in Task 12 review)
 
 - **Serves:** UC-08 E3 / the overview, the schedule, the apply form and `/me/events`
@@ -246,6 +259,7 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] A day labelled `"   "` is called "Day 1" on all four surfaces
   - [ ] A labelled day is unchanged on all four
 - **Depends on:** Task 12.
+- **Left over:** nothing. The overview panel's input was the array position and is now `day.dayIndex`, like every other surface (`src/app/events/[slug]/page.tsx`), and a **fifth** surface turned up with both of the original defects — the applicant drawer's day rows in `src/components/admin/events/ApplicantsTab.tsx`, which carried the weak `??` *and* the array position. Both are ported, and the drawer is now one more block in `src/components/__tests__/day-names.test.ts`. Note why the fifth one was missed: the first criterion above greps for `Day ${`, and that surface wrote the number as JSX (`Day {index + 1}`), so the criterion was weaker than the rule it stood for. The assertion per surface is the criterion that holds; the grep is a convenience.
 
 ## I. Championship (R-171 to R-198)
 

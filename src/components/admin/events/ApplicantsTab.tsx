@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Alert,
   Avatar,
@@ -11,6 +11,7 @@ import {
   ChoiceRow,
   EmptyState,
   Eyebrow,
+  Field,
   Panel,
   StatTile,
   StatusPill,
@@ -34,15 +35,28 @@ import {
   confirmationBadge,
   whenText,
 } from "@/components/events";
-import type { ApplicationStatus, AvailabilityState } from "@/db/schema";
-import type { ApplicantView, EventDetail } from "@/lib/events";
-import { type ApplicationDecision, entryMode } from "@/lib/events-policy";
+import type { ApplicationStatus, AvailabilityState, EntryRule } from "@/db/schema";
+import type { ApplicantView, EventDetail, EventResult } from "@/lib/events";
+import {
+  type ApplicationDecision,
+  type Eligibility,
+  dayName,
+  entryMode,
+} from "@/lib/events-policy";
 import { formatAnswer } from "@/lib/profile-fields";
 import {
   decideApplicationAction,
   saveApplicationNoteAction,
   setApplicantAvailabilityAction,
 } from "@/app/admin/events/actions";
+import {
+  type WaiverListResult,
+  type WaiverRow,
+  listEntryWaiversAction,
+  revokeEntryWaiverAction,
+  waiveEntryRuleAction,
+  waiveEnterRuleByHandleAction,
+} from "@/app/admin/events/waiver-actions";
 
 /**
  * Applicants — the table that matters on the night.
@@ -76,6 +90,45 @@ import {
  */
 
 type Filter = "all" | ApplicationStatus;
+
+/**
+ * The one line the collapsed row gives a manager about eligibility — and
+ * whether a **waiver** is what put it there (R-59 / UC-14 3b).
+ *
+ * `canEnter` and `canCaptain` fold the waiver in, which is right for the gate
+ * and wrong for this line: read on their own they say "Eligible" about somebody
+ * a manager let past the bar, and `Eligibility.enterWaived`'s docblock in
+ * `src/lib/events-policy.ts` says in as many words why that is the one thing
+ * this screen may not do — "a waiver rendered as though the member met the bar
+ * hides the one fact a manager may later want to revisit". The collapsed row is
+ * what a manager scans; opening every applicant to find out who was waived is
+ * the same as not being told.
+ *
+ * `enterWaived` and `captainWaived` are already "a waiver is the *only* reason"
+ * — a waiver on a rule the member now clears is reported by neither — so this
+ * names what is true today and not what was once granted.
+ *
+ * Exported for the test beside it, like `showsSaveAsTemplate` in `EventEditor`:
+ * the words are the rule, and a rule stated as a string can be asserted
+ * without rendering the table around it.
+ */
+export function eligibilityNote(eligibility: Eligibility): {
+  label: string;
+  /** An existing tint, not a new one: red for refused, union for a waiver. */
+  tone: string;
+} {
+  if (!eligibility.canEnter) return { label: "Below the bar", tone: "text-flare" };
+  if (eligibility.enterWaived) {
+    return {
+      label: eligibility.canCaptain ? "Can captain · entry waived" : "Entry waived",
+      tone: "text-union",
+    };
+  }
+  if (eligibility.captainWaived) {
+    return { label: "Can captain · waived", tone: "text-union" };
+  }
+  return { label: eligibility.canCaptain ? "Can captain" : "Eligible", tone: "text-muted" };
+}
 
 const FILTERS: ReadonlyArray<{ value: Filter; label: string }> = [
   { value: "all", label: "All" },
@@ -112,6 +165,84 @@ export default function ApplicantsTab({
   const [ask, setAsk] = useState<OverCapAsk | null>(null);
   const [moved, setMoved] = useState<string | null>(null);
   const [overCapacity, setOverCapacity] = useState(false);
+
+  /*
+   * This event's entry-rule waivers (R-59 / UC-14 3b).
+   *
+   * Read here rather than handed down with `applicants`, because a waiver can
+   * exist for somebody who has *no* application — that is the whole of the
+   * Gate-2 amendment, and `applyToEvent` refuses a below-rank member before a
+   * row is written, so the only list they could appear on is this one. Null
+   * means "not read yet", which the panel says rather than drawing an empty
+   * list that looks like an answer.
+   */
+  const [waivers, setWaivers] = useState<WaiverRow[] | null>(null);
+  const [waiverBusy, setWaiverBusy] = useState(false);
+  const [waiverError, setWaiverError] = useState<string | null>(null);
+  const [waiverNote, setWaiverNote] = useState<string | null>(null);
+  const [handle, setHandle] = useState("");
+
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const result = await listEntryWaiversAction(event.id);
+        if (live && result.ok) setWaivers(result.data.waivers);
+      } catch {
+        // Leave it at "reading…": a panel that cannot load is not a reason to
+        // break the table, which is what matters on the night.
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [event.id]);
+
+  /**
+   * One waiver write, with its own busy flag so the table stays usable.
+   *
+   * Returns whether it landed, which is what tells the handle field whether to
+   * clear itself: emptying it after a refused handle would take away the one
+   * thing the manager needs to correct.
+   */
+  const runWaiver = async (
+    write: () => Promise<EventResult<WaiverListResult>>,
+    note: string
+  ): Promise<boolean> => {
+    setWaiverBusy(true);
+    setWaiverError(null);
+    setWaiverNote(null);
+    try {
+      const result = await write();
+      if (!result.ok) {
+        setWaiverError(result.error);
+        return false;
+      }
+      setWaivers(result.data.waivers);
+      setWaiverNote(note);
+      // Every row's verdict is server-rendered from the same waivers, so the
+      // table is stale the moment one is written or withdrawn.
+      router.refresh();
+      return true;
+    } catch {
+      setWaiverError("Could not reach the server. Nothing was changed.");
+      return false;
+    } finally {
+      setWaiverBusy(false);
+    }
+  };
+
+  const waiveFor = (userId: string, rule: EntryRule, name: string) =>
+    void runWaiver(
+      () => waiveEntryRuleAction(event.id, userId, rule),
+      `${rule === "enter" ? "Entry" : "Captain"} rule waived for ${name}.`
+    );
+
+  const revokeFor = (userId: string, rule: EntryRule, name: string) =>
+    void runWaiver(
+      () => revokeEntryWaiverAction(event.id, userId, rule),
+      `${rule === "enter" ? "Entry" : "Captain"} waiver withdrawn for ${name}.`
+    );
 
   const nameOf = (row: ApplicantView) =>
     row.member.displayName ?? row.member.discordId ?? "Unknown member";
@@ -335,9 +466,13 @@ export default function ApplicantsTab({
               <TableHeadCell>Coming?</TableHeadCell>
               <TableHeadCell>Rank</TableHeadCell>
               <TableHeadCell>Submitted</TableHeadCell>
-              {event.days.map((day, index) => (
+              {/* The stored `dayIndex`, like the day rows in the expanded
+                  applicant below: a header numbering the columns by position
+                  while the rows name days by their index would be two answers
+                  to "which day is D2?" on one screen. */}
+              {event.days.map((day) => (
                 <TableHeadCell key={day.id} align="right">
-                  D{index + 1}
+                  D{day.dayIndex + 1}
                 </TableHeadCell>
               ))}
               <TableHeadCell align="right">Decide</TableHeadCell>
@@ -356,6 +491,9 @@ export default function ApplicantsTab({
                   onDecide={(status) => void decide(row, status)}
                   onChanged={() => router.refresh()}
                   onError={setError}
+                  waiverBusy={waiverBusy}
+                  onWaive={(rule) => waiveFor(row.member.id, rule, nameOf(row))}
+                  onRevoke={(rule) => revokeFor(row.member.id, rule, nameOf(row))}
                 />
               ))}
             </TableBody>
@@ -366,6 +504,96 @@ export default function ApplicantsTab({
       {shown.length === 0 && applicants.length > 0 && (
         <Panel>
           <EmptyState>Nobody with that status.</EmptyState>
+        </Panel>
+      )}
+
+      {/* --- Who has been let past a rank rule (R-59 / UC-14 3b) ---- */}
+      {(event.minRankToEnter || event.minRankToCaptain) && (
+        <Panel
+          as="section"
+          padding="none"
+          className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0"
+        >
+          <Eyebrow>Entry-rule waivers</Eyebrow>
+          <p className="text-14 text-muted">
+            A waiver lets one member past one of this event&apos;s rank rules —{" "}
+            {event.minRankToEnter ? `${event.minRankToEnter} to enter` : "no rule to enter"},{" "}
+            {event.minRankToCaptain
+              ? `${event.minRankToCaptain} to captain`
+              : "no rule to captain"}
+            . It is a decision, not a setting: it is recorded against the manager who gave it
+            and it appears in the audit log. The entry one can be given{" "}
+            <span className="text-chalk">before</span> somebody applies, which is the only way
+            a below-rank member can apply at all.
+          </p>
+
+          {waiverError && <Alert>{waiverError}</Alert>}
+          {waiverNote && (
+            <Eyebrow as="p" className="text-success">
+              ✓ {waiverNote}
+            </Eyebrow>
+          )}
+
+          {waivers === null ? (
+            <EmptyState size="sm">Reading this event&apos;s waivers…</EmptyState>
+          ) : waivers.length === 0 ? (
+            <EmptyState size="sm">
+              Nobody has been let past a rank rule on this event.
+            </EmptyState>
+          ) : (
+            <ul className="space-y-2">
+              {waivers.map((waiver) => (
+                <li
+                  key={`${waiver.userId}-${waiver.rule}`}
+                  className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-lg border border-hair p-3"
+                >
+                  <span className="text-14 text-chalk">{waiver.member}</span>
+                  <Badge tone="union">
+                    {waiver.rule === "enter" ? "May enter" : "May captain"}
+                  </Badge>
+                  <span className="text-12 text-muted" suppressHydrationWarning>
+                    {waiver.grantedBy ? `Given by ${waiver.grantedBy}` : "Given by an admin"} ·{" "}
+                    {whenText(waiver.waivedAt) ?? "—"}
+                  </span>
+                  <Button
+                    size="sm"
+                    className="ml-auto"
+                    disabled={waiverBusy}
+                    onClick={() => revokeFor(waiver.userId, waiver.rule, waiver.member)}
+                  >
+                    Withdraw
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {event.minRankToEnter && (
+            <div className="space-y-2 border-t border-hair pt-3">
+              <Field
+                label="Waive the entry rule for somebody who cannot apply yet"
+                hint="Their handle — the last part of their player-profile link. They are refused before an application exists, so they are on no list here."
+                value={handle}
+                maxLength={60}
+                onChange={(input) => setHandle(input.target.value)}
+              />
+              <Button
+                size="sm"
+                disabled={waiverBusy || handle.trim() === ""}
+                onClick={() =>
+                  void (async () => {
+                    const landed = await runWaiver(
+                      () => waiveEnterRuleByHandleAction(event.id, handle),
+                      `Entry rule waived for ${handle.trim()}.`
+                    );
+                    if (landed) setHandle("");
+                  })()
+                }
+              >
+                {waiverBusy ? "Saving…" : "Waive the entry rule"}
+              </Button>
+            </div>
+          )}
         </Panel>
       )}
     </div>
@@ -386,6 +614,9 @@ function ApplicantRow({
   onDecide,
   onChanged,
   onError,
+  waiverBusy,
+  onWaive,
+  onRevoke,
 }: {
   row: ApplicantView;
   event: EventDetail;
@@ -396,9 +627,13 @@ function ApplicantRow({
   onDecide: (status: ApplicationDecision) => void;
   onChanged: () => void;
   onError: (message: string) => void;
+  waiverBusy: boolean;
+  onWaive: (rule: EntryRule) => void;
+  onRevoke: (rule: EntryRule) => void;
 }) {
   const columns = 6 + event.days.length;
   const badge = confirmationBadge(row.confirmation);
+  const note = eligibilityNote(row.eligibility);
 
   return (
     <>
@@ -441,18 +676,7 @@ function ApplicantRow({
 
         <TableCell>
           <span className="block text-14">{row.rank ?? "—"}</span>
-          <span
-            className={cx(
-              "eyebrow block",
-              row.eligibility.canEnter ? "text-muted" : "text-flare"
-            )}
-          >
-            {row.eligibility.canEnter
-              ? row.eligibility.canCaptain
-                ? "Can captain"
-                : "Eligible"
-              : "Below the bar"}
-          </span>
+          <span className={cx("eyebrow block", note.tone)}>{note.label}</span>
         </TableCell>
 
         <TableCell numeric className="text-12 text-muted" suppressHydrationWarning>
@@ -504,6 +728,9 @@ function ApplicantRow({
               name={name}
               onChanged={onChanged}
               onError={onError}
+              waiverBusy={waiverBusy}
+              onWaive={onWaive}
+              onRevoke={onRevoke}
             />
           </TableCell>
         </TableRow>
@@ -512,18 +739,34 @@ function ApplicantRow({
   );
 }
 
-function ApplicantDetail({
+/**
+ * The expanded applicant: their answers, the gate, the waivers and the days.
+ *
+ * Exported for the tests beside it, the way `EventEditor` exports
+ * `SaveAsTemplate`. It is reached by clicking a row, so a static render of the
+ * tab never contains it — and the day rows below are a surface that names days
+ * (UC-08 E3), which `src/components/__tests__/day-names.test.ts` holds every
+ * one of to the same rule. A surface no test can reach is how the `label ?? …`
+ * copy survived here after the other three were ported.
+ */
+export function ApplicantDetail({
   row,
   event,
   name,
   onChanged,
   onError,
+  waiverBusy,
+  onWaive,
+  onRevoke,
 }: {
   row: ApplicantView;
   event: EventDetail;
   name: string;
   onChanged: () => void;
   onError: (message: string) => void;
+  waiverBusy: boolean;
+  onWaive: (rule: EntryRule) => void;
+  onRevoke: (rule: EntryRule) => void;
 }) {
   const [note, setNote] = useState(row.note ?? "");
   const [savingNote, setSavingNote] = useState(false);
@@ -599,10 +842,16 @@ function ApplicantDetail({
           <p className={cx("text-12", row.eligibility.canEnter ? "text-muted" : "text-flare")}>
             {row.eligibility.enterReason}
           </p>
+          {/*
+            Tinted from `meetsCaptainRule`, which is the rule the server
+            enforces (`setCaptains`, R-59 / UC-15 3a) — `CaptainsTab` reads the
+            same answer. `canCaptain` folds the *entry* rule back in, so it
+            would warn about a captain rule that is met and nobody is holding.
+          */}
           <p
             className={cx(
               "mt-1 text-12",
-              row.eligibility.canCaptain ? "text-muted" : "text-union"
+              row.eligibility.meetsCaptainRule ? "text-muted" : "text-union"
             )}
           >
             {row.eligibility.captainReason}
@@ -612,6 +861,56 @@ function ApplicantDetail({
               Accept still works. §8.3 is explicit that gates are guidance and an override
               must exist.
             </p>
+          )}
+
+          {/*
+            The waiver, per rule (R-59 / UC-14 3b).
+
+            Offered on an applicant who does not clear a rule, and withdrawable
+            on one who has been let past it — including somebody who has since
+            climbed the ladder, which is why `row.waived` and not
+            `eligibility.enterWaived` decides whether there is one to withdraw.
+            A waiver on a rule they now meet changes nothing, and a manager
+            tidying up should be able to see it and take it away.
+
+            The captain rule is normally waived from the Captains tab, where the
+            pick is being made; it can be withdrawn here because this is the
+            screen that lists what has been granted.
+          */}
+          {(event.minRankToEnter || event.minRankToCaptain) && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hair pt-3">
+              {row.waived.enter ? (
+                <>
+                  <Badge tone="union">Entry rule waived</Badge>
+                  <Button size="sm" disabled={waiverBusy} onClick={() => onRevoke("enter")}>
+                    Withdraw it
+                  </Button>
+                </>
+              ) : (
+                event.minRankToEnter &&
+                !row.eligibility.enterCheck.ok && (
+                  <Button size="sm" disabled={waiverBusy} onClick={() => onWaive("enter")}>
+                    Waive the entry rule
+                  </Button>
+                )
+              )}
+
+              {row.waived.captain ? (
+                <>
+                  <Badge tone="union">Captain rule waived</Badge>
+                  <Button size="sm" disabled={waiverBusy} onClick={() => onRevoke("captain")}>
+                    Withdraw it
+                  </Button>
+                </>
+              ) : (
+                event.minRankToCaptain &&
+                !row.eligibility.captainCheck.ok && (
+                  <Button size="sm" disabled={waiverBusy} onClick={() => onWaive("captain")}>
+                    Waive the captain rule
+                  </Button>
+                )
+              )}
+            </div>
           )}
         </div>
       </section>
@@ -626,12 +925,17 @@ function ApplicantDetail({
             </EmptyState>
           ) : (
             <div className="space-y-2">
-              {event.days.map((day, index) => (
+              {event.days.map((day) => (
                 <div key={day.id} className="flex flex-wrap items-center gap-2">
                   <span className="min-w-[9rem] text-12">
-                    <span className="num text-muted">Day {index + 1}</span>{" "}
+                    {/* `dayName` is the one rule for what a day is called
+                        (UC-08 E3), numbered from the stored `dayIndex` rather
+                        than this row's position — the two things the `Day
+                        {index + 1}` / `label ?? …` pair here got wrong. The
+                        date follows it, as it does on every other surface. */}
+                    <span className="num text-muted">{dayName(day, day.dayIndex)}</span>{" "}
                     <span suppressHydrationWarning className="text-chalk/70">
-                      {day.label ?? whenText(day.startsAt) ?? "No date"}
+                      {whenText(day.startsAt) ?? "No date"}
                     </span>
                   </span>
                   <ChoiceRow>

@@ -64,6 +64,8 @@ export const AUDIT_ACTIONS = {
   "event.days": "Days changed",
   "event.questions": "Application form changed",
   "application.decided": "Application decided",
+  "waiver.granted": "Entry rule waived",
+  "waiver.revoked": "Entry waiver withdrawn",
   "team.set": "Teams changed",
   "team.captains": "Captains changed",
   "draft.config": "Draft rules changed",

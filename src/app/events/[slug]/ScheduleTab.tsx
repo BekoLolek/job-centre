@@ -12,6 +12,7 @@ import {
   upNext,
 } from "@/components/format/board";
 import { EmptyState, Eyebrow, Panel, cx, plural } from "@/components/ui";
+import { dayName } from "@/lib/events-policy";
 import type { ResolvedMatch } from "@/lib/format-resolve";
 
 /**
@@ -219,7 +220,19 @@ function PlannedDays({ days }: { days: ScheduleDayRow[] }) {
               className="flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg border border-hair bg-raised px-4 py-3"
             >
               <span className="eyebrow">Day {day.dayIndex + 1}</span>
-              <span className="text-14">{day.label ?? `Day ${day.dayIndex + 1}`}</span>
+              {/* What the day is called (UC-08 E3) — `dayName` is the one rule,
+                  so the overview, the apply form, `/me/events` and a day
+                  sequence refusal all name a day the same way. Numbered from
+                  the stored `dayIndex`, not this row's position. */}
+              <span className="text-14">
+                {dayName(
+                  {
+                    startsAt: day.startsAt === null ? null : new Date(day.startsAt),
+                    label: day.label,
+                  },
+                  day.dayIndex
+                )}
+              </span>
               <LocalTime
                 at={day.startsAt}
                 className="ml-auto text-12"

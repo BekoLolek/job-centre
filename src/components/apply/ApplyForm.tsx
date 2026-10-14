@@ -17,6 +17,7 @@ import {
   plural,
 } from "@/components/ui";
 import type { AvailabilityState, EntryMode, ProfileValue } from "@/db/schema";
+import { dayName } from "@/lib/events-policy";
 import type { PrefilledQuestionView } from "@/lib/events";
 import { formatAnswer, hasAnswer } from "@/lib/profile-fields";
 import { applyToEventAction } from "@/app/events/[slug]/apply/actions";
@@ -375,7 +376,18 @@ export default function ApplyForm({
                 className="flex flex-wrap items-center gap-x-4 gap-y-3 px-5 py-4"
               >
                 <div className="min-w-40">
-                  <div className="text-14">{day.label ?? `Day ${day.dayIndex + 1}`}</div>
+                  {/* `dayName` is the one rule for what a day is called
+                      (UC-08 E3), numbered from the stored `dayIndex` rather
+                      than this row's position. */}
+                  <div className="text-14">
+                    {dayName(
+                      {
+                        startsAt: day.startsAt === null ? null : new Date(day.startsAt),
+                        label: day.label,
+                      },
+                      day.dayIndex
+                    )}
+                  </div>
                   <EventDateRange
                     startsAt={day.startsAt}
                     fallback="Time to be confirmed"

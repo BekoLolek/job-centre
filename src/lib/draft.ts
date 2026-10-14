@@ -97,7 +97,9 @@ import {
   rosterState,
 } from "./draft-policy";
 import { lockRefusal } from "./archive-policy";
-import type { EventResult } from "./events";
+// `gatesFor` rather than a second ladder-and-ranks read of its own: the captain
+// rule here has to give the same answer as the applicant list and the apply page.
+import { type EventResult, gatesFor } from "./events";
 
 /* ------------------------------------------------------------------ */
 /* Results                                                            */
@@ -491,6 +493,13 @@ export type SetCaptainsResult = {
  * somebody unusual to captain accepts them first and the intent is recorded
  * where it belongs rather than as a silent exception here.
  *
+ * They must also clear the event's **captain rank rule** (R-59 / UC-15 3a),
+ * and that check is in this transaction rather than in the screen that offers
+ * the picker. The override for it is the same shape as the one above: an
+ * `entry_waivers` row, written by a manager, audited by the action that writes
+ * it — not a flag on the request, which is all a client-side confirmation
+ * amounts to once you remember the action is a public endpoint.
+ *
  * The whole assignment is applied in two passes because one person cannot lead
  * two teams: swapping two captains has to clear both before setting either, or
  * the unique constraint fires halfway through a legal change.
@@ -564,11 +573,44 @@ export async function setCaptains(
           .map((row) => [row.userId, row.teamId])
       );
 
+      /*
+       * UC-15 3a / R-59: the captain rank rule, enforced **here**.
+       *
+       * It used to be enforced nowhere. The Captains tab asked the manager to
+       * confirm a below-bar pick and then sent the same payload either way, so
+       * the rule was a dialog in one client — and a server action is a public
+       * POST (see the Next.js server-actions guide's security notes), so
+       * anything that skipped the dialog skipped the rule. The gate is now
+       * read from the database on every write, and the only thing that opens it
+       * is an `entry_waivers` row: a decision somebody took, recorded against
+       * event + member + rule, and audited by the action that writes it.
+       *
+       * `meetsCaptainRule` rather than `canCaptain` deliberately — see its
+       * docblock in events-policy. These candidates are accepted applicants, so
+       * the *entry* rule has already been settled by whoever accepted them, and
+       * folding it in again would refuse captains over a bar nobody is holding.
+       */
+      const gates = await gatesFor(tx, event, userIds);
+
       for (const [teamId, userId] of wanted) {
         if (userId === null) continue;
         if (!ok.has(userId)) {
           errors[teamId] =
             "A captain has to be an accepted applicant. Accept them on the Applicants tab first.";
+          continue;
+        }
+        // No gate is a refusal, not a pass. `gatesFor` returns one per accepted
+        // applicant and `ok` above has already established they are one, so a
+        // missing gate is unreachable today — but the shape has to be the one
+        // that fails closed, because the alternative is a rule that a lost row
+        // switches off rather than a captain who has to be re-picked.
+        const gate = gates.get(userId);
+        if (!gate || !gate.eligibility.meetsCaptainRule) {
+          errors[teamId] = `This event asks for ${
+            event.minRankToCaptain ?? "a minimum rank"
+          } to captain and they are ${
+            gate?.rank ?? "unranked"
+          }. Confirm the override to record a waiver for them, or pick somebody else.`;
           continue;
         }
         const on = drafted.get(userId);

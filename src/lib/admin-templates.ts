@@ -473,18 +473,44 @@ export type FromEventInput = {
 };
 
 /**
- * Turn an event that already happened into a template.
+ * Turn an event that already happened into a template (R-22 / UC-08 10a).
  *
- * The useful direction. Everything an event carries that a template can hold
- * comes across: its type, its game, its config — including `config.format`,
- * which is the schedule and stage settings — and its whole question set, with
- * each question's profile link turned back into the profile field's *key*.
+ * The useful direction, and the one behind both buttons that offer it: the
+ * "make one from an event" panel on `/admin/templates` (UC-28 3a) and "Save as
+ * template" in the event editor itself. Both are admin-only, enforced in
+ * `createTemplateFromEventAction` rather than here — this module takes an id
+ * and writes a row, and the question of who may is the action's.
  *
- * What cannot come across, and is not pretended to: days, dates, capacity, the
- * rank thresholds, and the generated stages. Days and dates are the two things
- * that are always different next month; capacity and the thresholds are event
- * decisions rather than format ones; and stages are rows in `stages`, not
- * config, so a bracket is regenerated rather than copied.
+ * ## A setup, and nothing that happened
+ *
+ * What comes across is the event's *settings*: its type, its game, its config —
+ * including `config.format`, which is the schedule and stage settings, and
+ * `entryMode` and `waitlist`, which are how people get in (R-27, R-170) — and
+ * its whole question set, with each question's profile link turned back into
+ * the profile field's *key*.
+ *
+ * What does not is everything that only happened once. The applicants, the
+ * teams, the draft's lots and awards, the matches and the recorded results are
+ * rows in their own tables keyed on `event_id`; a template is one row holding
+ * config and questions, so there is nowhere for any of them to go and the copy
+ * below cannot carry one even by accident. `config` itself is checked: every
+ * key anything writes there is a setting (`teams`, `draft`, `bracket`,
+ * `entryMode`, `waitlist`, and the `format` block's own settings), never a
+ * record of what a team did, so copying it whole copies a setup.
+ *
+ * ## What is left behind, and why that is a decision rather than an oversight
+ *
+ * Days, dates, capacity, the two rank thresholds, and the generated stages.
+ * Days and dates are the two things that are always different next month, and
+ * stages are rows in `stages` so a bracket is regenerated rather than copied.
+ * Capacity and the thresholds are a different case: docs/plan.md Task 13 asks
+ * for them, and they are columns on `events` rather than keys in `config`, so
+ * reproducing them needs either a column on `event_templates` to hold them or
+ * `createEvent` to learn to apply them out of a template. Routing them through
+ * `config` instead would leave every event made from such a template carrying a
+ * dead second copy of its own capacity, which is the one thing this codebase
+ * will not store. `TEMPLATE_OMITS` is the list both screens print, and it is
+ * accurate.
  */
 export async function createTemplateFromEvent(
   eventId: string,
