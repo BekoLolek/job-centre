@@ -53,6 +53,7 @@ import {
   isFieldType,
   normaliseOptions,
   normaliseRankLadder,
+  rankUnavailable,
   reorderById,
   slugify,
   uniqueKey,
@@ -659,6 +660,17 @@ function validateFieldInput(input: FieldInput): AdminResult<{
  * labelled "Notes" becoming `notes` and `notes-2` is a convenience rather than a
  * surprise. The `(game_id, key)` unique index is `NULLS NOT DISTINCT`, which is
  * what makes the same rule work for global fields.
+ *
+ * ## A global question is any type except `rank` (UC-03 E1, 3a)
+ *
+ * E1 is "a detail asked of *every* game", and a rank cannot be one. A `rank`
+ * field reads its choices from `games.rank_ladder` — `choicesFor` in
+ * `profile-fields.ts` — and a field with no game has no ladder to read, so
+ * every answer to it fails `parseProfileValue`'s "that is not one of the
+ * options". The member is shown a picker with nothing in it and cannot answer
+ * however hard they try, which is UC-03 3a one level down: no ranks, no rank
+ * details. `updateField` has always refused to retype a global question as a
+ * rank for exactly this reason; this is the same rule on the way in.
  */
 export async function createField(
   gameId: string | null,
@@ -672,11 +684,10 @@ export async function createField(
     const [game] = await database.select().from(games).where(eq(games.id, gameId)).limit(1);
     if (!game) return fail("That game no longer exists.");
     if (checked.data.type === "rank" && game.rankLadder.length === 0) {
-      return fail(
-        `${game.name} has no rank ladder yet, so a rank question would have nothing to offer. ` +
-          "Add the ranks first."
-      );
+      return fail(rankUnavailable(game.name));
     }
+  } else if (checked.data.type === "rank") {
+    return fail(rankUnavailable(null));
   }
 
   const siblings = await database

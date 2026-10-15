@@ -1,0 +1,57 @@
+-- When the member last said an answer is right (R-49 / UC-12 3, Task 10).
+--
+-- ## Nothing here touches a row that already exists
+--
+-- One nullable column, no default, no backfill, no constraint. That is the
+-- whole migration, and the shape was chosen rather than settled for:
+-- `DATABASE_URL` is blank in this working copy and production cannot be
+-- inspected from here, so anything that *tightens* — `SET NOT NULL`, a check,
+-- a unique index — would be a bet on rows this file cannot see. Those
+-- statements do not skip the rows that break them (drizzle/0015 and
+-- drizzle/0018 are the two places this repo had to buy its way out of exactly
+-- that); they fail the deploy and leave every later migration stuck behind it.
+-- `ADD COLUMN ... timestamptz` with no default and no NOT NULL cannot fail on
+-- data, and on Postgres 11+ it does not rewrite the table either.
+--
+-- ## Why null rather than a backfilled `updated_at`
+--
+-- The tempting backfill is `confirmed_at = updated_at`, and it would be a lie.
+-- `updated_at` says when the *value* changed; `confirmed_at` says when the
+-- *member vouched for it*. Every existing row was written before there was
+-- anywhere to vouch, so the honest answer for all of them is "never", and null
+-- is how a timestamp says never. It also keeps the two columns answering
+-- different questions: a row where `confirmed_at > updated_at` is an answer
+-- somebody has re-checked since giving it, and a backfill would have erased
+-- that distinction for the whole table on day one.
+--
+-- **Nothing reads this column as a gate**, so null is not a lockout, and that is
+-- the whole reason a backfill is unnecessary rather than merely awkward. It is
+-- read on two paths and shown on three screens, and no branch anywhere turns on
+-- its value:
+--
+--   * `buildSection` in src/lib/profile.ts puts it on
+--     `ProfileFieldView.confirmedAt`, which the profile page's rows
+--     (`ProfileSection`) and the application form's detail rows (`ApplyForm`)
+--     render as "confirmed 12 Mar" next to the answer;
+--   * `linkedAnswers` in src/lib/events.ts puts it on
+--     `ApplicationView.answerConfirmedAt`, which the admin's applicant details
+--     (`ApplicantsTab`) render under a linked question's answer — the reader
+--     who most needs to know whether anybody has looked at a rank since March.
+--
+-- Both carry it as an ISO string, never a formatted one: no instant is
+-- formatted on the server, so every one of those three screens renders it
+-- through `LocalTime` in the reader's own zone.
+--
+-- In particular the dashboard's "a question changed since you answered it" to-do
+-- does **not** consult it. That comparison is between the stored answer and the
+-- question as it now stands (`detailAttention` in src/lib/profile-fields.ts),
+-- because a question's definition carries no timestamp to be compared against:
+-- `profile_fields` records when a question was created and when it was retired,
+-- and nothing records when its wording, type or options last moved.
+--
+-- ## Idempotent on re-run, like every migration here
+--
+-- `npm run db:migrate` re-runs the applied list on each deploy; drizzle's
+-- journal makes that a no-op, and there is no data statement in this file that
+-- would do anything if it ran twice.
+ALTER TABLE "profile_values" ADD COLUMN "confirmed_at" timestamp with time zone;

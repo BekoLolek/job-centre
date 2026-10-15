@@ -32,6 +32,14 @@ import type { AdminFieldView } from "@/lib/admin-games";
  *  - `GamesManager`'s game copy — "without taking 12 stored answers with it"
  *    is a description of what deactivating *avoids*, one level up from a
  *    question, and it is also true.
+ *  - `removeQuestionNotice`'s **own-question** half — "removing it takes their
+ *    answers with it when you save" is true of an event question the event
+ *    asks in its own right: `setEventQuestions` deletes the row and
+ *    `clearOrphanedAnswers` really does drop the answers to it. Its **linked**
+ *    half is scanned below, because that is the one that cannot claim a loss:
+ *    the answer is a `profile_values` row and nothing on this path can reach
+ *    one. The two are pinned apart in
+ *    `src/components/admin/events/__tests__/linked-question-cost.test.ts`.
  *
  * The two modules the components cannot have here are mocked: the router
  * (there is no Next request) and the actions (`"use server"`, and nothing is
@@ -49,9 +57,20 @@ vi.mock("@/app/admin/games/actions", () => ({
   updateFieldAction: async () => ({ ok: true, data: { strandedAnswers: 0 } }),
 }));
 
+// The Form tab's own action module, for the same reason: importing it pulls
+// next-auth in behind the database.
+vi.mock("@/app/admin/events/actions", () => ({
+  saveEventQuestionsAction: async () => ({
+    ok: true,
+    data: { questions: [], clearedAnswers: 0 },
+  }),
+}));
+
 const { default: QuestionList, DELETE_REFUSED_WHEN_ANSWERED, DELETE_UNANSWERED, RETIRING_EXPLAINER } =
   await import("../QuestionList");
 const { default: QuestionDialog, strandedAnswerNotice } = await import("../QuestionDialog");
+const { removeQuestionNotice } = await import("../events/QuestionsTab");
+const { THIS_GAME, rankUnavailable } = await import("@/lib/profile-fields");
 
 /* ------------------------------------------------------------------ */
 /* Fixtures                                                           */
@@ -162,8 +181,35 @@ function everyQuestionScreenString(): { where: string; text: string }[] {
     { where: "strandedAnswerNotice(1) body", text: strandedAnswerNotice(1).body },
     { where: "strandedAnswerNotice(40) heading", text: strandedAnswerNotice(40).heading },
     { where: "strandedAnswerNotice(40) body", text: strandedAnswerNotice(40).body },
+    { where: "rankUnavailable, a game with no ladder", text: rankUnavailable(THIS_GAME) },
+    { where: "rankUnavailable, the Everyone section", text: rankUnavailable(null) },
+    // The Form tab's remove dialog, linked half only — see the docblock above.
+    { where: "removeQuestionNotice(1) linked heading", text: removeQuestionNotice({ linked: true, answers: 1 }).heading },
+    { where: "removeQuestionNotice(1) linked body", text: removeQuestionNotice({ linked: true, answers: 1 }).body },
+    { where: "removeQuestionNotice(40) linked heading", text: removeQuestionNotice({ linked: true, answers: 40 }).heading },
+    { where: "removeQuestionNotice(40) linked body", text: removeQuestionNotice({ linked: true, answers: 40 }).body },
   ];
 }
+
+describe("why a rank question is unavailable (UC-03 3a, E1)", () => {
+  it("tells the Everyone section the reason that is true of it", () => {
+    // `createField(null, { type: "rank" })` is refused outright: a field with no
+    // game has no ladder to read, so the question would render an empty picker
+    // and `parseProfileValue` would refuse every answer to it.
+    const text = rankUnavailable(null);
+
+    expect(text).toMatch(/cannot be asked of every game/);
+    expect(text).not.toMatch(/this game/i);
+  });
+
+  it("still tells a game with no ladder to add the ranks first", () => {
+    // A different problem with a different answer: this one is one ladder away
+    // from being able to ask.
+    expect(rankUnavailable(THIS_GAME)).toMatch(/Add the ranks first/);
+    // And `createField` refuses in the same words, naming the game it has.
+    expect(rankUnavailable("REPO")).toContain("REPO has no rank ladder yet");
+  });
+});
 
 describe("what the admin question screens say about stored answers", () => {
   it.each(everyQuestionScreenString())(

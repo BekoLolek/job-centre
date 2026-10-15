@@ -22,7 +22,9 @@ import {
   type TemplateResult,
   createTemplate,
   createTemplateFromEvent,
+  deleteTemplate,
   duplicateTemplate,
+  moveTemplate,
   setTemplateActive,
   updateTemplate,
 } from "@/lib/admin-templates";
@@ -99,11 +101,11 @@ export async function duplicateTemplateAction(
 }
 
 /**
- * Show or hide a template.
+ * Show or hide a template (R-128 / UC-28 7, 8).
  *
  * Deactivating drops it out of the create-event picker and changes nothing
- * about the events already made from it. There is deliberately no delete —
- * checklist.md's standing rule.
+ * about the events already made from it. It is the path the screen recommends,
+ * and the one that keeps a seasonal setup for next time.
  */
 export async function setTemplateActiveAction(
   templateId: string,
@@ -123,6 +125,62 @@ export async function setTemplateActiveAction(
 
   refresh();
   return { ok: true, data: { id: result.data.id } };
+}
+
+/**
+ * Move a template up or down the order (R-129 / UC-28 7, 8).
+ *
+ * The order is saved as `sort`, which is also the order `/admin/events`' create
+ * picker reads in — so this is revalidated on both pages like every other
+ * mutation here.
+ */
+export async function moveTemplateAction(
+  templateId: string,
+  direction: "up" | "down"
+): Promise<TemplateResult<null>> {
+  const admin = await requireAdmin();
+
+  const result = await moveTemplate(templateId, direction);
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "template.moved",
+    actor: admin,
+    subject: templateId,
+    summary: `Moved a template ${direction} the order.`,
+  });
+
+  refresh();
+  return { ok: true, data: null };
+}
+
+/**
+ * Delete a template, keeping every event made from it (UC-28 8a).
+ *
+ * The audit line records how many events kept running, because that is the
+ * number somebody will want six months later when they wonder where the
+ * template behind four events went. The events themselves are untouched —
+ * `deleteTemplate`'s docblock says why that is a property of the schema rather
+ * than of this function being careful.
+ */
+export async function deleteTemplateAction(
+  templateId: string
+): Promise<TemplateResult<{ usedBy: number }>> {
+  const admin = await requireAdmin();
+
+  const result = await deleteTemplate(templateId);
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "template.deleted",
+    actor: admin,
+    subject: templateId,
+    summary: `Deleted the template "${result.data.name}".`,
+    detail: { eventsKept: result.data.usedBy },
+  });
+
+  refresh();
+  return { ok: true, data: { usedBy: result.data.usedBy } };
 }
 
 /**

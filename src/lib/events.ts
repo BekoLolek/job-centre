@@ -58,6 +58,7 @@ import {
   type EventRow,
   type EventStatus,
   type Game,
+  type ProfileField,
   type ProfileFieldOption,
   type ProfileFieldType,
   type ProfileValue,
@@ -105,10 +106,13 @@ import {
   signupWindowProblem,
   waivedRulesFrom,
 } from "./events-policy";
+import { type ProfileSectionView, loadProfileForGame } from "./profile";
 import {
   type FieldShape,
   choicesFor,
+  detailAttention,
   fieldTypeInfo,
+  hasAnswer,
   isFieldType,
   normaliseOptions,
   parseProfileValue,
@@ -192,11 +196,9 @@ export type EventQuestionView = EventQuestion & {
   choices: ProfileFieldOption[];
 };
 
-/** A question with this member's answer already in it (§2, §7). */
-export type PrefilledQuestionView = EventQuestionView & {
+/** One of the event's own questions, with this member's answer already in it. */
+export type AnsweredQuestionView = EventQuestionView & {
   value: ProfileValue;
-  /** True when the value came from the profile rather than from a past answer. */
-  prefilled: boolean;
 };
 
 export type EventSummary = EventRow & {
@@ -217,6 +219,20 @@ export type ApplicationView = Application & {
   /** Keyed by `event_days.id`. Days with no answer are absent. */
   availability: Record<string, AvailabilityState>;
   confirmation: ConfirmationState | null;
+  /**
+   * When the member last said a **linked** question's answer is still right
+   * (R-49 / UC-12 3), ISO, keyed by `event_questions.id`.
+   *
+   * Only linked questions appear: their answer is a `profile_values` row, which
+   * is the only thing that carries `confirmed_at`. An answer the event asks in
+   * its own right is given on the application and has no such stamp, so it is
+   * absent rather than null — there is no question to ask about it.
+   *
+   * ISO rather than a `Date` because `ApplicantsTab` is a client component, and
+   * `ApplyDay.startsAt` already settled that a `Date` does not survive those
+   * props well. The formatting happens in the browser, never here.
+   */
+  answerConfirmedAt: Record<string, string>;
 };
 
 export type ApplicantView = ApplicationView & {
@@ -241,9 +257,33 @@ export type ApplicantView = ApplicationView & {
   waived: WaivedRules;
 };
 
+/**
+ * One question this application still needs the member for (UC-13 2).
+ *
+ * `why` is `detailAttention`'s: `missing` for a required answer that is not
+ * there, `stale` for an answer the question has outgrown — "a question changed
+ * since you answered it", which is the case nobody can see coming and only the
+ * member can fix.
+ */
+export type OutstandingAnswer = {
+  /** `profile_fields.id`, or `event_questions.id` for the event's own. */
+  id: string;
+  label: string;
+  why: "missing" | "stale";
+  /** Where the answer lives, which is also where the member goes to fix it. */
+  where: "profile" | "event";
+};
+
 export type MyApplicationView = ApplicationView & {
   event: EventRow;
   seats: CapacityState;
+  /**
+   * What this application still needs from them — empty for the great majority
+   * (R-60 / UC-13 2). Derived on every read, never stored
+   * (docs/domain-model.md:335), the same rule the seat counts follow: a to-do
+   * that outlived the thing it was asking for is worse than no to-do at all.
+   */
+  outstanding: OutstandingAnswer[];
 };
 
 /** Everything the member's application page needs, in one read. */
@@ -255,12 +295,27 @@ export type ApplicationFormView = {
   waived: WaivedRules;
   /** The member's rank for this event's game, as recorded on their profile. */
   rank: string | null;
-  questions: PrefilledQuestionView[];
+  /**
+   * The member's profile details for this event's game, and the global ones
+   * (UC-12 2) — the **full** profile for that game, not only the parts an event
+   * question happens to link to. This is what the member checks and edits; the
+   * edits go to the profile (R-11, R-49).
+   */
+  profile: ProfileSectionView[];
+  /** The event's *own* questions only. See `ownQuestions`. */
+  questions: AnsweredQuestionView[];
   /** Their answer per day, empty on a first visit. */
   availability: Record<string, AvailabilityState>;
   confirmation: ConfirmationState | null;
   /** Their existing application, if they have one. */
   application: ApplicationView | null;
+  /**
+   * Whether an existing application's answers may still be changed (R-53 /
+   * UC-13 3, 4a) — `answersEditable`'s answer, decided on the server against
+   * the same clock the write will use so the page and `editApplicationAnswers`
+   * cannot disagree. False for a visitor with no application.
+   */
+  canEditAnswers: boolean;
 };
 
 /* ------------------------------------------------------------------ */
@@ -637,19 +692,141 @@ async function readExtras(
   return { availability: byApplication, confirmation: confirmed };
 }
 
+/**
+ * The answers to every **linked** question on these applications, read from the
+ * profile — which is where they live (R-11, Task 10).
+ *
+ * A question with a `profile_field_id` is the event saying "ask them their
+ * profile detail". Its answer is therefore the profile's answer, and storing a
+ * second copy of it on the application is the one thing this project does not
+ * do: the domain model's rule is that nothing derived is stored
+ * (docs/domain-model.md:335), and a copy of an answer is exactly that. It
+ * would also be a copy that goes wrong — a member who fixes
+ * their rank on `/me/profile` would be sitting in a manager's applicant list
+ * under the rank they typed in March, with no way for either of them to tell
+ * which number was being used to seed the draft.
+ *
+ * So the composition happens here, on every read, and `ApplicationView.answers`
+ * stays the complete map every caller already expects: the admin applicant list
+ * (UC-14 2), the questions tab's answer counts, and the member's own form.
+ *
+ * Returned raw, without re-parsing against the question. A profile answer that
+ * no longer fits the question it is shown under is a real state (an admin
+ * retyped one of them, and R-09 keeps the answer either way), and the place
+ * that reports it is `detailAttention` — on the member's own page, where
+ * somebody can actually fix it. Dropping it here would hide it from everybody
+ * instead.
+ *
+ * **`questionIds` comes back with the answers, from the same rows.** Which
+ * questions are linked is one derivation — `profile_field_id is not null`, the
+ * rule `ownQuestions` states — and `decorate` needs the set as well as the
+ * values, to drop a legacy stored copy. Asking the same table a second time for
+ * the same answer is how two reads of one rule start disagreeing, so the one
+ * query that already has the rows hands both halves over.
+ */
+type LinkedReads = {
+  /** Question ids on these applications' events whose answer is the profile's. */
+  questionIds: Set<string>;
+  /** The composed answers, by application id. */
+  answers: Map<string, ApplicationAnswers>;
+  /**
+   * When the member last vouched for each of those answers — ISO, by
+   * application id then question id, absent for an answer never confirmed
+   * (R-49 / UC-12 3). A string rather than a `Date` because it is read in a
+   * client component, the choice `ApplyDay.startsAt` already made.
+   */
+  confirmedAt: Map<string, Record<string, string>>;
+};
+
+async function linkedAnswers(
+  database: Database,
+  rows: readonly Application[]
+): Promise<LinkedReads> {
+  const out: LinkedReads = {
+    questionIds: new Set<string>(),
+    answers: new Map<string, ApplicationAnswers>(),
+    confirmedAt: new Map<string, Record<string, string>>(),
+  };
+  if (rows.length === 0) return out;
+
+  const eventIds = [...new Set(rows.map((row) => row.eventId))];
+  const userIds = [...new Set(rows.map((row) => row.userId))];
+
+  const linked = (
+    await database
+      .select()
+      .from(eventQuestions)
+      .where(inArray(eventQuestions.eventId, eventIds))
+  ).filter((question) => question.profileFieldId !== null);
+  for (const question of linked) out.questionIds.add(question.id);
+  if (linked.length === 0) return out;
+
+  const values = await database
+    .select()
+    .from(profileValues)
+    .where(
+      and(
+        inArray(profileValues.userId, userIds),
+        inArray(
+          profileValues.fieldId,
+          linked.map((question) => question.profileFieldId as string)
+        )
+      )
+    );
+  const byMemberField = new Map(values.map((row) => [`${row.userId}:${row.fieldId}`, row]));
+
+  for (const row of rows) {
+    const composed: ApplicationAnswers = {};
+    const stamps: Record<string, string> = {};
+    for (const question of linked) {
+      if (question.eventId !== row.eventId) continue;
+      const stored = byMemberField.get(`${row.userId}:${question.profileFieldId as string}`);
+      if (stored === undefined) continue;
+      composed[question.id] = stored.value;
+      if (stored.confirmedAt) stamps[question.id] = stored.confirmedAt.toISOString();
+    }
+    if (Object.keys(composed).length > 0) out.answers.set(row.id, composed);
+    if (Object.keys(stamps).length > 0) out.confirmedAt.set(row.id, stamps);
+  }
+  return out;
+}
+
 async function decorate(
   database: Database,
   rows: readonly Application[]
 ): Promise<ApplicationView[]> {
-  const extras = await readExtras(
-    database,
-    rows.map((row) => row.id)
-  );
-  return rows.map((row) => ({
-    ...row,
-    availability: extras.availability.get(row.id) ?? {},
-    confirmation: extras.confirmation.get(row.id) ?? null,
-  }));
+  const [extras, linked] = await Promise.all([
+    readExtras(
+      database,
+      rows.map((row) => row.id)
+    ),
+    linkedAnswers(database, rows),
+  ]);
+
+  return rows.map((row) => {
+    /*
+     * A stored copy under a linked question's id is a legacy row: written
+     * before the profile became the only home for these answers, or by an
+     * `applyToEvent` that predates this commit. It is dropped from the view
+     * rather than merged, because the profile is the source and a copy that
+     * disagrees with it must not be what a manager reads. The next write to
+     * the application removes it from the column too; no migration goes
+     * hunting for them, because an unread key in a jsonb blob costs nothing
+     * and a data migration over every application ever stored is not free.
+     */
+    const own: ApplicationAnswers = {};
+    for (const [questionId, value] of Object.entries(row.answers)) {
+      if (!linked.questionIds.has(questionId)) own[questionId] = value;
+    }
+
+    return {
+      ...row,
+      answers: { ...own, ...(linked.answers.get(row.id) ?? {}) },
+      answerConfirmedAt: linked.confirmedAt.get(row.id) ?? {},
+      availability: extras.availability.get(row.id) ?? {},
+      confirmation: extras.confirmation.get(row.id) ?? null,
+    };
+  });
 }
 
 async function decorateOne(
@@ -689,15 +866,17 @@ export type AnswerCheck =
  *    profile and the hard gate here, which is the point at which refusing to
  *    continue is the correct behaviour.
  *
- * A linked question with no key in the payload falls back to the member's
- * stored profile answer, so a returning player really can submit without
- * touching anything (§2). `prefill` carries those values.
+ * Callers pass `ownQuestions(...)`, not the whole set. A question linked to a
+ * profile field is answered on the profile and composed back on read
+ * (`linkedAnswers`), so an answer to one arriving here would be the second copy
+ * Task 10 exists to remove — and because the list this validates against is
+ * also the list of keys it will accept, a payload naming a linked question is
+ * refused rather than stored.
  */
 export function validateAnswers(
   questions: readonly EventQuestion[],
   ladder: readonly string[],
-  raw: Record<string, unknown>,
-  prefill: Record<string, ProfileValue> = {}
+  raw: Record<string, unknown>
 ): AnswerCheck {
   const byId = new Map(questions.map((question) => [question.id, question]));
   const errors: Record<string, string> = {};
@@ -710,7 +889,7 @@ export function validateAnswers(
 
   const answers: ApplicationAnswers = {};
   for (const question of questions) {
-    const supplied = Object.hasOwn(raw, question.id) ? raw[question.id] : prefill[question.id];
+    const supplied = Object.hasOwn(raw, question.id) ? raw[question.id] : null;
     const result = parseProfileValue(shapeOf(question, ladder), supplied ?? null);
 
     if (!result.ok) {
@@ -731,35 +910,281 @@ export function validateAnswers(
   return { ok: true, answers };
 }
 
-/** The member's profile answers, keyed by the event question that mirrors them. */
-async function prefillFromProfile(
-  database: Database,
-  questions: readonly EventQuestion[],
-  userId: string | null
-): Promise<Record<string, ProfileValue>> {
-  const linked = questions.filter((question) => question.profileFieldId !== null);
-  if (!userId || linked.length === 0) return {};
+/**
+ * The questions this event asks **in its own right** — the unlinked ones.
+ *
+ * A linked question is the event asking for a profile detail, which the
+ * application form now shows as a profile detail (UC-12 2) and writes to the
+ * profile. So it is not asked twice, not answered on the application, and not
+ * stored there. This is the one place that decides which questions are which,
+ * so the form, the write and the to-dos cannot disagree about it.
+ */
+function ownQuestions(questions: readonly EventQuestion[]): EventQuestion[] {
+  return questions.filter((question) => question.profileFieldId === null);
+}
 
-  const rows = await database
+/* ------------------------------------------------------------------ */
+/* The profile details an application asks about (R-11, R-49)          */
+/* ------------------------------------------------------------------ */
+
+/** One profile detail as this event's application asks it. */
+type AskedDetail = {
+  field: ProfileField;
+  /** The ladder a `rank` detail picks from: the game's, or none for a global one. */
+  ladder: readonly string[];
+  /** Required by the catalogue, or by a linked question of this event. */
+  required: boolean;
+};
+
+/**
+ * Which profile details this event's application shows, and which it insists on.
+ *
+ * The global details plus the event's game's, minus the retired ones (R-09,
+ * UC-03 5a) — the same set `loadProfileForGame` renders, assembled here because
+ * the write has to decide requiredness from the database rather than from
+ * whatever the page thought it was showing.
+ *
+ * A retired detail is dropped **before** requiredness is considered, so a
+ * required detail that an admin retires stops blocking applications
+ * immediately. The alternative is an event nobody can apply to, asking for
+ * something the form does not have a row for.
+ */
+async function askedDetails(
+  database: Database,
+  event: { gameId: string | null },
+  questions: readonly EventQuestion[]
+): Promise<AskedDetail[]> {
+  const game = await readGame(database, event.gameId);
+
+  const fields = (
+    await database
+      .select()
+      .from(profileFields)
+      .where(
+        game
+          ? or(eq(profileFields.gameId, game.id), isNull(profileFields.gameId))
+          : isNull(profileFields.gameId)
+      )
+      .orderBy(asc(profileFields.sort), asc(profileFields.createdAt))
+  ).filter((field) => field.retiredAt === null);
+
+  const demanded = detailsRequiredBy(questions);
+
+  return fields.map((field) => ({
+    field,
+    ladder: field.gameId === null ? [] : (game?.rankLadder ?? []),
+    required: field.required || demanded.has(field.id),
+  }));
+}
+
+/** Profile field ids this event requires on top of what the catalogue does. */
+function detailsRequiredBy(questions: readonly EventQuestion[]): Set<string> {
+  return new Set(
+    questions
+      .filter((question) => question.required && question.profileFieldId !== null)
+      .map((question) => question.profileFieldId as string)
+  );
+}
+
+/** A checked detail patch: what would be written, and what the result would be. */
+type DetailPlan = {
+  /** Every detail the patch names, parsed. Blanks included, as `null`. */
+  parsed: Array<{ detail: AskedDetail; value: ProfileValue }>;
+  /** Ids the member vouched for without changing. */
+  confirm: string[];
+  /** What the member's answers would be afterwards, keyed by detail id. */
+  values: Map<string, ProfileValue>;
+};
+
+type DetailCheck =
+  | { ok: true; plan: DetailPlan }
+  | { ok: false; errors: Record<string, string> };
+
+/**
+ * Check a detail patch and work out what it leaves behind — **without writing**.
+ *
+ * Split from the write for one reason, and it is the reason the whole ordering
+ * of `applyToEvent` is the way it is: a refusal must leave nothing behind. If
+ * the required-detail check ran after the write, an application refused for a
+ * missing detail would still have committed the member's other edits inside the
+ * same transaction that said no. So everything that can refuse happens first,
+ * over a picture of what the write *would* do, and `commitDetails` runs only
+ * once nothing is left to refuse.
+ *
+ * `values` is the stored answers with the patch laid over them, which is what
+ * the required check has to see: a member who answered a detail months ago and
+ * did not send it this time has answered it.
+ *
+ * **The profile is the destination, not a copy of one.** UC-12 3a says the
+ * member edits a detail in place and "System saves them to their profile too";
+ * read with Task 10's own title — *profile stays the source* — and with the
+ * domain model's rule that nothing derived is stored
+ * (docs/domain-model.md:335), "too" cannot mean a second copy on the
+ * application. There is one answer and it is in `profile_values`; everything
+ * else composes it on read (`linkedAnswers`).
+ *
+ * Mirrors `saveProfileSection` deliberately — same parse function, same
+ * all-or-nothing, same "blank means delete the row" — because two ways to write
+ * one answer is how the two of them drift. What is different is only that this
+ * one spans the global section and the game's at once, which is what the
+ * application shows, and that it refuses nothing for being incomplete: the
+ * required check is the caller's, so it can be reported next to the seat and
+ * the questions rather than per section.
+ *
+ * `confirm` carries the ids the member said are still right without touching —
+ * R-49's whole sentence. They are stamped, not written: see `commitDetails`.
+ *
+ * Every id in either argument is checked against `asked`. An unknown one is an
+ * error rather than a silent drop, the same judgement `validateAnswers` and
+ * `saveProfileSection` make: a payload naming a detail this event does not ask
+ * about is a stale page or a forgery, and both deserve to be told.
+ */
+async function checkDetails(
+  database: Database,
+  userId: string,
+  asked: readonly AskedDetail[],
+  patch: Record<string, unknown>,
+  confirm: readonly string[]
+): Promise<DetailCheck> {
+  const byId = new Map(asked.map((detail) => [detail.field.id, detail]));
+  const errors: Record<string, string> = {};
+  const parsed: Array<{ detail: AskedDetail; value: ProfileValue }> = [];
+
+  for (const id of Object.keys(patch)) {
+    const detail = byId.get(id);
+    if (!detail) {
+      errors[id] = "That detail is not one this event asks about.";
+      continue;
+    }
+    const result = parseProfileValue(
+      {
+        type: detail.field.type,
+        label: detail.field.label,
+        options: detail.field.options,
+        rankLadder: detail.ladder,
+      },
+      patch[id]
+    );
+    if (!result.ok) errors[id] = result.error;
+    else parsed.push({ detail, value: result.value });
+  }
+
+  for (const id of confirm) {
+    if (!byId.has(id)) errors[id] = "That detail is not one this event asks about.";
+  }
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+
+  const stored = await database
     .select()
     .from(profileValues)
-    .where(
-      and(
-        eq(profileValues.userId, userId),
-        inArray(
-          profileValues.fieldId,
-          linked.map((question) => question.profileFieldId as string)
-        )
-      )
-    );
-
-  const byField = new Map(rows.map((row) => [row.fieldId, row.value]));
-  const out: Record<string, ProfileValue> = {};
-  for (const question of linked) {
-    const value = byField.get(question.profileFieldId as string);
-    if (value !== undefined) out[question.id] = value;
+    .where(eq(profileValues.userId, userId));
+  const values = new Map<string, ProfileValue>();
+  for (const detail of asked) {
+    const row = stored.find((candidate) => candidate.fieldId === detail.field.id);
+    values.set(detail.field.id, row?.value ?? null);
   }
-  return out;
+  for (const { detail, value } of parsed) values.set(detail.field.id, value);
+
+  return { ok: true, plan: { parsed, confirm: [...new Set(confirm)], values } };
+}
+
+/** Does this value count as "cleared"? `[]` and `null` are both yes. */
+function blankValue(value: ProfileValue): boolean {
+  return value === null || (Array.isArray(value) && value.length === 0);
+}
+
+/**
+ * Apply a checked plan to `profile_values`.
+ *
+ * A cleared answer is **deleted** rather than stored as null, exactly as
+ * `saveProfileSection` does it, so "never answered" and "answered, then
+ * cleared" stay the same state and the table does not fill with tombstones.
+ *
+ * Answers the member changed get `updated_at` *and* `confirmed_at`: saving an
+ * answer is asserting it. Answers they only vouched for get `confirmed_at`
+ * alone, which is the whole reason the column exists — see the docblock on
+ * `profile_values.confirmed_at`.
+ *
+ * ## The stamp, and the two things it will not do
+ *
+ * **It never creates a row.** The `update` touches rows that exist and nothing
+ * else: confirming is a statement about an answer, an unanswered detail has
+ * nothing to vouch for, and a row invented to hold the stamp would have to
+ * invent a `value` for a `not null` column too. A `confirm` id with no answer
+ * behind it is simply not stamped.
+ *
+ * **It never moves `updated_at`.** That is the distinction the column exists
+ * for: afterwards `confirmed_at > updated_at` says "given in March, re-checked
+ * today", which is what a manager reading an applicant's details wants to know.
+ *
+ * Authorised on the rows it writes: the `where` carries `userId` as well as the
+ * field ids, so a forged id either matches an answer of theirs or matches
+ * nothing. A retired detail cannot get here at all — `askedDetails` drops it
+ * before `checkDetails`, which then refuses the id outright (R-09, UC-03 5a).
+ */
+async function commitDetails(
+  database: Database,
+  userId: string,
+  plan: DetailPlan,
+  now: Date
+): Promise<void> {
+  const clearing = plan.parsed
+    .filter(({ value }) => blankValue(value))
+    .map(({ detail }) => detail.field.id);
+
+  if (clearing.length > 0) {
+    await database
+      .delete(profileValues)
+      .where(and(eq(profileValues.userId, userId), inArray(profileValues.fieldId, clearing)));
+  }
+
+  for (const { detail, value } of plan.parsed) {
+    if (blankValue(value)) continue;
+    await database
+      .insert(profileValues)
+      .values({ userId, fieldId: detail.field.id, value, updatedAt: now, confirmedAt: now })
+      .onConflictDoUpdate({
+        target: [profileValues.userId, profileValues.fieldId],
+        set: { value, updatedAt: now, confirmedAt: now },
+      });
+  }
+
+  // A detail they cleared in the same submission is not also one they vouched
+  // for; there is no row left to stamp, and stamping before the delete would
+  // only have written a confirmation of nothing.
+  const toStamp = plan.confirm.filter((id) => !clearing.includes(id));
+  if (toStamp.length > 0) {
+    await database
+      .update(profileValues)
+      .set({ confirmedAt: now })
+      .where(and(eq(profileValues.userId, userId), inArray(profileValues.fieldId, toStamp)));
+  }
+}
+
+/**
+ * Required details with nothing in them, keyed by detail id (UC-12 2b).
+ *
+ * The hard gate the profile deliberately does not have. The approved amendment
+ * to UC-04 4a puts it exactly here: the profile saves partially so a member can
+ * fill it in over time, and the application is what refuses to go through
+ * without the thing they skipped — which is the only point at which the missing
+ * answer costs anybody anything.
+ *
+ * Keyed by `profile_fields.id` so the form can mark the row the member is
+ * looking at, not a sentence at the bottom.
+ */
+function missingRequiredDetails(
+  asked: readonly AskedDetail[],
+  values: ReadonlyMap<string, ProfileValue>
+): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const detail of asked) {
+    if (!detail.required) continue;
+    if (hasAnswer(values.get(detail.field.id) ?? null)) continue;
+    errors[detail.field.id] = "This one is required.";
+  }
+  return errors;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1969,8 +2394,25 @@ export async function revokeEntryWaiver(
 /* ------------------------------------------------------------------ */
 
 export type ApplyInput = {
-  /** Keyed by `event_questions.id`. Missing linked keys prefill from the profile. */
+  /**
+   * Keyed by `event_questions.id`, for the event's **own** questions.
+   *
+   * A question linked to a profile field is not answered here and never was
+   * meant to be: its answer is the member's profile answer, and it arrives in
+   * `details`. A key naming a linked question is refused rather than stored, so
+   * a stale page cannot write a second copy of an answer by accident.
+   */
   answers?: Record<string, unknown>;
+  /**
+   * The member's profile details, keyed by `profile_fields.id` (UC-12 3a).
+   * Written to the profile, which is where they live (R-11).
+   */
+  details?: Record<string, unknown>;
+  /**
+   * Detail ids the member said are still right without changing them
+   * (UC-12 3, R-49). Stamped, not written.
+   */
+  confirmed?: readonly string[];
   /** Keyed by `event_days.id`. */
   availability?: Record<string, AvailabilityState | null>;
   /** For a caller that has already stamped the request, and for tests. */
@@ -1985,12 +2427,18 @@ export type ApplyInput = {
  *  1. lock the event row, so nobody else is counting seats at the same time;
  *  2. re-read the questions, the ladder and the counts from inside that lock;
  *  3. refuse everything that should be refused — closed signups, a failed rank
- *     gate, an unanswered required question, a second application;
+ *     gate, an unanswered required question, a missing required profile detail,
+ *     a second application;
  *  4. *then* decide pending, accepted or waitlisted, and write.
  *
  * Steps 2 and 4 being inside the same lock is the entire point. Split them and
  * two people take the last seat, which is the kind of bug that surfaces once,
  * on the busiest event of the year, and cannot be reproduced afterwards.
+ *
+ * Every refusal happens before every write, including the profile writes — so
+ * an application refused for a missing detail has not quietly saved the member's
+ * other edits on its way out. That is why the detail handling is split into
+ * `checkDetails` and `commitDetails`.
  *
  * Re-applying after withdrawing is allowed and reuses the row: they go to the
  * back of whatever queue exists now, which is the fair reading of first-come.
@@ -2054,16 +2502,38 @@ export async function applyToEvent(
     if (!gate.canEnter) return fail(gate.enterReason);
 
     const questions = await readQuestions(tx, eventId);
-    const prefill = await prefillFromProfile(tx, questions, userId);
-    const checked = validateAnswers(questions, ladder, input.answers ?? {}, prefill);
+    // Only the event's own questions are answered on the application. A linked
+    // question's answer is the profile's and arrives in `input.details`; see
+    // `linkedAnswers` for why there is no second copy of it here.
+    const checked = validateAnswers(ownQuestions(questions), ladder, input.answers ?? {});
     if (!checked.ok) {
       return fail("Some of those answers need another look.", checked.errors);
+    }
+
+    // UC-12 2, 2b, 3a: the profile details this event asks about, checked before
+    // anything is written so a refusal leaves nothing behind.
+    const asked = await askedDetails(tx, event, questions);
+    const details = await checkDetails(
+      tx,
+      userId,
+      asked,
+      input.details ?? {},
+      input.confirmed ?? []
+    );
+    if (!details.ok) {
+      return fail("Some of those details need another look.", details.errors);
+    }
+    const missing = missingRequiredDetails(asked, details.plan.values);
+    if (Object.keys(missing).length > 0) {
+      return fail("This event needs a few details from your profile first.", missing);
     }
 
     const dayIds = new Set(days.map((day) => day.id));
     for (const dayId of Object.keys(input.availability ?? {})) {
       if (!dayIds.has(dayId)) return fail("That day is not part of this event.");
     }
+
+    await commitDetails(tx, userId, details.plan, now);
 
     // UC-12 7b: an approval event stores the application for a manager to decide.
     const status: ApplicationStatus =
@@ -2243,12 +2713,191 @@ async function writeAvailability(
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Changing an answer while sign-ups are open (R-53 / UC-13 3, 4, 4a)  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * May an applicant still change their answers? (R-53, UC-13 3 / 4a.)
+ *
+ * The sign-up **window**, not the sign-up **offer**. `applicationsOpen` answers
+ * a different question — whether a *new* application would be taken — and it
+ * closes on `full` for an event that has switched its waitlist off (R-170,
+ * UC-12 E3). Reusing it here would stop everybody already in that event from
+ * fixing a typo, for a reason that has nothing to do with them: there is no
+ * seat for a *new* applicant, and they are not one. So `full` is the one closed
+ * reason that still counts as open here, and every other one does not:
+ * `signups_closed` and `event_started` are the cut-off UC-13 4a describes,
+ * `cancelled` and `finished` have nothing left to answer, and `not_published`
+ * cannot have an application behind it.
+ *
+ * ## This is not the attendance deadline, and must never share a guard with it
+ *
+ * R-200 closes the "still coming?" answer two days before the start
+ * (`confirmationsOpen`); this closes the *answers* when sign-ups close. Two
+ * deadlines, two different instants, two different things being shut. And
+ * **neither of them governs withdrawing** — R-54, UC-13 4a and UC-13
+ * extensions E3 all say so in the same words: *withdrawing is still allowed*.
+ * The reason it is acceptable to lock anything at all is that the way out stays
+ * open; somebody taken ill the day before an event still gives up their seat,
+ * and the seat is what everybody else is waiting for. So
+ * `withdrawApplication` below consults neither this function nor
+ * `confirmationsOpen`, and a refactor that gave it one of them would be the
+ * bug this whole paragraph exists to prevent.
+ */
+export function answersEditable(state: ApplicationsState): boolean {
+  return state.open || state.reason === "full";
+}
+
+/** The refusal UC-13 4a asks for — and it names the thing that still works. */
+const ANSWERS_CLOSED =
+  "Sign-ups for this event have closed, so your answers stand. You can still withdraw if you cannot make it.";
+
+export type EditAnswersInput = {
+  /**
+   * The event's own questions, keyed by `event_questions.id` — **the whole
+   * answer set, not a patch.**
+   *
+   * `applications.answers` is replaced with what `validateAnswers` makes of
+   * this map, so a question left out of it ends up with no stored answer. That
+   * is deliberate rather than tolerated: an answer is cleared by sending it
+   * empty, `validateAnswers` drops an empty answer from the set it returns, and
+   * a merge could therefore never clear one — a member who wants their optional
+   * note gone would have no way to say so. One rule for both directions costs
+   * callers a complete payload, which `ApplyForm` sends (every question, `null`
+   * where there is no answer), and gives the member a way back out of every
+   * answer they can give.
+   *
+   * A required question is still refused when it is missing, so the set cannot
+   * be emptied past what the event insists on.
+   */
+  answers?: Record<string, unknown>;
+  /** Profile details, keyed by `profile_fields.id` (UC-12 3a). */
+  details?: Record<string, unknown>;
+  /** Detail ids vouched for without being changed (R-49). */
+  confirmed?: readonly string[];
+  /** Keyed by `event_days.id`; `null` clears a day. */
+  availability?: Record<string, AvailabilityState | null>;
+  now?: Date;
+};
+
+/**
+ * Change an open application's answers (R-53 / UC-13 3, 4).
+ *
+ * The refusals, in the order they are made and for the reason each is made:
+ *
+ *  1. **the event is locked** — complete, cancelled or archived. UC-13 3b
+ *     refuses *every* change to a finished event, and `lockRefusal` is the one
+ *     rule for that across the whole module.
+ *  2. **not their application, or not an open one.** Found by `(event, user)`
+ *     inside the transaction, so there is no application id in the signature to
+ *     point at somebody else's row — the rule this codebase states as
+ *     "authorise on the row you are about to write, never on an id beside it".
+ *     A withdrawn or declined application has no answers to change.
+ *  3. **sign-ups have closed** (UC-13 4a) — `answersEditable`, checked here and
+ *     not only on the page. A server action is a public POST endpoint: a form
+ *     the page stopped rendering is a form anybody can still submit, and this
+ *     is the only place that can actually say no. Nothing is written when it
+ *     does, including the profile details, which is why they are checked before
+ *     they are committed.
+ *
+ * No seat moves. Changing an answer is not a decision about a seat: the status,
+ * the queue position and the submission time are all left exactly as they were,
+ * so a member who fixes their rank does not lose their place — and
+ * `submittedAt` in particular stays put, because it *is* the queue order (§14)
+ * and touching it would quietly send them to the back.
+ *
+ * The event's row lock is taken all the same. Availability and the answer set
+ * are read by the same admin screens that read the seat counts, and a write
+ * that does not queue behind the lock is a write that can interleave with a
+ * promotion.
+ */
+export async function editApplicationAnswers(
+  eventId: string,
+  userId: string,
+  input: EditAnswersInput = {},
+  database: Database = defaultDb
+): Promise<EventResult<ApplicationView>> {
+  const now = input.now ?? new Date();
+
+  return database.transaction(async (tx) => {
+    const row = await lockEvent(tx, eventId);
+    if (!row) return fail("That event no longer exists.");
+    const locked = lockRefusal(row);
+    if (locked) return fail(locked);
+
+    const days = await readDays(tx, eventId);
+    const event = withDates(row, days);
+
+    const existing = await readApplications(tx, eventId);
+    const mine = existing.find((candidate) => candidate.userId === userId) ?? null;
+    if (!mine) return fail("You have not applied to this event.");
+    if (mine.status === "withdrawn" || mine.status === "declined") {
+      return fail("That application is not open, so there is nothing to change.");
+    }
+
+    const seats = capacityState(event, existing);
+    const state = applicationsOpen(event, now, {
+      accepted: seats.accepted,
+      waitlisted: seats.waitlisted,
+    });
+    if (!answersEditable(state)) return fail(ANSWERS_CLOSED);
+
+    const game = await readGame(tx, event.gameId);
+    const ladder = game?.rankLadder ?? [];
+
+    const questions = await readQuestions(tx, eventId);
+    const checked = validateAnswers(ownQuestions(questions), ladder, input.answers ?? {});
+    if (!checked.ok) {
+      return fail("Some of those answers need another look.", checked.errors);
+    }
+
+    const asked = await askedDetails(tx, event, questions);
+    const details = await checkDetails(
+      tx,
+      userId,
+      asked,
+      input.details ?? {},
+      input.confirmed ?? []
+    );
+    if (!details.ok) {
+      return fail("Some of those details need another look.", details.errors);
+    }
+    const missing = missingRequiredDetails(asked, details.plan.values);
+    if (Object.keys(missing).length > 0) {
+      return fail("This event needs a few details from your profile first.", missing);
+    }
+
+    const dayIds = new Set(days.map((day) => day.id));
+    for (const dayId of Object.keys(input.availability ?? {})) {
+      if (!dayIds.has(dayId)) return fail("That day is not part of this event.");
+    }
+
+    await commitDetails(tx, userId, details.plan, now);
+    await tx
+      .update(applications)
+      .set({ answers: checked.answers })
+      .where(eq(applications.id, mine.id));
+    await writeAvailability(tx, mine.id, input.availability ?? {}, dayIds);
+
+    const [fresh] = await tx.select().from(applications).where(eq(applications.id, mine.id));
+    return withData(await decorateOne(tx, fresh));
+  });
+}
+
 /**
  * Withdraw, and let the next person in (UC-13 3a, R-54).
  *
  * The promotion is not this function's rule: it is `freeSeat`'s, the same one
  * a decline and a "not coming" go through. All this decides is that a
  * withdrawal is a departure, and then it says so.
+ *
+ * **Sign-ups closing does not close this** (UC-13 4a, UC-13 extensions E3), and
+ * neither does the attendance deadline (R-200). There is deliberately no call
+ * to `answersEditable` or `confirmationsOpen` in this function: a member who
+ * can no longer change a word of their application can still give the seat up,
+ * which is the one thing that still matters to the queue behind them. The only
+ * thing that stops a withdrawal is the event itself being over (`lockRefusal`).
  *
  * Promotion and renumbering happen in the same transaction as the withdrawal,
  * so there is no instant at which the seat is free and the queue still says #1.
@@ -2975,6 +3624,109 @@ export async function getApplicationsForEvent(
     });
 }
 
+/**
+ * What each of these events still needs from this member (UC-13 2, R-60).
+ *
+ * Batched across every event in the list — four queries for the whole
+ * dashboard, not four per card — because `/me` renders this for all of them and
+ * a per-row read is how a dashboard becomes slow enough that somebody deletes
+ * the to-dos rather than the query.
+ *
+ * Two kinds of question are checked, and they are deliberately the same two the
+ * application form shows:
+ *
+ *  - the member's **profile details** for the event's game, plus the global
+ *    ones (`where: "profile"`), answered from `profile_values`;
+ *  - the event's **own** questions (`where: "event"`), answered from
+ *    `applications.answers`. A linked question is not checked here: the profile
+ *    detail behind it already is, and counting both would show one question
+ *    twice under two labels.
+ *
+ * The verdict is `detailAttention`'s in both cases, which is what makes "the
+ * question changed since you answered it" mean the same thing on this page, on
+ * the profile and on the application. A **retired** detail answers `null` there
+ * and so never reaches this list (R-09, UC-03 5a): an admin who stops asking a
+ * question has stopped asking it everywhere, and a to-do pointing at a question
+ * no form shows is a job nobody can finish.
+ */
+async function outstandingByEvent(
+  database: Database,
+  userId: string,
+  eventRows: readonly EventRow[],
+  answersFor: (eventId: string) => ApplicationAnswers
+): Promise<Map<string, OutstandingAnswer[]>> {
+  const out = new Map<string, OutstandingAnswer[]>();
+  if (eventRows.length === 0) return out;
+
+  const eventIds = eventRows.map((event) => event.id);
+  const gameIds = [...new Set(eventRows.map((event) => event.gameId).filter((id) => id !== null))];
+
+  const [questions, gameRows, fields, values] = await Promise.all([
+    database.select().from(eventQuestions).where(inArray(eventQuestions.eventId, eventIds)),
+    gameIds.length > 0
+      ? database.select().from(games).where(inArray(games.id, gameIds))
+      : Promise.resolve([] as Game[]),
+    database
+      .select()
+      .from(profileFields)
+      .where(
+        gameIds.length > 0
+          ? or(inArray(profileFields.gameId, gameIds), isNull(profileFields.gameId))
+          : isNull(profileFields.gameId)
+      )
+      .orderBy(asc(profileFields.sort), asc(profileFields.createdAt)),
+    database.select().from(profileValues).where(eq(profileValues.userId, userId)),
+  ]);
+
+  const ladderOf = new Map(gameRows.map((game) => [game.id, game.rankLadder]));
+  const valueOf = new Map(values.map((row) => [row.fieldId, row.value]));
+
+  for (const event of eventRows) {
+    const mine = questions.filter((question) => question.eventId === event.id);
+    const demanded = detailsRequiredBy(mine);
+    const ladder = event.gameId === null ? [] : (ladderOf.get(event.gameId) ?? []);
+    const answers = answersFor(event.id);
+    const list: OutstandingAnswer[] = [];
+
+    for (const field of fields) {
+      if (field.gameId !== null && field.gameId !== event.gameId) continue;
+      const why = detailAttention(
+        {
+          type: field.type,
+          label: field.label,
+          options: field.options,
+          rankLadder: field.gameId === null ? [] : ladder,
+          required: field.required || demanded.has(field.id),
+          retiredAt: field.retiredAt,
+        },
+        valueOf.get(field.id) ?? null
+      );
+      if (why) list.push({ id: field.id, label: field.label, why, where: "profile" });
+    }
+
+    for (const question of ownQuestions(mine)) {
+      const why = detailAttention(
+        {
+          type: question.type,
+          label: question.label,
+          options: question.options,
+          rankLadder: ladder,
+          required: question.required,
+          // An event question cannot be retired — only deleted, which takes
+          // it out of this list by taking it out of the event.
+          retiredAt: null,
+        },
+        answers[question.id] ?? null
+      );
+      if (why) list.push({ id: question.id, label: question.label, why, where: "event" });
+    }
+
+    out.set(event.id, list);
+  }
+
+  return out;
+}
+
 /** "My applications" — every event this member has applied to, soonest first. */
 export async function getMyApplications(
   userId: string,
@@ -3015,11 +3767,26 @@ export async function getMyApplications(
     byEvent.set(row.eventId, bag);
   }
 
+  const answersByEvent = new Map(views.map((view) => [view.eventId, view.answers]));
+  const outstanding = await outstandingByEvent(
+    database,
+    userId,
+    [...eventById.values()],
+    (eventId) => answersByEvent.get(eventId) ?? {}
+  );
+
   return views
     .flatMap((view): MyApplicationView[] => {
       const event = eventById.get(view.eventId);
       if (!event) return [];
-      return [{ ...view, event, seats: capacityState(event, byEvent.get(event.id) ?? []) }];
+      return [
+        {
+          ...view,
+          event,
+          seats: capacityState(event, byEvent.get(event.id) ?? []),
+          outstanding: outstanding.get(event.id) ?? [],
+        },
+      ];
     })
     .sort((a, b) => {
       const timeA = a.event.startsAt?.getTime() ?? Number.MAX_SAFE_INTEGER;
@@ -3032,13 +3799,20 @@ export async function getMyApplications(
  * The member's application form, filled in.
  *
  * One read gives the page everything: the event, whether it is taking
- * applications and why not, whether this member clears the rank gate, and every
- * question carrying the answer they already gave — or, for a linked question
- * they have never answered here, the answer sitting on their profile.
+ * applications and why not, whether this member clears the rank gate, their
+ * whole profile for the event's game with every saved answer in it (UC-12 2),
+ * and the event's own questions carrying the answers they already gave.
  *
- * That last part is the reason the profile exists (§2): a returning player
- * should check that the prefilled answers are still right, tap the days they
- * can make, and submit.
+ * The profile section is the reason the profile exists (§2, R-11): a returning
+ * player checks that what is already on screen is still right, taps the days
+ * they can make, and submits — no typing at all. And it is the *profile* they
+ * are reading, not a copy of it taken when they applied, so the rank they
+ * corrected on `/me/profile` last night is the rank this page shows.
+ *
+ * `canEditAnswers` is for an applicant who already has one: it says whether the
+ * page should offer the form at all (R-53 / UC-13 4a). It is the same answer
+ * `editApplicationAnswers` will reach, which is the point of computing it here
+ * rather than letting the page compare dates.
  */
 export async function loadApplicationForm(
   eventId: string,
@@ -3067,20 +3841,31 @@ export async function loadApplicationForm(
     : [];
 
   const application = mine ? await decorateOne(database, mine) : null;
-  const prefill = await prefillFromProfile(database, view.questions, userId);
 
-  const questions = view.questions.map((question): PrefilledQuestionView => {
-    const answered = application?.answers[question.id];
-    if (answered !== undefined) {
-      return { ...question, value: answered, prefilled: false };
-    }
-    const fromProfile = prefill[question.id];
-    return {
+  // The event's own questions, each with whatever this member answered. The
+  // linked ones are left out on purpose: the profile section below is where
+  // they are asked, and asking the same thing twice on one page is how the two
+  // answers end up disagreeing.
+  const ownIds = new Set(ownQuestions(view.questions).map((question) => question.id));
+  const questions = view.questions
+    .filter((question) => ownIds.has(question.id))
+    .map((question): AnsweredQuestionView => ({
       ...question,
-      value: fromProfile ?? null,
-      prefilled: fromProfile !== undefined && fromProfile !== null,
-    };
-  });
+      value: application?.answers[question.id] ?? null,
+    }));
+
+  const profile = await loadProfileForGame(
+    userId,
+    event.gameId,
+    { alsoRequired: detailsRequiredBy(view.questions) },
+    database
+  );
+
+  const live =
+    application !== null &&
+    (application.status === "pending" ||
+      application.status === "accepted" ||
+      application.status === "waitlisted");
 
   return {
     event: view,
@@ -3088,7 +3873,9 @@ export async function loadApplicationForm(
     eligibility: gate?.eligibility ?? eligibility(event, { rank }, view.rankLadder),
     waived: gate?.waived ?? NO_WAIVERS,
     rank,
+    profile,
     questions,
+    canEditAnswers: live && answersEditable(view.applicationsState),
     availability: application?.availability ?? {},
     confirmation: application?.confirmation ?? null,
     application,

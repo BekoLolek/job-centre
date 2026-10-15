@@ -25,7 +25,7 @@ import {
   StatTile,
   plural,
 } from "@/components/ui";
-import { getEventById, getMyApplications } from "@/lib/events";
+import { answersEditable, getEventById, getMyApplications } from "@/lib/events";
 import { confirmationDeadline, confirmationsOpen } from "@/lib/events-policy";
 import { requireUser } from "@/lib/session-guards";
 
@@ -101,6 +101,12 @@ export default async function MyEventsPage({
         // write is about to refuse.
         confirmationClosesAt: confirmationDeadline(event.startsAt)?.toISOString() ?? null,
         confirmationsOpen: confirmationsOpen(event.startsAt, now),
+        // R-53, UC-13 4a. A third deadline, with its own boolean on purpose:
+        // the attendance answer closes two days before the start, the answers
+        // close when sign-ups do, and withdrawing closes neither time. One
+        // shared flag would be a bug that reads as a tidy-up.
+        answersEditable: answersEditable(event.applicationsState),
+        outstanding: application.outstanding.length,
         past,
         // Eligibility is left out deliberately: it costs a read per event and
         // only changes the wording for somebody who has withdrawn and might

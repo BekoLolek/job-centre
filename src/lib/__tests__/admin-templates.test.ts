@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   type Database,
@@ -11,15 +11,17 @@ import {
   profileFields,
   users,
 } from "@/db";
-import { type TestDatabase, freshDatabase } from "@/db/__tests__/helpers";
+import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { RIVALS_RANK_LADDER } from "@/db/seed";
 import {
   type TemplateResult,
   createTemplate,
   createTemplateFromEvent,
+  deleteTemplate,
   duplicateTemplate,
   getTemplate,
   loadAdminTemplates,
+  moveTemplate,
   questionSpecsForEvent,
   setTemplateActive,
   templateUsage,
@@ -32,7 +34,13 @@ import {
   normaliseTemplateConfig,
   normaliseTemplateQuestions,
 } from "@/lib/admin-templates-policy";
-import { createEvent, listEventTemplates, setEventQuestions } from "@/lib/events";
+import {
+  applyToEvent,
+  createEvent,
+  listEventTemplates,
+  publishEvent,
+  setEventQuestions,
+} from "@/lib/events";
 
 /**
  * `/admin/templates` — the writing half of `event_templates`.
@@ -289,10 +297,25 @@ describe("createTemplate", () => {
     expect(second.sort).toBeGreaterThan(first.sort);
   });
 
-  it("does not let two templates share a name", async () => {
+  /*
+   * Rewritten for UC-28 4a, which says a name "already used" is *rejected*.
+   * This used to assert the silent "Rivals 2", which is the behaviour the Gate
+   * 2 amendment to UC-15 6a ruled against for the same reason: an automatic
+   * name may be suffixed, a typed one is refused, because renaming what
+   * somebody typed without telling them is worse than refusing it.
+   */
+  it("refuses a name another template already has (UC-28 4a)", async () => {
     expectOk(await createTemplate({ name: "Rivals" }, db));
-    const second = expectOk(await createTemplate({ name: "Rivals" }, db));
-    expect(second.name).toBe("Rivals 2");
+    expect(await expectFail(createTemplate({ name: "Rivals" }, db))).toMatch(
+      /already called "Rivals"/
+    );
+  });
+
+  it("folds case and spaces before deciding a name is taken", async () => {
+    expectOk(await createTemplate({ name: "Rivals cup" }, db));
+    expect(await expectFail(createTemplate({ name: "  rivals   CUP " }, db))).toMatch(
+      /already called/i
+    );
   });
 
   it("refuses a game that does not exist", async () => {
@@ -330,13 +353,26 @@ describe("updateTemplate", () => {
     expect(cleared.gameId).toBeNull();
   });
 
-  it("refuses a name already taken by another template", async () => {
+  // Also rewritten for UC-28 4a: a rename is a typed name like any other, so
+  // the rule has to hold on the way through as well as on the way in.
+  it("refuses a rename onto a name another template has (UC-28 4a)", async () => {
     expectOk(await createTemplate({ name: "Taken" }, db));
     const other = expectOk(await createTemplate({ name: "Other" }, db));
-    // Renamed onto a clash, it is suffixed rather than refused — the picker
-    // must never show two rows reading the same.
-    const updated = expectOk(await updateTemplate(other.id, { name: "Taken" }, db));
-    expect(updated.name).toBe("Taken 2");
+    expect(await expectFail(updateTemplate(other.id, { name: "Taken" }, db))).toMatch(
+      /already called "Taken"/
+    );
+
+    // And the old name is still standing — nothing was half-written.
+    expect((await getTemplate(other.id, db))?.name).toBe("Other");
+  });
+
+  it("lets a template keep its own name, so saving an unchanged card works", async () => {
+    const template = expectOk(await createTemplate({ name: "Rivals cup" }, db));
+    const saved = expectOk(
+      await updateTemplate(template.id, { name: "Rivals cup", type: "tournament" }, db)
+    );
+    expect(saved.name).toBe("Rivals cup");
+    expect(saved.type).toBe("tournament");
   });
 
   it("refuses an invalid question set without writing half of it", async () => {
@@ -412,6 +448,342 @@ describe("setTemplateActive", () => {
     const [after] = await db.select().from(events).where(eq(events.id, event.id));
     expect(after.createdFromTemplateId).toBe(template.id);
     expect(await templateUsage(template.id, db)).toBe(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Order (R-129 / UC-28 7, 8)                                         */
+/* ------------------------------------------------------------------ */
+
+describe("moveTemplate", () => {
+  /** The templates as both screens read them: `sort`, then `name`. */
+  async function order(): Promise<string[]> {
+    const view = await loadAdminTemplates(db);
+    return view.templates.map((template) => template.name);
+  }
+
+  it("swaps two templates and renumbers sort densely", async () => {
+    expectOk(await createTemplate({ name: "First" }, db));
+    const second = expectOk(await createTemplate({ name: "Second" }, db));
+    expectOk(await createTemplate({ name: "Third" }, db));
+
+    expectOk(await moveTemplate(second.id, "up", db));
+    expect(await order()).toEqual(["Second", "First", "Third"]);
+
+    const rows = await db
+      .select({ sort: eventTemplates.sort })
+      .from(eventTemplates)
+      .orderBy(asc(eventTemplates.sort));
+    expect(rows.map((row) => row.sort)).toEqual([0, 1, 2]);
+  });
+
+  it("does nothing at the ends", async () => {
+    const first = expectOk(await createTemplate({ name: "First" }, db));
+    const last = expectOk(await createTemplate({ name: "Second" }, db));
+
+    expectOk(await moveTemplate(first.id, "up", db));
+    expectOk(await moveTemplate(last.id, "down", db));
+    expect(await order()).toEqual(["First", "Second"]);
+  });
+
+  it("recovers an order even when two rows arrived sharing a sort", async () => {
+    // A seed, or any write that did not go through `createTemplate`, can leave
+    // two rows on the same number — at which point the list falls back to the
+    // alphabet and an arrow looks broken. One move renumbers the lot.
+    await db.insert(eventTemplates).values([
+      { name: "Beta", sort: 0 },
+      { name: "Alpha", sort: 0 },
+    ]);
+    const [beta] = await db
+      .select({ id: eventTemplates.id })
+      .from(eventTemplates)
+      .where(eq(eventTemplates.name, "Beta"));
+
+    expect(await order()).toEqual(["Alpha", "Beta"]);
+    expectOk(await moveTemplate(beta.id, "up", db));
+    expect(await order()).toEqual(["Beta", "Alpha"]);
+  });
+
+  it("reports a template that is gone", async () => {
+    expect(
+      await expectFail(
+        moveTemplate("00000000-0000-0000-0000-000000000000", "up", db)
+      )
+    ).toMatch(/no longer exists/i);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Deleting (UC-28 8a)                                                */
+/* ------------------------------------------------------------------ */
+
+describe("deleteTemplate", () => {
+  /**
+   * UC-28 8a: "Deleting a template events were created from - System keeps
+   * those events and forgets only the link."
+   *
+   * The one flow in this use case where getting it wrong destroys something a
+   * community spent a season on, so it is asserted on the event rows rather
+   * than on the return value: the event is still there, it still has its
+   * questions and its config, and the only thing that changed is that it no
+   * longer names where it came from. The foreign key is `on delete set null`
+   * (`drizzle/0006_puzzling_shockwave.sql`) and this is what proves it — a
+   * cascade would take the whole event with it.
+   */
+  it("keeps every event made from it, and forgets only the link", async () => {
+    const template = expectOk(
+      await createTemplate(
+        {
+          name: "Rivals monthly",
+          type: "tournament",
+          gameId: rivalsId,
+          config: { teams: 4, draft: true },
+          questions: [{ label: "Current rank", type: "rank", profileFieldKey: "rank" }],
+        },
+        db
+      )
+    );
+
+    const autumn = expectOk(
+      await createEvent({ title: "Autumn cup", templateId: template.id }, db)
+    );
+    const winter = expectOk(
+      await createEvent({ title: "Winter cup", templateId: template.id }, db)
+    );
+    expect(await templateUsage(template.id, db)).toBe(2);
+
+    const removed = expectOk(await deleteTemplate(template.id, db));
+    expect(removed.usedBy).toBe(2);
+    expect(removed.name).toBe("Rivals monthly");
+
+    // The template is gone from both reads.
+    expect(await getTemplate(template.id, db)).toBeNull();
+    expect(await listEventTemplates(db)).toHaveLength(0);
+
+    // Both events are still here, with everything they copied.
+    const rows = await db
+      .select()
+      .from(events)
+      .where(inArray(events.id, [autumn.id, winter.id]));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.createdFromTemplateId).toBeNull();
+      expect(row.gameId).toBe(rivalsId);
+      expect(row.config.teams).toBe(4);
+      expect(row.config.draft).toBe(true);
+    }
+
+    const questions = await db
+      .select()
+      .from(eventQuestions)
+      .where(eq(eventQuestions.eventId, autumn.id));
+    expect(questions).toHaveLength(1);
+    expect(questions[0].label).toBe("Current rank");
+  });
+
+  it("keeps the applications on an event whose template went", async () => {
+    // The sharpest version of the same property: a cascade would reach past the
+    // event into the people who applied to it.
+    const template = expectOk(await createTemplate({ name: "Open night" }, db));
+    const event = expectOk(
+      await createEvent(
+        { ...PUBLISHABLE, title: "Open night one", templateId: template.id, capacity: 8 },
+        db
+      )
+    );
+    expectOk(await publishEvent(event.id, db));
+
+    const member = await makeUser(db, { displayName: "Ada" });
+    expectOk(await applyToEvent(event.id, member, {}, db));
+
+    expectOk(await deleteTemplate(template.id, db));
+
+    const rows = await db
+      .select()
+      .from(applications)
+      .where(eq(applications.eventId, event.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].userId).toBe(member);
+  });
+
+  it("closes the gap in sort so the arrows keep working", async () => {
+    const first = expectOk(await createTemplate({ name: "First" }, db));
+    expectOk(await createTemplate({ name: "Second" }, db));
+    expectOk(await createTemplate({ name: "Third" }, db));
+
+    expectOk(await deleteTemplate(first.id, db));
+
+    const rows = await db
+      .select({ name: eventTemplates.name, sort: eventTemplates.sort })
+      .from(eventTemplates)
+      .orderBy(asc(eventTemplates.sort));
+    expect(rows).toEqual([
+      { name: "Second", sort: 0 },
+      { name: "Third", sort: 1 },
+    ]);
+  });
+
+  it("frees the name it was using", async () => {
+    const template = expectOk(await createTemplate({ name: "Rivals cup" }, db));
+    expectOk(await deleteTemplate(template.id, db));
+    expect(expectOk(await createTemplate({ name: "Rivals cup" }, db)).name).toBe(
+      "Rivals cup"
+    );
+  });
+
+  it("reports a template that is already gone", async () => {
+    expect(
+      await expectFail(deleteTemplate("00000000-0000-0000-0000-000000000000", db))
+    ).toMatch(/no longer exists/i);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The whole of UC-28, step by step                                   */
+/* ------------------------------------------------------------------ */
+
+describe("maintaining templates (UC-28)", () => {
+  it("1-2: lists them in order, with the usage count and whether each is on", async () => {
+    const quiet = expectOk(await createTemplate({ name: "Quiz night" }, db));
+    const busy = expectOk(await createTemplate({ name: "Rivals monthly" }, db));
+    expectOk(await createEvent({ title: "March", templateId: busy.id }, db));
+    expectOk(await createEvent({ title: "April", templateId: busy.id }, db));
+    expectOk(await setTemplateActive(quiet.id, false, db));
+
+    const view = await loadAdminTemplates(db);
+    expect(view.templates.map((template) => template.name)).toEqual([
+      "Quiz night",
+      "Rivals monthly",
+    ]);
+    expect(view.templates.map((template) => template.events)).toEqual([0, 2]);
+    expect(view.templates.map((template) => template.isActive)).toEqual([false, true]);
+  });
+
+  it("3-4: creates one from scratch with a kind, questions, entry mode and format", async () => {
+    const template = expectOk(
+      await createTemplate(
+        {
+          name: "Rivals monthly",
+          type: "Tournament",
+          gameId: rivalsId,
+          config: {
+            teams: 4,
+            draft: true,
+            bracket: true,
+            entryMode: "approval",
+            format: { concurrentLobbies: 2 },
+          },
+          questions: [
+            { label: "Current rank", type: "rank", profileFieldKey: "rank", required: true },
+            { label: "Preferred role", type: "select", options: ["Vanguard", "Duelist"] },
+          ],
+        },
+        db
+      )
+    );
+
+    expect(template.type).toBe("tournament");
+    expect(template.gameId).toBe(rivalsId);
+    expect(template.config.entryMode).toBe("approval");
+    expect(template.config.format).toEqual({ concurrentLobbies: 2 });
+    expect(template.questions.map((question) => question.label)).toEqual([
+      "Current rank",
+      "Preferred role",
+    ]);
+    // 4: saved, and offered to the create-event picker straight away.
+    expect((await listEventTemplates(db)).map((row) => row.id)).toContain(template.id);
+  });
+
+  it("4a: refuses a name that is blank, and one another template has", async () => {
+    expectOk(await createTemplate({ name: "Rivals monthly" }, db));
+    expect(await expectFail(createTemplate({ name: "  " }, db))).toMatch(
+      /give the template a name/i
+    );
+    expect(await expectFail(createTemplate({ name: "Rivals monthly" }, db))).toMatch(
+      /already called/i
+    );
+    // One row, not two and not a "Rivals monthly 2" nobody asked for.
+    expect(await db.select().from(eventTemplates)).toHaveLength(1);
+  });
+
+  it("5-6: duplicates one, edits the copy, and saves both", async () => {
+    const original = expectOk(
+      await createTemplate(
+        { name: "Rivals 8", config: { teams: 8, draft: true } },
+        db
+      )
+    );
+    const copy = expectOk(await duplicateTemplate(original.id, undefined, db));
+    expectOk(await updateTemplate(copy.id, { name: "Rivals 6", config: { teams: 6 } }, db));
+
+    const view = await loadAdminTemplates(db);
+    const names = view.templates.map((template) => template.name);
+    expect(names).toEqual(["Rivals 8", "Rivals 6"]);
+
+    // 6: *both* saved — the edit to the copy left the original where it was.
+    const [eight] = view.templates.filter((template) => template.name === "Rivals 8");
+    const [six] = view.templates.filter((template) => template.name === "Rivals 6");
+    expect(eight.config.teams).toBe(8);
+    expect(eight.config.draft).toBe(true);
+    expect(six.config.teams).toBe(6);
+  });
+
+  it("7-8: switches the original off, moves the copy to the top, saves the order", async () => {
+    const original = expectOk(await createTemplate({ name: "Rivals 8" }, db));
+    const copy = expectOk(await duplicateTemplate(original.id, "Rivals 6", db));
+
+    expectOk(await setTemplateActive(original.id, false, db));
+    expectOk(await moveTemplate(copy.id, "up", db));
+
+    // 8, first half: the original is no longer offered in UC-08 step 1.
+    const offered = await listEventTemplates(db);
+    expect(offered.map((row) => row.name)).toEqual(["Rivals 6"]);
+
+    // 8, second half: the order is saved, and it is the order both screens read.
+    expect((await loadAdminTemplates(db)).templates.map((row) => row.name)).toEqual([
+      "Rivals 6",
+      "Rivals 8",
+    ]);
+
+    // And the copy really is first in the picker once the original is back on.
+    expectOk(await setTemplateActive(original.id, true, db));
+    expect((await listEventTemplates(db)).map((row) => row.name)).toEqual([
+      "Rivals 6",
+      "Rivals 8",
+    ]);
+  });
+
+  it("outcome: an event made from a template is unaffected by a later edit", async () => {
+    const template = expectOk(
+      await createTemplate(
+        {
+          name: "Rivals monthly",
+          gameId: rivalsId,
+          config: { teams: 4 },
+          questions: [{ label: "Current rank", type: "rank", profileFieldKey: "rank" }],
+        },
+        db
+      )
+    );
+    const event = expectOk(
+      await createEvent({ title: "March cup", templateId: template.id }, db)
+    );
+
+    expectOk(
+      await updateTemplate(
+        template.id,
+        { config: { teams: 8 }, questions: [{ label: "Something else", type: "text" }] },
+        db
+      )
+    );
+
+    const [after] = await db.select().from(events).where(eq(events.id, event.id));
+    expect(after.config.teams).toBe(4);
+    const questions = await db
+      .select()
+      .from(eventQuestions)
+      .where(eq(eventQuestions.eventId, event.id));
+    expect(questions.map((question) => question.label)).toEqual(["Current rank"]);
   });
 });
 

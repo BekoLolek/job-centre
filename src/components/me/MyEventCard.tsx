@@ -125,6 +125,17 @@ export type MyEventRow = {
    * member an answer the server is about to refuse.
    */
   confirmationsOpen: boolean;
+  /**
+   * Whether the answers may still be changed (R-53 / UC-13 3, 4a) —
+   * `answersEditable`'s verdict, taken on the server.
+   *
+   * A **separate** boolean from `confirmationsOpen`, and separate again from
+   * `editable` below, because all three close at different moments and one of
+   * them must never close at all. See the note over the withdraw block.
+   */
+  answersEditable: boolean;
+  /** How many answers this application still needs (UC-13 2), 0 for most. */
+  outstanding: number;
   /** True once the event has been and gone; nothing left to change. */
   past: boolean;
   /** What this member's next move is, computed on the server. */
@@ -455,12 +466,45 @@ export default function MyEventCard({ row }: { row: MyEventRow }) {
           </section>
         )}
 
+        {/* --- Answers --------------------------------------------- */}
+        {live && !row.past && (
+          <section className="space-y-3 border-t border-hair pt-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <Eyebrow>Your answers</Eyebrow>
+              {row.outstanding > 0 && (
+                <Badge tone="union">{plural(row.outstanding, "answer")} needed</Badge>
+              )}
+              {row.answersEditable && (
+                <Button
+                  href={`/events/${row.slug}/apply`}
+                  size="sm"
+                  variant={row.outstanding > 0 ? "union" : "default"}
+                  className="ml-auto"
+                >
+                  {row.outstanding > 0 ? "Answer them" : "Change my answers"}
+                </Button>
+              )}
+            </div>
+
+            <p className="text-12 leading-relaxed text-muted">
+              {row.answersEditable
+                ? "Your details are your profile, so changing one here changes it everywhere — and changing an answer does not move your seat or your place in any queue. You can keep changing them until sign-ups close."
+                : "Sign-ups have closed, so your answers stand and the organisers are building the running order on them. Withdrawing still works, which is below."}
+            </p>
+          </section>
+        )}
+
         {/* --- Withdraw -------------------------------------------- */}
         {/*
-          `editable` deliberately does not consult the answer deadline. R-54 is
-          not an answer, and UC-13 extensions E3 keeps it open after R-200's
-          cut-off: the day before an event, giving a seat up is the one thing
-          still worth doing with it.
+          `editable` deliberately consults **neither** deadline. R-54 is not an
+          answer, and UC-13 4a and UC-13 extensions E3 both keep withdrawing
+          open past the two deadlines that do close: R-200's attendance cut-off
+          (`row.confirmationsOpen`) and sign-ups closing (`row.answersEditable`).
+          The day before an event, giving a seat up is the one thing still worth
+          doing with it — somebody taken ill cannot say "I can't make it" and
+          cannot fix a typo, and can still free the seat the queue is waiting
+          for. Folding either boolean into `editable` would close the way out
+          along with them, and it would pass every pure test in the suite.
         */}
         {editable && (
           <div className="flex flex-wrap items-center gap-4 border-t border-hair pt-4">

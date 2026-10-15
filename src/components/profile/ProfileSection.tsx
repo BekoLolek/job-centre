@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import FieldControl from "./FieldControl";
+import LocalTime from "@/components/format/LocalTime";
 import { Alert, Badge, EmptyState, Eyebrow, Section } from "@/components/ui";
 import type { ProfileValue } from "@/db/schema";
 import type { ProfileSectionView } from "@/lib/profile";
@@ -196,6 +197,20 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
                 <span className="eyebrow text-chalk/70">{field.label}</span>
                 {field.required && !hasAnswer(values[field.id] ?? null) && (
                   <Badge tone="union">Needed</Badge>
+                )}
+                {/*
+                  When they last said this answer is right (R-49 / UC-12 3) —
+                  the member's half of what `confirmed_at` is for: "answered in
+                  March, and still true as of March" is the row to look at
+                  again. Absent until there is a confirmation to show, which is
+                  every answer given before drizzle/0022. Rendered through
+                  `LocalTime`, in their own zone: no instant is formatted on the
+                  server.
+                */}
+                {field.confirmedAt !== null && hasAnswer(values[field.id] ?? null) && (
+                  <span className="ml-auto text-12 text-muted">
+                    confirmed <LocalTime at={field.confirmedAt} format="day" />
+                  </span>
                 )}
               </div>
 

@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Database, events } from "@/db";
+import { type Database, applications, events } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { loadDashboard } from "@/lib/admin-dashboard";
 import { recordAudit } from "@/lib/audit";
@@ -76,6 +76,73 @@ describe("applications waiting", () => {
     // Deciding it makes the line go away. Nothing was marked done.
     unwrap(await setApplicationStatus(queued.id, "declined", {}, db));
     expect((await itemsFor(event.id)).filter((row) => row.kind === "applications")).toEqual([]);
+  });
+
+  /**
+   * The other pile, and the one the first version of this module left out.
+   *
+   * UC-27 2 and R-109 both say "pending applications". An approval event's
+   * applications land `pending` (R-27 / UC-12 7b) and nothing but a manager's
+   * decision moves them — no cap to promote them, no withdrawal to free a seat
+   * — so if any application belongs on this page it is this one. The module's
+   * own comment said it was deliberately missing and named this task.
+   */
+  it("appears for an approval event's applications nobody has decided (UC-27 2)", async () => {
+    counter += 1;
+    const event = unwrap(
+      await createEvent(
+        { ...PUBLISHABLE, title: `Approval ${counter}`, config: { entryMode: "approval" } },
+        db
+      )
+    );
+    unwrap(await publishEvent(event.id, db));
+
+    const first = await makeUser(db, { displayName: `Hopeful ${counter}` });
+    const second = await makeUser(db, { displayName: `Also hopeful ${counter}` });
+    const one = unwrap(await applyToEvent(event.id, first, {}, db));
+    unwrap(await applyToEvent(event.id, second, {}, db));
+    expect(one.status).toBe("pending");
+
+    const pending = () =>
+      itemsFor(event.id).then((rows) =>
+        rows.filter((row) => row.kind === "pending_applications")
+      );
+
+    const [item] = await pending();
+    expect(item.label).toBe("2 applications need a decision");
+    expect(item.count).toBe(2);
+    expect(item.href).toBe(`/admin/events/${event.id}?tab=applicants`);
+    expect(item.action).toBe("Decide them");
+    // Nothing else resolves it, so it is blocking rather than merely due.
+    expect(item.urgency).toBe("blocked");
+
+    // Deciding one takes it off the count; deciding both takes the line away.
+    unwrap(await setApplicationStatus(one.id, "accepted", {}, db));
+    const [after] = await pending();
+    expect(after.label).toBe("1 application needs a decision");
+
+    const [other] = await db
+      .select({ id: applications.id })
+      .from(applications)
+      .where(and(eq(applications.eventId, event.id), eq(applications.status, "pending")));
+    unwrap(await setApplicationStatus(other.id, "declined", {}, db));
+    expect(await pending()).toEqual([]);
+  });
+
+  it("does not list a first-come event's seats as needing a decision", async () => {
+    // The two piles are different work and must not be counted twice: a
+    // first-come application decides itself on the way in (§14).
+    counter += 1;
+    const event = unwrap(
+      await createEvent({ ...PUBLISHABLE, title: `First come ${counter}` }, db)
+    );
+    unwrap(await publishEvent(event.id, db));
+    const member = await makeUser(db, { displayName: `Seated ${counter}` });
+    expect(unwrap(await applyToEvent(event.id, member, {}, db)).status).toBe("accepted");
+
+    expect(
+      (await itemsFor(event.id)).filter((row) => row.kind === "pending_applications")
+    ).toEqual([]);
   });
 });
 
@@ -351,6 +418,67 @@ describe("a member waiting to hear about an event they want to run", () => {
     expect(
       (await loadDashboard({}, db)).items.filter((item) => item.kind === "host_applications")
     ).toEqual([]);
+  });
+});
+
+describe("the admin home's extra attention items (UC-27 E1)", () => {
+  /**
+   * E1: "At step 2, System **also** lists events ready to publish, events with
+   * teams missing captains, an open draft lot, and matches needing a winner."
+   *
+   * Each of those four has a test of its own above; this is the "also", which
+   * is the part a line-by-line test cannot see — one event in a state that
+   * deserves three of them at once, and all three reaching the admin rather
+   * than the first one winning. The fourth (ready to publish) is mutually
+   * exclusive with them by design: it only appears while the event is a draft,
+   * and teams and a draft lot only exist once it is published, so it is
+   * asserted beside them rather than among them.
+   */
+  it("lists captains, an open lot and a drawn series together, each with its own link", async () => {
+    counter += 1;
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Everything ${counter}` }, db));
+
+    // A draft event: "ready to publish" is E1's first item.
+    expect(
+      (await itemsFor(event.id)).map((item) => item.kind)
+    ).toEqual(["publish"]);
+
+    unwrap(await publishEvent(event.id, db));
+
+    const captain = await makeUser(db, { displayName: `Cap ${counter}` });
+    const player = await makeUser(db, { displayName: `Player ${counter}` });
+    for (const userId of [captain, player]) {
+      unwrap(await applyToEvent(event.id, userId, {}, db));
+    }
+    const teams = unwrap(await setTeams(event.id, [{ name: "Red" }, { name: "Blue" }], db)).teams;
+    // One captain of two, so "missing captains" is true of the other.
+    unwrap(await setCaptains(event.id, [{ teamId: teams[0].id, userId: captain }], db));
+    unwrap(await setDraftPool(event.id, { userIds: [player] }, db));
+    unwrap(await openLot(event.id, { userId: player }, db));
+
+    const items = await itemsFor(event.id);
+    const kinds = items.map((item) => item.kind);
+    expect(kinds).toContain("captains");
+    expect(kinds).toContain("lot_open");
+    // Published, so publishing is no longer a decision anybody owes.
+    expect(kinds).not.toContain("publish");
+
+    // Every one of them is a decision with a screen behind it (§4), which is
+    // what makes the list worth reading rather than a status board.
+    for (const item of items) {
+      expect(item.href.startsWith("/")).toBe(true);
+      expect(item.event?.id).toBe(event.id);
+    }
+  });
+
+  it("says nothing about an event in no state at all (UC-27 2a)", async () => {
+    counter += 1;
+    // Published, inside its sign-up window, nobody waiting, no teams, no
+    // bracket: there is genuinely nothing to decide, and the page has to be
+    // able to say so rather than inventing a line.
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Quiet ${counter}` }, db));
+    unwrap(await publishEvent(event.id, db));
+    expect(await itemsFor(event.id)).toEqual([]);
   });
 });
 

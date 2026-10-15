@@ -2,6 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { MyEventRow } from "../MyEventCard";
+import { offersWithdraw, readable } from "./card-text";
 
 /*
  * The attendance section of a member's own event card (UC-13 5-8).
@@ -37,14 +38,19 @@ vi.mock("@/app/me/events/actions", () => ({
 
 const { default: MyEventCard } = await import("../MyEventCard");
 
+/** The whole rendered markup, for assertions about the controls themselves. */
+function markup(row: MyEventRow): string {
+  return renderToStaticMarkup(createElement(MyEventCard, { row }));
+}
+
 /** The rendered card as a reader sees it: no tags, no HTML entities. */
 function text(row: MyEventRow): string {
-  return renderToStaticMarkup(createElement(MyEventCard, { row }))
-    .replace(/<[^>]*>/g, " ")
-    .replace(/&#x27;|&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/&nbsp;|\s+/g, " ");
+  return readable(markup(row));
+}
+
+/** Is the withdraw control on the card? Shared with `answers-lock`. */
+function offers(row: MyEventRow): boolean {
+  return offersWithdraw(markup(row));
 }
 
 function row(over: Partial<MyEventRow> = {}): MyEventRow {
@@ -72,6 +78,8 @@ function row(over: Partial<MyEventRow> = {}): MyEventRow {
     confirmation: null,
     confirmationClosesAt: "2026-05-18T17:00:00.000Z",
     confirmationsOpen: true,
+    answersEditable: true,
+    outstanding: 0,
     past: false,
     action: {
       kind: "accepted",
@@ -137,11 +145,24 @@ describe("after the answer closes", () => {
   });
 
   it("still offers Withdraw, which the deadline does not govern", () => {
-    // The assertion this file exists for. Both sides of the lock, because the
-    // bug would be a change that closed the way out along with the answer.
-    expect(text(row({ ...shut, confirmation: "in" }))).toContain("Withdraw");
-    expect(text(row({ ...shut, confirmation: null }))).toContain("Withdraw");
-    expect(text(row())).toContain("Withdraw");
+    /*
+     * The assertion this file exists for. Both sides of the lock, because the
+     * bug would be a change that closed the way out along with the answer.
+     *
+     * `offersWithdraw` rather than reading "Withdraw" out of the text: the
+     * card says "Withdrawing still works" a few lines above the button, so the
+     * text assertion passed with the button deleted and only bit at all
+     * because this fixture leaves `answersEditable` true — flip that and it
+     * was green either way. Same trap, same shared helper, as
+     * `answers-lock.test.ts`, which hit it first.
+     */
+    expect(offers(row({ ...shut, confirmation: "in" }))).toBe(true);
+    expect(offers(row({ ...shut, confirmation: null }))).toBe(true);
+    expect(offers(row())).toBe(true);
+    // And with the answers shut too, which is the fixture's other half: the
+    // attendance deadline and sign-ups closing are different instants, and
+    // neither governs the way out (R-54, UC-13 4a / E3).
+    expect(offers(row({ ...shut, answersEditable: false, confirmation: "in" }))).toBe(true);
   });
 
   it("points a member who can no longer make it at withdrawing", () => {

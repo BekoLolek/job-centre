@@ -20,6 +20,8 @@ import {
   setRankLadder,
   updateField,
 } from "@/lib/admin-games";
+import { loadAdminTemplates } from "@/lib/admin-templates";
+import { hostableGames } from "@/lib/hosting";
 import { loadProfile, saveProfileSection } from "@/lib/profile";
 
 /**
@@ -839,6 +841,253 @@ describe("loadAdminGames", () => {
       globalRetired: [],
       globalAnswers: 0,
     });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-03 E1: a detail asked of every game (R-131)                     */
+/* ------------------------------------------------------------------ */
+
+describe("a detail asked of every game (UC-03 E1)", () => {
+  /**
+   * E1: "admin adds a detail for every game - System asks it on every game's
+   * profile section, **once**."
+   *
+   * Once is the whole requirement (R-131, "so that shared details are asked
+   * once"), and the way it is kept is that the question belongs to no game: one
+   * row with `game_id` null, one section in front of the member, however many
+   * games exist. Asking it per game would be three controls for one fact and
+   * three rows in `profile_values` to disagree with each other.
+   */
+  it("asks it once, in its own section, however many games there are", async () => {
+    await createGame({ name: "REPO" }, db);
+    await createGame({ name: "Jackbox" }, db);
+    await createGame({ name: "Marvel Rivals" }, db);
+
+    const field = await createField(null, { label: "Happy on voice", type: "bool" }, db);
+    expect(field.ok).toBe(true);
+
+    const profile = await loadProfile(userId, db);
+    const asking = profile.sections.filter((section) =>
+      section.fields.some((row) => row.label === "Happy on voice")
+    );
+    expect(asking).toHaveLength(1);
+    expect(asking[0].gameId).toBeNull();
+    expect(asking[0].key).toBe("global");
+
+    // And no game's own section picked it up on the way past.
+    const view = await loadAdminGames(db);
+    expect(view.globalFields.map((row) => row.label)).toEqual(["Happy on voice"]);
+    for (const game of view.games) expect(game.fields).toEqual([]);
+  });
+
+  it("is answered once, and that one answer is what every game's form reads", async () => {
+    const game = await addRepo();
+    const field = await createField(null, { label: "Happy on voice", type: "bool" }, db);
+    if (!field.ok) throw new Error(field.error);
+
+    const saved = await saveProfileSection(userId, null, { [field.data.id]: true }, db);
+    expect(saved.ok).toBe(true);
+
+    const rows = await db
+      .select()
+      .from(profileValues)
+      .where(eq(profileValues.fieldId, field.data.id));
+    expect(rows).toHaveLength(1);
+
+    // Still one row and one answer with a game in play — nothing about adding
+    // a game duplicates the question or the answer.
+    const profile = await loadProfile(userId, db);
+    const global = profile.sections.find((section) => section.gameId === null);
+    expect(global?.fields.map((row) => row.value)).toEqual([true]);
+    expect(
+      profile.sections.find((section) => section.gameId === game.id)?.fields
+    ).toEqual([]);
+  });
+
+  /*
+   * The bug this file found. A `rank` field reads its choices from its game's
+   * ladder (`choicesFor` in `profile-fields.ts`), so a field with no game has
+   * no choices at all and `parseProfileValue` refuses every answer to it — the
+   * member is shown an empty picker and can never fill it in. `updateField`
+   * already refused to retype a global question as a rank; `createField` let
+   * one in, which is UC-03 3a ("no ranks, no rank details") going unenforced
+   * for the section that belongs to no game.
+   */
+  it("cannot be a rank, because a rank belongs to one game's ladder (UC-03 3a)", async () => {
+    const refused = await createField(null, { label: "Current rank", type: "rank" }, db);
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.error).toMatch(/cannot be asked of every game/i);
+
+    // Nothing was written, so no member is shown an unanswerable question.
+    const view = await loadAdminGames(db);
+    expect(view.globalFields).toEqual([]);
+  });
+
+  it("can still be a rank on a game that has a ladder", async () => {
+    const [game] = await db
+      .insert(games)
+      .values({ key: "rivals", name: "Marvel Rivals", rankLadder: [...RIVALS_RANK_LADDER] })
+      .returning({ id: games.id });
+    const field = await createField(game.id, { label: "Current rank", type: "rank" }, db);
+    expect(field.ok).toBe(true);
+  });
+
+  /**
+   * Task 14's rule, one section over: retiring a question kept for everybody
+   * stops it being asked of everybody and keeps every answer (UC-03 5a).
+   */
+  it("stops being asked of every game when it is retired, and keeps the answers", async () => {
+    await createGame({ name: "REPO" }, db);
+    const field = await createField(null, { label: "Happy on voice", type: "bool" }, db);
+    if (!field.ok) throw new Error(field.error);
+    await saveProfileSection(userId, null, { [field.data.id]: true }, db);
+
+    const retired = await retireField(field.data.id, db);
+    expect(retired.ok && retired.data.keptAnswers).toBe(1);
+
+    const profile = await loadProfile(userId, db);
+    expect(
+      profile.sections.flatMap((section) => section.fields.map((row) => row.label))
+    ).not.toContain("Happy on voice");
+    expect(await fieldAnswerCount(field.data.id, db)).toBe(1);
+
+    // And the admin screen still has it, with its answers, to switch back on.
+    const view = await loadAdminGames(db);
+    expect(view.globalRetired.map((row) => row.label)).toEqual(["Happy on voice"]);
+    expect(view.globalAnswers).toBe(1);
+
+    // Task 14: deleting one that holds answers is refused outright.
+    const deleted = await deleteField(field.data.id, db);
+    expect(deleted.ok).toBe(false);
+    if (!deleted.ok) expect(deleted.error).toMatch(/retire it instead/i);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-03 E2: hiding a game (R-132)                                    */
+/* ------------------------------------------------------------------ */
+
+describe("hiding a game (UC-03 E2)", () => {
+  /**
+   * E2: "System stops offering it for new events, host applications and
+   * profiles; existing events, answers and history keep it."
+   *
+   * Three reads for the three places the flow names, and then the half that
+   * matters more: the event that already chose it still has it, and the answers
+   * are all still there.
+   */
+  it("stops offering it on profiles and host applications, and keeps everything", async () => {
+    const game = await addRepo();
+    const field = await createField(game.id, { label: "Lobby size", type: "number" }, db);
+    if (!field.ok) throw new Error(field.error);
+    await saveProfileSection(userId, game.id, { [field.data.id]: 4 }, db);
+    const eventId = await eventWithRankRule(game.id, { title: "REPO night" });
+
+    expect((await hostableGames(db)).map((row) => row.name)).toEqual(["REPO"]);
+
+    const hidden = await setGameActive(game.id, false, db);
+    expect(hidden.ok).toBe(true);
+
+    // Profiles: the section is gone.
+    const profile = await loadProfile(userId, db);
+    expect(profile.sections.map((section) => section.gameId)).not.toContain(game.id);
+
+    // Host applications: the dropdown no longer offers it.
+    expect(await hostableGames(db)).toEqual([]);
+
+    // The existing event keeps it, answers and all.
+    const [event] = await db.select().from(events).where(eq(events.id, eventId));
+    expect(event.gameId).toBe(game.id);
+    expect(await fieldAnswerCount(field.data.id, db)).toBe(1);
+
+    // And switching it back on restores the lot.
+    expect((await setGameActive(game.id, true, db)).ok).toBe(true);
+    const back = await loadProfile(userId, db);
+    const section = back.sections.find((row) => row.gameId === game.id);
+    expect(section?.fields.map((row) => row.value)).toEqual([4]);
+  });
+
+  it("keeps a hidden game on the admin screen, which is where it comes back from", async () => {
+    const game = await addRepo();
+    await setGameActive(game.id, false, db);
+    const view = await loadAdminGames(db);
+    expect(view.games.map((row) => [row.name, row.isActive])).toEqual([["REPO", false]]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-03 E3: the order games are offered in (R-133)                   */
+/* ------------------------------------------------------------------ */
+
+describe("the order games are offered in (UC-03 E3)", () => {
+  /**
+   * E3: "Admin reorders games - System shows them in that order **everywhere a
+   * game is chosen**."
+   *
+   * Everywhere is the word that does the work, so this asserts every read that
+   * puts a game in front of somebody. `hostableGames` sorted by name, which
+   * made `/admin/games`' arrows do nothing on the one screen where a member
+   * picks a game — fixed in `src/lib/hosting.ts` and pinned here.
+   */
+  it("holds in the admin list, on a profile, in the host form and in the template picker", async () => {
+    // Alphabetical and admin's order disagree, which is the only way this test
+    // can tell them apart.
+    const zebra = await createGame({ name: "Zebra Royale" }, db);
+    const apex = await createGame({ name: "Apex Arena" }, db);
+    if (!zebra.ok || !apex.ok) throw new Error("setup");
+    await createField(zebra.data.id, { label: "Notes", type: "text" }, db);
+    await createField(apex.data.id, { label: "Notes", type: "text" }, db);
+
+    const names = (rows: ReadonlyArray<{ name: string }>) => rows.map((row) => row.name);
+
+    // As created: Zebra first, because `sort` is append order, not the alphabet.
+    expect(names((await loadAdminGames(db)).games)).toEqual([
+      "Zebra Royale",
+      "Apex Arena",
+    ]);
+    expect(names(await hostableGames(db))).toEqual(["Zebra Royale", "Apex Arena"]);
+    expect(names((await loadAdminTemplates(db)).games)).toEqual([
+      "Zebra Royale",
+      "Apex Arena",
+    ]);
+    expect(
+      (await loadProfile(userId, db)).sections
+        .filter((section) => section.gameId !== null)
+        .map((section) => section.name)
+    ).toEqual(["Zebra Royale", "Apex Arena"]);
+
+    // The admin moves Apex up. Every one of those reads follows.
+    expect((await moveGame(apex.data.id, "up", db)).ok).toBe(true);
+
+    expect(names((await loadAdminGames(db)).games)).toEqual([
+      "Apex Arena",
+      "Zebra Royale",
+    ]);
+    expect(names(await hostableGames(db))).toEqual(["Apex Arena", "Zebra Royale"]);
+    expect(names((await loadAdminTemplates(db)).games)).toEqual([
+      "Apex Arena",
+      "Zebra Royale",
+    ]);
+    expect(
+      (await loadProfile(userId, db)).sections
+        .filter((section) => section.gameId !== null)
+        .map((section) => section.name)
+    ).toEqual(["Apex Arena", "Zebra Royale"]);
+  });
+
+  it("leaves a hidden game out of the host form without disturbing the order", async () => {
+    const first = await createGame({ name: "Zebra Royale" }, db);
+    const second = await createGame({ name: "Apex Arena" }, db);
+    const third = await createGame({ name: "Mid Game" }, db);
+    if (!first.ok || !second.ok || !third.ok) throw new Error("setup");
+
+    await setGameActive(second.data.id, false, db);
+    expect((await hostableGames(db)).map((row) => row.name)).toEqual([
+      "Zebra Royale",
+      "Mid Game",
+    ]);
   });
 });
 

@@ -5,6 +5,7 @@ import {
   NUMBER_MAX,
   TEXT_MAX_LENGTH,
   choicesFor,
+  detailAttention,
   fieldTypeInfo,
   formatAnswer,
   groupRankLadder,
@@ -395,5 +396,70 @@ describe("reorder", () => {
     const rows = [{ id: "a" }, { id: "b" }];
     expect(reorderById(rows, "b", "up").map((row) => row.id)).toEqual(["b", "a"]);
     expect(reorderById(rows, "nope", "up").map((row) => row.id)).toEqual(["a", "b"]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* detailAttention (UC-12 2b, UC-13 2, UC-03 5a)                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which questions still need the member — the one rule three screens read.
+ *
+ * The application form opens a control for whatever this returns, `/me`'s
+ * to-dos name it, and the profile page badges it. All three being one function
+ * is the only reason they cannot disagree about whether a question is
+ * outstanding, so the function is tested rather than any of the three.
+ *
+ * The retirement case is the one with teeth. R-09 keeps every answer when an
+ * admin retires a question, and UC-03 5a stops the question being asked — so a
+ * retired question that still returned "missing" would produce a to-do with
+ * nowhere to do it, for ever, on a question nobody is asking any more. It is a
+ * single `if` that no other test in the suite would notice the loss of.
+ */
+describe("detailAttention", () => {
+  const detail = (over: Partial<Parameters<typeof detailAttention>[0]> = {}) => ({
+    type: "select" as const,
+    label: "Preferred role",
+    options: ROLES,
+    rankLadder: [] as string[],
+    required: false,
+    retiredAt: null as Date | null,
+    ...over,
+  });
+
+  it("asks for a required answer that is not there", () => {
+    // UC-12 2b: the application asks for it inline.
+    expect(detailAttention(detail({ required: true }), null)).toBe("missing");
+    expect(detailAttention(detail({ required: true, type: "multiselect" }), [])).toBe("missing");
+  });
+
+  it("asks nothing for an optional answer that is not there", () => {
+    expect(detailAttention(detail(), null)).toBeNull();
+  });
+
+  it("asks nothing when the answer still fits the question", () => {
+    expect(detailAttention(detail({ required: true }), "duelist")).toBeNull();
+  });
+
+  it("flags an answer the question has outgrown, required or not", () => {
+    /*
+     * "A question changed since you answered it" (UC-13 2), detected by asking
+     * the question rather than by comparing clocks: the admin deleted the
+     * option this member had picked, and R-09 kept the row. Nothing but the
+     * member can resolve it.
+     */
+    expect(detailAttention(detail(), "healer")).toBe("stale");
+    expect(detailAttention(detail({ type: "number" }), "duelist")).toBe("stale");
+    expect(detailAttention(detail({ required: true }), "healer")).toBe("stale");
+  });
+
+  it("asks nothing at all for a retired question", () => {
+    // UC-03 5a / R-09. Both ways round, because a retired question is exactly
+    // the one most likely to be required *and* unanswerable.
+    const retired = { retiredAt: new Date("2026-03-01T00:00:00Z") };
+    expect(detailAttention(detail({ ...retired, required: true }), null)).toBeNull();
+    expect(detailAttention(detail({ ...retired, required: true }), "healer")).toBeNull();
+    expect(detailAttention(detail(retired), "duelist")).toBeNull();
   });
 });

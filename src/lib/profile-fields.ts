@@ -216,6 +216,49 @@ export function choicesFor(
   return [];
 }
 
+/**
+ * What the section asked of **everybody** is called, and keyed by.
+ *
+ * Here rather than in `src/lib/profile.ts`, which builds the sections, for the
+ * one reason that decides where anything in this folder lives: that module
+ * holds a database handle, and a client component comparing a section key to
+ * this constant would drag Postgres into its chunk (it did — the apply page's
+ * build failed on `node:fs`). A name is a rule, not a query.
+ */
+export const GLOBAL_SECTION_NAME = "Everyone";
+export const GLOBAL_SECTION_KEY = "global";
+
+/**
+ * Why a `rank` question cannot be asked here (UC-03 3a, E1).
+ *
+ * Two different reasons with two different answers, and the copy has to know
+ * which it is saying: a game with no ladder yet is one ladder away from being
+ * able to ask, while the "Everyone" section has no game and so can never read
+ * one — `createField` refuses that outright, because a rank field with no
+ * ladder renders a picker no member can answer and `parseProfileValue` would
+ * refuse every answer to it.
+ *
+ * **One home for the sentence.** `createField`'s refusal and the dialog's
+ * explanation were the same two sentences byte-for-byte in two files, which is
+ * how the screen ends up promising something the server does not say. It lives
+ * here rather than beside either of them for the reason `src/components/
+ * events/when.ts` exists: this module has no database handle and no `"use
+ * client"`, so the server rule and the client's explanation of it can both
+ * call it.
+ *
+ * @param game The game's name, or `null` for the global ("Everyone") section.
+ */
+export function rankUnavailable(game: string | null): string {
+  return game === null
+    ? "A rank question reads one game's rank ladder, so it cannot be asked of every game. " +
+        "Add it to the game whose ranks it means."
+    : `${game} has no rank ladder yet, so a rank question would have nothing to offer. ` +
+        "Add the ranks first.";
+}
+
+/** How the dialog names a game it is only shown inside (`rankUnavailable`). */
+export const THIS_GAME = "This game";
+
 /* ------------------------------------------------------------------ */
 /* The rank ladder, arranged for two taps                             */
 /* ------------------------------------------------------------------ */
@@ -405,6 +448,61 @@ export function valueStillValid(field: FieldShape, value: ProfileValue): boolean
   // An empty multiselect is a legal parse but not an answer worth keeping.
   if (Array.isArray(result.value)) return result.value.length > 0;
   return result.value !== null;
+}
+
+/**
+ * Why one profile detail still needs the member, or null when it does not.
+ *
+ *  - `missing` — a required detail with no answer. UC-12 2b asks for it inline
+ *    on the application, and the approved amendment to UC-04 4a is what makes
+ *    that the right place: the profile saves partially and the *application*
+ *    requires it, so a member can fill their profile in over time and still be
+ *    stopped at the one event that needs the thing they skipped.
+ *  - `stale` — there **is** an answer and it no longer fits the question. This
+ *    is "the question changed since you answered it" (UC-13 2), and it is the
+ *    one case nobody can see coming: an admin retypes "Pick one" as a number,
+ *    or drops the option half the members picked, and R-09 keeps every answer
+ *    rather than clearing it (UC-03 5a). The row survives, unreadable, and only
+ *    the member can replace it.
+ */
+export type DetailAttention = "missing" | "stale" | null;
+
+/**
+ * Does this detail need the member's attention, and why?
+ *
+ * ## Why this is a comparison with the question and not with a clock
+ *
+ * "Changed since you answered it" sounds like two timestamps, and there is no
+ * second timestamp to use: `profile_fields` records when a question was created
+ * and when it was retired, and nothing records when its wording, type or
+ * options last moved. So the comparison is structural — the stored answer
+ * against the question **as it now stands** — which is both stronger and
+ * cheaper than a clock would be. An edit that left every answer still readable
+ * (a relabel, a reorder) needs nothing from the member and raises nothing here;
+ * an edit that stranded their answer raises it whenever it happened, including
+ * for edits made before this rule existed. A timestamp comparison would have
+ * got both of those backwards.
+ *
+ * `profile_values.confirmed_at` is deliberately not read here. It records that
+ * the member vouched for an answer, which is a different fact from whether the
+ * answer still parses, and a confirmation can no more rescue a stranded answer
+ * than it can strand a good one.
+ *
+ * ## A retired question never needs anything
+ *
+ * First, and before `required` is even looked at (R-09, UC-03 5a). Retiring is
+ * how an admin stops asking something people have already answered, so a
+ * retired detail that raised a to-do would be the site asking for exactly what
+ * the admin just stopped asking — and a *required* retired detail would nag for
+ * ever, because the form it points at no longer has the question on it.
+ */
+export function detailAttention(
+  field: FieldShape & { required: boolean; retiredAt: Date | null },
+  value: ProfileValue
+): DetailAttention {
+  if (field.retiredAt !== null) return null;
+  if (!hasAnswer(value)) return field.required ? "missing" : null;
+  return valueStillValid(field, value) ? null : "stale";
 }
 
 /** Is there an answer here at all? `[]` and `null` are both "no". */

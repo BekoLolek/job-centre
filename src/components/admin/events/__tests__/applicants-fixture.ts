@@ -114,6 +114,7 @@ export function applicant(
     note: null,
     availability: {},
     confirmation: null,
+    answerConfirmedAt: {},
     member: {
       id: "member-1",
       displayName: displayName ?? "Filler Fay",

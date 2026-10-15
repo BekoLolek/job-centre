@@ -26,6 +26,7 @@ import {
   cx,
   plural,
 } from "@/components/ui";
+import LocalTime from "@/components/format/LocalTime";
 import {
   AVAILABILITY_CHOICES,
   applicationStatusLabel,
@@ -830,6 +831,23 @@ export function ApplicantDetail({
                       rankLadder: event.rankLadder,
                     },
                     row.answers[question.id] ?? null
+                  )}
+                  {/*
+                    For a question linked to a profile detail, when the member
+                    last said that answer is still right (R-49 / UC-12 3).
+                    `confirmed_at > updated_at` is the difference between "they
+                    checked this when they applied" and "nobody has looked at
+                    this since March", which is what a manager seeding a draft
+                    off somebody's rank wants to know. Only linked questions
+                    have one — an own answer is given on the application and
+                    carries no stamp. `LocalTime` keeps the formatting in the
+                    reader's browser.
+                  */}
+                  {row.answerConfirmedAt[question.id] && (
+                    <span className="mt-0.5 block text-12 text-muted">
+                      confirmed{" "}
+                      <LocalTime at={row.answerConfirmedAt[question.id]} format="day" />
+                    </span>
                   )}
                 </dd>
               </div>

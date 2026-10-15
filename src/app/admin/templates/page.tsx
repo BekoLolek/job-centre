@@ -68,8 +68,9 @@ export default async function AdminTemplatesPage() {
 
         <p className="pb-4 text-center text-12 text-muted">
           A template is copied into an event and then forgotten, so editing one never
-          touches an event already taking applications. Nothing here deletes a template —
-          deactivating takes it out of the create-event picker and leaves everything else.
+          touches an event already taking applications — and deleting one leaves every
+          event made from it exactly as it is. Deactivating is the gentler move:
+          it takes a template out of the create-event picker and keeps it for next season.
         </p>
       </Page>
     </div>

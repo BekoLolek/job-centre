@@ -102,6 +102,8 @@ export const AUDIT_ACTIONS = {
   "template.from_event": "Template made from an event",
   "template.activated": "Template activated",
   "template.deactivated": "Template deactivated",
+  "template.moved": "Templates reordered",
+  "template.deleted": "Template deleted",
   "championship.created": "Championship created",
   "championship.updated": "Championship changed",
   "championship.status": "Championship status changed",
@@ -136,6 +138,10 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   // Somebody was signed out of every device they had open (UC-02 4a).
   "user.sessions.ended",
   "template.deactivated",
+  // The row goes. Every event made from it keeps running (UC-28 8a) — a
+  // template holds a setup, not history — but the starting point itself is
+  // gone, and this is the line that says who removed it.
+  "template.deleted",
   // It takes a season's results away with it: the places recorded in that event
   // go by the cascade, and the standings re-score without them.
   "championship.event.removed",

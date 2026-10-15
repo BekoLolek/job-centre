@@ -27,12 +27,23 @@
  * because a template cannot hold a field id — ids differ per deployment, and
  * `resolveTemplateQuestions` in `events.ts` resolves keys on the way back in.
  *
- * ## Nothing is deleted
+ * ## Switching off is the usual way, deleting is the other one
  *
  * Deactivating drops a template out of `listEventTemplates`, which is the only
  * read the create-event flow does, so it disappears from the picker while every
- * event ever made from it keeps its provenance row. That is checklist.md's
- * standing rule, and it costs nothing here.
+ * event ever made from it keeps its provenance row (R-128). That is the path
+ * the screen recommends and it costs nothing here.
+ *
+ * {@link deleteTemplate} is the other one, and UC-28 8a is why it exists: a
+ * template is a starting point rather than a parent, so an admin who is done
+ * with one may remove the row outright and **the events made from it stay**.
+ * Nothing about this contradicts the standing "nothing destructive" rule — a
+ * template holds no history. It holds a *setup*, every event copied it on the
+ * way in, and `events.created_from_template_id` is provenance nothing reads to
+ * decide anything. The foreign key is `on delete set null` (schema.ts, and
+ * `drizzle/0006_puzzling_shockwave.sql`), so the link is forgotten and the
+ * event is untouched — which is exactly what 8a asks for, and is the one
+ * property worth a test of its own.
  */
 
 import { asc, count, eq, inArray, ne, sql } from "drizzle-orm";
@@ -60,6 +71,7 @@ import {
   templateFail as fail,
 } from "./admin-templates-policy";
 import { readDatesFor } from "./events";
+import { reorderById } from "./profile-fields";
 
 /* ------------------------------------------------------------------ */
 /* Results and rules                                                  */
@@ -279,23 +291,55 @@ async function nextSort(database: Database): Promise<number> {
   return (row?.highest ?? -1) + 1;
 }
 
-/** A name nobody else is using, so the picker never shows two of the same. */
-async function freeName(
+/** Every other template's name, folded for comparison. */
+async function takenNames(
   database: Database,
-  desired: string,
   exceptId?: string
-): Promise<string> {
+): Promise<Set<string>> {
   const rows = await database
     .select({ name: eventTemplates.name })
     .from(eventTemplates)
     .where(exceptId ? ne(eventTemplates.id, exceptId) : undefined);
-  const taken = new Set(rows.map((row) => row.name.toLowerCase()));
+  return new Set(rows.map((row) => row.name.toLowerCase()));
+}
+
+/**
+ * Whether another template already carries this name (UC-28 4a).
+ *
+ * The check for a name somebody **typed**. `cleanTemplateName` has already
+ * collapsed the spaces, so this only has to fold case: "Rivals cup" and
+ * "rivals  cup" are the same template to everybody except `=`.
+ */
+async function nameTaken(
+  database: Database,
+  desired: string,
+  exceptId?: string
+): Promise<boolean> {
+  return (await takenNames(database, exceptId)).has(desired.toLowerCase());
+}
+
+/**
+ * A name nobody else is using, suffixed if need be.
+ *
+ * Only for a name the *system* chose — a duplicate's "Rivals cup copy", or the
+ * event title `createTemplateFromEvent` falls back to. A name an admin typed is
+ * refused instead (UC-28 4a), per the Gate 2 amendment to UC-15 6a: "automatic
+ * names get a suffix; a typed duplicate is refused", because silently renaming
+ * what someone typed is worse than telling them.
+ */
+async function freeName(database: Database, desired: string): Promise<string> {
+  const taken = await takenNames(database);
   if (!taken.has(desired.toLowerCase())) return desired;
   for (let n = 2; n < 100; n += 1) {
     const candidate = `${desired} ${n}`.slice(0, TEMPLATE_NAME_MAX);
     if (!taken.has(candidate.toLowerCase())) return candidate;
   }
   return desired;
+}
+
+/** The refusal 4a asks for, worded the same wherever a typed name clashes. */
+function nameClash(name: string): { ok: false; error: string } {
+  return fail(`A template is already called "${name}". Pick another name.`);
 }
 
 /* ------------------------------------------------------------------ */
@@ -310,13 +354,20 @@ export type TemplateInput = {
   questions?: unknown;
 };
 
-/** Make a template from nothing. Name only, in practice. */
+/**
+ * Make a template from nothing (R-125 / UC-28 3).
+ *
+ * Name, kind, questions, entry mode and format defaults — everything UC-28 3
+ * lists, all of it optional except the name. A blank name and a name another
+ * template already has are both refused, which is UC-28 4a.
+ */
 export async function createTemplate(
   input: TemplateInput,
   database: Database = defaultDb
 ): Promise<TemplateResult<EventTemplate>> {
   const name = cleanTemplateName(input.name);
   if (!name) return fail("Give the template a name.");
+  if (await nameTaken(database, name)) return nameClash(name);
 
   const game = await resolveGame(database, input.gameId);
   if (!game.ok) return game;
@@ -330,7 +381,7 @@ export async function createTemplate(
   const [created] = await database
     .insert(eventTemplates)
     .values({
-      name: await freeName(database, name),
+      name,
       type: cleanTemplateType(input.type),
       gameId: game.data?.id ?? null,
       config: config.data,
@@ -352,11 +403,11 @@ export type TemplatePatch = {
 };
 
 /**
- * Edit a template. Only the keys present in `patch` change.
+ * Edit a template (R-126 / UC-28 5, 6). Only the keys present in `patch` change.
  *
  * Nothing here touches an event. Every event ever made from this template holds
  * its own copy of the questions and the config, and that is the entire reason a
- * template is safe to edit at all.
+ * template is safe to edit at all — UC-28's outcome in one sentence.
  */
 export async function updateTemplate(
   templateId: string,
@@ -371,7 +422,11 @@ export async function updateTemplate(
   if (patch.name !== undefined) {
     const name = cleanTemplateName(patch.name);
     if (!name) return fail("Give the template a name.");
-    values.name = await freeName(database, name, templateId);
+    // A rename is a typed name, so 4a applies to it exactly as it does to a
+    // create. `templateId` is excepted: a template may keep its own name, or
+    // saving a card nobody renamed would reject itself.
+    if (await nameTaken(database, name, templateId)) return nameClash(name);
+    values.name = name;
   }
 
   if (patch.type !== undefined) values.type = cleanTemplateType(patch.type);
@@ -406,11 +461,16 @@ export async function updateTemplate(
 }
 
 /**
- * Copy a template.
+ * Copy a template (R-127 / UC-28 5).
  *
  * The obvious way to make "Rivals tournament, 6 teams" out of "Rivals
  * tournament, 8 teams" without retyping either the eleven questions or the
- * config. The copy starts active and lands at the bottom of the order.
+ * config. The copy starts active and lands at the bottom of the order, which is
+ * where UC-28 7 then moves it from.
+ *
+ * A name given here is a typed one and is refused on a clash (4a). The default
+ * "… copy" is the system's own, so it is suffixed instead — the one case where
+ * suffixing is right, because nobody typed it.
  */
 export async function duplicateTemplate(
   templateId: string,
@@ -420,12 +480,15 @@ export async function duplicateTemplate(
   const source = await getTemplate(templateId, database);
   if (!source) return fail("That template no longer exists.");
 
-  const wanted = cleanTemplateName(name) || cleanTemplateName(`${source.name} copy`);
+  const typed = cleanTemplateName(name);
+  if (typed && (await nameTaken(database, typed))) return nameClash(typed);
+
+  const wanted = typed || cleanTemplateName(`${source.name} copy`);
 
   const [created] = await database
     .insert(eventTemplates)
     .values({
-      name: await freeName(database, wanted),
+      name: typed || (await freeName(database, wanted)),
       type: source.type,
       gameId: source.gameId,
       config: source.config,
@@ -457,6 +520,114 @@ export async function setTemplateActive(
     .where(eq(eventTemplates.id, templateId))
     .returning();
   return updated ? withData(updated) : fail("That template no longer exists.");
+}
+
+/* ------------------------------------------------------------------ */
+/* Order                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Renumber `sort` as 0…n-1 for the given order, skipping rows already correct.
+ *
+ * Dense from the top every time, for the reason `writeGameSort` in
+ * `admin-games.ts` gives: nudging one row's number instead is what eventually
+ * produces two rows sharing a `sort`, at which point "move up" appears to do
+ * nothing and nobody can see why. Both reads that matter —
+ * {@link loadAdminTemplates} and `listEventTemplates` — order by `sort` then
+ * `name`, so a tie is resolved alphabetically and the arrow looks broken.
+ */
+async function writeTemplateSort(
+  database: Database,
+  ordered: ReadonlyArray<{ id: string; sort: number }>
+): Promise<void> {
+  for (const [index, row] of ordered.entries()) {
+    if (row.sort === index) continue;
+    await database
+      .update(eventTemplates)
+      .set({ sort: index })
+      .where(eq(eventTemplates.id, row.id));
+  }
+}
+
+/**
+ * Move a template up or down the list, then renumber (R-129 / UC-28 7, 8).
+ *
+ * "Admin switches the original off and moves the copy to the top. System stops
+ * offering the original and **saves the order**." The order is `sort`, and it is
+ * the order both the admin list and the create-event picker read in, so moving
+ * a template here is what puts it first on `/admin/events` as well.
+ *
+ * Hidden templates move with the rest rather than being parked at the bottom.
+ * This list is the one screen where an inactive template is in front of you —
+ * it is where you switch one back on — and a seasonal template kept for next
+ * time (R-128) should still be where the admin left it when it is.
+ */
+export async function moveTemplate(
+  templateId: string,
+  direction: "up" | "down",
+  database: Database = defaultDb
+): Promise<TemplateResult> {
+  const rows = await database
+    .select({ id: eventTemplates.id, sort: eventTemplates.sort })
+    .from(eventTemplates)
+    .orderBy(asc(eventTemplates.sort), asc(eventTemplates.name));
+  if (!rows.some((row) => row.id === templateId)) {
+    return fail("That template no longer exists.");
+  }
+
+  await writeTemplateSort(database, reorderById(rows, templateId, direction));
+  return withData(null);
+}
+
+/* ------------------------------------------------------------------ */
+/* Deleting                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Remove a template. **Every event made from it stays** (UC-28 8a).
+ *
+ * The flow 8a names, and the reason it is safe is the reason templates exist in
+ * the shape they do: `createEvent` *copies* the type, the game, the config and
+ * the questions into the new event and then forgets the template, so the event
+ * does not depend on the row at all. What remains is
+ * `events.created_from_template_id`, which is provenance nothing reads to
+ * decide anything, and whose foreign key is `on delete set null` — so the link
+ * is forgotten and nothing else about the event moves. 8a's "keeps those events
+ * and forgets only the link", exactly.
+ *
+ * `usedBy` comes back so the caller can say what it just did; the screen puts
+ * the same number in the confirm *before* the click, because "4 events were
+ * made from this" is the thing an admin wants to know first — and the answer to
+ * it is almost always {@link setTemplateActive} instead, which keeps the
+ * template for next season (R-128). Deleting is still the right answer for the
+ * one somebody made by mistake.
+ */
+export async function deleteTemplate(
+  templateId: string,
+  database: Database = defaultDb
+): Promise<TemplateResult<{ name: string; usedBy: number }>> {
+  // Read the row we are about to delete rather than trusting the id: the name
+  // in the audit line has to be this template's.
+  const template = await getTemplate(templateId, database);
+  if (!template) return fail("That template no longer exists.");
+
+  const usedBy = await templateUsage(templateId, database);
+
+  const [deleted] = await database
+    .delete(eventTemplates)
+    .where(eq(eventTemplates.id, templateId))
+    .returning({ id: eventTemplates.id });
+  if (!deleted) return fail("That template no longer exists.");
+
+  // Close the gap the delete left, so `sort` stays dense and the arrows keep
+  // meaning what they say.
+  const rows = await database
+    .select({ id: eventTemplates.id, sort: eventTemplates.sort })
+    .from(eventTemplates)
+    .orderBy(asc(eventTemplates.sort), asc(eventTemplates.name));
+  await writeTemplateSort(database, rows);
+
+  return withData({ name: template.name, usedBy });
 }
 
 /* ------------------------------------------------------------------ */
@@ -533,13 +704,18 @@ export async function createTemplateFromEvent(
   const config = normaliseTemplateConfig(includeConfig ? event.config : {});
   if (!config.ok) return config;
 
-  const name = cleanTemplateName(input.name) || cleanTemplateName(event.title);
+  // A typed name is refused on a clash (UC-28 4a); the fall back to the
+  // event's title is the system's own choice, so it is suffixed instead.
+  const typed = cleanTemplateName(input.name);
+  if (typed && (await nameTaken(database, typed))) return nameClash(typed);
+
+  const name = typed || cleanTemplateName(event.title);
   if (!name) return fail("Give the template a name.");
 
   const [created] = await database
     .insert(eventTemplates)
     .values({
-      name: await freeName(database, name),
+      name: typed || (await freeName(database, name)),
       type: cleanTemplateType(event.type),
       gameId: event.gameId,
       config: config.data,

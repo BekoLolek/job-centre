@@ -155,6 +155,13 @@
       "when": 1791929226929,
       "tag": "0021_entry_waivers",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1791973577532,
+      "tag": "0022_profile_value_confirmed_at",
+      "breakpoints": true
     }
   ]
 }

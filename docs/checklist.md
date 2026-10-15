@@ -438,9 +438,14 @@ there and nothing else.
       column and is *provenance only* — nothing reads it to decide anything. A template is
       still copied and then forgotten, which is what makes editing one safe while an event
       made from it is already taking applications
-- [x] **Deactivate rather than delete**, per the standing rule. An inactive template drops
-      out of `listEventTemplates` — the only read the create-event flow does — so it leaves
-      the picker while every event ever made from it keeps working and keeps its provenance
+- [x] **Deactivate rather than delete** is the path the screen recommends. An inactive
+      template drops out of `listEventTemplates` — the only read the create-event flow does
+      — so it leaves the picker while every event ever made from it keeps working and keeps
+      its provenance. Deleting one is offered too (UC-28 8a, added by Task 35): a template
+      holds a setup rather than history, every event copied it on the way in, and
+      `events.created_from_template_id` is `on delete set null`, so the events keep working
+      and only the provenance note goes. The standing rule still holds for games, questions
+      and answers, which do hold history
 - [x] Every create, edit, duplicate and activation change goes through `recordAudit`
 
 **Schema:** one migration, `drizzle/0006_puzzling_shockwave.sql` — the `user_notes` table

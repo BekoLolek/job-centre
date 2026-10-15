@@ -21,13 +21,14 @@
  * ignored. A save either applies in full or writes nothing.
  */
 
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or } from "drizzle-orm";
 import {
   type Database,
   type Game,
   type ProfileField,
   type ProfileFieldOption,
   type ProfileValue,
+  type ProfileValueRow,
   db as defaultDb,
   games,
   profileFields,
@@ -35,8 +36,12 @@ import {
 } from "@/db";
 import {
   type Completeness,
+  type DetailAttention,
   type FieldShape,
+  GLOBAL_SECTION_KEY,
+  GLOBAL_SECTION_NAME,
   choicesFor,
+  detailAttention,
   parseProfileValue,
   sectionCompleteness,
 } from "./profile-fields";
@@ -57,7 +62,41 @@ export type ProfileFieldView = {
   choices: ProfileFieldOption[];
   /** This member's stored answer, or `null` when they have not said. */
   value: ProfileValue;
+  /**
+   * When they last saved or confirmed that answer (R-49 / UC-12 3), or null —
+   * never, which is what every answer given before the column existed says.
+   *
+   * ISO, never a formatted string: no instant is formatted on the server, and
+   * the two screens that show this one (`ProfileSection` and `ApplyForm`'s
+   * detail rows) are client components that render it through `LocalTime` in
+   * the reader's own zone. A string rather than a `Date` for the reason
+   * `ApplyDay.startsAt` is one — a `Date` does not survive the props of a
+   * client component well.
+   */
+  confirmedAt: string | null;
+  /**
+   * Why this detail still needs them, or null. `detailAttention`'s answer, so
+   * the application form, the profile page and `/me`'s to-dos cannot form three
+   * opinions about which questions are outstanding.
+   */
+  attention: DetailAttention;
 };
+
+/**
+ * Enough of a field to render a control for it.
+ *
+ * `FieldControl` is handed one of these rather than a whole `ProfileFieldView`
+ * because three screens build one out of something that is not a profile field
+ * at all — the two question dialogs preview an admin's draft question, and the
+ * application form renders an event's own question. None of them has a
+ * `confirmed_at` to offer, and inventing one so the types line up would be
+ * fiction. What they do all have is a type, a label and a choice list, which is
+ * all a control reads.
+ */
+export type FieldControlView = Pick<
+  ProfileFieldView,
+  "id" | "key" | "label" | "type" | "required" | "options" | "choices" | "value"
+>;
 
 export type ProfileSectionView = {
   /** `null` is the global section — the questions asked of everybody (§7). */
@@ -79,13 +118,118 @@ export type ProfileView = {
   untouched: boolean;
 };
 
-/** The label the global section carries on the page. */
-export const GLOBAL_SECTION_NAME = "Everyone";
-export const GLOBAL_SECTION_KEY = "global";
-
 /* ------------------------------------------------------------------ */
 /* Reading                                                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * One section, assembled from rows already read.
+ *
+ * Shared by `loadProfile` and `loadProfileForGame` rather than copied into
+ * both, because the two differ only in *which* sections they want and the
+ * interesting part — what a retired question does, where a `rank` field gets
+ * its choices, how completeness is counted — must be the same answer on
+ * `/me/profile` and on the application form. UC-12 2 shows the member the same
+ * details UC-04 2 does; two builders is two chances for one of them to keep
+ * asking a retired question.
+ */
+function buildSection(
+  game: Game | null,
+  allFields: readonly ProfileField[],
+  storedValues: readonly ProfileValueRow[],
+  alsoRequired: ReadonlySet<string> = new Set()
+): ProfileSectionView {
+  const rowByField = new Map(storedValues.map((row) => [row.fieldId, row]));
+  const ladder = game?.rankLadder ?? [];
+
+  const fields = allFields
+    .filter((field) => field.gameId === (game?.id ?? null) && field.retiredAt === null)
+    .map((field): ProfileFieldView => {
+      const row = rowByField.get(field.id) ?? null;
+      const value = row?.value ?? null;
+      const required = field.required || alsoRequired.has(field.id);
+      return {
+        id: field.id,
+        key: field.key,
+        label: field.label,
+        type: field.type,
+        required,
+        options: field.options,
+        choices: choicesFor(field.type, field.options, ladder),
+        value,
+        confirmedAt: row?.confirmedAt?.toISOString() ?? null,
+        attention: detailAttention(
+          {
+            type: field.type,
+            label: field.label,
+            options: field.options,
+            rankLadder: ladder,
+            required,
+            retiredAt: field.retiredAt,
+          },
+          value
+        ),
+      };
+    });
+
+  return {
+    gameId: game?.id ?? null,
+    key: game?.key ?? GLOBAL_SECTION_KEY,
+    name: game?.name ?? GLOBAL_SECTION_NAME,
+    rankLadder: [...ladder],
+    fields,
+    completeness: sectionCompleteness(fields),
+  };
+}
+
+/**
+ * The sections an application to this game's event has to show (UC-12 2).
+ *
+ * The **global** section and the game's own, in that order, and nothing else —
+ * the member's Valorant answers are not what a Marvel Rivals event is asking
+ * about. An event with no game gets the global section alone.
+ *
+ * Unlike `loadProfile` this does not require the game to be active: an event
+ * already published against a game an admin has since deactivated still has
+ * applicants, and refusing to show them the questions they are being judged on
+ * would be worse than showing a section for a game that is no longer in the
+ * catalogue. Retirement still applies per question, because that is a decision
+ * about the question rather than about the game.
+ *
+ * `alsoRequired` lets one event demand a detail the catalogue leaves optional.
+ * An event question linked to a profile field and marked required is the
+ * manager saying "I will not read an application without this", and the
+ * amendment to UC-04 4a is explicit that the application is where such a demand
+ * belongs — the profile still saves without it. Passing the ids in rather than
+ * patching `required` afterwards keeps `attention` and `completeness` derived
+ * from one definition of required instead of two.
+ */
+export async function loadProfileForGame(
+  userId: string | null,
+  gameId: string | null,
+  options: { alsoRequired?: ReadonlySet<string> } = {},
+  database: Database = defaultDb
+): Promise<ProfileSectionView[]> {
+  const [game] = gameId
+    ? await database.select().from(games).where(eq(games.id, gameId)).limit(1)
+    : [];
+
+  const [allFields, storedValues] = await Promise.all([
+    database
+      .select()
+      .from(profileFields)
+      .where(game ? or(eq(profileFields.gameId, game.id), isNull(profileFields.gameId)) : isNull(profileFields.gameId))
+      .orderBy(asc(profileFields.sort), asc(profileFields.createdAt)),
+    userId
+      ? database.select().from(profileValues).where(eq(profileValues.userId, userId))
+      : Promise.resolve([] as ProfileValueRow[]),
+  ]);
+
+  const alsoRequired = options.alsoRequired ?? new Set<string>();
+  const sections = [buildSection(null, allFields, storedValues, alsoRequired)];
+  if (game) sections.push(buildSection(game, allFields, storedValues, alsoRequired));
+  return sections.filter((section) => section.fields.length > 0);
+}
 
 /**
  * Everything `/me/profile` needs, in three queries.
@@ -120,37 +264,10 @@ export async function loadProfile(
     database.select().from(profileValues).where(eq(profileValues.userId, userId)),
   ]);
 
-  const valueByField = new Map(storedValues.map((row) => [row.fieldId, row.value]));
-
-  const build = (game: Game | null): ProfileSectionView => {
-    const ladder = game?.rankLadder ?? [];
-    const fields = allFields
-      .filter((field) => field.gameId === (game?.id ?? null) && field.retiredAt === null)
-      .map((field): ProfileFieldView => ({
-        id: field.id,
-        key: field.key,
-        label: field.label,
-        type: field.type,
-        required: field.required,
-        options: field.options,
-        choices: choicesFor(field.type, field.options, ladder),
-        value: valueByField.get(field.id) ?? null,
-      }));
-
-    return {
-      gameId: game?.id ?? null,
-      key: game?.key ?? GLOBAL_SECTION_KEY,
-      name: game?.name ?? GLOBAL_SECTION_NAME,
-      rankLadder: [...ladder],
-      fields,
-      completeness: sectionCompleteness(fields),
-    };
-  };
-
   const sections: ProfileSectionView[] = [];
-  const global = build(null);
+  const global = buildSection(null, allFields, storedValues);
   if (global.fields.length > 0) sections.push(global);
-  for (const game of activeGames) sections.push(build(game));
+  for (const game of activeGames) sections.push(buildSection(game, allFields, storedValues));
 
   // A value belonging to a field of a deactivated game, or to a retired
   // question, still counts as the member having answered something —
@@ -198,6 +315,12 @@ export type SaveResult =
  * for the page to show as "2 of 3 answered". A profile is a thing you fill in
  * over time, and the hard gate belongs on the event application (§8.3), not
  * here.
+ *
+ * Every written row has `confirmed_at` stamped with it (UC-04 4), because
+ * saving an answer *is* asserting it — the member has just looked at the
+ * question and said this. The same instant goes on `updated_at`, so a save and
+ * a confirmation of the same answer are distinguishable only when they happen
+ * separately, which is exactly when the distinction matters.
  */
 export async function saveProfileSection(
   userId: string,
@@ -282,10 +405,10 @@ export async function saveProfileSection(
   for (const { field, value } of toWrite) {
     await database
       .insert(profileValues)
-      .values({ userId, fieldId: field.id, value, updatedAt: now })
+      .values({ userId, fieldId: field.id, value, updatedAt: now, confirmedAt: now })
       .onConflictDoUpdate({
         target: [profileValues.userId, profileValues.fieldId],
-        set: { value, updatedAt: now },
+        set: { value, updatedAt: now, confirmedAt: now },
       });
   }
 
@@ -313,3 +436,22 @@ export async function saveProfileSection(
     savedAt: now.toISOString(),
   };
 }
+
+/*
+ * There is no `confirmProfileAnswers` here, and there was.
+ *
+ * "Yes, that is all still right" (R-49 / UC-12 3) is stamped by
+ * `commitDetails` in `src/lib/events.ts`, inside the transaction that accepts
+ * the application — the only path a member can reach it from. A second
+ * stamp-only writer in this module had no production caller and no way to
+ * acquire one: the apply form is the one screen that offers the tap, and it
+ * cannot write a confirmation outside the transaction that checks the details
+ * it belongs to. Two writers of one column, with the reachable one enforcing
+ * the retirement rule a step earlier (`askedDetails` drops a retired detail and
+ * `checkDetails` then refuses its id outright, rather than silently skipping
+ * it), is how the two of them drift.
+ *
+ * Its invariants — never creates a row, never moves `updated_at`, authorised on
+ * the row it writes — are stated on `commitDetails`, which is the code that now
+ * keeps them.
+ */

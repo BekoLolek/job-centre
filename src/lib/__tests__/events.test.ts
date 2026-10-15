@@ -19,8 +19,10 @@ import {
   type CreateEventInput,
   type EventQuestionInput,
   type EventResult,
+  answersEditable,
   applyToEvent,
   createEvent,
+  editApplicationAnswers,
   getApplicationsForEvent,
   getEventBySlug,
   getMyApplications,
@@ -35,7 +37,12 @@ import {
   updateEvent,
   withdrawApplication,
 } from "@/lib/events";
-import { MIN_CAPACITY, entryMode } from "@/lib/events-policy";
+import {
+  type ApplicationsState,
+  type ClosedReason,
+  MIN_CAPACITY,
+  entryMode,
+} from "@/lib/events-policy";
 
 /**
  * The events data layer, against real Postgres.
@@ -248,6 +255,63 @@ async function setProfileValue(userId: string, fieldId: string, value: unknown):
       target: [profileValues.userId, profileValues.fieldId],
       set: { value: value as never },
     });
+}
+
+/** The member's stored answer to one profile detail, or null. */
+async function storedProfileValue(userId: string, fieldId: string) {
+  const [row] = await db
+    .select()
+    .from(profileValues)
+    .where(and(eq(profileValues.userId, userId), eq(profileValues.fieldId, fieldId)));
+  return row?.value ?? null;
+}
+
+/** When the member last confirmed one detail, or null — never. */
+async function storedConfirmedAt(userId: string, fieldId: string) {
+  const [row] = await db
+    .select()
+    .from(profileValues)
+    .where(and(eq(profileValues.userId, userId), eq(profileValues.fieldId, fieldId)));
+  return row?.confirmedAt ?? null;
+}
+
+/**
+ * When one detail's **value** last changed, or null when there is no answer.
+ *
+ * Read beside `storedConfirmedAt` rather than folded into it: the two columns
+ * answer different questions, and a stamp that moved `updated_at` would erase
+ * the difference between "given in March" and "re-checked today".
+ */
+async function storedUpdatedAt(userId: string, fieldId: string) {
+  const [row] = await db
+    .select()
+    .from(profileValues)
+    .where(and(eq(profileValues.userId, userId), eq(profileValues.fieldId, fieldId)));
+  return row?.updatedAt ?? null;
+}
+
+/**
+ * The `answers` column **as stored**, not as composed on read.
+ *
+ * `ApplicationView.answers` merges the profile's answers in for linked
+ * questions (`linkedAnswers`), which is exactly what makes "is there a second
+ * copy of this answer?" invisible through the normal read. So the assertions
+ * about duplication go straight at the column.
+ */
+async function storedAnswers(eventId: string, userId: string) {
+  const [row] = await db
+    .select({ answers: applications.answers })
+    .from(applications)
+    .where(and(eq(applications.eventId, eventId), eq(applications.userId, userId)));
+  return row?.answers ?? null;
+}
+
+/** One profile detail out of a loaded application form, by field id. */
+function detailIn(
+  form: Awaited<ReturnType<typeof loadApplicationForm>>,
+  fieldId: string
+) {
+  return form?.profile.flatMap((section) => section.fields).find((field) => field.id === fieldId);
 }
 
 async function rowsFor(eventId: string) {
@@ -1041,7 +1105,13 @@ describe("applyToEvent — answers", () => {
     });
   });
 
-  it("prefills a linked question from the profile when the payload leaves it out", async () => {
+  it("reads a linked question's answer from the profile, the payload saying nothing", async () => {
+    /*
+     * Not a prefill — there is no prefill any more. Nothing is copied onto the
+     * application: `linkedAnswers` composes the answer out of `profile_values`
+     * on every read, so the view shows what the profile says at the instant it
+     * is read (R-11, Task 10).
+     */
     const event = await openEvent({ gameId: rivalsId });
     const { questions } = expectOk(
       await addQuestions(event.id, [
@@ -1063,7 +1133,43 @@ describe("applyToEvent — answers", () => {
     expect(application.answers[questions[0].id]).toBe("strategist");
   });
 
-  it("lets the form override what the profile says", async () => {
+  it("refuses an answer posted under a linked question's id", async () => {
+    /*
+     * The forged-or-stale payload for the one question that is not asked on
+     * the application any more. Storing it would be the second copy of an
+     * answer Task 10 exists to remove, so it is refused rather than dropped —
+     * the same judgement a question id from another event gets.
+     */
+    const event = await openEvent({ gameId: rivalsId });
+    const { questions } = expectOk(
+      await addQuestions(event.id, [
+        {
+          label: "Preferred role",
+          type: "select",
+          options: ROLE_OPTIONS,
+          profileFieldId: roleFieldId,
+        },
+      ])
+    );
+
+    const userId = await makeUser(db);
+    await setProfileValue(userId, roleFieldId, "strategist");
+
+    const result = await applyToEvent(
+      event.id,
+      userId,
+      { now: NOW, answers: { [questions[0].id]: "vanguard" } },
+      db
+    );
+    expect(expectFail(result).errors?.[questions[0].id]).toMatch(/not part of this event/i);
+    expect(await rowsFor(event.id)).toEqual([]);
+    // And the profile is untouched: a refusal writes nothing anywhere.
+    expect(await storedProfileValue(userId, roleFieldId)).toBe("strategist");
+  });
+
+  it("writes a changed detail to the profile instead of onto the application", async () => {
+    // UC-12 3a: "Member edits them in place; System saves them to their
+    // profile too" — and the profile is the only place it lands (R-11).
     const event = await openEvent({ gameId: rivalsId });
     const { questions } = expectOk(
       await addQuestions(event.id, [
@@ -1083,11 +1189,13 @@ describe("applyToEvent — answers", () => {
       await applyToEvent(
         event.id,
         userId,
-        { now: NOW, answers: { [questions[0].id]: "vanguard" } },
+        { now: NOW, details: { [roleFieldId]: "vanguard" } },
         db
       )
     );
     expect(application.answers[questions[0].id]).toBe("vanguard");
+    expect(await storedProfileValue(userId, roleFieldId)).toBe("vanguard");
+    expect(await storedAnswers(event.id, userId)).toEqual({});
   });
 
   it("rejects availability naming a day from another event", async () => {
@@ -2112,7 +2220,10 @@ describe("reads for the pages", () => {
     expect(mine[0].seats.accepted).toBe(1);
   });
 
-  it("gives the member's form back prefilled, with the gate already worked out", async () => {
+  it("gives the member's profile back, with the gate already worked out", async () => {
+    // UC-12 2. The profile section carries the saved answers; the event's own
+    // questions carry theirs. The linked question is **not** in `questions` —
+    // the profile detail behind it is what the member is shown (`ownQuestions`).
     const event = await openEvent({
       gameId: rivalsId,
       minRankToEnter: "Platinum III",
@@ -2140,17 +2251,22 @@ describe("reads for the pages", () => {
     expect(form?.eligibility.canEnter).toBe(true);
     expect(form?.rank).toBe("Diamond III");
     expect(form?.application).toBeNull();
+    expect(form?.canEditAnswers).toBe(false);
 
-    const prefilled = form?.questions.find((question) => question.id === questions[0].id);
-    expect(prefilled?.value).toBe("vanguard");
-    expect(prefilled?.prefilled).toBe(true);
+    expect(form?.questions.map((question) => question.id)).toEqual([questions[1].id]);
+    expect(form?.questions[0].value).toBeNull();
 
-    const empty = form?.questions.find((question) => question.id === questions[1].id);
-    expect(empty?.value).toBeNull();
-    expect(empty?.prefilled).toBe(false);
+    const role = detailIn(form, roleFieldId);
+    expect(role?.value).toBe("vanguard");
+    expect(role?.attention).toBeNull();
   });
 
-  it("shows an existing application's own answers rather than the profile's", async () => {
+  it("reads a linked answer out of the profile, not a copy on the application", async () => {
+    /*
+     * Task 10's title, tested: *profile stays the source*. The member applies
+     * with one role, then changes it on their profile — and the application
+     * reads the new one, because there was never a second copy to go stale.
+     */
     const event = await openEvent({ gameId: rivalsId });
     const { questions } = expectOk(
       await addQuestions(event.id, [
@@ -2165,14 +2281,22 @@ describe("reads for the pages", () => {
 
     const userId = await makeUser(db);
     await setProfileValue(userId, roleFieldId, "vanguard");
-    expectOk(
-      await applyToEvent(event.id, userId, { now: NOW, answers: { [questions[0].id]: "duelist" } }, db)
+    const application = expectOk(
+      await applyToEvent(event.id, userId, { now: NOW, details: { [roleFieldId]: "duelist" } }, db)
     );
 
+    // The answer the member gave on the form went to the profile, and nothing
+    // was written under the question's id.
+    expect(application.answers[questions[0].id]).toBe("duelist");
+    expect(await storedAnswers(event.id, userId)).toEqual({});
+    expect(await storedProfileValue(userId, roleFieldId)).toBe("duelist");
+
+    // Changed on `/me/profile` afterwards, with no application write at all.
+    await setProfileValue(userId, roleFieldId, "strategist");
     const form = await loadApplicationForm(event.id, userId, { now: NOW }, db);
-    expect(form?.questions[0].value).toBe("duelist");
-    expect(form?.questions[0].prefilled).toBe(false);
-    expect(form?.application?.status).toBe("accepted");
+    expect(form?.application?.answers[questions[0].id]).toBe("strategist");
+    expect(detailIn(form, roleFieldId)?.value).toBe("strategist");
+    expect(form?.canEditAnswers).toBe(true);
   });
 
   it("works for a signed-out visitor, with no answers and no gate opinion", async () => {
@@ -2591,5 +2715,808 @@ describe("an event's dates come from its days (R-24, UC-11 2)", () => {
 
     const far = new Date("2099-01-01T00:00:00.000Z");
     expect(expectOk(await setConfirmation(application.id, "in", { now: far }, db)).closesAt).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Changing answers while sign-ups are open (R-53 / UC-13 3, 4, 4a)   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The half of Task 10 that is a rule rather than a screen.
+ *
+ * Two deadlines and one thing with no deadline at all, and the whole file turns
+ * on keeping them apart:
+ *
+ *  - **answers** close when sign-ups do (UC-13 4a);
+ *  - the **attendance answer** closes two days before the start (R-200,
+ *    UC-13 7) — a different instant, tested in its own describe below;
+ *  - **withdrawing** closes neither (R-54, UC-13 4a, UC-13 extensions E3).
+ *
+ * The acceptance criterion most likely to be got wrong is the third, because
+ * the tidy-looking refactor is one guard for all of them, and it reads as a
+ * simplification right up until somebody taken ill the day before an event
+ * cannot give their seat up.
+ */
+describe("editing an application", () => {
+  /** An open event with one question of its own and one linked detail. */
+  async function editable(over: Partial<CreateEventInput> = {}) {
+    const event = await openEvent({ gameId: rivalsId, ...over });
+    const { questions } = expectOk(
+      await addQuestions(event.id, [
+        { label: "Anything else", type: "text" },
+        {
+          label: "Preferred role",
+          type: "select",
+          options: ROLE_OPTIONS,
+          profileFieldId: roleFieldId,
+        },
+      ])
+    );
+    return { event, own: questions[0], linked: questions[1] };
+  }
+
+  it("saves a changed answer and a changed detail", async () => {
+    // UC-13 3-4: "Applicant changes an answer while sign-ups are open. System
+    // saves it." The detail lands on the profile, the event's own answer on the
+    // application — one answer each, in the one place it belongs.
+    const { event, own, linked } = await editable();
+    const userId = await makeUser(db);
+    await setProfileValue(userId, roleFieldId, "vanguard");
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    const edited = expectOk(
+      await editApplicationAnswers(
+        event.id,
+        userId,
+        { now: hours(1), answers: { [own.id]: "Bringing a spare keyboard" }, details: { [roleFieldId]: "duelist" } },
+        db
+      )
+    );
+
+    expect(edited.answers[own.id]).toBe("Bringing a spare keyboard");
+    expect(edited.answers[linked.id]).toBe("duelist");
+    expect(await storedProfileValue(userId, roleFieldId)).toBe("duelist");
+    // Still exactly one copy: the linked answer is not on the application.
+    expect(await storedAnswers(event.id, userId)).toEqual({
+      [own.id]: "Bringing a spare keyboard",
+    });
+  });
+
+  /** The legacy row Task 10 left behind: a stored copy under a linked id. */
+  async function plantLegacyCopy(
+    eventId: string,
+    userId: string,
+    answers: Record<string, unknown>
+  ) {
+    const row = (await rowsFor(eventId)).find((candidate) => candidate.userId === userId);
+    await db
+      .update(applications)
+      .set({ answers: answers as never })
+      .where(eq(applications.id, row?.id as string));
+  }
+
+  it("reads the profile's answer over a legacy copy, and the next write clears it", async () => {
+    /*
+     * The row an `applyToEvent` from before Task 10 left behind: an answer
+     * stored under a *linked* question's id, beside the profile answer that is
+     * now the only home for it. `decorate` drops it from the view rather than
+     * merging it, because the profile is the source and a copy that disagrees
+     * must not be what a manager reads — and the next write to the application
+     * takes it out of the column, because `validateAnswers` is given
+     * `ownQuestions` and replaces the whole map.
+     *
+     * Planted by hand because nothing can write one any more, which is exactly
+     * why it needs a test: the behaviour was proved once by experiment and
+     * nothing held it.
+     */
+    const { event, own, linked } = await editable();
+    const userId = await makeUser(db);
+    await setProfileValue(userId, roleFieldId, "strategist");
+    expectOk(
+      await applyToEvent(
+        event.id,
+        userId,
+        { now: NOW, answers: { [own.id]: "As submitted" } },
+        db
+      )
+    );
+
+    await plantLegacyCopy(event.id, userId, {
+      [own.id]: "As submitted",
+      [linked.id]: "vanguard",
+    });
+    expect(await storedAnswers(event.id, userId)).toEqual({
+      [own.id]: "As submitted",
+      [linked.id]: "vanguard",
+    });
+
+    // What the manager's list and the member's own page read: the profile.
+    const [applicant] = await getApplicationsForEvent(event.id, db);
+    expect(applicant.answers[linked.id]).toBe("strategist");
+    expect((await getMyApplications(userId, { now: NOW }, db))[0].answers[linked.id]).toBe(
+      "strategist"
+    );
+
+    // And the next write to the application takes the copy out of the column.
+    expectOk(
+      await editApplicationAnswers(
+        event.id,
+        userId,
+        { now: hours(1), answers: { [own.id]: "As submitted" } },
+        db
+      )
+    );
+    expect(await storedAnswers(event.id, userId)).toEqual({ [own.id]: "As submitted" });
+  });
+
+  it("shows nothing under a linked question when only the legacy copy exists", async () => {
+    /*
+     * The case that tells a drop from a merge, and the reason the drop is not
+     * merely tidier. With no profile answer there is nothing to compose, so a
+     * merge would let the legacy copy through — and a manager would be reading
+     * "vanguard" as the member's preferred role from a column the member can no
+     * longer edit, while `/me/profile` shows them an unanswered question.
+     *
+     * The stale copy is also what `detailAttention` has to be able to see is
+     * missing: a composed answer that came from nowhere would hide a required
+     * detail the member still has to give.
+     */
+    const { event, own, linked } = await editable();
+    const userId = await makeUser(db);
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    await plantLegacyCopy(event.id, userId, { [linked.id]: "vanguard" });
+
+    const [applicant] = await getApplicationsForEvent(event.id, db);
+    expect(applicant.answers[linked.id]).toBeUndefined();
+    expect(applicant.answers).toEqual({});
+    // The member's page agrees, and asks them for the detail instead.
+    const [mine] = await getMyApplications(userId, { now: NOW }, db);
+    expect(mine.answers[linked.id]).toBeUndefined();
+    expect(mine.answers[own.id]).toBeUndefined();
+  });
+
+  it("refuses an edit once sign-ups have closed, and writes nothing", async () => {
+    /*
+     * UC-13 4a, enforced on the server. The form has gone from the page by
+     * then, which proves nothing: a server action is a public POST endpoint, so
+     * this is a direct call made after the deadline — the only kind that can
+     * actually happen — and it has to be refused *and* leave the stored answer
+     * and the profile exactly as they were.
+     */
+    const { event, own } = await editable({ signupClosesAt: hours(-1) });
+    const userId = await makeUser(db);
+    await setProfileValue(userId, roleFieldId, "vanguard");
+    expectOk(
+      await applyToEvent(
+        event.id,
+        userId,
+        { now: hours(-2), answers: { [own.id]: "As submitted" } },
+        db
+      )
+    );
+
+    const refused = await editApplicationAnswers(
+      event.id,
+      userId,
+      { now: NOW, answers: { [own.id]: "Changed my mind" }, details: { [roleFieldId]: "duelist" } },
+      db
+    );
+
+    expect(expectFail(refused).error).toMatch(/closed/i);
+    // The refusal names the way out, because the way out is what makes closing
+    // the answer acceptable (R-54).
+    expect(expectFail(refused).error).toMatch(/withdraw/i);
+    expect(await storedAnswers(event.id, userId)).toEqual({ [own.id]: "As submitted" });
+    expect(await storedProfileValue(userId, roleFieldId)).toBe("vanguard");
+  });
+
+  it("still lets them withdraw after sign-ups have closed", async () => {
+    /*
+     * The criterion. R-54, UC-13 4a and UC-13 extensions E3 all say the same
+     * thing: *withdrawing is still allowed*. Somebody taken ill the day before
+     * can no longer change a word of their application and can still give up
+     * the seat, which is the part everybody behind them is waiting for — so the
+     * seat frees and the queue moves, on the same closed event that has just
+     * refused an edit.
+     */
+    const { event } = await editable({ capacity: MIN_CAPACITY, signupClosesAt: hours(-1) });
+    const seated = await makeUser(db);
+    const alsoSeated = await makeUser(db);
+    const queued = await makeUser(db);
+    for (const [index, member] of [seated, alsoSeated, queued].entries()) {
+      expectOk(await applyToEvent(event.id, member, { now: hours(-3 + index) }, db));
+    }
+
+    // Edits are shut on this event, for this member, at this instant.
+    expect(
+      expectFail(await editApplicationAnswers(event.id, seated, { now: NOW }, db)).error
+    ).toMatch(/closed/i);
+
+    const result = expectOk(await withdrawApplication(event.id, seated, db));
+    expect(result.application.status).toBe("withdrawn");
+    expect(result.promoted.map((row) => row.userId)).toEqual([queued]);
+    expect(await queueFor(event.id)).toEqual({
+      [seated]: ["withdrawn", null],
+      [alsoSeated]: ["accepted", null],
+      [queued]: ["accepted", null],
+    });
+  });
+
+  it("lets an applicant edit a full event that has stopped taking applications", async () => {
+    /*
+     * `applicationsOpen` answers "would a *new* application be taken?", and for
+     * a full event with the waitlist switched off (R-170, UC-12 E3) that is no.
+     * The member doing the editing is not a new application, and sign-ups have
+     * not closed — reusing that verdict here would lock everybody in a full
+     * event out of fixing a typo for a reason that is nothing to do with them.
+     */
+    const { event, own } = await editable({
+      capacity: MIN_CAPACITY,
+      config: { waitlist: false },
+    });
+    const first = await makeUser(db);
+    const second = await makeUser(db);
+    expectOk(await applyToEvent(event.id, first, { now: NOW }, db));
+    expectOk(await applyToEvent(event.id, second, { now: NOW }, db));
+
+    const form = await loadApplicationForm(event.id, first, { now: NOW }, db);
+    expect(form?.state.open).toBe(false);
+    if (form?.state.open === false) expect(form.state.reason).toBe("full");
+    expect(form?.canEditAnswers).toBe(true);
+
+    expectOk(
+      await editApplicationAnswers(
+        event.id,
+        first,
+        { now: NOW, answers: { [own.id]: "Still in" } },
+        db
+      )
+    );
+    expect(await storedAnswers(event.id, first)).toEqual({ [own.id]: "Still in" });
+  });
+
+  it("refuses every change once the event is complete", async () => {
+    // UC-13 3b. `lockRefusal` is the one rule for a finished event's record,
+    // and it is the one thing that closes withdrawing too.
+    const { event, own } = await editable();
+    const userId = await makeUser(db);
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+    // The drawn path: published → live → complete (diagrams/event-state.md).
+    expectOk(await updateEvent(event.id, { status: "live" }, db));
+    expectOk(await updateEvent(event.id, { status: "complete" }, db));
+
+    expect(
+      expectFail(
+        await editApplicationAnswers(
+          event.id,
+          userId,
+          { now: NOW, answers: { [own.id]: "Too late" } },
+          db
+        )
+      ).error
+    ).toMatch(/finished/i);
+    expect(await storedAnswers(event.id, userId)).toEqual({});
+  });
+
+  it("refuses somebody with no open application", async () => {
+    const { event, own } = await editable();
+    const stranger = await makeUser(db);
+    expect(
+      expectFail(await editApplicationAnswers(event.id, stranger, { now: NOW }, db)).error
+    ).toMatch(/not applied/i);
+
+    const gone = await makeUser(db);
+    expectOk(await applyToEvent(event.id, gone, { now: NOW }, db));
+    expectOk(await withdrawApplication(event.id, gone, db));
+    expect(
+      expectFail(
+        await editApplicationAnswers(
+          event.id,
+          gone,
+          { now: NOW, answers: { [own.id]: "Sneaking back in" } },
+          db
+        )
+      ).error
+    ).toMatch(/not open/i);
+  });
+
+  it("leaves the seat, the queue place and the submission time alone", async () => {
+    /*
+     * Changing an answer is not a decision about a seat. `submittedAt` in
+     * particular is the queue order (§14), so a write that touched it would
+     * quietly send a waitlisted member to the back for fixing their rank.
+     */
+    const { event, own } = await editable({ capacity: MIN_CAPACITY });
+    const [a, b] = [await makeUser(db), await makeUser(db)];
+    const queued = await makeUser(db);
+    expectOk(await applyToEvent(event.id, a, { now: hours(-3) }, db));
+    expectOk(await applyToEvent(event.id, b, { now: hours(-2) }, db));
+    expectOk(await applyToEvent(event.id, queued, { now: hours(-1) }, db));
+
+    const before = (await rowsFor(event.id)).find((row) => row.userId === queued);
+    expectOk(
+      await editApplicationAnswers(
+        event.id,
+        queued,
+        { now: NOW, answers: { [own.id]: "Happy to wait" } },
+        db
+      )
+    );
+    const after = (await rowsFor(event.id)).find((row) => row.userId === queued);
+
+    expect(after?.status).toBe("waitlisted");
+    expect(after?.waitlistPosition).toBe(before?.waitlistPosition);
+    expect(after?.submittedAt.toISOString()).toBe(before?.submittedAt.toISOString());
+  });
+
+  it("stamps a detail the member only vouched for, without moving the value", async () => {
+    // UC-12 3 / R-49: they changed nothing and said it is all still right.
+    const { event } = await editable();
+    const userId = await makeUser(db);
+    await setProfileValue(userId, roleFieldId, "vanguard");
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    const stampedAt = hours(5);
+    expectOk(
+      await editApplicationAnswers(
+        event.id,
+        userId,
+        { now: stampedAt, confirmed: [roleFieldId] },
+        db
+      )
+    );
+
+    expect(await storedProfileValue(userId, roleFieldId)).toBe("vanguard");
+    expect((await storedConfirmedAt(userId, roleFieldId))?.toISOString()).toBe(
+      stampedAt.toISOString()
+    );
+  });
+
+  it("refuses a detail that is not one this event asks about", async () => {
+    // A detail belonging to another game. Refused rather than ignored, the
+    // same judgement a question id from another event gets.
+    const { event } = await editable();
+    const userId = await makeUser(db);
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    const [stray] = await db
+      .insert(profileFields)
+      .values({ gameId: null, key: `stray-${titleCounter}`, label: "Stray", type: "text" })
+      .returning({ id: profileFields.id });
+    await db.delete(profileFields).where(eq(profileFields.id, stray.id));
+
+    const refused = await editApplicationAnswers(
+      event.id,
+      userId,
+      { now: NOW, details: { [stray.id]: "anything" } },
+      db
+    );
+    expect(expectFail(refused).errors?.[stray.id]).toMatch(/not one this event asks about/i);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Confirming a detail without changing it (R-49 / UC-12 3)           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The stamp, on the path a member can actually reach.
+ *
+ * `commitDetails` is the only writer of a stamp-only `confirmed_at`: the apply
+ * form offers the tap, `checkDetails` decides whether the ids are ones this
+ * event asks about, and the write happens inside the transaction that accepts
+ * the application. These four assertions were a describe block in
+ * `profile.test.ts` over a `confirmProfileAnswers` nothing in `src/app` or
+ * `src/components` called; they are the invariants rather than that function's
+ * shape, so they moved here rather than going with it.
+ *
+ * Each one is a way the stamp can fail open, and two of them are worse than a
+ * missing feature: a confirmation written against a question the site has
+ * stopped asking (R-09, UC-03 5a) and a confirmation written onto somebody
+ * else's row.
+ */
+describe("confirming a detail the member did not change", () => {
+  /** A throwaway detail on the Rivals profile. Deleted by the test. */
+  async function spareDetail(label = "Spare detail") {
+    const [row] = await db
+      .insert(profileFields)
+      .values({
+        gameId: rivalsId,
+        key: `spare-${Math.random().toString(36).slice(2, 8)}`,
+        label,
+        type: "text",
+        sort: 60,
+      })
+      .returning({ id: profileFields.id });
+    return row.id;
+  }
+
+  it("stamps the answer without moving its value or `updated_at`", async () => {
+    /*
+     * R-49 in full: "my profile details shown back to me when I apply, so that
+     * I only confirm they are still right". The confirmation has to leave a
+     * trace, and it must not pretend the answer was re-entered — `updated_at`
+     * is still when they actually typed it, which is the whole distinction the
+     * column exists for (`confirmed_at > updated_at` is "given in March,
+     * re-checked today").
+     */
+    const event = await openEvent({ gameId: rivalsId });
+    const userId = await makeUser(db);
+    const typedAt = new Date("2026-03-01T10:00:00Z");
+    await db
+      .insert(profileValues)
+      .values({ userId, fieldId: roleFieldId, value: "strategist", updatedAt: typedAt });
+
+    const stampedAt = hours(2);
+    expectOk(
+      await applyToEvent(
+        event.id,
+        userId,
+        { now: stampedAt, confirmed: [roleFieldId] },
+        db
+      )
+    );
+
+    expect(await storedProfileValue(userId, roleFieldId)).toBe("strategist");
+    expect((await storedUpdatedAt(userId, roleFieldId))?.toISOString()).toBe(
+      typedAt.toISOString()
+    );
+    expect((await storedConfirmedAt(userId, roleFieldId))?.toISOString()).toBe(
+      stampedAt.toISOString()
+    );
+  });
+
+  it("creates nothing for a detail nobody has answered", async () => {
+    // Confirming is a statement about an answer. There is no answer here, so
+    // there is nothing to vouch for — and `value` is `not null`, so a row to
+    // hold the stamp would have to invent one.
+    const event = await openEvent({ gameId: rivalsId });
+    const userId = await makeUser(db);
+
+    expectOk(
+      await applyToEvent(event.id, userId, { now: NOW, confirmed: [roleFieldId] }, db)
+    );
+
+    const rows = await db
+      .select()
+      .from(profileValues)
+      .where(and(eq(profileValues.userId, userId), eq(profileValues.fieldId, roleFieldId)));
+    expect(rows).toEqual([]);
+  });
+
+  it("refuses to stamp a retired detail, and writes nothing", async () => {
+    /*
+     * UC-03 5a / R-09: retiring keeps the answers already given and stops the
+     * question being asked. A page open since before the retirement posts the
+     * id all the same, and it must not get a fresh confirmation written against
+     * a question nobody is asking — `askedDetails` drops the retired detail and
+     * `checkDetails` then refuses the id outright, which is a louder no than
+     * skipping it quietly.
+     */
+    const event = await openEvent({ gameId: rivalsId });
+    const retired = await spareDetail("Retired detail");
+    const userId = await makeUser(db);
+    await setProfileValue(userId, retired, "answered before it was retired");
+    await db
+      .update(profileFields)
+      .set({ retiredAt: new Date("2026-03-20T00:00:00Z") })
+      .where(eq(profileFields.id, retired));
+
+    const refused = await applyToEvent(
+      event.id,
+      userId,
+      { now: NOW, confirmed: [retired] },
+      db
+    );
+
+    expect(expectFail(refused).errors?.[retired]).toMatch(/not one this event asks about/i);
+    // The answer is kept and unstamped: R-09 keeps it, and nobody vouched for it.
+    expect(await storedProfileValue(userId, retired)).toBe("answered before it was retired");
+    expect(await storedConfirmedAt(userId, retired)).toBeNull();
+    expect(await rowsFor(event.id)).toEqual([]);
+
+    await db.delete(profileFields).where(eq(profileFields.id, retired));
+  });
+
+  it("stamps only the applicant's own answer", async () => {
+    // Authorised on the row it writes: the `where` carries the member id as
+    // well as the field ids, so one member's confirmation reaches one row —
+    // never the answer somebody else gave to the same detail.
+    const event = await openEvent({ gameId: rivalsId });
+    const mine = await makeUser(db);
+    const theirs = await makeUser(db);
+    await setProfileValue(mine, roleFieldId, "duelist");
+    await setProfileValue(theirs, roleFieldId, "vanguard");
+
+    expectOk(
+      await applyToEvent(event.id, mine, { now: hours(3), confirmed: [roleFieldId] }, db)
+    );
+
+    expect((await storedConfirmedAt(mine, roleFieldId))?.toISOString()).toBe(
+      hours(3).toISOString()
+    );
+    expect(await storedConfirmedAt(theirs, roleFieldId)).toBeNull();
+    expect(await storedProfileValue(theirs, roleFieldId)).toBe("vanguard");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Required profile details, and retirement (UC-12 2b, UC-03 5a)      */
+/* ------------------------------------------------------------------ */
+
+describe("the details an event insists on", () => {
+  /** A required detail on the Rivals profile, cleaned up by the caller. */
+  async function requiredDetail(label = "Discord handle") {
+    const [row] = await db
+      .insert(profileFields)
+      .values({
+        gameId: rivalsId,
+        key: `needed-${Math.random().toString(36).slice(2, 8)}`,
+        label,
+        type: "text",
+        required: true,
+        sort: 50,
+      })
+      .returning({ id: profileFields.id });
+    return row.id;
+  }
+
+  it("refuses the application when a required detail is missing, storing nothing", async () => {
+    /*
+     * UC-12 2b and the approved amendment to UC-04 4a: the profile saves
+     * partially so a member can fill it in over time, and the *application* is
+     * what will not go through without it. Nothing is stored — not the
+     * application, and not the other details sent with it, because every
+     * refusal happens before every write.
+     */
+    const event = await openEvent({ gameId: rivalsId });
+    const needed = await requiredDetail();
+    const userId = await makeUser(db);
+
+    const refused = await applyToEvent(
+      event.id,
+      userId,
+      { now: NOW, details: { [roleFieldId]: "duelist" } },
+      db
+    );
+    expect(expectFail(refused).errors?.[needed]).toMatch(/required/i);
+    expect(await rowsFor(event.id)).toEqual([]);
+    expect(await storedProfileValue(userId, roleFieldId)).toBeNull();
+
+    // Answered inline, as UC-12 2b asks — and now it goes through.
+    expectOk(
+      await applyToEvent(
+        event.id,
+        userId,
+        { now: NOW, details: { [needed]: "beko#1", [roleFieldId]: "duelist" } },
+        db
+      )
+    );
+    expect(await storedProfileValue(userId, needed)).toBe("beko#1");
+
+    await db.delete(profileFields).where(eq(profileFields.id, needed));
+  });
+
+  it("stops asking for a required detail the admin has retired", async () => {
+    /*
+     * R-09 / UC-03 5a, at the point it bites hardest. A required detail that
+     * is retired but still enforced is an event nobody can apply to, asking
+     * for something no form has a row for — so retirement is checked *before*
+     * requiredness, and the answers already given stay where they are.
+     */
+    const event = await openEvent({ gameId: rivalsId });
+    const needed = await requiredDetail("Retired question");
+    const userId = await makeUser(db);
+
+    expect(
+      expectFail(await applyToEvent(event.id, userId, { now: NOW }, db)).errors?.[needed]
+    ).toMatch(/required/i);
+
+    await db
+      .update(profileFields)
+      .set({ retiredAt: new Date("2026-03-20T00:00:00Z") })
+      .where(eq(profileFields.id, needed));
+
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    // And it is not on the form either.
+    const form = await loadApplicationForm(event.id, userId, { now: NOW }, db);
+    expect(form?.profile.flatMap((section) => section.fields).map((field) => field.id)).not.toContain(
+      needed
+    );
+
+    await db.delete(profileFields).where(eq(profileFields.id, needed));
+  });
+
+  it("lets a required linked question demand a detail the catalogue leaves optional", async () => {
+    // A manager marking a linked question required is them saying they will not
+    // read an application without it. The demand lands on the detail, which is
+    // where the member can answer it.
+    const event = await openEvent({ gameId: rivalsId });
+    expectOk(
+      await addQuestions(event.id, [
+        {
+          label: "Preferred role",
+          type: "select",
+          options: ROLE_OPTIONS,
+          required: true,
+          profileFieldId: roleFieldId,
+        },
+      ])
+    );
+    const userId = await makeUser(db);
+
+    expect(
+      expectFail(await applyToEvent(event.id, userId, { now: NOW }, db)).errors?.[roleFieldId]
+    ).toMatch(/required/i);
+
+    const form = await loadApplicationForm(event.id, userId, { now: NOW }, db);
+    expect(detailIn(form, roleFieldId)?.required).toBe(true);
+    expect(detailIn(form, roleFieldId)?.attention).toBe("missing");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The dashboard's to-dos (R-60 / UC-13 2)                            */
+/* ------------------------------------------------------------------ */
+
+describe("what an open application still needs", () => {
+  it("raises a question that has changed since the member answered it", async () => {
+    /*
+     * UC-13 2's "unanswered changed questions". The admin reorders the ladder
+     * out from under a stored rank (R-09 keeps the answer), so the answer is
+     * still there and can no longer be read against the question — which is a
+     * thing only the member can put right, and the only way they find out.
+     */
+    const event = await openEvent({ gameId: rivalsId });
+    const userId = await makeUser(db);
+    await setProfileValue(userId, rankFieldId, "Diamond III");
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    expect(
+      (await getMyApplications(userId, { now: NOW }, db))[0].outstanding
+    ).toEqual([]);
+
+    await db
+      .update(profileFields)
+      .set({ type: "number" })
+      .where(eq(profileFields.id, rankFieldId));
+
+    const mine = await getMyApplications(userId, { now: NOW }, db);
+    expect(mine[0].outstanding).toEqual([
+      { id: rankFieldId, label: "Rank", why: "stale", where: "profile" },
+    ]);
+
+    await db
+      .update(profileFields)
+      .set({ type: "rank" })
+      .where(eq(profileFields.id, rankFieldId));
+  });
+
+  it("raises nothing at all for a retired question", async () => {
+    /*
+     * R-09 / UC-03 5a. A to-do pointing at a question no form shows is a job
+     * with nowhere to do it — and a *required* retired question would nag for
+     * ever. Both the missing case and the changed case, because retirement has
+     * to win over each of them.
+     */
+    const event = await openEvent({ gameId: rivalsId });
+    const [needed] = await db
+      .insert(profileFields)
+      .values({
+        gameId: rivalsId,
+        key: `retire-${Math.random().toString(36).slice(2, 8)}`,
+        label: "Soon retired",
+        type: "select",
+        options: ROLE_OPTIONS,
+        required: true,
+        sort: 60,
+      })
+      .returning({ id: profileFields.id });
+
+    const userId = await makeUser(db);
+    await setProfileValue(userId, needed.id, "duelist");
+    expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    // Make the stored answer unreadable *and* leave the question required.
+    await db
+      .update(profileFields)
+      .set({ type: "number" })
+      .where(eq(profileFields.id, needed.id));
+    expect(
+      (await getMyApplications(userId, { now: NOW }, db))[0].outstanding.map((row) => row.id)
+    ).toEqual([needed.id]);
+
+    await db
+      .update(profileFields)
+      .set({ retiredAt: new Date("2026-03-20T00:00:00Z") })
+      .where(eq(profileFields.id, needed.id));
+
+    expect((await getMyApplications(userId, { now: NOW }, db))[0].outstanding).toEqual([]);
+
+    await db.delete(profileFields).where(eq(profileFields.id, needed.id));
+  });
+
+  it("raises an unanswered required question of the event's own", async () => {
+    // The other half of UC-13 2: the event's own question, whose answer lives
+    // on the application. `setEventQuestions` dropped the old answer when the
+    // manager retyped it (`clearOrphanedAnswers`), which is exactly what "the
+    // question changed since you answered it" looks like from here.
+    const event = await openEvent({ gameId: rivalsId });
+    const { questions } = expectOk(
+      await addQuestions(event.id, [{ label: "Which role tonight", type: "text" }])
+    );
+    const userId = await makeUser(db);
+    expectOk(
+      await applyToEvent(event.id, userId, { now: NOW, answers: { [questions[0].id]: "Duelist" } }, db)
+    );
+    expect((await getMyApplications(userId, { now: NOW }, db))[0].outstanding).toEqual([]);
+
+    expectOk(
+      await addQuestions(event.id, [
+        {
+          id: questions[0].id,
+          label: "Which role tonight",
+          type: "select",
+          options: ROLE_OPTIONS,
+          required: true,
+        },
+      ])
+    );
+
+    expect((await getMyApplications(userId, { now: NOW }, db))[0].outstanding).toEqual([
+      { id: questions[0].id, label: "Which role tonight", why: "missing", where: "event" },
+    ]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* answersEditable (R-53 / UC-13 4a)                                  */
+/* ------------------------------------------------------------------ */
+
+describe("answersEditable", () => {
+  /*
+   * The pure half, so the one closed reason that still counts as open is
+   * pinned without standing a database up — and so the list of reasons that do
+   * *not* is spelled out rather than implied by whichever one a test happened
+   * to reach.
+   */
+  const shut = (reason: ClosedReason): ApplicationsState => ({
+    open: false,
+    reason,
+    message: reason,
+    opensAt: null,
+    closesAt: null,
+  });
+
+  it("is open while applications are", () => {
+    expect(
+      answersEditable({
+        open: true,
+        willWaitlist: false,
+        seatsLeft: 3,
+        closesAt: null,
+        message: "",
+      })
+    ).toBe(true);
+  });
+
+  it("is open on a full event, which is not a closed sign-up window", () => {
+    expect(answersEditable(shut("full"))).toBe(true);
+  });
+
+  it("is shut for every reason that really is the window closing", () => {
+    for (const reason of [
+      "signups_closed",
+      "event_started",
+      "finished",
+      "cancelled",
+      "too_early",
+      "not_published",
+    ] as const) {
+      expect(answersEditable(shut(reason))).toBe(false);
+    }
   });
 });

@@ -261,6 +261,20 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Depends on:** Task 12.
 - **Left over:** nothing. The overview panel's input was the array position and is now `day.dayIndex`, like every other surface (`src/app/events/[slug]/page.tsx`), and a **fifth** surface turned up with both of the original defects — the applicant drawer's day rows in `src/components/admin/events/ApplicantsTab.tsx`, which carried the weak `??` *and* the array position. Both are ported, and the drawer is now one more block in `src/components/__tests__/day-names.test.ts`. Note why the fifth one was missed: the first criterion above greps for `Day ${`, and that surface wrote the number as JSX (`Day {index + 1}`), so the criterion was weaker than the rule it stood for. The assertion per surface is the criterion that holds; the grep is a convenience.
 
+### Task 53: Two admins can still make two templates with one name (found in Task 10/35 review)
+
+- **Serves:** R-125 / UC-28 4a
+- **Files:** `src/db/schema.ts` (`event_templates.name`, + migration), `src/lib/admin-templates.ts` (`nameTaken`, `freeName`, `takenNames`), tests
+- **Do:** UC-28 4a refuses a typed name another template already has, and `createTemplate` and `updateTemplate` both enforce it — by reading every name, lowercasing, and comparing. There is no unique index behind that read, so it is advisory: two admins creating "Rivals cup" in the same instant both pass `nameTaken` and both insert, and `freeName`'s "copy", "copy 2" suffixing has the same race. The database should refuse the second — a unique index on `lower(name)`, which is also the comparison the code makes (`takenNames` folds case, so a plain index on `name` would not match the rule it is enforcing).
+  Not done in Task 10's review batch because it needs a migration and a duplicate-row decision against production rows nobody can inspect from here: two templates whose names differ only by case, or by collapsed whitespace, must be resolved before the index can be created, exactly as Task 23's 0018 had to withdraw duplicate pending applications first. Deciding that against a live table is the task.
+- **Acceptance criteria:**
+  - [ ] Two simultaneous creates of one name: exactly one wins, proven with the sequencing helpers in `src/lib/__tests__/events-concurrency.test.ts`
+  - [ ] The refusal the loser gets is `nameClash`'s sentence, not a database error
+  - [ ] `freeName`'s suffixing retries on a lost race rather than failing the duplicate
+  - [ ] The migration states what it does with templates that already share a name, and why
+  - [ ] `cleanTemplateName`'s space-collapsing and the index agree on what "the same name" means
+- **Depends on:** Task 13, Task 35. Needs a migration, so it must not run beside another that holds one.
+
 ## I. Championship (R-171 to R-198)
 
 Added 2026-09-20. A season of two to four events a month across different games, with one
@@ -571,6 +585,9 @@ Task 24, R-166 in Task 25, and R-151 in Task 17.
 - **Files:** `src/lib/events.ts`, `src/components/admin/events/BasicsTab.tsx`, `src/components/admin/events/readiness.ts`, `src/app/events/[slug]/page.tsx`, `src/app/events/[slug]/apply/page.tsx`, `src/app/me/page.tsx`, `src/components/admin/events/ApplicantsTab.tsx`, `src/lib/availability.ts`, `src/components/admin/AvailabilityGrid.tsx`, `src/lib/admin-users.ts`, `src/lib/admin-allowlist.ts`, `src/lib/dev-login.ts`, tests beside each
 - **Do:** a test for each flow listed. Gaps already suspected: web address validation with a named reason (UC-08 E2a), date-override notes in the admin slot list (UC-06 E1), developer sign-in refused whenever `DATABASE_URL` is set (UC-30 1a). Also: the dev-login banner is `fixed bottom-0 z-50` and 45px tall, so it covers the unsaved-changes bar's Save and Discard buttons — they cannot be clicked while developer sign-in is on (found in Task 7's browser check). Lift the bar above the banner, or the banner out of its way.
 - **Acceptance criteria:** every flow listed has a passing test
+- **Also found since, in this task's files:**
+  - `BasicsTab.tsx` still offers a hidden game when creating an event, labelled "(hidden)". UC-03 E2 says hiding a game "stops offering it for new events" (found in Task 35, which owns the games library but not this screen).
+  - The dev-login banner overlap above is **done** - Task 13 lifted the unsaved-changes bar to `z-[60]`. Nothing left to do there, and it is unverified in a browser.
 - **Depends on:** Task 10, Task 16
 
 ### Task 34: Kept format and result features

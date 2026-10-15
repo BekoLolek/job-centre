@@ -91,10 +91,52 @@ export default async function MePage() {
 
   const todos: Array<{ label: string; detail: string; href: string; action: string }> = [];
 
-  const requiredMissing = profile.sections.reduce(
-    (total, section) => total + section.completeness.missing.length,
-    0
-  );
+  /*
+   * UC-13 2's first kind of to-do: a question this application needs and
+   * cannot get on its own — a required answer that is not there, or one the
+   * question has changed out from under (`detailAttention`). Named per event,
+   * because "a question changed" is only worth saying next to the event that
+   * is asking it, and it links to that event's own form where the answer can
+   * be given.
+   *
+   * A **retired** question never appears here. That is `detailAttention`'s
+   * doing, not this page's, and it has to be: a question an admin has stopped
+   * asking has no row on the form this to-do links to, so it would be a job
+   * with nowhere to do it (R-09, UC-03 5a).
+   */
+  const changed = new Set<string>();
+  for (const row of live) {
+    const stale = row.outstanding.filter((item) => item.why === "stale");
+    const blank = row.outstanding.filter((item) => item.why === "missing");
+    for (const item of row.outstanding) {
+      if (item.where === "profile") changed.add(item.id);
+    }
+
+    if (stale.length > 0) {
+      todos.push({
+        label: `${plural(stale.length, "question")} changed on ${row.event.title}`,
+        detail: `Your answer to ${stale.map((item) => item.label).join(", ")} cannot be read against the question as it now stands. Your old answer is still saved — answering again replaces it.`,
+        href: `/events/${row.event.slug}/apply`,
+        action: "Answer it again",
+      });
+    }
+    if (blank.length > 0) {
+      todos.push({
+        label: `${plural(blank.length, "answer")} missing for ${row.event.title}`,
+        detail: `${blank.map((item) => item.label).join(", ")} — this event asks for it, and the organisers are reading your application without it.`,
+        href: `/events/${row.event.slug}/apply`,
+        action: "Fill it in",
+      });
+    }
+  }
+
+  // The same nudge for the rest of the profile — the questions no open
+  // application has already named above, so one missing rank does not produce
+  // two to-dos saying the same thing. Counted from `attention` rather than from
+  // `completeness`, so an answer a question has outgrown counts too.
+  const requiredMissing = profile.sections
+    .flatMap((section) => section.fields)
+    .filter((field) => field.attention !== null && !changed.has(field.id)).length;
   if (requiredMissing > 0) {
     todos.push({
       label: `${plural(requiredMissing, "profile question")} unanswered`,
@@ -256,6 +298,58 @@ export default async function MePage() {
               </div>
             )}
           </Section>
+
+          {/* --- Every open application ------------------------------ */}
+          {live.length > 0 && (
+            <Section
+              icon="list"
+              title="Your open applications"
+              description="Where each one stands. A queue number is your place in it, and you move up on your own."
+              aside={
+                <Link href="/me/events" className="text-12 text-muted hover:text-union">
+                  Manage them →
+                </Link>
+              }
+            >
+              <ul className="divide-y divide-hair/60">
+                {live.map((row) => (
+                  <li key={row.id} className="flex flex-wrap items-center gap-4 py-4">
+                    <StatusPill
+                      status={applicationStatusTone(row.status)}
+                      label={
+                        // R-52 in one line: in, queued — and *where* in the
+                        // queue, because "waitlisted" without a number tells
+                        // somebody nothing about whether to make other plans.
+                        row.status === "waitlisted" && row.waitlistPosition !== null
+                          ? `Queue #${row.waitlistPosition}`
+                          : applicationStatusLabel(row.status)
+                      }
+                    />
+                    <div className="min-w-0">
+                      <Link
+                        href={`/events/${row.event.slug}`}
+                        className="text-14 text-chalk hover:text-union"
+                      >
+                        {row.event.title}
+                      </Link>
+                      <div className="mt-1">
+                        <EventDateRange
+                          startsAt={row.event.startsAt}
+                          endsAt={row.event.endsAt}
+                          fallback="Date to be confirmed"
+                        />
+                      </div>
+                    </div>
+                    {row.outstanding.length > 0 && (
+                      <Badge tone="union">
+                        {plural(row.outstanding.length, "answer")} needed
+                      </Badge>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </Section>
+          )}
 
           {/* --- Awaiting my attention ------------------------------- */}
           <Section

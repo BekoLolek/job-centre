@@ -9,7 +9,12 @@ import {
 } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { RIVALS_RANK_LADDER } from "@/db/seed";
-import { GLOBAL_SECTION_NAME, loadProfile, saveProfileSection } from "@/lib/profile";
+import { GLOBAL_SECTION_NAME } from "@/lib/profile-fields";
+import {
+  loadProfile,
+  loadProfileForGame,
+  saveProfileSection,
+} from "@/lib/profile";
 
 /**
  * The member's half of Phase 1, against real Postgres.
@@ -449,5 +454,137 @@ describe("saveProfileSection", () => {
     // And the member has still answered something, so the profile is not
     // "untouched" just because the only thing they filled in was retired.
     expect((await loadProfile(userId, db)).untouched).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* confirmed_at, and the profile an application shows                 */
+/* ------------------------------------------------------------------ */
+
+/** The whole stored row for one answer, so the two stamps can be compared. */
+async function rowFor(fieldId: string, member = userId) {
+  const [row] = await db
+    .select()
+    .from(profileValues)
+    .where(and(eq(profileValues.userId, member), eq(profileValues.fieldId, fieldId)));
+  return row ?? null;
+}
+
+describe("confirmed_at", () => {
+  it("is stamped when the member saves an answer", async () => {
+    // UC-04 4 / docs/domain-model.md: "set whenever the member saves or
+    // confirms the answer". Saving an answer is asserting it.
+    const result = await saveProfileSection(userId, rivalsId, { [ignId]: "Beko" }, db);
+    expect(result.ok).toBe(true);
+
+    const row = await rowFor(ignId);
+    expect(row?.confirmedAt).toBeInstanceOf(Date);
+    expect(row?.confirmedAt?.getTime()).toBe(row?.updatedAt.getTime());
+  });
+
+  it("comes back on the loaded profile, next to the answer", async () => {
+    await saveProfileSection(userId, rivalsId, { [ignId]: "Beko" }, db);
+
+    const profile = await loadProfile(userId, db);
+    const field = profile.sections
+      .flatMap((section) => section.fields)
+      .find((candidate) => candidate.id === ignId);
+
+    // ISO on the view, not a `Date`: `ProfileSection` and `ApplyForm` are
+    // client components and format it in the reader's own zone (`LocalTime`).
+    // Nothing on the server turns an instant into words.
+    expect(typeof field?.confirmedAt).toBe("string");
+    expect(field?.confirmedAt).toBe((await rowFor(ignId))?.confirmedAt?.toISOString());
+  });
+
+  it("is null for an answer nobody has vouched for", async () => {
+    // Every row written before drizzle/0022 says null, and so does one written
+    // straight to the table. Null means never, not "now".
+    await db.insert(profileValues).values({ userId, fieldId: ignId, value: "Beko" });
+    expect((await rowFor(ignId))?.confirmedAt).toBeNull();
+
+    const sections = await loadProfileForGame(userId, rivalsId, {}, db);
+    const field = sections
+      .flatMap((section) => section.fields)
+      .find((candidate) => candidate.id === ignId);
+    expect(field?.confirmedAt).toBeNull();
+  });
+});
+
+/*
+ * The four invariants of "yes, that is all still right" (R-49 / UC-12 3) were
+ * tested here, against a `confirmProfileAnswers` in this module whose only
+ * importer was this file. The stamp is written by `commitDetails` in
+ * `src/lib/events.ts`, inside the transaction that accepts the application, and
+ * all four now sit on that live path in `src/lib/__tests__/events.test.ts`
+ * ("confirming a detail the member did not change") — including the two this
+ * module could only assert about an unreachable function: a retired detail
+ * cannot be stamped, and a stamp reaches one member's row only.
+ */
+
+describe("loadProfileForGame", () => {
+  it("shows the global details and this game's, and no other game's", async () => {
+    // UC-12 2: "their saved profile details for the event's game". A Jackbox
+    // answer is not what a Marvel Rivals event is asking about.
+    const sections = await loadProfileForGame(userId, rivalsId, {}, db);
+    expect(sections.map((section) => section.name)).toEqual([
+      GLOBAL_SECTION_NAME,
+      "Marvel Rivals",
+    ]);
+    expect(
+      sections.flatMap((section) => section.fields).map((field) => field.id)
+    ).not.toContain(packsId);
+  });
+
+  it("gives an event with no game the global details alone", async () => {
+    const sections = await loadProfileForGame(userId, null, {}, db);
+    expect(sections.map((section) => section.name)).toEqual([GLOBAL_SECTION_NAME]);
+    expect(sections[0].fields.map((field) => field.id)).toEqual([voiceId]);
+  });
+
+  it("stops listing a retired detail", async () => {
+    // R-09, and the half of it that matters on the application: the answer is
+    // kept, the question is not asked.
+    await db.insert(profileValues).values({ userId, fieldId: ignId, value: "Beko" });
+    await db
+      .update(profileFields)
+      .set({ retiredAt: new Date("2026-04-01T00:00:00Z") })
+      .where(eq(profileFields.id, ignId));
+
+    const sections = await loadProfileForGame(userId, rivalsId, {}, db);
+    expect(
+      sections.flatMap((section) => section.fields).map((field) => field.id)
+    ).not.toContain(ignId);
+    // Kept, not deleted.
+    expect((await rowFor(ignId))?.value).toBe("Beko");
+  });
+
+  it("lets one event require a detail the catalogue leaves optional", async () => {
+    // The approved amendment to UC-04 4a: the profile saves partially, and the
+    // application is where a demand for it belongs.
+    expect(
+      (await loadProfileForGame(userId, jackboxId, {}, db))
+        .flatMap((section) => section.fields)
+        .find((field) => field.id === packsId)?.attention
+    ).toBeNull();
+
+    const sections = await loadProfileForGame(
+      userId,
+      jackboxId,
+      { alsoRequired: new Set([packsId]) },
+      db
+    );
+    const packs = sections
+      .flatMap((section) => section.fields)
+      .find((field) => field.id === packsId);
+    expect(packs?.required).toBe(true);
+    expect(packs?.attention).toBe("missing");
+  });
+
+  it("says nothing about a visitor who is not signed in", async () => {
+    const sections = await loadProfileForGame(null, rivalsId, {}, db);
+    expect(
+      sections.flatMap((section) => section.fields).every((field) => field.value === null)
+    ).toBe(true);
   });
 });

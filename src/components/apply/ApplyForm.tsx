@@ -18,9 +18,15 @@ import {
 } from "@/components/ui";
 import type { AvailabilityState, EntryMode, ProfileValue } from "@/db/schema";
 import { dayName } from "@/lib/events-policy";
-import type { PrefilledQuestionView } from "@/lib/events";
-import { formatAnswer, hasAnswer } from "@/lib/profile-fields";
-import { applyToEventAction } from "@/app/events/[slug]/apply/actions";
+import type { AnsweredQuestionView } from "@/lib/events";
+import LocalTime from "@/components/format/LocalTime";
+import type { ProfileFieldView, ProfileSectionView } from "@/lib/profile";
+import { GLOBAL_SECTION_KEY, formatAnswer, hasAnswer } from "@/lib/profile-fields";
+import {
+  applyToEventAction,
+  editApplicationAction,
+} from "@/app/events/[slug]/apply/actions";
+import { detailWrites } from "./writes";
 
 /**
  * The application form — the page this whole project exists to make painless.
@@ -32,10 +38,10 @@ import { applyToEventAction } from "@/app/events/[slug]/apply/actions";
  * That is the literal design of this component, and for a member whose profile
  * is filled in it really is three taps and no typing:
  *
- *   1. **"Yes, still right"** on the prefilled block, which arrives already
- *      answered from `loadApplicationForm` — every value shown as a sentence
- *      rather than as a control, because a control invites fiddling with an
- *      answer that was already correct.
+ *   1. **"Yes, still right"** on the profile block, which arrives already
+ *      answered — every value shown as a sentence rather than as a control,
+ *      because a control invites fiddling with an answer that was already
+ *      correct.
  *   2. **"I can make every day"**, or one tap per day if it is more complicated
  *      than that.
  *   3. **Apply.**
@@ -44,13 +50,50 @@ import { applyToEventAction } from "@/app/events/[slug]/apply/actions";
  * — the same click-first controls `/me/profile` uses, not a second
  * implementation — and editing a row counts as having checked it.
  *
+ * ## The profile block is the profile, not a copy of it
+ *
+ * UC-12 2 shows the member their **saved profile details for the event's game**,
+ * all of them, and UC-12 3a says an edit here is saved to their profile. So
+ * that is where it goes and nowhere else (R-11): the event's application stores
+ * answers to the event's *own* questions, and a detail the event wants from the
+ * profile is read from the profile every time anybody looks. There is no
+ * snapshot. A snapshot would be a second copy of an answer, which is the thing
+ * the domain model forbids (docs/domain-model.md:335 — nothing derived is
+ * stored), and it would be the copy a manager read while the member looked at
+ * the other one.
+ *
+ * What the member taps is therefore two different writes behind one button:
+ * details they **changed** are saved, details they **left alone** are stamped
+ * as confirmed (R-49). The second one is why `confirmed_at` exists — without it
+ * a filled-in profile produces no evidence that anybody ever looked.
+ *
+ * ## Asking for what is missing, inline
+ *
+ * A required detail with no answer (UC-12 2b) and an answer the question has
+ * outgrown both arrive with their control already open, because they are the
+ * two cases the member cannot resolve by reading. Everything else stays a
+ * sentence. The submit button will not go until the missing ones are filled in,
+ * and `applyToEvent` refuses it regardless — the client stops the obvious so
+ * the round trip is not wasted, and the server decides.
+ *
+ * ## Editing an application that is already in
+ *
+ * Same form, `mode: "edit"` (R-53 / UC-13 3). It saves and stays rather than
+ * navigating, no seat moves, and the button says so. Whether to offer it at all
+ * is the page's decision, taken from `canEditAnswers` — and whether to *accept*
+ * it is `editApplicationAnswers`', taken again under the event's row lock,
+ * because this form being on screen proves nothing about whether sign-ups were
+ * still open when the member pressed the button.
+ *
  * ## What is not here
  *
  * No validation rules. The client stops the obvious ("that required question
- * has no answer") so the round trip is not wasted, but `applyToEvent` re-reads
- * the questions, the ladder and the seat count inside a row lock and refuses
- * anything it does not like. If the two ever disagree the server wins, and its
- * per-question errors land back on the right rows.
+ * has no answer") so the round trip is not wasted, but the server re-reads the
+ * questions, the details, the ladder and the seat count inside a row lock and
+ * refuses anything it does not like. If the two ever disagree the server wins,
+ * and its per-row errors land back on the right rows — profile details keyed by
+ * field id, event questions by question id, which is why the two maps are kept
+ * apart all the way down.
  */
 
 export type ApplyDay = {
@@ -64,11 +107,16 @@ export type ApplyDay = {
 export type ApplyFormProps = {
   eventId: string;
   slug: string;
-  questions: PrefilledQuestionView[];
+  /** Applying for the first time, or changing answers already stored. */
+  mode: "apply" | "edit";
+  /** The member's profile for this event's game, plus the global details. */
+  profile: ProfileSectionView[];
+  /** The event's own questions. Linked ones are in `profile`, not here. */
+  questions: AnsweredQuestionView[];
   days: ApplyDay[];
   /** The event's game ladder, for rendering a `rank` answer back. */
   rankLadder: string[];
-  /** Their existing per-day answers, when they are re-applying. */
+  /** Their existing per-day answers, when they are re-applying or editing. */
   availability: Record<string, AvailabilityState>;
   /** True when the seats are gone and this application joins the queue (§14). */
   willWaitlist: boolean;
@@ -83,9 +131,14 @@ export type ApplyFormProps = {
   entryMode: EntryMode;
 };
 
+/** One detail, with the section it came from — the flat list the form works on. */
+type DetailRow = ProfileFieldView & { sectionKey: string; sectionName: string };
+
 export default function ApplyForm({
   eventId,
   slug,
+  mode,
+  profile,
   questions,
   days,
   rankLadder,
@@ -95,7 +148,24 @@ export default function ApplyForm({
 }: ApplyFormProps) {
   const router = useRouter();
 
-  const [values, setValues] = useState<Record<string, ProfileValue>>(() => {
+  const details = useMemo<DetailRow[]>(
+    () =>
+      profile.flatMap((section) =>
+        section.fields.map((field) => ({
+          ...field,
+          sectionKey: section.key,
+          sectionName: section.name,
+        }))
+      ),
+    [profile]
+  );
+
+  const [detailValues, setDetailValues] = useState<Record<string, ProfileValue>>(() => {
+    const start: Record<string, ProfileValue> = {};
+    for (const detail of details) start[detail.id] = detail.value;
+    return start;
+  });
+  const [answers, setAnswers] = useState<Record<string, ProfileValue>>(() => {
     const start: Record<string, ProfileValue> = {};
     for (const question of questions) start[question.id] = question.value;
     return start;
@@ -103,42 +173,69 @@ export default function ApplyForm({
   const [availability, setAvailability] =
     useState<Record<string, AvailabilityState>>(initialAvailability);
 
-  /** Rows the member has opened to change. Everything else stays a sentence. */
-  const [open, setOpen] = useState<Record<string, boolean>>({});
+  /**
+   * Detail rows whose control is open. A detail that needs the member — a
+   * required blank (UC-12 2b) or an answer its question has outgrown — starts
+   * open, because those are the two they cannot deal with by reading.
+   */
+  const [open, setOpen] = useState<Record<string, boolean>>(() => {
+    const start: Record<string, boolean> = {};
+    for (const detail of details) if (detail.attention !== null) start[detail.id] = true;
+    return start;
+  });
+  /** Details the member actually changed. Only these are written as values. */
+  const [touched, setTouched] = useState<Record<string, true>>({});
   const [confirmed, setConfirmed] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // Split once: the questions that arrived answered, and the ones that did not.
-  // The split is on the *incoming* value, not the current one, so answering a
-  // blank question does not make it jump into the confirm block mid-form.
-  const { known, blank } = useMemo(() => {
-    const known: PrefilledQuestionView[] = [];
-    const blank: PrefilledQuestionView[] = [];
-    for (const question of questions) {
-      (hasAnswer(question.value) ? known : blank).push(question);
+  // Split once, on the *incoming* state rather than the current one, so filling
+  // in a blank does not make the row jump out of the "needs you" block mid-form.
+  const { settled, needed } = useMemo(() => {
+    const settled: DetailRow[] = [];
+    const needed: DetailRow[] = [];
+    for (const detail of details) {
+      (detail.attention === null && hasAnswer(detail.value) ? settled : needed).push(detail);
     }
-    return { known, blank };
-  }, [questions]);
+    return { settled, needed };
+  }, [details]);
 
-  const change = (questionId: string, value: ProfileValue) => {
-    setValues((current) => ({ ...current, [questionId]: value }));
+  const clearError = (id: string) =>
     setErrors((current) => {
-      if (!current[questionId]) return current;
+      if (!current[id]) return current;
       const next = { ...current };
-      delete next[questionId];
+      delete next[id];
       return next;
     });
+
+  const changeDetail = (id: string, value: ProfileValue) => {
+    setDetailValues((current) => ({ ...current, [id]: value }));
+    setTouched((current) => ({ ...current, [id]: true }));
+    clearError(id);
+    setSaved(false);
     // Touching an answer is a stronger form of checking it than pressing the
     // confirm button, so it counts as both.
     setConfirmed(true);
   };
 
-  const missing = questions.filter(
-    (question) => question.required && !hasAnswer(values[question.id] ?? null)
-  );
+  const changeAnswer = (id: string, value: ProfileValue) => {
+    setAnswers((current) => ({ ...current, [id]: value }));
+    clearError(id);
+    setSaved(false);
+  };
+
+  /** Required rows with nothing in them — the ones the server will refuse. */
+  const missing = [
+    ...details.filter(
+      (detail) => detail.required && !hasAnswer(detailValues[detail.id] ?? null)
+    ),
+    ...questions.filter(
+      (question) => question.required && !hasAnswer(answers[question.id] ?? null)
+    ),
+  ];
 
   const everyDayYes =
     days.length > 0 && days.every((day) => availability[day.id] === "yes");
@@ -146,23 +243,41 @@ export default function ApplyForm({
   const submit = async () => {
     setBusy(true);
     setProblem(null);
+    setSaved(false);
     setErrors({});
     try {
-      const answers: Record<string, unknown> = {};
-      for (const question of questions) answers[question.id] = values[question.id] ?? null;
+      const answerPayload: Record<string, unknown> = {};
+      for (const question of questions) answerPayload[question.id] = answers[question.id] ?? null;
 
-      const result = await applyToEventAction({
+      // Two halves of one tap: what they changed is written, what they left
+      // alone is stamped (R-49) — and nothing is stamped unless they said so,
+      // which in `mode: "edit"` is the only thing stopping a day-chip change
+      // from vouching for the member's whole profile. The rule is
+      // `detailWrites`, where it can be tested.
+      const { details: detailPayload, confirming } = detailWrites({
+        details,
+        values: detailValues,
+        touched,
+        confirmed,
+      });
+
+      const input = {
         eventId,
         slug,
-        answers,
+        answers: answerPayload,
+        details: detailPayload,
+        confirmed: confirming,
         availability,
-      });
+      };
+
+      const result =
+        mode === "edit" ? await editApplicationAction(input) : await applyToEventAction(input);
 
       if (!result.ok) {
         setProblem(result.error);
         setErrors(result.errors ?? {});
-        // A question that failed has to be reachable, so open every row that
-        // has an error on it — including ones the member had never opened.
+        // A row that failed has to be reachable, so open every detail that has
+        // an error on it — including ones the member had never opened.
         setOpen((current) => ({
           ...current,
           ...Object.fromEntries(Object.keys(result.errors ?? {}).map((id) => [id, true])),
@@ -170,21 +285,115 @@ export default function ApplyForm({
         setBusy(false);
         return;
       }
+
+      if (mode === "edit") {
+        // Nothing moves them off this page: they came here to change one answer
+        // and may want to change another. `router.refresh()` re-reads the
+        // profile so the sentences they are looking at are the stored ones.
+        setSaved(true);
+        setTouched({});
+        setBusy(false);
+        router.refresh();
+        return;
+      }
+
       // Note there is no `setBusy(false)` on the way out: the navigation below
       // is what ends this form's life, and re-enabling the button first is how
       // an impatient second tap becomes a second application.
 
       // Where the news is broken, and why it is not broken here: submitting
-      // makes this page's own guard true — a member with a live application is
-      // sent to `/me/events` — so a success panel rendered in this component
-      // would be replaced by that redirect a frame later. The confirmation is
+      // makes this page render the edit form instead, so a success panel in
+      // this component would be replaced a frame later. The confirmation is
       // therefore server-rendered on the page they land on, from the stored
       // application rather than from this component's memory of it.
       router.replace(`/me/events?applied=${encodeURIComponent(slug)}`);
     } catch {
-      setProblem("Could not reach the server, so nothing was submitted. Try again.");
+      setProblem(
+        mode === "edit"
+          ? "Could not reach the server, so nothing was saved. Try again."
+          : "Could not reach the server, so nothing was submitted. Try again."
+      );
       setBusy(false);
     }
+  };
+
+  /* --- One detail row ------------------------------------------------ */
+
+  const detailRow = (detail: DetailRow, startOpen: boolean) => {
+    const value = detailValues[detail.id] ?? null;
+    const isOpen = open[detail.id] === true || startOpen;
+    const shape = {
+      type: detail.type,
+      label: detail.label,
+      options: detail.options,
+      rankLadder: detail.sectionKey === GLOBAL_SECTION_KEY ? [] : rankLadder,
+    };
+
+    return (
+      <div key={detail.id} className="px-5 py-4">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+          <span className="eyebrow text-chalk/70">{detail.label}</span>
+
+          {detail.attention === "stale" && (
+            <Badge tone="union">Question changed</Badge>
+          )}
+          {detail.attention === "missing" && <Badge tone="union">Needed</Badge>}
+
+          {!isOpen && (
+            <span
+              className={cx("num text-14", hasAnswer(value) ? "text-chalk" : "text-muted")}
+            >
+              {formatAnswer(shape, value)}
+            </span>
+          )}
+
+          {/*
+            When they last said this one is right (R-49 / UC-12 3). It is the
+            answer to the question this block asks — "is this still true?" — and
+            a member looking at "confirmed in March" knows which rows to read
+            properly. `LocalTime` because no instant is formatted on the server.
+          */}
+          {!isOpen && detail.confirmedAt !== null && hasAnswer(value) && (
+            <span className="text-12 text-muted">
+              confirmed <LocalTime at={detail.confirmedAt} format="day" />
+            </span>
+          )}
+
+          {!startOpen && (
+            <button
+              type="button"
+              className="ml-auto text-12 text-muted underline underline-offset-4 hover:text-union"
+              onClick={() =>
+                setOpen((current) => ({ ...current, [detail.id]: !isOpen }))
+              }
+            >
+              {isOpen ? "Done" : "Change"}
+            </button>
+          )}
+        </div>
+
+        {detail.attention === "stale" && (
+          <p className="mt-2 text-12 leading-relaxed text-muted">
+            This question has changed since you answered it, so your old answer cannot be
+            read any more. It is still saved — pick again and it is replaced.
+          </p>
+        )}
+
+        {isOpen && (
+          <div className="mt-3">
+            <FieldControl
+              field={{ ...detail, value }}
+              value={value}
+              onChange={(next) => changeDetail(detail.id, next)}
+            />
+          </div>
+        )}
+
+        {errors[detail.id] && (
+          <p className="mt-2 text-12 text-flare">{errors[detail.id]}</p>
+        )}
+      </div>
+    );
   };
 
   /* --- The form ------------------------------------------------------ */
@@ -193,85 +402,31 @@ export default function ApplyForm({
     <div className="space-y-5">
       {problem && <Alert>{problem}</Alert>}
 
-      {/* --- 1. Already answered, confirm in one tap ------------------ */}
-      {known.length > 0 && (
+      {saved && (
+        <Alert tone="union">
+          <span className="block font-medium">Saved</span>
+          <span className="mt-1 block opacity-90">
+            Your answers are updated and your place is exactly where it was — changing an
+            answer does not move you in any queue.
+          </span>
+        </Alert>
+      )}
+
+      {/* --- 1. The profile, as it stands, confirmed in one tap -------- */}
+      {settled.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
-            <h2 className="font-display text-20 leading-none">
-              Already answered
-            </h2>
+            <h2 className="font-display text-20 leading-none">Your details</h2>
             <Badge tone={confirmed ? "success" : "union"}>
               {confirmed ? "Checked" : "Needs a look"}
             </Badge>
             <span className="ml-auto text-12 text-muted">
-              {plural(known.length, "answer")} from your profile
+              {plural(settled.length, "answer")} from your profile
             </span>
           </div>
 
           <div className="divide-y divide-hair/60">
-            {known.map((question) => {
-              const value = values[question.id] ?? null;
-              const isOpen = open[question.id] === true;
-              return (
-                <div key={question.id} className="px-5 py-4">
-                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
-                    <span className="eyebrow text-chalk/70">{question.label}</span>
-
-                    {!isOpen && (
-                      <span
-                        className={cx(
-                          "num text-14",
-                          hasAnswer(value) ? "text-chalk" : "text-muted"
-                        )}
-                      >
-                        {formatAnswer(
-                          {
-                            type: question.type,
-                            label: question.label,
-                            options: question.options,
-                            rankLadder,
-                          },
-                          value
-                        )}
-                      </span>
-                    )}
-
-                    <button
-                      type="button"
-                      className="ml-auto text-12 text-muted underline underline-offset-4 hover:text-union"
-                      onClick={() =>
-                        setOpen((current) => ({ ...current, [question.id]: !isOpen }))
-                      }
-                    >
-                      {isOpen ? "Done" : "Change"}
-                    </button>
-                  </div>
-
-                  {isOpen && (
-                    <div className="mt-3">
-                      <FieldControl
-                        field={{
-                          id: question.id,
-                          key: question.key,
-                          label: question.label,
-                          type: question.type,
-                          options: question.options,
-                          required: question.required,
-                          choices: question.choices,
-                          value,
-                        }}
-                        value={value}
-                        onChange={(next) => change(question.id, next)}
-                      />
-                    </div>
-                  )}
-
-                  {errors[question.id] && (
-                    <p className="mt-2 text-12 text-flare">{errors[question.id]}</p>
-                  )}
-                </div>
-              );
-            })}
+            {settled.map((detail) => detailRow(detail, false))}
           </div>
 
           <div className="flex flex-wrap items-center gap-3 border-t border-hair px-5 py-4">
@@ -283,33 +438,58 @@ export default function ApplyForm({
               {confirmed ? "✓ Confirmed" : "Yes, that's all still right"}
             </Button>
             <p className="text-12 leading-relaxed text-muted">
-              These came from your profile. One tap says they are still true — nothing to
-              retype.
+              These are your profile, not a copy of it — changing one here changes it
+              everywhere, and one tap says they are still true.
             </p>
           </div>
         </Panel>
       )}
 
-      {/* --- 2. Anything that has never been answered ----------------- */}
-      {blank.length > 0 && (
+      {/* --- 2. Details this event still needs ------------------------- */}
+      {needed.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
             <h2 className="font-display text-20 leading-none">
-              {known.length > 0 ? "Just these" : "The questions"}
+              {settled.length > 0 ? "Still needed" : "Your details"}
             </h2>
             <span className="ml-auto text-12 text-muted">
-              {blank.every((question) => !question.required)
+              {needed.every((detail) => !detail.required)
                 ? "All optional"
-                : `${blank.filter((question) => question.required).length} to answer`}
+                : `${needed.filter((detail) => detail.required).length} to answer`}
             </span>
           </div>
 
           <div className="divide-y divide-hair/60">
-            {blank.map((question) => (
+            {needed.map((detail) => detailRow(detail, true))}
+          </div>
+
+          <p className="border-t border-hair px-5 py-3 text-12 text-muted">
+            Answered once, these are remembered for every future event — that is what makes
+            the next application three taps.
+          </p>
+        </Panel>
+      )}
+
+      {/* --- 3. The event's own questions ------------------------------ */}
+      {questions.length > 0 && (
+        <Panel as="section" padding="none" className="overflow-hidden">
+          <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
+            <h2 className="font-display text-20 leading-none">
+              {details.length > 0 ? "Just these" : "The questions"}
+            </h2>
+            <span className="ml-auto text-12 text-muted">
+              {questions.every((question) => !question.required)
+                ? "All optional"
+                : `${questions.filter((question) => question.required).length} to answer`}
+            </span>
+          </div>
+
+          <div className="divide-y divide-hair/60">
+            {questions.map((question) => (
               <div key={question.id} className="px-5 py-4">
                 <div className="mb-3 flex flex-wrap items-baseline gap-2">
                   <span className="eyebrow text-chalk/70">{question.label}</span>
-                  {question.required && !hasAnswer(values[question.id] ?? null) && (
+                  {question.required && !hasAnswer(answers[question.id] ?? null) && (
                     <Badge tone="union">Needed</Badge>
                   )}
                 </div>
@@ -323,10 +503,10 @@ export default function ApplyForm({
                     options: question.options,
                     required: question.required,
                     choices: question.choices,
-                    value: values[question.id] ?? null,
+                    value: answers[question.id] ?? null,
                   }}
-                  value={values[question.id] ?? null}
-                  onChange={(next) => change(question.id, next)}
+                  value={answers[question.id] ?? null}
+                  onChange={(next) => changeAnswer(question.id, next)}
                 />
 
                 {errors[question.id] && (
@@ -338,7 +518,7 @@ export default function ApplyForm({
         </Panel>
       )}
 
-      {questions.length === 0 && (
+      {details.length === 0 && questions.length === 0 && (
         <Panel as="section">
           <Eyebrow className="mb-3">No questions</Eyebrow>
           <EmptyState>
@@ -347,7 +527,7 @@ export default function ApplyForm({
         </Panel>
       )}
 
-      {/* --- 3. Availability, as day chips ---------------------------- */}
+      {/* --- 4. Availability, as day chips ---------------------------- */}
       {days.length > 0 && (
         <Panel as="section" padding="none" className="overflow-hidden">
           <div className="flex flex-wrap items-center gap-3 border-b border-hair px-5 py-4">
@@ -358,11 +538,12 @@ export default function ApplyForm({
               size="sm"
               variant={everyDayYes ? "default" : "union"}
               className="ml-auto"
-              onClick={() =>
+              onClick={() => {
+                setSaved(false);
                 setAvailability(
                   Object.fromEntries(days.map((day) => [day.id, "yes" as AvailabilityState]))
-                )
-              }
+                );
+              }}
               disabled={everyDayYes}
             >
               {everyDayYes ? "✓ Every day" : "I can make every day"}
@@ -400,14 +581,15 @@ export default function ApplyForm({
                     <ChoiceChip
                       key={choice.value}
                       selected={availability[day.id] === choice.value}
-                      onClick={() =>
+                      onClick={() => {
+                        setSaved(false);
                         setAvailability((current) => {
                           const next = { ...current };
                           if (next[day.id] === choice.value) delete next[day.id];
                           else next[day.id] = choice.value;
                           return next;
-                        })
-                      }
+                        });
+                      }}
                     >
                       {choice.label}
                     </ChoiceChip>
@@ -424,16 +606,26 @@ export default function ApplyForm({
         </Panel>
       )}
 
-      {/* --- 4. One submit -------------------------------------------- */}
+      {/* --- 5. One submit -------------------------------------------- */}
       <Panel as="section" className="sticky bottom-4">
         <div className="flex flex-wrap items-center gap-4">
           <div className="min-w-0">
             <Button
               variant="union"
               onClick={submit}
-              disabled={busy || missing.length > 0 || (known.length > 0 && !confirmed)}
+              disabled={
+                busy || missing.length > 0 || (mode === "apply" && settled.length > 0 && !confirmed)
+              }
             >
-              {busy ? "Submitting…" : willWaitlist ? "Join the waitlist" : "Apply"}
+              {busy
+                ? mode === "edit"
+                  ? "Saving…"
+                  : "Submitting…"
+                : mode === "edit"
+                  ? "Save changes"
+                  : willWaitlist
+                    ? "Join the waitlist"
+                    : "Apply"}
             </Button>
           </div>
 
@@ -441,11 +633,13 @@ export default function ApplyForm({
             {missing.length > 0 ? (
               <span className="text-union">
                 {plural(missing.length, "question")} still needed:{" "}
-                {missing.map((question) => question.label).join(", ")}
+                {missing.map((row) => row.label).join(", ")}
               </span>
-            ) : known.length > 0 && !confirmed ? (
+            ) : mode === "edit" ? (
+              "Saving changes your answers and your profile. It does not touch your seat, your place in any queue, or when you applied — and you can keep changing them until sign-ups close."
+            ) : settled.length > 0 && !confirmed ? (
               <span className="text-union">
-                Confirm the answers above are still right, then this goes through.
+                Confirm the details above are still right, then this goes through.
               </span>
             ) : entryMode === "approval" ? (
               "The organisers review every application to this event, so this goes to them rather than taking a seat. You will hear either way, and you can withdraw it at any time until then."
@@ -461,7 +655,7 @@ export default function ApplyForm({
             className="text-12 text-muted underline underline-offset-4 hover:text-union"
             onClick={() => router.push(`/events/${slug}`)}
           >
-            Cancel
+            {mode === "edit" ? "Done" : "Cancel"}
           </button>
         </div>
       </Panel>

@@ -20,6 +20,45 @@ import SaveRow, { type SaveState } from "./SaveRow";
 import type { LinkableField } from "./types";
 
 /**
+ * What removing one question actually costs, in the admin's terms (UC-08 8).
+ *
+ * The honest version of "are you sure?", and the two halves are honest about
+ * different things: an own question's answers really do go (R-53's edits were
+ * stored on the application), while a linked question's answer is the member's
+ * profile answer and is not this event's to take (R-11).
+ *
+ * Exported as a function of the count rather than written into the modal's JSX
+ * for the reason `strandedAnswerNotice` is: the dialog is only on screen after
+ * a click a static render cannot make, and these are the sentences that have to
+ * be **true**. The linked half is checked by `question-copy.test.ts`'s
+ * destructive-wording scan, because it is the half that must never claim a loss
+ * — `setEventQuestions` deletes the question row and `clearOrphanedAnswers`
+ * touches `applications.answers` only, so a `profile_values` row cannot be
+ * reached from here at all.
+ */
+export function removeQuestionNotice(question: {
+  /** True when the answer shown under it is the member's profile answer. */
+  linked: boolean;
+  /** Stored answers for an own question; profile answers for a linked one. */
+  answers: number;
+}): { heading: string; body: string } {
+  if (question.linked) {
+    return {
+      heading: `${plural(question.answers, "applicant")} answered this on their profile`,
+      body:
+        "That answer belongs to their profile and stays there, so this takes nothing with " +
+        "it: they keep it, every other event asking for the same detail still reads it, " +
+        "and they will not be asked again. Removing it only stops this event asking.",
+    };
+  }
+  return {
+    heading: `${plural(question.answers, "applicant")} answered this`,
+    body:
+      "Removing it takes their answers with it when you save. Nothing is written until then.",
+  };
+}
+
+/**
  * Questions — the application form builder (§6.3's "Form" tab).
  *
  * ## Why the whole list saves at once
@@ -38,6 +77,24 @@ import type { LinkableField } from "./types";
  * server-side for `previewFieldEdit`, over the same stored values. That is why
  * there is no preview round trip here and there is one for days: the answers
  * are already on the page, the availability rows are not.
+ *
+ * ## A linked question has no answers to cost (R-11, Task 10)
+ *
+ * `ApplicantView.answers` is **composed**: `linkedAnswers` reads a linked
+ * question's answer out of `profile_values` on every read, because that is
+ * where it lives. So counting `applicants[].answers[id]` for a linked question
+ * counts profile answers, and every number this tab works out from it would be
+ * a cost nobody is going to pay — `clearOrphanedAnswers` has nothing to clear,
+ * and the save would report "0 answers cleared" a second after the dialog said
+ * three were at risk.
+ *
+ * Hence two counts, and the difference between them is the point:
+ * `answersTo` is what is **stored here** (zero for a linked question) and
+ * drives every warning and the save confirm, while `profileAnswersTo` is what
+ * the member holds on their profile and is only ever used to say that it stays
+ * there. Copy that talks an admin out of a safe action is the failure
+ * `question-copy.test.ts` exists to prevent one screen over, so the linked
+ * wording is scanned by that file too.
  */
 
 export default function QuestionsTab({
@@ -83,15 +140,39 @@ export default function QuestionsTab({
 
   /* --- Counting what an edit costs -------------------------------- */
 
-  /** Stored answers to one existing question. */
-  const answersTo = (questionId: string | undefined): number => {
-    if (!questionId) return 0;
+  /** A question as either list holds it: a draft, or a stored row. */
+  type Counted = { id?: string; profileFieldId: string | null };
+
+  /**
+   * Answers **stored against** one existing question.
+   *
+   * Zero for a linked question, always: its answer is a `profile_values` row
+   * composed in on read, and nothing is written under its id. Skipped rather
+   * than counted and subtracted, because the composed map cannot tell a
+   * profile answer from a legacy stored copy — and the copy is dropped on read
+   * and cleared by the next write anyway, so neither is a cost of removing it.
+   */
+  const answersTo = (question: Counted): number => {
+    if (!question.id || question.profileFieldId !== null) return 0;
+    const questionId = question.id;
     return applicants.filter((row) => hasAnswer(row.answers[questionId])).length;
   };
 
-  /** Of those, how many the draft definition would no longer accept. */
+  /**
+   * Applicants who have answered a **linked** question on their profile.
+   *
+   * Not a cost: the only thing it is ever used to say is that those answers
+   * stay where they are (`removeQuestionNotice`).
+   */
+  const profileAnswersTo = (question: Counted): number => {
+    if (!question.id || question.profileFieldId === null) return 0;
+    const questionId = question.id;
+    return applicants.filter((row) => hasAnswer(row.answers[questionId])).length;
+  };
+
+  /** Of the stored ones, how many the draft definition would no longer accept. */
   const invalidatedBy = (draft: QuestionDraft): number => {
-    if (!draft.id) return 0;
+    if (!draft.id || draft.profileFieldId !== null) return 0;
     const shape = {
       type: draft.type,
       label: draft.label,
@@ -110,7 +191,7 @@ export default function QuestionsTab({
     const kept = new Set(questions.map((question) => question.id).filter(Boolean));
     const removed = event.questions
       .filter((question) => !kept.has(question.id))
-      .reduce((total, question) => total + answersTo(question.id), 0);
+      .reduce((total, question) => total + answersTo(question), 0);
     const retyped = questions.reduce((total, draft) => total + invalidatedBy(draft), 0);
     return removed + retyped;
   };
@@ -212,6 +293,17 @@ export default function QuestionsTab({
     }
   };
 
+  /** What the remove dialog says about the question it is open over. */
+  const removal = deleting
+    ? removeQuestionNotice({
+        linked: deleting.profileFieldId !== null,
+        answers:
+          deleting.profileFieldId === null
+            ? answersTo(deleting)
+            : profileAnswersTo(deleting),
+      })
+    : null;
+
   const linked = questions.filter((question) => question.profileFieldId !== null).length;
   const kept = new Set(questions.map((question) => question.id).filter(Boolean));
   const dropping = event.questions.filter((question) => !kept.has(question.id));
@@ -244,7 +336,8 @@ export default function QuestionsTab({
         ) : (
           <ul className="divide-y divide-hair/60 rounded-lg border border-hair">
             {questions.map((question, index) => {
-              const answers = answersTo(question.id);
+              const answers = answersTo(question);
+              const fromProfiles = profileAnswersTo(question);
               const invalid = invalidatedBy(question);
               const link = linkableFields.find((field) => field.id === question.profileFieldId);
               const problem = fieldErrors[question.id ?? `new-${index}`];
@@ -299,7 +392,13 @@ export default function QuestionsTab({
                       size="sm"
                       variant="flare"
                       onClick={() =>
-                        answers > 0 ? setDeleting(question) : remove(question.key)
+                        // The dialog is for a question there is something to
+                        // say about: answers that really would go, or a
+                        // profile answer the admin might fear for. Neither,
+                        // and removing a draft row needs no ceremony.
+                        answers > 0 || fromProfiles > 0
+                          ? setDeleting(question)
+                          : remove(question.key)
                       }
                     >
                       Remove
@@ -315,7 +414,7 @@ export default function QuestionsTab({
           <Alert tone="union">
             {plural(dropping.length, "question")} will be deleted when you save, along with{" "}
             {plural(
-              dropping.reduce((total, question) => total + answersTo(question.id), 0),
+              dropping.reduce((total, question) => total + answersTo(question), 0),
               "stored answer"
             )}
             . Nothing has been removed yet.
@@ -361,7 +460,7 @@ export default function QuestionsTab({
         />
       )}
 
-      {/* --- Removing a question that has answers ------------------- */}
+      {/* --- Removing a question somebody has answered -------------- */}
       <Modal
         open={deleting !== null}
         onClose={() => setDeleting(null)}
@@ -383,15 +482,15 @@ export default function QuestionsTab({
           </>
         }
       >
-        {deleting && (
-          <Alert tone="flare">
-            <span className="block font-medium">
-              {plural(answersTo(deleting.id), "applicant")} answered this
-            </span>
-            <span className="mt-1 block opacity-90">
-              Removing it takes their answers with it when you save. Nothing is written
-              until then.
-            </span>
+        {deleting && removal && (
+          /*
+            `union` rather than `flare` for a linked question: nothing is lost,
+            so the loudest tone on the page would be the dialog arguing with its
+            own words.
+          */
+          <Alert tone={deleting.profileFieldId === null ? "flare" : "union"}>
+            <span className="block font-medium">{removal.heading}</span>
+            <span className="mt-1 block opacity-90">{removal.body}</span>
           </Alert>
         )}
       </Modal>

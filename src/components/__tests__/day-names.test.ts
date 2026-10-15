@@ -107,6 +107,8 @@ function applyForm(days: ApplyDay[]): string {
   const props: ApplyFormProps = {
     eventId: "event-1",
     slug: "spring-lan",
+    mode: "apply",
+    profile: [],
     questions: [],
     days,
     rankLadder: [],
@@ -171,6 +173,8 @@ function myEventCard(days: ApplyDay[]): string {
     confirmation: null,
     confirmationClosesAt: "2026-05-18T17:00:00.000Z",
     confirmationsOpen: true,
+    answersEditable: true,
+    outstanding: 0,
     past: false,
     action: {
       kind: "accepted",

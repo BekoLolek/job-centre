@@ -12,6 +12,7 @@ import {
   EmptyState,
   Eyebrow,
   Field,
+  Modal,
   Section,
   Select,
   StatusPill,
@@ -35,7 +36,9 @@ import { entryMode } from "@/lib/events-policy";
 import {
   createTemplateAction,
   createTemplateFromEventAction,
+  deleteTemplateAction,
   duplicateTemplateAction,
+  moveTemplateAction,
   setTemplateActiveAction,
   updateTemplateAction,
 } from "@/app/admin/templates/actions";
@@ -132,7 +135,7 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
       <Section
         icon="list"
         title="Templates"
-        description="Active ones appear in the create-event picker. Editing one never touches an event already made from it."
+        description="Order here is the order the create-event picker offers them in, so the common ones go to the top. Active ones appear in that picker at all. Editing one never touches an event already made from it."
         aside={<Badge>{plural(view.templates.length, "template")}</Badge>}
       >
         {view.templates.length === 0 ? (
@@ -145,15 +148,25 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
           </div>
         ) : (
           <div className="divide-y divide-hair/60">
-            {view.templates.map((template) => (
+            {view.templates.map((template, index) => (
               <TemplateCard
                 key={template.id}
                 template={template}
                 games={view.games}
                 profileFields={view.profileFields}
+                first={index === 0}
+                last={index === view.templates.length - 1}
                 open={openId === template.id}
                 busy={pending}
                 onToggleOpen={() => setOpenId(openId === template.id ? null : template.id)}
+                onMove={(direction) => run(() => moveTemplateAction(template.id, direction))}
+                onDelete={() =>
+                  run(async () => {
+                    const result = await deleteTemplateAction(template.id);
+                    if (result.ok && openId === template.id) setOpenId(null);
+                    return result;
+                  })
+                }
                 onSetActive={(active) =>
                   run(() => setTemplateActiveAction(template.id, active))
                 }
@@ -303,6 +316,43 @@ function FromEventPanel({
 /* One template                                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * What deleting this template does, in the admin's terms (UC-28 8a).
+ *
+ * Exported as a string rather than buried in the dialog's JSX for the reason
+ * `QuestionList`'s `DELETE_UNANSWERED` is: it is only on screen after a click a
+ * static render cannot make, and it is the sentence that has to be *true* —
+ * "the events made from it keep working" is a claim about
+ * `events.created_from_template_id` being `on delete set null`, and a test
+ * reads both halves.
+ */
+export function templateDeleteWarning(usedBy: number): string {
+  if (usedBy === 0) {
+    return "No event has been made from this template, so nothing depends on it.";
+  }
+  // `plural` counts; it does not conjugate. "1 event were made from this
+  // template" was on screen and on the card until a test read the whole clause
+  // instead of the numeral, so the sentence branches rather than the number.
+  if (usedBy === 1) {
+    return (
+      "1 event was made from this template and it keeps working, with every question " +
+      "and setting it copied. A template is copied into an event and then forgotten, so " +
+      "the only thing it loses is the note saying where it came from."
+    );
+  }
+  return (
+    `${plural(usedBy, "event")} were made from this template and all of them keep ` +
+    "working, with every question and setting they copied. A template is copied into an " +
+    "event and then forgotten, so the only thing they lose is the note saying where they " +
+    "came from."
+  );
+}
+
+/** The gentler option, said next to the louder one. */
+export const DEACTIVATE_INSTEAD =
+  "It goes out of the create-event picker for good. Deactivating takes it out of the " +
+  "picker too and keeps the setup for next season.";
+
 type TemplatePatch = {
   name?: string;
   type?: string;
@@ -315,9 +365,13 @@ function TemplateCard({
   template,
   games,
   profileFields,
+  first,
+  last,
   open,
   busy,
   onToggleOpen,
+  onMove,
+  onDelete,
   onSetActive,
   onDuplicate,
   onSave,
@@ -325,14 +379,19 @@ function TemplateCard({
   template: AdminTemplateView;
   games: AdminTemplatesView["games"];
   profileFields: AdminTemplatesView["profileFields"];
+  first: boolean;
+  last: boolean;
   open: boolean;
   busy: boolean;
   onToggleOpen: () => void;
+  onMove: (direction: "up" | "down") => void;
+  onDelete: () => void;
   onSetActive: (active: boolean) => void;
   onDuplicate: () => void;
   onSave: (patch: TemplatePatch) => void;
 }) {
   const [tab, setTab] = useState<"basics" | "format" | "questions">("basics");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const [name, setName] = useState(template.name);
   const [type, setType] = useState(template.type);
@@ -414,7 +473,26 @@ function TemplateCard({
           <Badge tone="union">{plural(template.liveEvents, "event")} running</Badge>
         )}
 
+        {/* UC-28 7: the copy goes to the top, and the order is what the
+            create-event picker reads. Same two arrows `/admin/games` uses, for
+            the same reason — dense `sort` means they always do something. */}
         <span className="ml-auto flex shrink-0 items-center gap-1">
+          <Button
+            size="sm"
+            aria-label={`Move ${template.name} up`}
+            disabled={busy || first}
+            onClick={() => onMove("up")}
+          >
+            ↑
+          </Button>
+          <Button
+            size="sm"
+            aria-label={`Move ${template.name} down`}
+            disabled={busy || last}
+            onClick={() => onMove("down")}
+          >
+            ↓
+          </Button>
           <Button size="sm" disabled={busy} onClick={onDuplicate}>
             Duplicate
           </Button>
@@ -512,6 +590,21 @@ function TemplateCard({
                   onClick={() => onSetActive(!template.isActive)}
                 >
                   {template.isActive ? "Deactivate" : "Activate"}
+                </Button>
+              </div>
+
+              {/* UC-28 8a. Offered because a template made by mistake should be
+                  removable, and safe because a template is a starting point
+                  rather than a parent: every event copied it on the way in, so
+                  deleting the row forgets the link and nothing else. */}
+              <div className="border-t border-hair pt-4">
+                <Eyebrow className="mb-2">Deleting</Eyebrow>
+                <p className="mb-3 text-12 leading-relaxed text-muted">
+                  {templateDeleteWarning(template.events)} Deactivating is usually what you
+                  want instead: it keeps a seasonal setup for next time.
+                </p>
+                <Button size="sm" disabled={busy} onClick={() => setConfirmingDelete(true)}>
+                  Delete template
                 </Button>
               </div>
             </div>
@@ -623,6 +716,35 @@ function TemplateCard({
           </div>
         </div>
       )}
+
+      <Modal
+        open={confirmingDelete}
+        onClose={() => setConfirmingDelete(false)}
+        size="sm"
+        eyebrow="Delete template"
+        title={template.name}
+        footer={
+          <>
+            <Button size="sm" disabled={busy} onClick={() => setConfirmingDelete(false)}>
+              Keep it
+            </Button>
+            <Button
+              size="sm"
+              variant="flare"
+              disabled={busy}
+              onClick={() => {
+                setConfirmingDelete(false);
+                onDelete();
+              }}
+            >
+              Delete it
+            </Button>
+          </>
+        }
+      >
+        <p className="text-14 text-muted">{templateDeleteWarning(template.events)}</p>
+        <p className="text-12 leading-relaxed text-muted">{DEACTIVATE_INSTEAD}</p>
+      </Modal>
     </article>
   );
 }

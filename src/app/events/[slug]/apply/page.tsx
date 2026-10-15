@@ -33,7 +33,7 @@
  */
 
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import ApplyForm, { type ApplyDay } from "@/components/apply/ApplyForm";
 import {
@@ -84,19 +84,14 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
   if (!form) notFound();
 
   const application = form.application;
-  // `pending` counts: an approval event's application (R-27) is one
-  // `applyToEvent` would refuse a second time, so offering the form again would
-  // be offering a button that cannot work.
+  // `pending` counts: an approval event's application (R-27) is very much
+  // alive — it is not holding a seat, but it is the application the organisers
+  // will read, and its answers are still the member's to change.
   const live =
-    application &&
+    application !== null &&
     (application.status === "pending" ||
       application.status === "accepted" ||
       application.status === "waitlisted");
-
-  // Someone with a live application has nothing to do here; `applyToEvent`
-  // would refuse it. Their page is `/me/events`, where they can change
-  // availability, confirm attendance or withdraw.
-  if (live) redirect("/me/events");
 
   const days: ApplyDay[] = event.days.map((day) => ({
     id: day.id,
@@ -255,6 +250,82 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
               <Button href={`/events/${event.slug}`}>Back to the event</Button>
             </div>
           </Panel>
+        ) : live ? (
+          /*
+           * They are already in, so this page is where they change their mind
+           * about an answer (R-53 / UC-13 3) — the same form, the same writes,
+           * because a second form over the same questions is a second set of
+           * rules about them.
+           *
+           * The entry gate is deliberately **not** consulted on this branch.
+           * `blocked` belongs to somebody who cannot apply; a member who is
+           * already in and has since slipped below the bar is a decision for a
+           * manager (UC-14), not a reason to stop them fixing a typo — and
+           * `editApplicationAnswers` moves no seat, so there is nothing for the
+           * gate to protect here.
+           */
+          <>
+            {form.canEditAnswers ? (
+              <>
+                <Alert tone="union">
+                  <span className="block font-medium">
+                    {application.status === "accepted"
+                      ? "You're in — this is your application"
+                      : application.status === "waitlisted"
+                        ? "You are in the queue — this is your application"
+                        : "Awaiting review — this is your application"}
+                  </span>
+                  <span className="mt-1 block opacity-90">
+                    Change anything you like until sign-ups close. Your place does not move:
+                    answers are not a decision about a seat. Withdrawing is on{" "}
+                    <Link href="/me/events" className="underline underline-offset-4">
+                      My events
+                    </Link>
+                    , and that stays open even after this does.
+                  </span>
+                </Alert>
+
+                <ApplyForm
+                  eventId={event.id}
+                  slug={event.slug}
+                  mode="edit"
+                  profile={form.profile}
+                  questions={form.questions}
+                  days={days}
+                  rankLadder={event.rankLadder}
+                  availability={form.availability}
+                  willWaitlist={willWaitlist}
+                  entryMode={mode}
+                />
+              </>
+            ) : (
+              /*
+               * UC-13 4a: sign-ups have closed, so the answers stand. Saying so
+               * is the honest version of hiding the form — and the sentence
+               * names the one thing that has *not* closed, because R-54 and
+               * UC-13 extensions E3 keep withdrawing open and that is the whole
+               * reason locking the answers is acceptable.
+               */
+              <Panel as="section">
+                <Eyebrow className="mb-3">Answers closed</Eyebrow>
+                <h2 className="font-display text-30 leading-none">
+                  These answers stand
+                </h2>
+                <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
+                  Sign-ups for this event have closed, so what you answered is what the
+                  organisers are working from — the running order gets built on answers
+                  that will not move. If you can no longer make it, withdrawing still
+                  works, and it frees your seat for whoever is waiting.
+                </p>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <Button href="/me/events" variant="union">
+                    My events
+                  </Button>
+                  <Button href={`/events/${event.slug}`}>Back to the event</Button>
+                </div>
+              </Panel>
+            )}
+          </>
         ) : closedBecause ? (
           <Panel as="section">
             <Eyebrow className="mb-3">Not taking applications</Eyebrow>
@@ -318,6 +389,8 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
             <ApplyForm
               eventId={event.id}
               slug={event.slug}
+              mode="apply"
+              profile={form.profile}
               questions={form.questions}
               days={days}
               rankLadder={event.rankLadder}

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
-import { type Database, auditLog } from "@/db";
+import { and, eq } from "drizzle-orm";
+import { type Database, applications, auditLog } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 
 /*
@@ -51,8 +51,10 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/server", () => ({ after: () => {} }));
 
-const { applyToEventAction } = await import("../actions");
-const { createEvent, publishEvent } = await import("@/lib/events");
+const { applyToEventAction, editApplicationAction } = await import("../actions");
+const { applyToEvent, createEvent, publishEvent, setEventQuestions } = await import(
+  "@/lib/events"
+);
 
 let handle: TestDatabase;
 let db: Database;
@@ -177,5 +179,145 @@ describe("applying", () => {
     expect(again.ok).toBe(false);
     expect(sent.decided).not.toHaveBeenCalled();
     expect(await auditFor(event.id)).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Changing an answer afterwards (R-53 / UC-13 3, 4, 4a)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The action behind the edit form.
+ *
+ * Where the answers *land* is `src/lib/events.ts`'s business and is tested
+ * there. What is under test here is the pair of facts that only exist at this
+ * layer: a member fixing their own answer is **not** a decision about a seat,
+ * so nobody is notified and nothing is written to the log — and the deadline is
+ * enforced below this layer, so calling the action directly after sign-ups
+ * close is refused rather than quietly honoured.
+ *
+ * That second one is the whole reason the check is not in this file. A server
+ * action is a public POST endpoint, reachable long after the page stopped
+ * rendering the form, and this test is that call.
+ */
+describe("editing an application", () => {
+  /** An open event with one question of its own, and `userId` already in it. */
+  async function applied(options: { closesAt?: Date } = {}) {
+    counter += 1;
+    const created = await createEvent(
+      {
+        ...PUBLISHABLE,
+        title: `Edit night ${counter}`,
+        capacity: 4,
+        ...(options.closesAt ? { signupClosesAt: options.closesAt } : {}),
+      },
+      db
+    );
+    if (!created.ok) throw new Error(created.error);
+    const published = await publishEvent(created.data.id, db);
+    if (!published.ok) throw new Error(published.error);
+
+    const questions = await setEventQuestions(
+      created.data.id,
+      [{ label: "Anything else", type: "text" }],
+      db
+    );
+    if (!questions.ok) throw new Error(questions.error);
+
+    const userId = await makeUser(db, { displayName: "Second Thoughts Sam" });
+    const landed = await applyToEvent(
+      created.data.id,
+      userId,
+      { now: new Date("2026-01-01T00:00:00Z"), answers: { [questions.data.questions[0].id]: "As submitted" } },
+      db
+    );
+    if (!landed.ok) throw new Error(landed.error);
+
+    return {
+      event: { id: created.data.id, slug: published.data.slug },
+      questionId: questions.data.questions[0].id,
+      userId,
+    };
+  }
+
+  async function storedAnswers(eventId: string, userId: string) {
+    const [row] = await db
+      .select({ answers: applications.answers })
+      .from(applications)
+      .where(and(eq(applications.eventId, eventId), eq(applications.userId, userId)));
+    return row?.answers ?? null;
+  }
+
+  it("saves the change, tells nobody and logs nothing", async () => {
+    // UC-13 4: "System saves it." No seat moved, so there is no decision to
+    // announce (R-100 is about where an application *landed*) and nothing a
+    // manager needs in the audit log.
+    const { event, questionId, userId } = await applied();
+    state.userId = userId;
+    sent.decided.mockClear();
+    const before = await auditFor(event.id);
+
+    const result = await editApplicationAction({
+      eventId: event.id,
+      slug: event.slug,
+      answers: { [questionId]: "Bringing a spare keyboard" },
+      availability: {},
+    });
+
+    expect(result.ok).toBe(true);
+    expect(await storedAnswers(event.id, userId)).toEqual({
+      [questionId]: "Bringing a spare keyboard",
+    });
+    expect(sent.decided).not.toHaveBeenCalled();
+    expect(await auditFor(event.id)).toHaveLength(before.length);
+  });
+
+  it("refuses the same call once sign-ups have closed, and writes nothing", async () => {
+    /*
+     * UC-13 4a. The page has already stopped offering the form by now; this is
+     * the direct POST that does not care. The refusal has to come from the
+     * server, and it has to leave the stored answer alone.
+     */
+    const { event, questionId, userId } = await applied({
+      closesAt: new Date("2026-02-01T00:00:00Z"),
+    });
+    state.userId = userId;
+
+    const result = await editApplicationAction({
+      eventId: event.id,
+      slug: event.slug,
+      answers: { [questionId]: "Changed my mind" },
+      availability: {},
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/closed/i);
+    expect(await storedAnswers(event.id, userId)).toEqual({ [questionId]: "As submitted" });
+  });
+
+  it("edits the caller's own application and nobody else's", async () => {
+    // There is no application id in the signature, so there is nothing to
+    // point at somebody else's row: the session decides whose is found.
+    const { event, questionId, userId } = await applied();
+    const other = await makeUser(db, { displayName: "Bystander Bo" });
+    const landed = await applyToEvent(
+      event.id,
+      other,
+      { now: new Date("2026-01-01T00:00:00Z"), answers: { [questionId]: "Theirs" } },
+      db
+    );
+    if (!landed.ok) throw new Error(landed.error);
+
+    state.userId = userId;
+    const result = await editApplicationAction({
+      eventId: event.id,
+      slug: event.slug,
+      answers: { [questionId]: "Mine" },
+      availability: {},
+    });
+
+    expect(result.ok).toBe(true);
+    expect(await storedAnswers(event.id, userId)).toEqual({ [questionId]: "Mine" });
+    expect(await storedAnswers(event.id, other)).toEqual({ [questionId]: "Theirs" });
   });
 });

@@ -44,7 +44,7 @@ classDiagram
         concurrentMatches; breakMinutes
     }
     class EventDay { label; startsAt }
-    class Question { prompt; kind; options; required; order }
+    class Question { prompt; kind; options; required; order; linkedDetail }
     class Application {
         status
         appliedAt
@@ -92,8 +92,9 @@ classDiagram
     Event "1" *-- "0..*" Question
     Event "1" *-- "0..*" Application
     Member "1" --> "0..*" Application
-    Application "1" *-- "0..*" Answer
-    Question "1" --> "0..*" Answer
+    Application "1" *-- "0..*" Answer : its own questions only
+    Question "0..1" --> "0..1" ProfileDetail : asks for
+    Question "1" --> "0..*" Answer : unlinked only
     Event "1" *-- "0..*" EntryWaiver
     Member "1" --> "0..*" EntryWaiver : waived for
 
@@ -244,7 +245,18 @@ are listed; validation of a single form belongs to the use case.
 
 ### Question / Answer
 **Means:** A sign-up question an event asks, and an applicant's answer.
-**Rules:** A choice question has at least one option. Changing a published event's questions flags every earlier answer set as needing review by its applicant.
+
+| Attribute | Type | Rules |
+|---|---|---|
+| linkedDetail | a ProfileDetail, or none | the detail this question asks for; only one of the event's game's, or a forEveryGame one, and of the same kind |
+
+**Rules:**
+- A choice question has at least one option.
+- Changing a published event's questions flags every earlier answer set as needing review by its applicant.
+- A question **with** a linkedDetail has no Answer of its own. It is the event asking for a profile detail, so the application form shows that detail, an edit to it is saved to the member's ProfileAnswer, and every reader composes the answer from there (UC-12 2, 3a). One answer, in one place: a second copy on the application is the derived data this model does not store.
+- A question **without** one is answered on the application, and that Answer belongs to the application.
+- Removing a linked question takes nothing with it: the ProfileAnswer is the member's and stays. Removing an unlinked one takes its Answers.
+
 **Appears in:** UC-08, UC-12, UC-13, UC-14
 
 ### Application
@@ -457,7 +469,8 @@ are listed; validation of a single form belongs to the use case.
 | Event | Application | 1 to many | An event receives many applications |
 | Event | EventDay | 1 to 1..4 | An event runs on one to four days |
 | Event | Question | 1 to many | An event asks its own questions |
-| Application | Answer | 1 to many | One answer per question |
+| Question | ProfileDetail | 0..1 to 0..1 | A question may ask for a profile detail instead of asking fresh |
+| Application | Answer | 1 to many | One answer per **unlinked** question; a linked question's answer is the member's ProfileAnswer |
 | Event | Team | 1 to many | Teams belong to one event |
 | Team | RosterPlace | 1 to many | A team's players |
 | Application | RosterPlace | 1 to 0..1 | An accepted applicant plays for at most one team |
@@ -496,6 +509,7 @@ its slots and map results, which is the rule that makes corrections safe (R-79).
 | Unpublished | An event only its managers can see. | "Draft" (the auction; the code status value `draft` is renamed in the UI only) |
 | Running | An event in progress. | "Live" (code status value) |
 | Application | A request for a seat. | Host application |
+| Linked question | An event question that asks for a profile detail. Its answer is the member's ProfileAnswer, composed on read and never copied onto the application. | Answer (which belongs to the application, and only to an unlinked question) |
 | Seat | An accepted application in a first-come or approval event. | Roster place |
 | Waitlist | Waitlisted applications ordered by appliedAt. | |
 | Entry rule | minRankToEnter or minRankToCaptain. | |

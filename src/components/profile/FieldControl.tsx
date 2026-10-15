@@ -10,7 +10,7 @@ import {
 } from "@/components/ui";
 import RankPicker from "./RankPicker";
 import type { ProfileValue } from "@/db/schema";
-import type { ProfileFieldView } from "@/lib/profile";
+import type { FieldControlView } from "@/lib/profile";
 import { NUMBER_MAX, NUMBER_MIN, TEXT_MAX_LENGTH } from "@/lib/profile-fields";
 
 /**
@@ -27,7 +27,7 @@ import { NUMBER_MAX, NUMBER_MIN, TEXT_MAX_LENGTH } from "@/lib/profile-fields";
  */
 
 export type FieldControlProps = {
-  field: ProfileFieldView;
+  field: FieldControlView;
   value: ProfileValue;
   disabled?: boolean;
   onChange: (value: ProfileValue, options?: { debounce?: boolean }) => void;

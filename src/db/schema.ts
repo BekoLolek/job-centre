@@ -329,6 +329,30 @@ export const profileValues = pgTable(
       .references(() => profileFields.id, { onDelete: "cascade" }),
     value: json<ProfileValue>("value").notNull(),
     updatedAt: instant("updated_at").notNull().defaultNow(),
+    /**
+     * When the member last **said this answer is right** — docs/domain-model.md
+     * §ProfileDetail/ProfileAnswer: "set whenever the member saves or confirms
+     * the answer".
+     *
+     * It is a stamp, not a state. There is no "unconfirmed" state to leave and
+     * no transition to police: `saveProfileSection` sets it because saving an
+     * answer is asserting it, and the apply page sets it when the member taps
+     * "that is all still right" over answers they did not change (UC-12 3,
+     * R-49). Nothing clears it, and nothing but those two paths writes it — an
+     * admin editing the *question* must never be able to make it look as though
+     * the member vouched for the answer afterwards.
+     *
+     * Distinct from `updated_at`, which is when the *value* last changed. A
+     * returning applicant who confirms an answer they gave in March moves
+     * `confirmed_at` and leaves `updated_at` in March, which is the only way to
+     * tell "still true as of today" from "nobody has looked at this since
+     * March".
+     *
+     * Nullable with no default, so every row written before this column existed
+     * says `null` — never confirmed — rather than claiming a confirmation that
+     * did not happen. See drizzle/0022.
+     */
+    confirmedAt: instant("confirmed_at"),
   },
   (table) => [
     unique("profile_values_user_field_uniq").on(table.userId, table.fieldId),

@@ -16,7 +16,14 @@ import {
 import FieldControl from "@/components/profile/FieldControl";
 import type { ProfileFieldType, ProfileValue } from "@/db/schema";
 import type { AdminFieldView } from "@/lib/admin-games";
-import { FIELD_TYPES, choicesFor, fieldTypeInfo, normaliseOptions } from "@/lib/profile-fields";
+import {
+  FIELD_TYPES,
+  THIS_GAME,
+  choicesFor,
+  fieldTypeInfo,
+  normaliseOptions,
+  rankUnavailable,
+} from "@/lib/profile-fields";
 import {
   createFieldAction,
   previewFieldEditAction,
@@ -70,6 +77,14 @@ export function strandedAnswerNotice(count: number): { heading: string; body: st
       `question back the way it was makes ${one ? "it" : "them"} readable again.`,
   };
 }
+
+/*
+ * The "why not a rank question here" copy is `rankUnavailable` in
+ * `src/lib/profile-fields.ts`, which is also where `createField` reads its
+ * refusal from — the two were the same two sentences in two files. A dialog
+ * that can only be open over one game names it "This game" (`THIS_GAME`),
+ * because it has no game row to read a name out of.
+ */
 
 export type QuestionDialogProps = {
   open: boolean;
@@ -240,8 +255,7 @@ export default function QuestionDialog({
         )}
         {type === "rank" && rankLadder.length === 0 && (
           <p className="mt-1 text-12 text-flare">
-            This game has no rank ladder yet, so a rank question would have nothing to
-            offer. Add the ranks first.
+            {rankUnavailable(gameId === null ? null : THIS_GAME)}
           </p>
         )}
       </div>

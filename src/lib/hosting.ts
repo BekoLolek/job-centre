@@ -1,4 +1,4 @@
-import { type SQL, and, desc, eq, isNull, notInArray } from "drizzle-orm";
+import { type SQL, and, asc, desc, eq, isNull, notInArray } from "drizzle-orm";
 import {
   type Database,
   type HostApplicationStatus,
@@ -574,15 +574,29 @@ export function questionsFromApplication(
     .map((label) => ({ label, type: "text" as const, required: true as const }));
 }
 
-/** The games this site already knows, so the form is a dropdown for the common case. */
+/**
+ * The games this site already knows, so the form is a dropdown for the common
+ * case.
+ *
+ * In the admin's order, not alphabetical (R-133 / UC-03 E3: "shows them in that
+ * order **everywhere a game is chosen**"). A host application is one of the
+ * three places UC-03 E2 names, so it is one of the places E3 means — and this
+ * list sorted by name, which quietly made `/admin/games`' arrows do nothing
+ * here. `sort` then `name` is the same order `loadAdminGames`, `loadProfile` and
+ * `loadAdminTemplates` read in, so the catalogue reads the same way on every
+ * screen.
+ *
+ * Hidden games are left out, which is the other half of E2: a game switched off
+ * stops being offered for new events, host applications and profiles.
+ */
 export async function hostableGames(
   database: Database = defaultDb
 ): Promise<Array<{ id: string; name: string }>> {
   const rows = await database
     .select({ id: games.id, name: games.name, active: games.isActive })
-    .from(games);
+    .from(games)
+    .orderBy(asc(games.sort), asc(games.name));
   return rows
     .filter((row) => row.active !== false)
-    .map((row) => ({ id: row.id, name: row.name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .map((row) => ({ id: row.id, name: row.name }));
 }

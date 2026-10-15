@@ -1,9 +1,16 @@
 /**
  * `/admin` — what needs attention (docs/platform-plan.md §4).
  *
- * "Pending applications, unscheduled matches." This is the page you have open
- * on the night, so it answers exactly one question — *what should I do next* —
- * and every answer is a link to the screen that does it.
+ * "Pending applications, host applications, unscheduled matches" (R-109 /
+ * UC-27 2), and R-169's four more: ready to publish, teams with no captain, an
+ * open draft lot, a series needing a winner (UC-27 E1). This is the page you
+ * have open on the night, so it answers exactly one question — *what should I
+ * do next* — and every answer is a link to the screen that does it.
+ *
+ * "Pending applications" is two different piles and both are listed, because
+ * both wait on an admin: an approval event's `pending` rows, which nothing but
+ * a decision will move (R-27), and a first-come event's cap queue, which a
+ * withdrawal might. See the two queries in {@link loadDashboard}.
  *
  * ## Everything here is derived
  *
@@ -58,6 +65,7 @@ import { type FormatView, formatFor, matchIdsFor } from "./format";
 
 export type AttentionKind =
   | "applications"
+  | "pending_applications"
   | "host_applications"
   | "publish"
   | "captains"
@@ -102,6 +110,7 @@ export type DashboardView = {
   drafts: EventSummary[];
   totals: {
     events: number;
+    /** Applications waiting on an admin: both `pending` and the cap's queue. */
     waiting: number;
     needsWinner: number;
     unscheduled: number;
@@ -134,7 +143,7 @@ export async function loadDashboard(
   const active = all.filter((event) => ACTIVE.includes(event.status));
   const ids = active.map((event) => event.id);
 
-  const [waitingRows, openLots, teamRows] = await Promise.all([
+  const [waitingRows, pendingRows, openLots, teamRows] = await Promise.all([
     ids.length > 0
       ? database
           .select({ id: applications.id, eventId: applications.eventId })
@@ -144,16 +153,27 @@ export async function loadDashboard(
           // admin there is somebody the *cap* waitlisted rather than a person:
           // `decided_at` null on a waitlisted row. That is the same definition
           // the editor's Applicants tab dots.
-          //
-          // An approval event's `pending` rows wait on an admin too (R-27), and
-          // they are counted on `/admin/events` and on the Applicants tab. They
-          // are deliberately not an attention item yet — that is Task 35's.
           .where(
             and(
               inArray(applications.eventId, ids),
               eq(applications.status, "waitlisted"),
               isNull(applications.decidedAt)
             )
+          )
+      : Promise.resolve([]),
+    ids.length > 0
+      ? database
+          .select({ id: applications.id, eventId: applications.eventId })
+          .from(applications)
+          // An approval event's applications land `pending` and stay there
+          // until a manager says yes or no (R-27). That is the plainest reading
+          // of UC-27 2's "pending applications" and of R-109's — somebody who
+          // cannot plan their evening until an admin decides — and it is the
+          // one item the first version of this module left out. No
+          // `decided_at` clause: a decision moves the row off `pending`
+          // altogether, so the status is the whole question.
+          .where(
+            and(inArray(applications.eventId, ids), eq(applications.status, "pending"))
           )
       : Promise.resolve([]),
     ids.length > 0
@@ -175,6 +195,7 @@ export async function loadDashboard(
   ]);
 
   const waitingBy = tally(waitingRows.map((row) => row.eventId));
+  const pendingBy = tally(pendingRows.map((row) => row.eventId));
   const openBy = tally(openLots.map((row) => row.eventId));
   const teamsBy = tally(teamRows.map((row) => row.eventId));
   const captainlessBy = tally(
@@ -202,6 +223,26 @@ export async function loadDashboard(
         action: "Decide them",
         count: waiting,
         urgency: "next",
+        event: at,
+      });
+    }
+
+    /* --- applications waiting on a yes or a no (R-27, UC-27 2) ------- */
+    const pending = pendingBy.get(event.id) ?? 0;
+    if (pending > 0) {
+      items.push({
+        key: `${event.id}:pending`,
+        kind: "pending_applications",
+        label: `${pending} ${pending === 1 ? "application needs" : "applications need"} a decision`,
+        detail:
+          "Entry is by approval, so nobody has a seat until you say so. Accept or decline each one — they cannot plan the night until you do.",
+        href: editor("applicants"),
+        action: "Decide them",
+        count: pending,
+        // Blocking: unlike the cap's queue, nothing else resolves this. A
+        // withdrawal will not promote a pending applicant, and the event fills
+        // only when an admin decides.
+        urgency: "blocked",
         event: at,
       });
     }
@@ -333,7 +374,8 @@ export async function loadDashboard(
     drafts: all.filter((event) => event.status === "draft"),
     totals: {
       events: active.length,
-      waiting: waitingRows.length,
+      // Both piles, because both are applications waiting on an admin.
+      waiting: waitingRows.length + pendingRows.length,
       needsWinner,
       unscheduled,
       openLots: openLots.length,
