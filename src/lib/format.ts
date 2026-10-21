@@ -23,6 +23,35 @@
  * the stage has been ticked off. Changing the format after the first game is
  * not an edit, it is a different tournament.
  *
+ * ## The matches follow the teams, and the server is what makes them (R-73)
+ *
+ * `syncStages` is the one function that answers "should these rows be rebuilt",
+ * and every path that can change the answer calls it inside its own server
+ * action: the stage list, the team count, a hand placement. It used to be an
+ * effect in the Format tab, which meant the answer was only ever computed on a
+ * screen somebody happened to be looking at — change the teams with the Format
+ * tab shut and the bracket stayed on yesterday's shape until somebody opened it
+ * (UC-18 8, 9).
+ *
+ * It has exactly three outcomes per stage, and the middle one is the whole
+ * design (UC-18 9a):
+ *
+ *  - **current** — the rows already are what `(kind, team count, config)` says.
+ *    Nothing is written, which is what makes calling this after every team
+ *    write cheap.
+ *  - **out of date** — they are not, and the stage is carrying something a
+ *    rebuild would destroy. `stages.out_of_date_since` is stamped and the rows
+ *    are left exactly as they are. `rebuildStage` is the way through, and it
+ *    says what it will clear first.
+ *  - **rebuilt** — they are not, and nobody has touched the stage.
+ *
+ * `stageTouchOf` is what separates the last two, and it is deliberately wider
+ * than `stageHasResults`: a score typed in but never ticked off blocks the
+ * *automatic* path even though it does not block a manager who has been told
+ * about it. An automation that can destroy work has to refuse whenever it
+ * cannot tell, because the person who would have said "yes, go on" is not
+ * there.
+ *
  * ## What is deliberately not stored
  *
  * Labels, stakes notes, phases, placements and the whole schedule plan. All of
@@ -32,6 +61,7 @@
  * `events`.
  */
 
+import { createHash } from "node:crypto";
 import { and, asc, eq, inArray, isNotNull, or } from "drizzle-orm";
 import {
   type Database,
@@ -39,6 +69,7 @@ import {
   type MatchGameRow,
   type MatchRow,
   type Stage,
+  type StageConfigJson,
   type StageKindValue,
   type Team,
   db as defaultDb,
@@ -52,8 +83,10 @@ import {
   type GeneratedStage,
   type MatchBracket,
   generateStage,
+  swissNextRound,
 } from "./bracket";
 import { lockRefusal } from "./archive-policy";
+import { type AuditEntry, recordAudit } from "./audit";
 import type { EventResult } from "./events";
 import {
   type FormatTiming,
@@ -69,6 +102,7 @@ import {
   normaliseMatchSlot,
   normalisePlaySide,
   normaliseStageConfig,
+  teamCountRefusal,
   tossForFirstSideChoice,
 } from "./format-policy";
 import {
@@ -80,6 +114,7 @@ import {
   StageResolution,
   type TeamRef,
   blankGamesFor,
+  seedingFrom,
 } from "./format-resolve";
 import {
   type PlannedBlock,
@@ -140,6 +175,23 @@ export type StageView = {
   champion: string | null;
   /** What this stage hands the next one, or null while it is unsettled. */
   seeding: string[] | null;
+  /**
+   * The seeding this stage was *resolved from*, best first — the team list's own
+   * order for the first stage, the previous stage's finishing order after that,
+   * and a row of nulls while that stage is still being played.
+   *
+   * It is what makes a source reference readable in both directions: `seed:3`
+   * resolves through it, and so does the reverse question `advanceSwiss` has to
+   * answer, which is "this team is which seed of this stage".
+   */
+  seeds: Array<string | null>;
+  /** When a manager last moved something here by hand (R-157 / UC-19 E2). */
+  handEditedAt: string | null;
+  /**
+   * When these matches stopped matching the format and the teams (UC-18 9a).
+   * Non-null is the board's "out of date", and the one state with a button.
+   */
+  outOfDateSince: string | null;
 };
 
 export type FormatView = {
@@ -363,6 +415,9 @@ export async function formatFor(
     });
     specs.push(spec);
     views.push({
+      seeds: seedingFrom({ stage: spec, matches: records, teams: refs, seeds }),
+      handEditedAt: iso(row.handEditedAt),
+      outOfDateSince: iso(row.outOfDateSince),
       id: row.id,
       name: row.name ?? defaultStageName(kind),
       kind,
@@ -588,59 +643,109 @@ export async function generateMatches(
     }
 
     const teamRows = await readTeams(tx, stage.eventId);
-    if (teamRows.length < 2) return fail("Add at least two teams before generating a bracket.");
     if (teamRows.length > MAX_TEAMS) return fail(`An event can have at most ${MAX_TEAMS} teams.`);
 
+    // Per kind, named, and nothing generated (UC-18 2a). The old pair of
+    // messages said "at least two teams" for every shape, which is true of a
+    // bracket and false of three groups — and the shapes that could not be
+    // built were silently clamped into one that could.
     const kind = kindOf(stage);
-    const spec = generateStage(kind, teamRows.length, stage.config as Partial<StageConfig>);
-    const seeded = seedOrderOf(teamRows);
+    const config = normaliseStageConfig(kind, stage.config as Partial<StageConfig>);
+    const refusal = teamCountRefusal(kind, teamRows.length, config);
+    if (refusal) return fail(refusal);
 
-    await tx.delete(matches).where(eq(matches.stageId, stageId));
-
-    for (const match of spec.matches) {
-      // A table game's pairing is known from the start; a bracket slot's is not,
-      // and writing a guess into it would defeat the whole resolve-on-read idea.
-      const direct = match.bracket === "rr";
-      const [row] = await tx
-        .insert(matches)
-        .values({
-          stageId,
-          eventId: stage.eventId,
-          slot: match.slot,
-          round: match.round,
-          phase: match.phase,
-          bestOf: match.bestOf,
-          teamAId: direct ? teamFromSource(match.sourceA, seeded) : null,
-          teamBId: direct ? teamFromSource(match.sourceB, seeded) : null,
-          sourceA: match.sourceA,
-          sourceB: match.sourceB,
-          // The coin, tossed once per match and never again unless an admin
-          // asks. Everything after game 1 is a parity check on the game index
-          // (§8.4), so this one value is the whole of the assignment.
-          firstSideChoice: tossForFirstSideChoice(),
-        })
-        .returning({ id: matches.id });
-
-      const games = blankGamesFor(match);
-      if (games.length) {
-        await tx.insert(matchGames).values(
-          games.map((game) => ({
-            matchId: row.id,
-            index: game.index,
-            mode: game.mode,
-            map: game.map,
-            referee: game.referee,
-            scoreA: game.scoreA,
-            scoreB: game.scoreB,
-            played: game.played,
-            sideChosen: game.sideChosen,
-          }))
-        );
-      }
-    }
-
-    return withData({ created: spec.matches.length });
+    const created = await writeStageMatches(tx, stage, teamRows);
+    return withData({ created });
   });
+}
+
+/**
+ * Delete every match of one stage and write the generated shape in its place —
+ * the destructive half of every rebuild path, in one place.
+ *
+ * It decides nothing. Whether the stage may be rebuilt at all is the caller's
+ * question: `generateMatches` asks `stageHasResults`, `syncStages` asks
+ * `stageTouchOf`, and `rebuildStage` asks the manager. Three copies of the
+ * insert loop would be three chances for one of them to drift into writing a
+ * bracket the other two would not.
+ *
+ * ## It also clears the stage's three stored marks
+ *
+ * `hand_edited_at` and `out_of_date_since` both describe rows that no longer
+ * exist after this, so leaving either set would be a warning about matches that
+ * have gone. A Swiss stage's recorded pairings go the same way and for the same
+ * reason: the rounds they paired have just been deleted, so the stage goes back
+ * to round one rather than regenerating rounds nobody will play.
+ */
+async function writeStageMatches(
+  tx: Database,
+  stage: Stage,
+  teamRows: Team[]
+): Promise<number> {
+  const kind = kindOf(stage);
+  const config = normaliseStageConfig(kind, stage.config as Partial<StageConfig>);
+  const fresh: StageConfig = { ...config, swissRounds: {} };
+  const spec = generateStage(kind, teamRows.length, fresh);
+  const seeded = seedOrderOf(teamRows);
+
+  await tx.delete(matches).where(eq(matches.stageId, stage.id));
+  await tx
+    .update(stages)
+    .set({ config: fresh as unknown as StageConfigJson, handEditedAt: null, outOfDateSince: null })
+    .where(eq(stages.id, stage.id));
+
+  await insertGenerated(tx, stage, spec.matches, seeded);
+  return spec.matches.length;
+}
+
+/** Write these generated matches as rows, with their blank cards. */
+async function insertGenerated(
+  tx: Database,
+  stage: Stage,
+  wanted: GeneratedStage["matches"],
+  seeded: string[]
+): Promise<void> {
+  for (const match of wanted) {
+    // A table game's pairing is known from the start; a bracket slot's is not,
+    // and writing a guess into it would defeat the whole resolve-on-read idea.
+    const direct = match.bracket === "rr";
+    const [row] = await tx
+      .insert(matches)
+      .values({
+        stageId: stage.id,
+        eventId: stage.eventId,
+        slot: match.slot,
+        round: match.round,
+        phase: match.phase,
+        bestOf: match.bestOf,
+        teamAId: direct ? teamFromSource(match.sourceA, seeded) : null,
+        teamBId: direct ? teamFromSource(match.sourceB, seeded) : null,
+        sourceA: match.sourceA,
+        sourceB: match.sourceB,
+        // The coin, tossed once per match and never again unless an admin
+        // asks. Everything after game 1 is a parity check on the game index
+        // (§8.4), so this one value is the whole of the assignment.
+        firstSideChoice: tossForFirstSideChoice(),
+      })
+      .returning({ id: matches.id });
+
+    const games = blankGamesFor(match);
+    if (games.length) {
+      await tx.insert(matchGames).values(
+        games.map((game) => ({
+          matchId: row.id,
+          index: game.index,
+          mode: game.mode,
+          map: game.map,
+          referee: game.referee,
+          scoreA: game.scoreA,
+          scoreB: game.scoreB,
+          played: game.played,
+          sideChosen: game.sideChosen,
+        }))
+      );
+    }
+  }
 }
 
 /** The teams in seed order — the `seed` column when it is set, else the sort order. */
@@ -655,6 +760,741 @@ function seedOrderOf(rows: Team[]): string[] {
 function teamFromSource(source: string, seeded: string[]): string | null {
   const match = /^seed:([1-9][0-9]*)$/.exec(source);
   return match ? (seeded[Number(match[1]) - 1] ?? null) : null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Are these rows still the shape the settings describe? (R-73)       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One line per match, describing everything a regeneration would write.
+ *
+ * Comparing the generated spec against the stored rows is the only honest
+ * answer to "are these matches current", and it has to be the whole row rather
+ * than a count. The Format tab's old effect compared `rows.length` against
+ * `spec.matches.length`, which is blind to every change that keeps the count:
+ * a stage moved from Bo3 to Bo5, a mode sequence edited, a grand final given
+ * its own length, and — the one that matters most here — a team removed and
+ * another added, which leaves a four-team round robin with six matches pointing
+ * at a team that is no longer in the event.
+ *
+ * What is deliberately **not** in the line: the coin (random per generation, so
+ * including it would make every stage permanently stale), the schedule, and
+ * anything recorded. Those are facts about the rows, not about their shape.
+ */
+function shapeLines(spec: GeneratedStage, seeded: string[]): string[] {
+  return spec.matches
+    .map((match) => {
+      const direct = match.bracket === "rr";
+      return [
+        match.slot,
+        match.round,
+        match.phase,
+        match.bestOf,
+        match.sourceA,
+        match.sourceB,
+        direct ? (teamFromSource(match.sourceA, seeded) ?? "") : "",
+        direct ? (teamFromSource(match.sourceB, seeded) ?? "") : "",
+        match.modes.join("+"),
+      ].join("~");
+    })
+    .sort();
+}
+
+/** The same line, read back off the rows that are actually stored. */
+function storedShapeLines(rows: MatchRow[], games: MatchGameRow[]): string[] {
+  return rows
+    .map((row) =>
+      [
+        row.slot,
+        row.round,
+        row.phase,
+        row.bestOf,
+        row.sourceA ?? "",
+        row.sourceB ?? "",
+        row.teamAId ?? "",
+        row.teamBId ?? "",
+        games
+          .filter((game) => game.matchId === row.id)
+          .sort((x, y) => x.index - y.index)
+          .map((game) => game.mode)
+          .join("+"),
+      ].join("~")
+    )
+    .sort();
+}
+
+/** Has somebody touched this stage, and would a rebuild therefore lose work? */
+export type StageTouch = {
+  playedGames: number;
+  overrides: number;
+  finished: number;
+  /** Scores typed in but never ticked off. Not a result; still somebody's work. */
+  draftedScores: number;
+  scheduled: number;
+  /** A manager moved a start time here (R-157 / UC-19 E2). */
+  handEdited: boolean;
+  /** True when `generateMatches` and `setStages` refuse outright. */
+  blocked: boolean;
+  /**
+   * True when nothing may rebuild this stage **without being asked**. Wider
+   * than `blocked` on purpose — see the note at the top of the file.
+   */
+  touched: boolean;
+};
+
+/**
+ * What one stage is carrying, from rows that have already been read.
+ *
+ * `blocked` mirrors `stageHasResults` exactly — a game ticked off, an admin's
+ * winner override, a recorded finish — because those two answers disagreeing is
+ * a dialog that promises a rebuild the write then refuses.
+ */
+function stageTouchOf(
+  stage: Stage,
+  rows: MatchRow[],
+  games: MatchGameRow[]
+): StageTouch {
+  const ids = new Set(rows.map((row) => row.id));
+  const inStage = games.filter((game) => ids.has(game.matchId));
+
+  const playedGames = inStage.filter((game) => game.played).length;
+  const draftedScores = inStage.filter(
+    (game) => !game.played && (game.scoreA > 0 || game.scoreB > 0)
+  ).length;
+  const overrides = rows.filter((row) => row.winnerOverrideId).length;
+  const finished = rows.filter((row) => row.finishedAt).length;
+  const scheduled = rows.filter((row) => row.scheduledAt).length;
+  const handEdited = stage.handEditedAt !== null;
+  const blocked = playedGames > 0 || overrides > 0 || finished > 0;
+
+  return {
+    playedGames,
+    overrides,
+    finished,
+    draftedScores,
+    scheduled,
+    handEdited,
+    blocked,
+    touched: blocked || handEdited || draftedScores > 0,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Keeping the matches in step with the teams (R-73 / UC-18 8, 9, 9a) */
+/* ------------------------------------------------------------------ */
+
+/** What the sync did about one stage. */
+export type StageSync = {
+  stageId: string;
+  name: string;
+  kind: StageKind;
+  /**
+   * `current` — nothing needed doing. `rebuilt` — the rows were replaced.
+   * `out_of_date` — they needed replacing and the stage is carrying work, so
+   * they were left alone and marked (UC-18 9a). `refused` — they cannot be
+   * built at all, and `reason` says why in a sentence (UC-18 2a).
+   */
+  state: "current" | "rebuilt" | "out_of_date" | "refused";
+  created: number;
+  reason: string | null;
+  touch: StageTouch;
+};
+
+export type SyncResult = {
+  stages: StageSync[];
+  rebuilt: number;
+  outOfDate: number;
+};
+
+/**
+ * **Bring every untouched stage back into line with the teams and the settings**
+ * (R-73 / UC-18 9).
+ *
+ * Called from the same server action as whatever changed: saving the stage
+ * list, setting the team count, placing somebody on a roster by hand. That is
+ * the acceptance criterion — changing the teams with the Format tab never
+ * opened leaves the matches current — and it is why this is a library function
+ * rather than an effect: a screen can only react to a change somebody is
+ * watching.
+ *
+ * ## It takes the event's row lock, like every other write here
+ *
+ * A rebuild deletes and re-inserts a whole stage, and the thing it races is a
+ * result being recorded into the stage it is deleting. Both take `for update`
+ * on the event, so one of them finishes first and the other reads what it did:
+ * a result that lands first makes the stage `touched`, and the rebuild declines
+ * and marks it out of date instead. Half a bracket is not reachable.
+ *
+ * ## It never fails because of a stage
+ *
+ * A stage that cannot be built — three groups and four teams, a shape stored
+ * under a kind this build does not know — is reported as `refused` with the
+ * sentence, not thrown. The caller is a team write that has already succeeded,
+ * and failing it afterwards would mean reporting an error for something that
+ * did happen.
+ */
+export async function syncStages(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<FormatResult<SyncResult>> {
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    const stageRows = await readStageRows(tx, eventId);
+    if (stageRows.length === 0) return withData({ stages: [], rebuilt: 0, outOfDate: 0 });
+
+    const teamRows = await readTeams(tx, eventId);
+    const matchRows = await readMatchRows(
+      tx,
+      stageRows.map((row) => row.id)
+    );
+    const gameRows = await readGameRows(
+      tx,
+      matchRows.map((row) => row.id)
+    );
+    const seeded = seedOrderOf(teamRows);
+
+    // A finished or cancelled event is a closed record. Nothing here rewrites
+    // one, not even into a shape that would be right if it were still running.
+    const locked = lockRefusal(event);
+
+    const out: StageSync[] = [];
+    const now = new Date();
+
+    for (const stage of stageRows) {
+      const rows = matchRows.filter((row) => row.stageId === stage.id);
+      const touch = stageTouchOf(stage, rows, gameRows);
+      const name = stage.name ?? stage.kind;
+      const base = { stageId: stage.id, name, created: 0, touch };
+
+      if (locked) {
+        out.push({ ...base, kind: kindOf(stage), state: "refused", reason: locked });
+        continue;
+      }
+
+      // A kind this build does not know is the plainest "cannot tell" there is:
+      // `kindOf` would read it as a round robin, so rebuilding would quietly
+      // replace somebody's bracket with a league table.
+      if (!isStageKind(stage.kind)) {
+        out.push({
+          ...base,
+          kind: kindOf(stage),
+          state: "refused",
+          reason: `“${name}” is stored as a format this version does not know, so its matches were left alone.`,
+        });
+        continue;
+      }
+
+      const kind = stage.kind;
+      const config = normaliseStageConfig(kind, stage.config as Partial<StageConfig>);
+      const refusal =
+        teamRows.length > MAX_TEAMS
+          ? `An event can have at most ${MAX_TEAMS} teams.`
+          : teamCountRefusal(kind, teamRows.length, config);
+
+      if (refusal) {
+        // Nothing generated (UC-18 2a) — but rows that are already there and no
+        // longer match are still out of date, and saying so is the only way the
+        // screen can explain why the bracket on it is yesterday's.
+        const stale =
+          rows.length > 0 &&
+          lineOf(shapeLines(generateStage(kind, teamRows.length, config), seeded)) !==
+            lineOf(storedShapeLines(rows, gameRows));
+        if (stale) {
+          await markOutOfDate(tx, stage, now);
+          out.push({ ...base, kind, state: "out_of_date", reason: refusal });
+        } else {
+          out.push({ ...base, kind, state: "refused", reason: refusal });
+        }
+        continue;
+      }
+
+      const spec = generateStage(kind, teamRows.length, config);
+      const wanted = lineOf(shapeLines(spec, seeded));
+      const stored = lineOf(storedShapeLines(rows, gameRows));
+
+      if (rows.length > 0 && wanted === stored) {
+        // Current. If it was marked out of date — a rebuild ran, or the teams
+        // came back to what they were — the mark is no longer true.
+        if (stage.outOfDateSince) {
+          await tx.update(stages).set({ outOfDateSince: null }).where(eq(stages.id, stage.id));
+        }
+        out.push({ ...base, kind, state: "current", reason: null });
+        continue;
+      }
+
+      if (touch.touched) {
+        await markOutOfDate(tx, stage, now);
+        out.push({ ...base, kind, state: "out_of_date", reason: null });
+        continue;
+      }
+
+      const created = await writeStageMatches(tx, stage, teamRows);
+      out.push({ ...base, kind, state: "rebuilt", created, reason: null });
+    }
+
+    return withData({
+      stages: out,
+      rebuilt: out.filter((row) => row.state === "rebuilt").length,
+      outOfDate: out.filter((row) => row.state === "out_of_date").length,
+    });
+  });
+}
+
+/** The shape lines as one comparable value. */
+function lineOf(lines: string[]): string {
+  return lines.join("|");
+}
+
+/**
+ * One log line for what the sync did, and none at all when it did nothing.
+ *
+ * It lives here rather than in an action file because three different actions
+ * call `syncStages` — the stage list, the team count, a hand placement — and
+ * "the bracket was rebuilt because the teams changed" is a line somebody reads
+ * the morning after. It should read the same whichever screen caused it, which
+ * a sentence written three times would not.
+ *
+ * `format.generated` rather than a new action name: the log already colours
+ * that one as destructive, which a rebuild is.
+ *
+ * It cannot throw — `recordAudit` swallows its own failures — which matters
+ * because every caller is a write that has already succeeded.
+ */
+export async function auditStageSync(
+  actor: AuditEntry["actor"],
+  eventId: string,
+  sync: FormatResult<SyncResult>,
+  database: Database = defaultDb
+): Promise<void> {
+  if (!sync.ok) return;
+  const rebuilt = sync.data.stages.filter((stage) => stage.state === "rebuilt");
+  const stale = sync.data.stages.filter((stage) => stage.state === "out_of_date");
+  if (rebuilt.length === 0 && stale.length === 0) return;
+
+  const parts: string[] = [];
+  if (rebuilt.length > 0) {
+    parts.push(
+      `Rebuilt ${rebuilt.map((stage) => `${stage.name} (${stage.created})`).join(", ")}`
+    );
+  }
+  if (stale.length > 0) {
+    parts.push(
+      `marked ${stale.map((stage) => stage.name).join(", ")} out of date — ${stale.length === 1 ? "it is" : "they are"} carrying work a rebuild would clear, so nothing was touched`
+    );
+  }
+
+  await recordAudit(
+    {
+      action: "format.generated",
+      actor,
+      eventId,
+      summary: `${parts.join("; ")}.`,
+      detail: {
+        rebuilt: rebuilt.length,
+        outOfDate: stale.length,
+        created: rebuilt.reduce((total, stage) => total + stage.created, 0),
+      },
+    },
+    database
+  );
+}
+
+/** Stamp the mark, once. A stage already out of date has been out of date since then. */
+async function markOutOfDate(tx: Database, stage: Stage, now: Date): Promise<void> {
+  if (stage.outOfDateSince) return;
+  await tx.update(stages).set({ outOfDateSince: now }).where(eq(stages.id, stage.id));
+}
+
+/* ------------------------------------------------------------------ */
+/* Letting a team be deleted at all (R-161 / UC-15 E1)                */
+/* ------------------------------------------------------------------ */
+
+/** What removing these teams would do to the matches that name them. */
+export type TeamRelease = {
+  /** Matches naming one of the teams, by stage. */
+  stages: Array<{ stageId: string; name: string; matches: number; withResults: number }>;
+  matches: number;
+  /** Of those, the ones carrying a result — the ones that refuse the removal. */
+  withResults: number;
+};
+
+/**
+ * Which matches name one of these teams — asked *before* a removal, so the
+ * confirm dialog can say what it costs (R-161 / UC-15 E1).
+ *
+ * Read-only, and it decides nothing.
+ */
+export async function matchesNamingTeams(
+  eventId: string,
+  teamIds: readonly string[],
+  database: Database = defaultDb
+): Promise<TeamRelease> {
+  const empty: TeamRelease = { stages: [], matches: 0, withResults: 0 };
+  if (teamIds.length === 0) return empty;
+
+  const stageRows = await readStageRows(database, eventId);
+  const rows = (
+    await readMatchRows(
+      database,
+      stageRows.map((row) => row.id)
+    )
+  ).filter((row) => namesOneOf(row, teamIds));
+  if (rows.length === 0) return empty;
+
+  const games = await readGameRows(
+    database,
+    rows.map((row) => row.id)
+  );
+  const carrying = (row: MatchRow) =>
+    row.winnerOverrideId !== null ||
+    row.finishedAt !== null ||
+    games.some((game) => game.matchId === row.id && game.played);
+
+  const byStage = stageRows
+    .map((stage) => {
+      const mine = rows.filter((row) => row.stageId === stage.id);
+      return {
+        stageId: stage.id,
+        name: stage.name ?? stage.kind,
+        matches: mine.length,
+        withResults: mine.filter(carrying).length,
+      };
+    })
+    .filter((entry) => entry.matches > 0);
+
+  return {
+    stages: byStage,
+    matches: rows.length,
+    withResults: rows.filter(carrying).length,
+  };
+}
+
+function namesOneOf(row: MatchRow, teamIds: readonly string[]): boolean {
+  return teamIds.some(
+    (id) => row.teamAId === id || row.teamBId === id || row.winnerOverrideId === id
+  );
+}
+
+/**
+ * **Let these teams be deleted** — or refuse, naming what is in the way
+ * (R-161 / UC-15 E1).
+ *
+ * ## Why this has to exist at all
+ *
+ * `matches.team_a_id` references `teams` with no `on delete` action, on purpose:
+ * cascading would erase a completed result and `set null` cannot null one half
+ * of a composite key (see the column's docblock). So Postgres refuses to delete
+ * a team that any match names, and it refuses with a foreign-key error — which
+ * is the right instinct and the wrong sentence. Before this existed, lowering
+ * the team count on an event whose matches had been generated failed with
+ * `matches_team_a_event_fk` in front of the manager.
+ *
+ * ## What it does, and what it will not do
+ *
+ * A table game's pairing is *stored* (`team_a_id`), unlike a bracket slot's,
+ * which is a source reference resolved on read. Nulling the two columns turns
+ * the first into the second: the match resolves from `seed:n` against whatever
+ * team list exists afterwards, which is exactly how every bracket match in the
+ * engine already works, and the sync that follows rebuilds the stage properly.
+ *
+ * It **refuses** when one of those matches carries a result — a played game, a
+ * recorded finish, or a winner override naming the team going. Nulling the
+ * reference there would quietly re-attribute a completed result to whoever
+ * inherits that seed, which is the standing rule's "erase a result" by a longer
+ * route. The way through is the way through every other recorded mistake:
+ * clear the series, or rebuild the stage, and then remove the team.
+ */
+export async function releaseTeamsFromMatches(
+  eventId: string,
+  teamIds: readonly string[],
+  database: Database = defaultDb
+): Promise<FormatResult<{ released: number }>> {
+  if (teamIds.length === 0) return withData({ released: 0 });
+
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
+
+    const release = await matchesNamingTeams(eventId, teamIds, tx);
+    if (release.matches === 0) return withData({ released: 0 });
+
+    if (release.withResults > 0) {
+      const named = release.stages
+        .filter((stage) => stage.withResults > 0)
+        .map((stage) => `“${stage.name}”`)
+        .join(", ");
+      return fail(
+        `${named} has a recorded result in a match one of those teams played, so removing the team would change who that result belongs to. Clear the series, or rebuild the stage, first.`
+      );
+    }
+
+    const stageRows = await readStageRows(tx, eventId);
+    const rows = (
+      await readMatchRows(
+        tx,
+        stageRows.map((row) => row.id)
+      )
+    ).filter((row) => namesOneOf(row, teamIds));
+
+    for (const row of rows) {
+      await tx
+        .update(matches)
+        .set({
+          teamAId: teamIds.includes(row.teamAId ?? "") ? null : row.teamAId,
+          teamBId: teamIds.includes(row.teamBId ?? "") ? null : row.teamBId,
+          winnerOverrideId: teamIds.includes(row.winnerOverrideId ?? "")
+            ? null
+            : row.winnerOverrideId,
+        })
+        .where(eq(matches.id, row.id));
+    }
+
+    return withData({ released: rows.length });
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* "Rebuild anyway" — what it clears, then clearing it (UC-18 9a)     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What rebuilding — or removing, or reshaping — one stage would clear.
+ *
+ * Read before the write so a confirm dialog can name the results that would go
+ * rather than counting them, the same problem `previewEventDays` solves for
+ * days and `previewTeams` for teams.
+ */
+export type StageClearing = {
+  stageId: string;
+  name: string;
+  /** Rows in the database — *not* the generated spec's length. See `stageClearings`. */
+  matches: number;
+  playedGames: number;
+  /** Series with a winner — the ones a rebuild would actually lose. */
+  decided: number;
+  overrides: number;
+  finished: number;
+  scheduled: number;
+  /** Scores typed in but never ticked off. Not a result; not a blocker. */
+  draftedScores: number;
+  /** A manager moved a start time in this stage (R-157 / UC-19 E2). */
+  handEdited: boolean;
+  /** True when `generateMatches` and `setStages` will refuse outright. */
+  blocked: boolean;
+  /** When the sync last found these matches out of step (UC-18 9a). */
+  outOfDateSince: string | null;
+  /** The results themselves, so the dialog can name them rather than count them. */
+  results: Array<{ slot: string; label: string; line: string }>;
+  /**
+   * **The token `rebuildStage` demands back.**
+   *
+   * It is a digest of everything above, recomputed inside the rebuild's own
+   * transaction. Hand back the one you were shown and the rebuild goes ahead;
+   * hand back a stale one — because a result landed in the seconds the dialog
+   * was open — and it is refused rather than clearing something the manager was
+   * never told about. This is the only guard that can tell those two apart: the
+   * stage looks identically rebuildable either way.
+   */
+  confirm: string;
+};
+
+/**
+ * Count what every stage of this event is carrying — asked *before* any write.
+ *
+ * Over the matches that actually **exist**. `formatFor` resolves a stage's
+ * matches from its generated spec whether or not a single row has been written,
+ * which is exactly what lets a bracket be previewed before it exists — and it
+ * means `stage.matches.length` is never zero and cannot answer "has this been
+ * generated yet". The rows can.
+ */
+export async function stageClearings(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<StageClearing[]> {
+  const view = await formatFor(eventId, database);
+  if (!view) return [];
+
+  const stageRows = await readStageRows(database, eventId);
+  const matchRows = await readMatchRows(
+    database,
+    stageRows.map((row) => row.id)
+  );
+  const gameRows = await readGameRows(
+    database,
+    matchRows.map((row) => row.id)
+  );
+
+  return stageRows.map((stage) => {
+    const rows = matchRows.filter((row) => row.stageId === stage.id);
+    const resolved = view.stages.find((entry) => entry.id === stage.id);
+    return clearingOf(stage, rows, gameRows, resolved ?? null);
+  });
+}
+
+function clearingOf(
+  stage: Stage,
+  rows: MatchRow[],
+  games: MatchGameRow[],
+  resolved: StageView | null
+): StageClearing {
+  const touch = stageTouchOf(stage, rows, games);
+  const stored = new Set(rows.map((row) => row.slot));
+  const onBoard = (resolved?.matches ?? []).filter((match) => stored.has(match.slot));
+
+  const results: StageClearing["results"] = [];
+  let decided = 0;
+  for (const match of onBoard) {
+    // `status` and `needsDecision` are the resolver's answers, and they are the
+    // ones the board shows: a void match has no winner, and a drawn decider is
+    // not decided until somebody says so. Re-deriving either here is how a
+    // dialog comes to disagree with the screen behind it.
+    if (match.status === "done") decided += 1;
+    if (match.games.some((game) => game.played) || match.winnerOverrideId || match.finishedAt) {
+      results.push({
+        slot: match.slot,
+        label: match.displayLabel,
+        line: `${match.nameA} ${match.gamesWonA}–${match.gamesWonB} ${match.nameB}`,
+      });
+    }
+  }
+
+  return {
+    stageId: stage.id,
+    name: stage.name ?? stage.kind,
+    matches: rows.length,
+    playedGames: touch.playedGames,
+    decided,
+    overrides: touch.overrides,
+    finished: touch.finished,
+    scheduled: touch.scheduled,
+    draftedScores: touch.draftedScores,
+    handEdited: touch.handEdited,
+    blocked: touch.blocked,
+    outOfDateSince: iso(stage.outOfDateSince),
+    results,
+    confirm: clearingDigest(stage, rows, games),
+  };
+}
+
+/**
+ * A short, stable fingerprint of everything in a stage that a rebuild destroys.
+ *
+ * Every played game, every score, every override, every finish, every start
+ * time and the hand-edit mark. Anything a manager was shown in the dialog is in
+ * here, so a value that still matches is a promise that nothing they were not
+ * shown has appeared since.
+ */
+function clearingDigest(stage: Stage, rows: MatchRow[], games: MatchGameRow[]): string {
+  const ids = new Set(rows.map((row) => row.id));
+  const parts = [
+    stage.id,
+    iso(stage.handEditedAt) ?? "",
+    ...[...rows]
+      .sort((x, y) => x.slot.localeCompare(y.slot))
+      .map((row) =>
+        [
+          row.slot,
+          row.bestOf,
+          row.winnerOverrideId ?? "",
+          iso(row.finishedAt) ?? "",
+          iso(row.scheduledAt) ?? "",
+          row.durationMin ?? "",
+          games
+            .filter((game) => game.matchId === row.id)
+            .sort((x, y) => x.index - y.index)
+            .map((game) => `${game.index}:${game.scoreA}:${game.scoreB}:${game.played ? 1 : 0}`)
+            .join(","),
+        ].join("~")
+      ),
+    // A game whose match has gone is not reachable from the rows above, and a
+    // digest that cannot see it would be a digest that misses a deletion.
+    String(games.filter((game) => ids.has(game.matchId)).length),
+  ];
+  return createHash("sha1").update(parts.join("|")).digest("hex").slice(0, 16);
+}
+
+/**
+ * **Rebuild one stage over the top of what it is carrying** (UC-18 9a).
+ *
+ * The single most destructive operation on the site: it deletes every match of
+ * the stage, and with them every played game, every score and every override in
+ * it. So it is the one write that will not take an instruction on its own —
+ * `confirm` has to be the `StageClearing.confirm` the manager was actually
+ * shown, and it is recomputed here, inside the transaction, under the event's
+ * row lock.
+ *
+ * Three different failures that a plain "force: true" flag cannot tell apart:
+ *
+ *  - The dialog was opened, a result was recorded in another tab, and the
+ *    manager then pressed the button. The digest has moved, so this refuses and
+ *    says what happened. Nothing is cleared.
+ *  - The stage was rebuilt by somebody else in the meantime. Same answer.
+ *  - The manager read what it would clear and meant it. The digest matches, and
+ *    it is cleared.
+ *
+ * The event lock is what makes the recomputation meaningful: a result being
+ * recorded concurrently either commits before this and changes the digest, or
+ * waits behind it and is refused by the row that is no longer there.
+ */
+export async function rebuildStage(
+  stageId: string,
+  confirm: string,
+  database: Database = defaultDb
+): Promise<FormatResult<{ created: number; cleared: StageClearing }>> {
+  return database.transaction(async (tx) => {
+    const [stage] = await tx.select().from(stages).where(eq(stages.id, stageId)).limit(1);
+    if (!stage) return fail("That stage no longer exists.");
+
+    const event = await lockEvent(tx, stage.eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    // A finished event's record is closed, and "rebuild anyway" is not a key to
+    // it. This is the same refusal `generateMatches` makes, and it comes first
+    // because it does not depend on anything the manager was shown.
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
+
+    const rows = await readMatchRows(tx, [stage.id]);
+    const games = await readGameRows(
+      tx,
+      rows.map((row) => row.id)
+    );
+    const digest = clearingDigest(stage, rows, games);
+
+    if (!confirm || confirm !== digest) {
+      return fail(
+        "Something in this stage changed since you were shown what rebuilding it would clear, so nothing was touched. Look again and confirm."
+      );
+    }
+
+    const teamRows = await readTeams(tx, stage.eventId);
+    if (teamRows.length > MAX_TEAMS) return fail(`An event can have at most ${MAX_TEAMS} teams.`);
+
+    const kind = kindOf(stage);
+    const config = normaliseStageConfig(kind, stage.config as Partial<StageConfig>);
+    const refusal = teamCountRefusal(kind, teamRows.length, config);
+    if (refusal) return fail(refusal);
+
+    // Read the report back out *before* the delete: afterwards there is nothing
+    // left to describe, and the caller's log line has to say what went.
+    const view = await formatFor(stage.eventId, tx);
+    const cleared = clearingOf(
+      stage,
+      rows,
+      games,
+      view?.stages.find((entry) => entry.id === stage.id) ?? null
+    );
+
+    const created = await writeStageMatches(tx, stage, teamRows);
+    await reflow(tx, stage.eventId);
+    return withData({ created, cleared });
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -756,10 +1596,113 @@ export async function recordGames(
       })
       .where(eq(matches.id, matchId));
 
+    // Before the re-flow, so a round that has just been paired is laid out with
+    // the rest of its day rather than sitting at no time until the next write.
+    await advanceSwiss(tx, match.eventId);
     await reflow(tx, match.eventId);
 
     return withData({ finishedAt: state.finishedAt, durationMin: state.durationMin });
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* Swiss, round by round                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * **Pair the next Swiss round, once the round before it is complete** (R-71 /
+ * UC-18 swiss).
+ *
+ * A Swiss cannot be generated up front. Round 1 is the seeding — top half
+ * against bottom half — and every round after it pairs the table as it stands,
+ * so it exists only once the round before it is in. That makes this the one
+ * part of the format engine that grows while the event is being played, and it
+ * is called from the two writes that can complete a round: recording games, and
+ * an override settling a drawn one.
+ *
+ * ## The pairing is written down, not re-derived
+ *
+ * `config.swissRounds` keeps the seed pairs of each round as it is made. The
+ * alternative — pairing from the table on every read — would silently re-pair a
+ * round that has already been played the moment somebody corrects an earlier
+ * score, which is the one thing a stored result must never do to a board. It is
+ * the same argument as `matches.first_side_choice`: a decision taken in front
+ * of a room is a fact, not a function.
+ *
+ * ## Nothing here decides a result
+ *
+ * Which matches are over is `status === "done"`, straight off the resolver —
+ * so a void match counts as settled and a drawn *table* game counts as played,
+ * while a drawn decider waits for the manager. Re-deriving any of that here is
+ * how a Swiss comes to pair a round the board says is still live.
+ */
+async function advanceSwiss(database: Database, eventId: string): Promise<number> {
+  const stageRows = await readStageRows(database, eventId);
+  const swiss = stageRows.filter((row) => row.kind === "swiss");
+  if (swiss.length === 0) return 0;
+
+  const view = await formatFor(eventId, database);
+  if (!view) return 0;
+
+  const teamRows = await readTeams(database, eventId);
+  const seeded = seedOrderOf(teamRows);
+  let added = 0;
+
+  for (const stage of swiss) {
+    const resolved = view.stages.find((entry) => entry.id === stage.id);
+    if (!resolved) continue;
+
+    const config = normaliseStageConfig("swiss", stage.config as Partial<StageConfig>);
+    const rounds = [...new Set(resolved.spec.matches.map((match) => match.round))];
+    const last = rounds.length ? Math.max(...rounds) : 0;
+    if (last < 1 || last >= config.rounds) continue;
+
+    // Every round so far, not only the last: the table the next round is paired
+    // from counts all of them, so one unfinished match anywhere means the order
+    // is still moving.
+    const stored = await readMatchRows(database, [stage.id]);
+    if (stored.length === 0) continue;
+    const bySlot = new Set(stored.map((row) => row.slot));
+    const onBoard = resolved.matches.filter((match) => bySlot.has(match.slot));
+    if (onBoard.length === 0) continue;
+    if (!onBoard.every((match) => match.status === "done" || match.status === "void")) continue;
+
+    const seedOf = new Map<string, number>();
+    resolved.seeds.forEach((teamId, index) => {
+      if (teamId) seedOf.set(teamId, index + 1);
+    });
+
+    const order = resolved.standings
+      .map((row) => seedOf.get(row.id))
+      .filter((seed): seed is number => seed !== undefined);
+    if (order.length < 2) continue;
+
+    const played = onBoard
+      .map((match) => [seedOf.get(match.teamAId ?? ""), seedOf.get(match.teamBId ?? "")])
+      .filter((pair): pair is [number, number] => pair[0] !== undefined && pair[1] !== undefined);
+
+    const { pairs } = swissNextRound(order, played);
+    if (pairs.length === 0) continue;
+
+    const next: StageConfig = {
+      ...config,
+      swissRounds: { ...config.swissRounds, [String(last + 1)]: pairs },
+    };
+    await database
+      .update(stages)
+      .set({ config: next as unknown as StageConfigJson })
+      .where(eq(stages.id, stage.id));
+
+    // Generated from the updated config rather than from `pairs` directly, so
+    // the new round's series length, mode sequence and coin come from the same
+    // one place every other match in the stage got them from.
+    const spec = generateStage("swiss", teamRows.length, next);
+    const fresh = spec.matches.filter((match) => !bySlot.has(match.slot));
+    await insertGenerated(database, stage, fresh, seeded);
+    added += fresh.length;
+  }
+
+  return added;
 }
 
 /**
@@ -795,6 +1738,9 @@ export async function setWinnerOverride(
     }
 
     await tx.update(matches).set({ winnerOverrideId: teamId }).where(eq(matches.id, matchId));
+    // An override is a result like any other, so it is also one of the two
+    // writes that can complete a Swiss round (UC-18 swiss).
+    await advanceSwiss(tx, match.eventId);
     await reflow(tx, match.eventId);
     return withData(null);
   });
@@ -933,6 +1879,18 @@ export async function clearMatch(
  * when this one ends — so changing a start and leaving the rest alone would
  * leave the board internally inconsistent, which is exactly what `recordGames`
  * goes to the trouble of preventing.
+ *
+ * ## It marks the stage hand-edited, and that is the point of the column
+ *
+ * R-157 / UC-19 E2: a moved start time marks its stage hand-edited, so it is
+ * never regenerated automatically. Only *this* function marks it — the auto
+ * fill and the re-flow write the same column on the same rows and are not hand
+ * edits, which is exactly why "has a person moved anything here" cannot be read
+ * back off `scheduled_at` afterwards and has to be recorded as it happens.
+ *
+ * The re-flow below moves later matches of the same day, and those shifts are
+ * consequences rather than edits: one manager moving one match does not mark
+ * three stages.
  */
 export async function setMatchSchedule(
   matchId: string,
@@ -956,6 +1914,10 @@ export async function setMatchSchedule(
     }
 
     await tx.update(matches).set({ scheduledAt: at }).where(eq(matches.id, matchId));
+    await tx
+      .update(stages)
+      .set({ handEditedAt: new Date() })
+      .where(eq(stages.id, match.stageId));
     await reflow(tx, match.eventId);
 
     // Read back rather than echo: the re-flow may well have moved it again, and

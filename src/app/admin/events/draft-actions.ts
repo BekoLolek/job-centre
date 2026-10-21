@@ -11,8 +11,12 @@
  * second copy of any of them here is a second copy that drifts, and a draft
  * that is wrong about money is a draft nobody trusts again.
  *
- * `requireAdmin()` runs inside every action rather than being trusted from the
- * page that rendered the button, because a server action is a public endpoint.
+ * A guard runs inside every action rather than being trusted from the page
+ * that rendered the button, because a server action is a public endpoint. For
+ * an action keyed on the event that is `requireEventManager`; for the two keyed
+ * on a *team* — the hand placements — it is `requireManagerOfChild`, which
+ * resolves the event from the team and never reads an id sent beside it. See
+ * `src/lib/event-scope.ts` for the hole the second shape closes.
  *
  * ## The one place this file does arithmetic
  *
@@ -24,6 +28,21 @@
  * the same reads the write itself uses) and counts. It decides nothing: whether
  * a removal is actually allowed is still `setTeams`'s answer, and the dialog
  * says what it would cost rather than promising it will work.
+ *
+ * ## Every write that changes the teams brings the matches with it
+ *
+ * The format follows the teams (R-73 / UC-18 8, 9), and these are the four
+ * writes that can change them: a count, the whole list, and the two hand
+ * placements Task 18 added. Each one calls `syncStages` after it succeeds, so a
+ * four-team bracket becomes a six-team bracket the moment the sixth team
+ * exists — whether or not anybody has the Format tab open. That last clause is
+ * the whole point: this used to be an effect on that tab, so changing the teams
+ * from the Teams tab left the matches on yesterday's shape until somebody
+ * happened to look at the format.
+ *
+ * `syncStages` refuses to touch a stage that is carrying results and marks it
+ * out of date instead (UC-18 9a), which is why calling it from a path as
+ * ordinary as "move a player between rosters" is safe.
  */
 
 import { revalidatePath } from "next/cache";
@@ -32,20 +51,33 @@ import {
   type CaptainInput,
   type DraftResult,
   type TeamInput,
+  type TeamWithRoster,
+  eventIdOfTeam,
   getDraftConfig,
   getDraftHistory,
   getDraftPool,
   getTeams,
+  placeOnRoster,
+  removeFromRoster,
   setCaptains,
   setDraftConfig,
   setDraftPool,
   setPoolKind,
+  setTeamCount,
   setTeams,
 } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
+import {
+  type SyncResult,
+  type TeamRelease,
+  auditStageSync,
+  matchesNamingTeams,
+  releaseTeamsFromMatches,
+  syncStages,
+} from "@/lib/format";
 import { recordAudit } from "@/lib/audit";
 import { displayNamesFor } from "@/lib/players";
-import { requireAdmin, requireEventManager } from "@/lib/session-guards";
+import { requireEventManager, requireManagerOfChild } from "@/lib/session-guards";
 
 /** Both admin screens: a team or a pool change alters what the list summarises. */
 function refresh(eventId: string): void {
@@ -89,10 +121,110 @@ export type TeamsImpact = {
   spent: number;
   /** True when at least one removal would be refused. */
   anyBlocked: boolean;
+  /**
+   * The generated matches naming a team that is going — the fourth thing
+   * UC-15 E1 says a lower team count clears, and the one the dialog could not
+   * say anything about until `matchesNamingTeams` existed.
+   *
+   * A match naming one of those teams and carrying a result refuses the whole
+   * removal (see `releaseTeamsFromMatches`), so `matches.withResults` is as
+   * much a blocker as a drafted roster is.
+   */
+  matches: TeamRelease;
 };
 
 function toTeamInput(team: TeamFields): TeamInput {
   return { id: team.id, name: team.name, seed: team.seed, balanceStart: team.balanceStart };
+}
+
+/**
+ * Let the teams this write is about to remove actually be deleted, or hand back
+ * the sentence saying why not (R-161 / UC-15 E1).
+ *
+ * ## Why the order is in the action rather than in the library
+ *
+ * `matches.team_a_id` references `teams` with no `on delete` action, so
+ * Postgres refuses to delete a team any match names — and `setTeams` and
+ * `setTeamCount` live in `src/lib/draft.ts`, which knows nothing about matches
+ * and should not. Before this, lowering the team count on an event whose
+ * matches had been generated came back as `matches_team_a_event_fk` in front of
+ * the manager, and Task 21 made that the common case rather than a rare one by
+ * generating the matches automatically.
+ *
+ * The rule itself is `releaseTeamsFromMatches`'s — including the refusal when
+ * one of those matches carries a result. All that is here is the order the
+ * foreign key forces: release the references, then write the teams, then sync.
+ */
+async function releaseBefore(
+  eventId: string,
+  doomed: (existing: TeamWithRoster[]) => TeamWithRoster[]
+): Promise<string | null> {
+  const ids = doomed(await getTeams(eventId)).map((team) => team.id);
+  if (ids.length === 0) return null;
+  const released = await releaseTeamsFromMatches(eventId, ids);
+  return released.ok ? null : released.error;
+}
+
+/**
+ * Bring the matches into line, and log it — the half of UC-18 9 that belongs to
+ * whatever just changed the teams.
+ *
+ * After the team write rather than inside it: the team write owns whether the
+ * change is allowed, and a sync that declined to rebuild a stage must not roll
+ * back a roster the manager has been told was saved. `syncStages` reports a
+ * stage it cannot build rather than failing, so this never turns a successful
+ * team write into an error.
+ */
+async function followTeams(
+  actor: { id: string; displayName?: string | null; name?: string | null },
+  eventId: string
+): Promise<SyncResult | null> {
+  const sync = await syncStages(eventId);
+  await auditStageSync(actor, eventId, sync);
+  return sync.ok ? sync.data : null;
+}
+
+/**
+ * What removing these particular teams would cost.
+ *
+ * Shared by the two previews because there are two ways to remove a team — a
+ * list that leaves one out, and a lower count — and one arithmetic. A second
+ * copy would be a second chance for the dialog to under-report what a save is
+ * about to clear.
+ */
+async function impactOfRemoving(
+  eventId: string,
+  doomed: (teams: TeamWithRoster[]) => TeamWithRoster[]
+): Promise<TeamsImpact> {
+  const [existing, lots] = await Promise.all([getTeams(eventId), getDraftHistory(eventId)]);
+
+  // Exactly the set `setTeams` checks: any lot naming the team as winner, at
+  // any status. A voided award still records a price that was once paid.
+  const hasHistory = new Set(
+    lots.map((lot) => lot.winnerTeamId).filter(Boolean) as string[]
+  );
+
+  const removed: RemovedTeamImpact[] = doomed(existing).map((team) => ({
+    id: team.id,
+    name: team.name,
+    memberUserIds: team.members.map((member) => member.userId),
+    captainUserId: team.captainUserId,
+    spent: team.members.reduce((total, member) => total + member.price, 0),
+    blocked: hasHistory.has(team.id),
+  }));
+
+  const matches = await matchesNamingTeams(
+    eventId,
+    removed.map((team) => team.id)
+  );
+
+  return {
+    removed,
+    clearedMembers: removed.reduce((total, team) => total + team.memberUserIds.length, 0),
+    spent: removed.reduce((total, team) => total + team.spent, 0),
+    anyBlocked: removed.some((team) => team.blocked) || matches.withResults > 0,
+    matches,
+  };
 }
 
 /**
@@ -108,34 +240,210 @@ export async function previewTeamsAction(
   await requireEventManager(eventId);
 
   const keeping = new Set(input.map((team) => team.id).filter(Boolean) as string[]);
-  const [existing, lots] = await Promise.all([
-    getTeams(eventId),
-    getDraftHistory(eventId),
-  ]);
-
-  // Exactly the set `setTeams` checks: any lot naming the team as winner, at
-  // any status. A voided award still records a price that was once paid.
-  const hasHistory = new Set(
-    lots.map((lot) => lot.winnerTeamId).filter(Boolean) as string[]
+  return impactOfRemoving(eventId, (existing) =>
+    existing.filter((team) => !keeping.has(team.id))
   );
+}
 
-  const removed: RemovedTeamImpact[] = existing
-    .filter((team) => !keeping.has(team.id))
-    .map((team) => ({
-      id: team.id,
-      name: team.name,
-      memberUserIds: team.members.map((member) => member.userId),
-      captainUserId: team.captainUserId,
-      spent: team.members.reduce((total, member) => total + member.price, 0),
-      blocked: hasHistory.has(team.id),
-    }));
+/**
+ * What lowering the team count to `count` would cost (R-161 / UC-15 E1).
+ *
+ * The same teams `setTeamCount` would drop — the last by `sort`, which is the
+ * order the tab shows — counted the same way. Read-only, and it decides
+ * nothing: a team that has won lots is still refused by the write.
+ */
+export async function previewTeamCountAction(
+  eventId: string,
+  count: number
+): Promise<TeamsImpact> {
+  await requireEventManager(eventId);
 
+  return impactOfRemoving(eventId, (existing) =>
+    count >= existing.length ? [] : existing.slice(count)
+  );
+}
+
+/**
+ * Set how many teams the event has — UC-15 1, in one action.
+ *
+ * The teams it creates are named by the library, not by the browser, which is
+ * the whole reason this exists beside `saveTeamsAction`: a placeholder written
+ * here is recorded as a placeholder (`name_is_custom` false), so choosing a
+ * captain renames it (UC-15 4) and a name the manager types instead of it is
+ * never overwritten (UC-15 4a).
+ */
+export async function setTeamCountAction(
+  eventId: string,
+  count: number
+): Promise<
+  DraftResult<{
+    teams: Array<TeamFields & { id: string }>;
+    added: number;
+    removed: number;
+    sync: SyncResult | null;
+  }>
+> {
+  const admin = await requireEventManager(eventId);
+
+  // A lower count removes teams from the end, and a team a match names cannot
+  // be deleted until that match stops naming it — see `releaseBefore`.
+  const blocked = await releaseBefore(eventId, (existing) =>
+    count >= existing.length ? [] : existing.slice(count)
+  );
+  if (blocked) return { ok: false, error: blocked };
+
+  const result = await setTeamCount(eventId, count);
+  if (!result.ok) return result;
+
+  // Nothing is logged when nothing moved: a manager pressing Save on the
+  // figure that is already stored should not leave a line saying the teams
+  // changed.
+  if (result.data.added > 0 || result.data.removed > 0) {
+    await recordAudit({
+      action: "team.count",
+      actor: admin,
+      eventId,
+      summary:
+        result.data.removed > 0
+          ? `Set the event to ${count} teams, removing ${result.data.removed}.`
+          : `Set the event to ${count} teams, adding ${result.data.added}.`,
+      detail: { count, added: result.data.added, removed: result.data.removed },
+    });
+  }
+
+  // The headline acceptance criterion of Task 21: changing the teams here
+  // leaves the matches current, with the Format tab never opened.
+  const sync = await followTeams(admin, eventId);
+
+  refresh(eventId);
   return {
-    removed,
-    clearedMembers: removed.reduce((total, team) => total + team.memberUserIds.length, 0),
-    spent: removed.reduce((total, team) => total + team.spent, 0),
-    anyBlocked: removed.some((team) => team.blocked),
+    ok: true,
+    data: {
+      teams: result.data.teams.map((team) => ({
+        id: team.id,
+        name: team.name,
+        seed: team.seed,
+        balanceStart: team.balanceStart,
+      })),
+      added: result.data.added,
+      removed: result.data.removed,
+      sync,
+    },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* Rosters by hand (UC-15 5, 6)                                       */
+/* ------------------------------------------------------------------ */
+
+export type RosterMove = {
+  teamId: string;
+  userId: string;
+  price: number;
+  isCaptain: boolean;
+};
+
+/** Every roster as it now stands, for the tab to adopt after a move. */
+async function rostersOf(eventId: string): Promise<RosterMove[]> {
+  const written = await getTeams(eventId);
+  return written.flatMap((team) =>
+    team.members.map((member) => ({
+      teamId: member.teamId,
+      userId: member.userId,
+      price: member.price,
+      isCaptain: member.isCaptain,
+    }))
+  );
+}
+
+/**
+ * Put an accepted player on a team, or move them to it — UC-15 5.
+ *
+ * **The event is resolved from the team**, through `requireManagerOfChild`, and
+ * an `eventId` from the browser is not accepted at all. `event-scope.ts` has
+ * the hole that opens otherwise: pass the id of the event you host to satisfy
+ * the guard, pass a team id from somebody else's event to the write, and the
+ * guard has checked a fact that has nothing to do with what is about to happen.
+ * The verified id is what reaches `placeOnRoster`, which re-reads the team
+ * against it anyway.
+ */
+export async function placeOnRosterAction(
+  teamId: string,
+  userId: string
+): Promise<DraftResult<{ rosters: RosterMove[]; sync: SyncResult | null }>> {
+  const { user: admin, eventId } = await requireManagerOfChild(() => eventIdOfTeam(teamId));
+
+  const result = await placeOnRoster(eventId, userId, teamId);
+  if (!result.ok) return result;
+
+  // Nothing to say when the player was already there — the idempotent answer
+  // to a double-click, not a change (see `placeOnRoster`).
+  if (result.data.fromTeamId !== result.data.toTeamId) {
+    const names = await displayNamesFor([userId]);
+    const teams = await getTeams(eventId);
+    const nameOfTeam = (id: string | null) =>
+      teams.find((team) => team.id === id)?.name ?? "a team";
+
+    await recordAudit({
+      action: "team.roster",
+      actor: admin,
+      eventId,
+      summary:
+        result.data.fromTeamId === null
+          ? `Put ${names.get(userId) ?? "somebody"} on ${nameOfTeam(teamId)} by hand.`
+          : `Moved ${names.get(userId) ?? "somebody"} from ${nameOfTeam(result.data.fromTeamId)} to ${nameOfTeam(teamId)} by hand.`,
+      detail: { userId, from: result.data.fromTeamId, to: teamId },
+    });
+  }
+
+  /*
+   * The matches follow the teams from here too (R-73 / UC-18 9).
+   *
+   * A placement moves a player between rosters that already exist, so today it
+   * cannot change what `generateStage` builds — the shape is a function of how
+   * many teams there are and which of them holds each seed, not of who is on
+   * them. It is called anyway, for two reasons: when the teams have *not*
+   * moved the sync is one read that writes nothing, and it is also what clears
+   * an out-of-date mark on a stage whose results have since been cleared. The
+   * alternative is a list of team writes that happen not to matter, which the
+   * next person to add one has to be told about.
+   */
+  const sync = await followTeams(admin, eventId);
+
+  refresh(eventId);
+  return { ok: true, data: { rosters: await rostersOf(eventId), sync } };
+}
+
+/**
+ * Take a player off a team — the other half of UC-15 5.
+ *
+ * `teamId` names the roster the manager is looking at and is authorised on, and
+ * `removeFromRoster` refuses if the player has since been moved off it rather
+ * than taking them off whichever team they are on now.
+ */
+export async function removeFromRosterAction(
+  teamId: string,
+  userId: string
+): Promise<DraftResult<{ rosters: RosterMove[]; sync: SyncResult | null }>> {
+  const { user: admin, eventId } = await requireManagerOfChild(() => eventIdOfTeam(teamId));
+
+  const result = await removeFromRoster(eventId, userId, teamId);
+  if (!result.ok) return result;
+
+  const names = await displayNamesFor([userId]);
+  await recordAudit({
+    action: "team.roster",
+    actor: admin,
+    eventId,
+    summary: `Took ${names.get(userId) ?? "somebody"} off a roster by hand.`,
+    detail: { userId, from: teamId, to: null },
+  });
+
+  // The other half of the hand placement, and the same reasoning — see above.
+  const sync = await followTeams(admin, eventId);
+
+  refresh(eventId);
+  return { ok: true, data: { rosters: await rostersOf(eventId), sync } };
 }
 
 /**
@@ -149,8 +457,22 @@ export async function previewTeamsAction(
 export async function saveTeamsAction(
   eventId: string,
   input: TeamFields[]
-): Promise<DraftResult<{ teams: Array<TeamFields & { id: string }>; removed: number }>> {
+): Promise<
+  DraftResult<{
+    teams: Array<TeamFields & { id: string }>;
+    removed: number;
+    sync: SyncResult | null;
+  }>
+> {
   const admin = await requireEventManager(eventId);
+
+  // The list is authoritative, so a team whose id is absent is being removed
+  // — same foreign key, same release. See `releaseBefore`.
+  const keeping = new Set(input.map((team) => team.id).filter(Boolean) as string[]);
+  const blocked = await releaseBefore(eventId, (existing) =>
+    existing.filter((team) => !keeping.has(team.id))
+  );
+  if (blocked) return { ok: false, error: blocked };
 
   const result = await setTeams(eventId, input.map(toTeamInput));
   if (!result.ok) return result;
@@ -166,6 +488,10 @@ export async function saveTeamsAction(
     detail: { teams: result.data.teams.length, removed: result.data.removed },
   });
 
+  // A list that dropped a team, added one, or re-seeded them all changes which
+  // team is in which slot, so the matches follow it (R-73 / UC-18 9).
+  const sync = await followTeams(admin, eventId);
+
   refresh(eventId);
   return {
     ok: true,
@@ -177,6 +503,7 @@ export async function saveTeamsAction(
         balanceStart: team.balanceStart,
       })),
       removed: result.data.removed,
+      sync,
     },
   };
 }

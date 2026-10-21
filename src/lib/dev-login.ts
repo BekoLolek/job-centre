@@ -20,10 +20,12 @@
  *
  * ## Why it cannot leak into a deployment
  *
- * {@link devLoginEnabled} requires **both**:
+ * {@link devLoginEnabled} requires **all three**:
  *
- *   1. `process.env.NODE_ENV === "development"`, and
- *   2. `DEV_LOGIN` switched on.
+ *   1. `process.env.NODE_ENV === "development"`,
+ *   2. `DEV_LOGIN` switched on, and
+ *   3. **no `DATABASE_URL`** — so the database it writes to is the local
+ *      PGlite file and not a Postgres somewhere else.
  *
  * `next build` — which is what Vercel runs, and what `npm run build` runs
  * locally — sets `NODE_ENV=production` and bakes it in; `next start` serves with
@@ -32,8 +34,20 @@
  * from a request. So on any deployment condition 1 is false and the page
  * answers 404 before it looks at anything else — even if someone copies
  * `DEV_LOGIN=1` into the Vercel dashboard by mistake, which is the realistic
- * accident this guards against. The two conditions are `&&` for exactly that
- * reason: either one alone would be a weaker promise.
+ * accident this guards against. The conditions are `&&` for exactly that
+ * reason: any one alone would be a weaker promise.
+ *
+ * Condition 3 is UC-30's precondition 1 and error flow 1a — "the site uses the
+ * local database"; "the site points at a remote database … System shows not
+ * found and signs nobody in" — and it closes the one accident the first two do
+ * not. `next dev` reports `development` whatever `DATABASE_URL` says, so a
+ * developer who puts the production connection string in `.env.local` for an
+ * afternoon (to read live data, to reproduce a report) has, with `DEV_LOGIN=1`
+ * still set from yesterday, a page that mints a **real session in the
+ * production database** with no password and no Discord. The decision is
+ * delegated to `driverFor`, the same function `createDatabase` uses to pick a
+ * driver, so "local database" means here exactly what it means there rather
+ * than being a second opinion about the same variable.
  *
  * The check is re-run on every request (not captured at module load), and every
  * exported function that touches the database re-checks it rather than trusting
@@ -42,17 +56,23 @@
 
 import { randomBytes } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { type Database, type User, db as defaultDb, sessions, users } from "@/db";
+import { type Database, type User, db as defaultDb, driverFor, sessions, users } from "@/db";
 import { ensureHandles } from "./players";
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                      */
 /* ------------------------------------------------------------------ */
 
-/** The variables this module reads. `NODE_ENV` is included because it is a gate. */
+/**
+ * The variables this module reads.
+ *
+ * `NODE_ENV` and `DATABASE_URL` are included because they are gates, not
+ * configuration: see the module comment.
+ */
 export type DevLoginEnv = {
   NODE_ENV?: string;
   DEV_LOGIN?: string;
+  DATABASE_URL?: string;
   DEV_LOGIN_DISCORD_ID?: string;
   DEV_LOGIN_ADMIN?: string;
 };
@@ -86,13 +106,25 @@ function isOn(raw: string | undefined): boolean {
 }
 
 /**
+ * Is the site running on its own local database? (UC-30 precondition 1.)
+ *
+ * `driverFor`'s answer, not a second reading of `DATABASE_URL`: the question
+ * this is asking is "which database would `db` be", and that function is the
+ * one that decides it.
+ */
+export function usesLocalDatabase(env: DevLoginEnv = process.env as DevLoginEnv): boolean {
+  return driverFor(env.DATABASE_URL) === "pglite";
+}
+
+/**
  * Is the escape hatch live?
  *
- * Both conditions, never either. See the module comment for why that is the
- * whole safety argument.
+ * All three conditions, never any subset. See the module comment for why that
+ * is the whole safety argument — in particular why a remote `DATABASE_URL`
+ * closes it even under `next dev` (UC-30 1a).
  */
 export function devLoginEnabled(env: DevLoginEnv = process.env as DevLoginEnv): boolean {
-  return env.NODE_ENV === "development" && isOn(env.DEV_LOGIN);
+  return env.NODE_ENV === "development" && isOn(env.DEV_LOGIN) && usesLocalDatabase(env);
 }
 
 export type DevLoginConfig = {
@@ -144,7 +176,8 @@ export type DevSession = {
 export class DevLoginDisabledError extends Error {
   constructor() {
     super(
-      "The development sign-in is disabled. It requires NODE_ENV=development and DEV_LOGIN=1."
+      "The development sign-in is disabled. It requires NODE_ENV=development, DEV_LOGIN=1 " +
+        "and no DATABASE_URL — it only ever works against the local database."
     );
     this.name = "DevLoginDisabledError";
   }

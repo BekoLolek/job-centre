@@ -24,8 +24,8 @@ import {
   MAX_DAYS,
   normaliseFormatTiming,
 } from "@/lib/format-policy";
-import { dayMinutes, planBlocks, schedulePreview } from "@/lib/format-schedule";
-import { toInstant, zoneLabel } from "@/lib/time";
+import { dayMinutes, dayOverruns, planBlocks, schedulePreview } from "@/lib/format-schedule";
+import { formatWhen, toInstant, zoneLabel } from "@/lib/time";
 import {
   type ScheduleSettingsFields,
   applyScheduleAction,
@@ -53,6 +53,15 @@ import SaveRow, { type SaveState } from "./SaveRow";
  * results — so the preview calls them with what is currently typed. It is the
  * same code the write goes through, so "what it will do" and "what it did"
  * cannot disagree.
+ *
+ * ## A day that does not finish on the day it started
+ *
+ * UC-18 7a asks for a warning, not a refusal: a final that ends at 00:40 is a
+ * real tournament and the site has no business rejecting it. `dayOverruns` is
+ * another pure function of the same plan, so the warning appears while the
+ * start time is being chosen rather than after the running order is written —
+ * and it separates "past midnight" from "into the next day's own start", which
+ * have different answers.
  *
  * ## Day starts are not stored twice
  *
@@ -184,6 +193,20 @@ export default function ScheduleTab({
     [blocks, starts, days]
   );
   const totals = useMemo(() => dayMinutes(blocks), [blocks]);
+
+  /*
+   * Days that do not finish on the day they started (UC-18 7a).
+   *
+   * A warning, never a refusal — a final that ends at 00:40 is a real
+   * tournament, and the use case says so in as many words. `dayOverruns` is
+   * the same pure function the rest of this preview is built from, called on
+   * what is typed, so the warning appears while the start time is being chosen
+   * rather than after the running order has been written.
+   */
+  const overruns = useMemo(
+    () => dayOverruns(blocks, starts.slice(0, days).map((value) => toInstant(value))),
+    [blocks, starts, days]
+  );
 
   const generated = format.stages
     .flatMap((stage) => stage.matches)
@@ -418,6 +441,31 @@ export default function ScheduleTab({
           <Eyebrow>Running order · longest case</Eyebrow>
           <Eyebrow as="span">{dayTotalsText(totals)}</Eyebrow>
         </div>
+
+        {overruns.length > 0 && (
+          <Alert tone="union">
+            <span className="block font-medium">
+              {overruns.length === 1
+                ? `Day ${overruns[0].day} does not finish on the day it starts`
+                : `${plural(overruns.length, "day")} do not finish on the day they start`}
+            </span>
+            <ul className="mt-1 space-y-0.5 opacity-90">
+              {overruns.map((day) => (
+                <li key={day.day}>
+                  Day {day.day} runs {hhmm(day.lengthMin)} and ends{" "}
+                  {formatWhen(day.endsAt) ?? "after midnight"}
+                  {day.intoNextDay
+                    ? " — which is after the next day's own start, so the two overlap."
+                    : " — past midnight."}
+                </li>
+              ))}
+            </ul>
+            <span className="mt-1 block opacity-90">
+              Allowed, and sometimes the plan. Start earlier, add a day, or move a block if it
+              is not.
+            </span>
+          </Alert>
+        )}
 
         {staleOverrides && (
           <Alert tone="union">

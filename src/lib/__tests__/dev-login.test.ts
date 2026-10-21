@@ -12,14 +12,20 @@ import {
   endDevSession,
   establishDevSession,
   safeRedirectPath,
+  usesLocalDatabase,
 } from "@/lib/dev-login";
 
 /**
  * The escape hatch's safety argument is "NODE_ENV=development **and**
- * DEV_LOGIN=1, never either", so most of this file is that claim, poked from
- * every side. The rest checks that what it mints is a real Auth.js database
- * session rather than something that only looks like one — if it were not, the
- * pages built on top of it would have been verified against a fiction.
+ * DEV_LOGIN=1 **and** no DATABASE_URL, never a subset", so most of this file
+ * is that claim, poked from every side. The rest checks that what it mints is
+ * a real Auth.js database session rather than something that only looks like
+ * one — if it were not, the pages built on top of it would have been verified
+ * against a fiction.
+ *
+ * The third condition is UC-30's precondition 1 and error flow 1a, and it is
+ * the one this module did not have. See the `DATABASE_URL` block below for
+ * what that cost.
  */
 
 let harness: TestDatabase;
@@ -74,10 +80,120 @@ describe("devLoginEnabled", () => {
   it("reads the live environment when it is not handed one", () => {
     vi.stubEnv("NODE_ENV", "development");
     vi.stubEnv("DEV_LOGIN", "1");
+    vi.stubEnv("DATABASE_URL", "");
     expect(devLoginEnabled()).toBe(true);
 
     vi.stubEnv("NODE_ENV", "production");
     expect(devLoginEnabled()).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-30 precondition 1 and 1a (R-142) — only ever the local database */
+/* ------------------------------------------------------------------ */
+
+/**
+ * > **Preconditions 1.** The site uses the local database, and developer
+ * > sign-in is switched on in local configuration.
+ * >
+ * > **1a.** The site points at a remote database, or developer sign-in is off
+ * > — System shows not found and signs nobody in.
+ *
+ * The hatch used to gate on `NODE_ENV` and `DEV_LOGIN` alone, which reads as
+ * sufficient — a deployment is always `production`, so a deployment can never
+ * reach the page — and leaves the accident the precondition is actually about
+ * wide open. `next dev` reports `development` whatever `DATABASE_URL` says. So
+ * a developer who pastes the production connection string into `.env.local`
+ * for an afternoon, with `DEV_LOGIN=1` still set from yesterday, has a page on
+ * localhost that writes a **real `sessions` row into the production database**
+ * — a working admin session for anybody who can reach port 3400, minted with
+ * no password and no Discord.
+ *
+ * That is why this is a rule and not a nicety, and why `establishDevSession`
+ * and `endDevSession` are each asserted separately below: the page's 404 is
+ * one door, and a server action is a public endpoint that does not go through
+ * it.
+ */
+describe("the local-database rule (UC-30 1, 1a)", () => {
+  it("counts an unset, empty or blank DATABASE_URL as the local database", () => {
+    expect(usesLocalDatabase({})).toBe(true);
+    expect(usesLocalDatabase({ DATABASE_URL: "" })).toBe(true);
+    expect(usesLocalDatabase({ DATABASE_URL: "   " })).toBe(true);
+  });
+
+  it("counts any connection string as a database somewhere else", () => {
+    for (const url of [
+      "postgres://user:pw@ep-cool-name.eu-central-1.aws.neon.tech/neondb",
+      "postgresql://localhost:5432/jobcentre",
+      "anything-at-all",
+    ]) {
+      expect(usesLocalDatabase({ DATABASE_URL: url })).toBe(false);
+    }
+  });
+
+  it("REFUSES the hatch whenever DATABASE_URL is set, development or not", () => {
+    // The load-bearing test. Both of the other two conditions are satisfied
+    // here, which is exactly the state a developer's machine is in.
+    expect(
+      devLoginEnabled({
+        NODE_ENV: "development",
+        DEV_LOGIN: "1",
+        DATABASE_URL: "postgres://user:pw@neon.tech/neondb",
+      })
+    ).toBe(false);
+
+    // And it is still on without it, so the refusal above is about the URL and
+    // not about something else in that object.
+    expect(devLoginEnabled({ NODE_ENV: "development", DEV_LOGIN: "1" })).toBe(true);
+  });
+
+  it("refuses a localhost connection string too", () => {
+    // Not "is it a remote host" — "is it the database this repo manages".
+    // A hand-run Postgres on this machine is still somebody's real data, and
+    // `driverFor` already sends every statement to it rather than to PGlite.
+    expect(
+      devLoginEnabled({
+        NODE_ENV: "development",
+        DEV_LOGIN: "1",
+        DATABASE_URL: "postgresql://localhost:5432/jobcentre",
+      })
+    ).toBe(false);
+  });
+
+  it("REFUSES to open a session against a database it does not own", async () => {
+    const before = await db.select().from(sessions);
+
+    await expect(
+      establishDevSession(db, {
+        NODE_ENV: "development",
+        DEV_LOGIN: "1",
+        DATABASE_URL: "postgres://user:pw@neon.tech/neondb",
+      })
+    ).rejects.toBeInstanceOf(DevLoginDisabledError);
+
+    // Not merely "returned nothing" — this is the whole rule, so nothing may
+    // have been written: no user row either.
+    expect(await db.select().from(sessions)).toHaveLength(before.length);
+    expect(
+      await db.select().from(users).where(eq(users.discordId, DEV_LOGIN_DISCORD_ID))
+    ).toHaveLength(0);
+  });
+
+  it("refuses to close one either, so neither action is a way in", async () => {
+    await expect(
+      endDevSession("whatever", db, {
+        NODE_ENV: "development",
+        DEV_LOGIN: "1",
+        DATABASE_URL: "postgres://user:pw@neon.tech/neondb",
+      })
+    ).rejects.toBeInstanceOf(DevLoginDisabledError);
+  });
+
+  it("says all three conditions in the refusal, so the fix is readable", () => {
+    const error = new DevLoginDisabledError();
+    expect(error.message).toMatch(/NODE_ENV=development/);
+    expect(error.message).toMatch(/DEV_LOGIN=1/);
+    expect(error.message).toMatch(/DATABASE_URL/);
   });
 });
 

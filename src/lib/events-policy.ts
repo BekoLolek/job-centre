@@ -249,6 +249,55 @@ export function capacityProblem(capacity: number | null): string | null {
   return null;
 }
 
+/* ------------------------------------------------------------------ */
+/* The web address (R-114 / UC-08 E2, E2a)                            */
+/* ------------------------------------------------------------------ */
+
+/** What a web address may be made of (UC-08 E2a). */
+const WEB_ADDRESS = /^[a-z0-9-]+$/;
+
+/** The longest address the editor's box allows, and the longest stored. */
+export const SLUG_MAX = 64;
+
+/** The address a manager typed, as it would be stored. Case only — never repair. */
+export function readWebAddress(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+/**
+ * Why this web address cannot be used, or null when it can (UC-08 E2a).
+ *
+ * **Refuses rather than repairs**, which is the whole of E2a: "Address taken or
+ * not letters, numbers and hyphens — System rejects with the reason; the old
+ * address stays." `updateEvent` used to run the typed address through `slugify`
+ * and save whatever came out, so a manager who typed `Summer Cup!` was given
+ * `summer-cup` with nothing said — a URL they did not choose, found out about
+ * later from a link that worked but was not the one already pasted into
+ * Discord. Silently *changing* what somebody typed is worse than refusing it:
+ * a refusal they can answer, and a change they cannot see.
+ *
+ * Case is not content, so {@link readWebAddress} lowercases first and
+ * `Summer-Cup` is accepted as `summer-cup`. Everything else is the manager's to
+ * fix.
+ *
+ * Taken-ness is not decided here — that needs the database — only shape. Pure,
+ * like every other sentence in this module, so the editor refuses before a
+ * round trip and refuses for exactly the reason the save would have.
+ */
+export function webAddressRefusal(address: string): string | null {
+  if (!address) return "Give the event a web address.";
+  if (address.length > SLUG_MAX) {
+    return `A web address is at most ${SLUG_MAX} characters; that one is ${address.length}.`;
+  }
+  if (!WEB_ADDRESS.test(address)) {
+    return `"${address}" is not a web address — letters, numbers and hyphens only.`;
+  }
+  if (address.startsWith("-") || address.endsWith("-")) {
+    return `"${address}" cannot start or end with a hyphen.`;
+  }
+  return null;
+}
+
 /**
  * Why this day list cannot be saved, or null when it can (R-24, UC-08 4, 10c).
  *
@@ -607,14 +656,33 @@ export function confirmationsOpen(startsAt: Date | null | undefined, now: Date):
 /* ------------------------------------------------------------------ */
 
 /**
- * Where a manager may send an application — every status but `pending`.
+ * Where a manager may send an application — the three states a decision can
+ * land in, written out rather than subtracted from `ApplicationStatus`.
  *
- * `pending` is where an approval event's application *arrives*; the state
- * diagram (docs/diagrams/application-state.md) has no edge back into it. So a
- * pending application is not a decision: it is not announced, it is not
- * notified, and nothing carrying this type can name it.
+ * Two states are missing, and for two different reasons.
+ *
+ * `pending` is where an approval event's application *arrives* (R-27, UC-12
+ * 7b); the state diagram (docs/diagrams/application-state.md) has no edge back
+ * into it. So a pending application is not a decision: it is not announced, it
+ * is not notified, and nothing carrying this type can name it.
+ *
+ * `withdrawn` is **the applicant's**. Every edge into it on the diagram reads
+ * "applicant withdraws", and the Applicants tab offers the status as a filter
+ * and never as a button, so no screen has ever needed it. Leaving it in this
+ * type was not cosmetic: `applyToEvent` refuses a *declined* member and lets a
+ * *withdrawn* one back in (R-122 "Beats R-121" / UC-12 E1, E2), so a manager
+ * decision naming `withdrawn` over a declined row turned the decline off — the
+ * same hole `withdrawApplication` was closed against, one door along. Listing
+ * the three states is what stops `Exclude` quietly re-opening it the next time
+ * a status is added.
+ *
+ * The type is the outer door; `setApplicationStatus` refuses both states again
+ * in the write, because an action is a public POST and a type is not a guard.
  */
-export type ApplicationDecision = Exclude<ApplicationStatus, "pending">;
+export type ApplicationDecision = Extract<
+  ApplicationStatus,
+  "accepted" | "waitlisted" | "declined"
+>;
 
 /* ------------------------------------------------------------------ */
 /* Rank thresholds (§8.3)                                             */

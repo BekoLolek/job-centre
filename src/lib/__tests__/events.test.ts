@@ -24,8 +24,10 @@ import {
   createEvent,
   editApplicationAnswers,
   getApplicationsForEvent,
+  getEventById,
   getEventBySlug,
   getMyApplications,
+  listEventOptions,
   listEvents,
   loadApplicationForm,
   publishEvent,
@@ -595,12 +597,27 @@ describe("updateEvent and publishEvent", () => {
     ).toMatch(/not one of/i);
   });
 
-  it("will not hand one event another's slug", async () => {
+  /*
+   * Rewritten to follow UC-08 E2a: "Address taken or not letters, numbers and
+   * hyphens - System rejects with the reason; the old address stays."
+   *
+   * It used to assert the opposite — that a taken address was quietly saved as
+   * `…-2` — which is `freeSlug`'s behaviour and is right for the address
+   * *derived from a title* at creation (UC-08 2), where there is nothing the
+   * admin typed for a suffix to contradict. An address the manager typed is
+   * E2a's case, and the full set of it is in `web-address.test.ts`.
+   */
+  it("refuses another event's slug by name, leaving the old address alone (UC-08 E2a)", async () => {
     const first = await makeEvent({ title: "Slug holder" });
     const second = await makeEvent({ title: "Slug wanter" });
-    const updated = expectOk(await updateEvent(second.id, { slug: first.slug }, db));
-    expect(updated.slug).not.toBe(first.slug);
-    expect(updated.slug).toBe(`${first.slug}-2`);
+    const was = second.slug;
+
+    const refusal = expectFail(await updateEvent(second.id, { slug: first.slug }, db));
+    expect(refusal.error).toContain(first.slug);
+    expect(refusal.error).toMatch(/already another event's address/i);
+
+    const after = await getEventById(second.id, {}, db);
+    expect(after?.slug).toBe(was);
   });
 
   it("says so when the event has gone", async () => {
@@ -1601,6 +1618,29 @@ describe("approval entry mode (R-27, UC-12 7b, UC-14)", () => {
     ).toMatch(/pending/i);
   });
 
+  it("refuses a manager withdrawing an application on the applicant's behalf", async () => {
+    /*
+     * The other state no decision may name. `withdrawApplication` is closed
+     * against `declined → withdrawn`, but this is the second door into the
+     * same room: a decision writing `withdrawn` over a declined row would let
+     * `applyToEvent` readmit somebody R-122 says is out for good ("Beats
+     * R-121" / UC-12 E1, E2), and the member would be back in the queue the
+     * manager had just taken them out of.
+     *
+     * Driven from `declined` because that is the transition with the
+     * consequence, and the row is read back: a refusal that had already
+     * written would be worse than no refusal at all.
+     */
+    const event = await approvalEvent();
+    const { userId, application } = await pendingApplication(event.id);
+    expectOk(await setApplicationStatus(application.id, "declined", { now: NOW }, db));
+
+    expect(
+      expectFail(await setApplicationStatus(application.id, "withdrawn", { now: NOW }, db)).error
+    ).toMatch(/only the applicant withdraws/i);
+    expect(await queueFor(event.id)).toEqual({ [userId]: ["declined", null] });
+  });
+
   it("hands the apply page an open event with nothing queued behind it", async () => {
     // What the form beside the submit button has to say (UC-12 7b) cannot be
     // read off `willWaitlist`: an approval event with every seat taken is still
@@ -1860,10 +1900,42 @@ describe("setAvailability", () => {
     const written = expectOk(
       await setAvailability(application.id, { [days[0].id]: "yes", [days[1].id]: "no" }, db)
     );
-    expect(written).toEqual({ [days[0].id]: "yes", [days[1].id]: "no" });
+    expect(written.answers).toEqual({ [days[0].id]: "yes", [days[1].id]: "no" });
+    expect([...written.changed].sort()).toEqual([days[0].id, days[1].id].sort());
 
     const cleared = expectOk(await setAvailability(application.id, { [days[1].id]: null }, db));
-    expect(cleared).toEqual({ [days[0].id]: "yes" });
+    expect(cleared.answers).toEqual({ [days[0].id]: "yes" });
+    expect(cleared.changed).toEqual([days[1].id]);
+  });
+
+  it("reports nothing changed when the answers arrive exactly as they are stored", async () => {
+    /*
+     * Not a nicety: the admin action writes an audit line off `changed`, and
+     * the Applicants tab posts an answer on every tap — including the tap that
+     * picks the answer already showing. "Corrected an applicant's answers"
+     * about a save that corrected nothing is a log entry that makes the real
+     * ones harder to find, and an empty `byDay` used to produce one saying
+     * "for 0 days".
+     */
+    const event = await openEvent();
+    const { days } = expectOk(
+      await setEventDays(event.id, [{ label: "Fri" }, { label: "Sat" }], db)
+    );
+    const userId = await makeUser(db);
+    const application = expectOk(await applyToEvent(event.id, userId, { now: NOW }, db));
+
+    expectOk(await setAvailability(application.id, { [days[0].id]: "yes" }, db));
+
+    const again = expectOk(await setAvailability(application.id, { [days[0].id]: "yes" }, db));
+    expect(again.changed).toEqual([]);
+    expect(again.answers).toEqual({ [days[0].id]: "yes" });
+
+    const nothing = expectOk(await setAvailability(application.id, {}, db));
+    expect(nothing.changed).toEqual([]);
+
+    // Clearing a day that was never answered is not a change either.
+    const blank = expectOk(await setAvailability(application.id, { [days[1].id]: null }, db));
+    expect(blank.changed).toEqual([]);
   });
 
   it("overwrites an earlier answer for the same day", async () => {
@@ -1874,7 +1946,8 @@ describe("setAvailability", () => {
 
     expectOk(await setAvailability(application.id, { [days[0].id]: "yes" }, db));
     const second = expectOk(await setAvailability(application.id, { [days[0].id]: "maybe" }, db));
-    expect(second).toEqual({ [days[0].id]: "maybe" });
+    expect(second.answers).toEqual({ [days[0].id]: "maybe" });
+    expect(second.changed).toEqual([days[0].id]);
 
     const rows = await db
       .select()
@@ -2688,6 +2761,26 @@ describe("an event's dates come from its days (R-24, UC-11 2)", () => {
       .filter((row) => row.title.startsWith(title))
       .map((row) => row.id);
     expect(listed).toEqual([early.id, late.id, undated.id]);
+  });
+
+  // Task 48, R-110 / UC-27 3: what `/admin/audit`'s filter reads instead of
+  // `listEvents` — the same events in the same order, with none of the seat
+  // counting a `<select>` would throw away.
+  it("lists every event as nothing but an id and a title, in the same order", async () => {
+    const title = `Options ${Date.now()}`;
+    const late = await datedEvent(hours(200), { title: `${title} late` });
+    const early = await datedEvent(hours(100), { title: `${title} early` });
+    // Unpublished, and `PUBLISHABLE`'s day puts it after both of the above.
+    const draft = await makeEvent({ ...PUBLISHABLE, title: `${title} draft` });
+
+    const options = (await listEventOptions(db)).filter((row) =>
+      row.title.startsWith(title)
+    );
+
+    // The draft is in it on purpose: a log is asked about events that never
+    // ran, so nothing a public list leaves out may be unreachable here.
+    expect(options.map((row) => row.id)).toEqual([early.id, late.id, draft.id]);
+    expect(options[0]).toEqual({ id: early.id, title: `${title} early` });
   });
 
   // R-200, UC-13 7: the answer closes two days before the start, and the start

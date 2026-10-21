@@ -149,11 +149,21 @@ export type AdminUsersView = {
   pendingAllowlist: string[];
 };
 
+/**
+ * Which half of the list to show (UC-02 E1, "filters by admin / not admin").
+ *
+ * Both directions, not just one. There used to be only `all` and `admins`, so
+ * "who is *not* an admin" — the question an admin asks before granting, and
+ * the one the facet is named after — was the one view the screen could not
+ * produce.
+ */
+export type UserFilter = "all" | "admins" | "members";
+
 export type ListUsersOptions = {
   /** Matched against display name, name and handle, case-insensitively. */
   search?: string;
-  /** `admins` shows only the flagged ones. */
-  filter?: "all" | "admins";
+  /** `admins` shows only the flagged ones, `members` only the unflagged. */
+  filter?: UserFilter;
   /** Read from the environment when absent, so tests can supply their own. */
   adminIdsEnv?: string | null;
 };
@@ -245,6 +255,7 @@ function filterUsers(
 
   return rows.filter((row) => {
     if (filter === "admins" && !row.isAdmin) return false;
+    if (filter === "members" && row.isAdmin) return false;
     if (!search) return true;
     return (
       row.displayName.toLowerCase().includes(search) ||

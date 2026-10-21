@@ -773,10 +773,12 @@ export function splitIntoGroups(teamCount: number, groups: number): number[][] {
  * Swiss round 1: the top half against the bottom half, in order — 1 v 5, 2 v 6
  * and so on for eight teams.
  *
- * Only the first round can be generated. Every later Swiss pairing is a
- * function of results that do not exist yet, so they are created round by round
- * from the standings; `swissPairings` does that, and the stage carries
- * `config.rounds` so the board knows how many are still to come.
+ * Only the first round can be generated *from the seeding*. Every later Swiss
+ * pairing is a function of results that do not exist yet, so it is decided
+ * round by round from the standings — `swissPairings` does the pairing,
+ * `swissNextRound` puts it back into seed numbers, and the answer is recorded
+ * in `config.swissRounds` so that regenerating the stage reproduces the rounds
+ * that were actually played rather than re-pairing them.
  */
 export function swissRoundOne(teamCount: number): Array<[number, number]> {
   const half = Math.ceil(teamCount / 2);
@@ -816,6 +818,40 @@ export function swissPairings(
 }
 
 /**
+ * The next Swiss round **in seed numbers** — the shape `config.swissRounds`
+ * stores and `generateStage` builds from.
+ *
+ * `swissPairings` works in whatever identity it is handed, because the pairing
+ * rule does not care what a team is called. The stage does: every other
+ * generated match in it names its two sides as `seed:n`, so a Swiss round has
+ * to as well or the resolver would need a second way to find a team. This is
+ * the one line of translation, kept here beside the pairing it translates.
+ *
+ * `order` is the table, best first, as seed numbers; `played` is every pairing
+ * already met, in any order within each pair.
+ */
+export function swissNextRound(
+  order: readonly number[],
+  played: ReadonlyArray<[number, number]>
+): { pairs: Array<[number, number]>; bye: number | null } {
+  const { pairs, bye } = swissPairings(
+    order.map((seed) => String(seed)),
+    played.map(([a, b]) => [String(a), String(b)] as [string, string])
+  );
+  return {
+    pairs: pairs.map(([a, b]) => {
+      const low = Number(a);
+      const high = Number(b);
+      // The better seed is side A, which is only cosmetic — but it is the same
+      // orientation `buildRoundRobin` gives a table game, so a Swiss round and
+      // a round-robin round read the same way down the board.
+      return (low <= high ? [low, high] : [high, low]) as [number, number];
+    }),
+    bye: bye === null ? null : Number(bye),
+  };
+}
+
+/**
  * Generate a whole stage.
  *
  * The only entry point that matters: give it a kind, a team count between 2 and
@@ -847,22 +883,52 @@ export function generateStage(
   }
 
   if (kind === "swiss") {
-    for (const [a, b] of swissRoundOne(teams)) {
-      builder.push({
-        slot: `sw1-${a}-${b}`,
-        round: 1,
-        phase: 1,
-        bracket: "rr",
-        group: null,
-        sourceA: seedRef(a),
-        sourceB: seedRef(b),
-        label: "Round 1",
-        displayLabel: "Round 1",
-        roundLabel: "Swiss round 1",
-        note: null,
-        elimination: false,
-        conditional: null,
+    /*
+     * Round 1 is a function of the seeding, so it is generated. Every later
+     * round is a function of a table that did not exist when the stage was
+     * made, so it appears here only once it has actually been paired —
+     * `config.swissRounds` is where that decision is recorded, and
+     * `advanceSwiss` in `./format.ts` is what records it as the round before
+     * finishes. A round the stage has not reached yet is simply not in the
+     * spec, which is why the board shows "2 of 3 rounds" rather than three
+     * rounds of placeholders.
+     */
+    const rounds: Array<{ round: number; pairs: Array<[number, number]> }> = [
+      { round: 1, pairs: swissRoundOne(teams) },
+    ];
+    for (let round = 2; round <= config.rounds; round += 1) {
+      const paired = config.swissRounds[String(round)];
+      // Stop at the first gap rather than skipping it: round 4 without round 3
+      // is a stored shape nobody can have played, and generating it would put
+      // a round on the board whose table has no games behind it.
+      if (!paired?.length) break;
+      rounds.push({
+        round,
+        // A pairing naming a seed this field does not have is a leftover from a
+        // bigger team list, and a match against nobody is worse than a round
+        // that is one match short.
+        pairs: paired.filter(([a, b]) => a <= teams && b <= teams),
       });
+    }
+
+    for (const { round, pairs } of rounds) {
+      for (const [a, b] of pairs) {
+        builder.push({
+          slot: round === 1 ? `sw1-${a}-${b}` : `sw${round}-${a}-${b}`,
+          round,
+          phase: round,
+          bracket: "rr",
+          group: null,
+          sourceA: seedRef(a),
+          sourceB: seedRef(b),
+          label: `Round ${round}`,
+          displayLabel: `Round ${round}`,
+          roundLabel: `Swiss round ${round}`,
+          note: null,
+          elimination: false,
+          conditional: null,
+        });
+      }
     }
     return finish(kind, teams, config, builder, {});
   }

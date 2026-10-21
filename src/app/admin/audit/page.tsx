@@ -32,7 +32,7 @@ import {
   plural,
 } from "@/components/ui";
 import { type AuditView, listAudit, resolveAuditFilter } from "@/lib/audit";
-import { listEvents } from "@/lib/events";
+import { listEventOptions } from "@/lib/events";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -56,7 +56,15 @@ export default async function AdminAuditPage({
   const limitRaw = Array.isArray(params.show) ? params.show[0] : params.show;
   const limit = Math.min(Math.max(Number(limitRaw) || PAGE, PAGE), 500);
 
-  const events = await listEvents();
+  /*
+   * Titles and ids, which is all the filter needs (R-110 / UC-27 3).
+   *
+   * `listEvents` would answer this too, and did — but it also groups a count
+   * over every application ever made, to build seat summaries a `<select>`
+   * throws away. This page is `force-dynamic`, so that ran on every render,
+   * including the branch below that reads no log rows at all.
+   */
+  const events = await listEventOptions();
   const filter = resolveAuditFilter(raw, events);
   const named = filter.kind === "event" ? filter.event : null;
 
@@ -124,6 +132,9 @@ export default async function AdminAuditPage({
 
             A plain GET form, so it works with no JavaScript and leaves the
             filter in the URL where it can be linked to and bookmarked.
+
+            `listEventOptions` is what fills it: every status, no limit, in the
+            order the admin lists use.
           */}
           <div className="flex flex-wrap items-end gap-3 pb-5">
             <Link

@@ -186,6 +186,26 @@ export type StageConfig = {
   playoffKind: EliminationKind;
   /** swiss: how many rounds are played. */
   rounds: number;
+  /**
+   * swiss: the pairings of every round after the first, keyed by round number
+   * as a string, each a list of seed pairs.
+   *
+   * ## Why a pairing is stored at all
+   *
+   * Only round 1 of a Swiss can be generated from `(kind, teamCount, config)`:
+   * every later round pairs the table as it stood when that round was made, and
+   * a table moves. So the pairing is a **decision taken at a moment**, not a
+   * derivation — the same kind of fact as `matches.first_side_choice`, and
+   * stored for the same reason. Re-deriving it later would silently re-pair a
+   * round that has already been played the moment an earlier score is
+   * corrected, which is precisely the thing §1.1 forbids.
+   *
+   * Seed numbers rather than team ids, because that is what the source grammar
+   * above already says and what every other generated match in the stage uses:
+   * a stored pairing is `seed:3` against `seed:6`, resolved into teams on read
+   * exactly as a round robin's are.
+   */
+  swissRounds: Record<string, Array<[number, number]>>;
   points: PointsRule;
   tiebreakers: Tiebreaker[];
 };
@@ -208,6 +228,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   advancePerGroup: 2,
   playoffKind: "single_elim",
   rounds: 3,
+  swissRounds: {},
   points: DEFAULT_POINTS,
   tiebreakers: DEFAULT_TIEBREAKERS,
 };
@@ -351,9 +372,148 @@ export function normaliseStageConfig(
     advancePerGroup: whole(raw.advancePerGroup, base.advancePerGroup, 1, MAX_TEAMS),
     playoffKind,
     rounds: whole(raw.rounds, base.rounds, 1, MAX_TEAMS * 2),
+    // Kept only for a Swiss: a pairing list on a round robin is a leftover from
+    // a kind change, and generating from it would be generating a shape nobody
+    // on screen can see.
+    swissRounds: kind === "swiss" ? swissRounds(raw.swissRounds) : {},
     points: points(raw.points),
     tiebreakers: tiebreakers(raw.tiebreakers),
   };
+}
+
+/**
+ * Read back a stored Swiss pairing list.
+ *
+ * Nothing here believes the stored value any more than `seriesMap` believes a
+ * stored series length: a round key has to be a round number, a pair has to be
+ * two *different* seeds in range, and anything else is dropped rather than
+ * generated into a match against a team that cannot be there. The round key is
+ * not bounded against `rounds` here, because a manager who lowers the round
+ * count has not unplayed the round that was already paired — `generateStage`
+ * is where `rounds` decides how much of this list is built.
+ */
+function swissRounds(value: unknown): Record<string, Array<[number, number]>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const out: Record<string, Array<[number, number]>> = {};
+
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const round = Number(String(key).trim());
+    if (!Number.isInteger(round) || round < 2 || round > MAX_TEAMS * 2) continue;
+    if (!Array.isArray(raw)) continue;
+
+    const pairs: Array<[number, number]> = [];
+    const used = new Set<number>();
+    for (const entry of raw) {
+      if (!Array.isArray(entry) || entry.length !== 2) continue;
+      const a = Math.trunc(Number(entry[0]));
+      const b = Math.trunc(Number(entry[1]));
+      if (!Number.isInteger(a) || !Number.isInteger(b)) continue;
+      if (a < 1 || b < 1 || a > MAX_TEAMS || b > MAX_TEAMS || a === b) continue;
+      // A seed in two pairings of one round is a team playing itself twice in
+      // the same slot of the evening. Keep the first, drop the rest.
+      if (used.has(a) || used.has(b)) continue;
+      used.add(a);
+      used.add(b);
+      pairs.push([a, b]);
+    }
+    if (pairs.length) out[String(round)] = pairs;
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* How many teams a kind can be played with (UC-18 2a)                */
+/* ------------------------------------------------------------------ */
+
+/** The inclusive team-count range one kind of stage can actually be built for. */
+export type TeamRange = { min: number; max: number };
+
+/**
+ * **What this kind of stage needs, in teams** (UC-18 2a).
+ *
+ * The platform's ceiling is eight everywhere (§8.1). The floor is two for every
+ * bracket and every table — and two kinds raise it, because their own settings
+ * say how wide the field has to be:
+ *
+ *  - **Groups then playoff.** A group of one is a team with nothing to play, so
+ *    `groups` groups need two teams each. Four groups is a sixteen-team shape
+ *    and there is no such event here, which is why the range can come out
+ *    *empty* and the message has to say "fewer groups" rather than "more
+ *    teams".
+ *  - **Swiss.** A round is a pairing of the whole field, and a field of `n`
+ *    teams has only `n - 1` distinct opponents in it, so `rounds` rounds need
+ *    `rounds + 1` teams. Below that the greedy pairer starts handing out
+ *    rematches ("a rematch beats no match"), which is the right answer to a
+ *    field that has run out of opponents mid-event and the wrong answer to a
+ *    format that was never playable.
+ *
+ * `generateStage` deliberately does **not** consult this: it clamps, because it
+ * is also the preview, and a Format tab that cannot draw the shape it is
+ * refusing is a tab that cannot explain the refusal. The refusal belongs on the
+ * write, and `teamCountRefusal` is what the write asks.
+ */
+export function teamRangeFor(kind: StageKind, config: StageConfig): TeamRange {
+  if (kind === "group_playoff") {
+    return { min: Math.max(MIN_TEAMS, config.groups * 2), max: MAX_TEAMS };
+  }
+  if (kind === "swiss") {
+    return { min: Math.max(MIN_TEAMS, config.rounds + 1), max: MAX_TEAMS };
+  }
+  return { min: MIN_TEAMS, max: MAX_TEAMS };
+}
+
+/** What a kind of stage is called in a sentence a manager reads. */
+export function stageKindName(kind: StageKind): string {
+  switch (kind) {
+    case "round_robin":
+      return "A round robin";
+    case "single_elim":
+      return "A single elimination";
+    case "double_elim":
+      return "A double elimination";
+    case "swiss":
+      return "A Swiss";
+    case "group_playoff":
+      return "Groups then a playoff";
+  }
+}
+
+/**
+ * **Why this kind cannot be played with this many teams, naming the range** —
+ * or null when it can (UC-18 2a).
+ *
+ * A sentence rather than a clamp, which is the whole point: clamping a
+ * five-team event's bracket up to six invents a team, and clamping a
+ * three-group stage down to one group builds a format nobody chose. Both were
+ * silent. This says what is wrong, what the valid range is, and leaves the
+ * stage exactly as it was.
+ */
+export function teamCountRefusal(
+  kind: StageKind,
+  teamCount: number,
+  config: StageConfig
+): string | null {
+  const range = teamRangeFor(kind, config);
+  const name = stageKindName(kind);
+
+  if (range.min > range.max) {
+    // No team count can satisfy it, so naming a range would name an empty one.
+    // The setting that made it impossible is the thing to change.
+    return kind === "group_playoff"
+      ? `${name} with ${range.min / 2} groups needs ${range.min} teams, and an event can have at most ${MAX_TEAMS}. Use fewer groups.`
+      : `${name} over ${config.rounds} rounds needs ${range.min} teams, and an event can have at most ${MAX_TEAMS}. Use fewer rounds.`;
+  }
+  if (!Number.isFinite(teamCount) || teamCount < range.min || teamCount > range.max) {
+    const detail =
+      kind === "group_playoff"
+        ? ` with ${config.groups} ${config.groups === 1 ? "group" : "groups"}`
+        : kind === "swiss"
+          ? ` over ${config.rounds} ${config.rounds === 1 ? "round" : "rounds"}`
+          : "";
+    return `${name}${detail} needs between ${range.min} and ${range.max} teams. This event has ${Math.max(0, Math.trunc(teamCount) || 0)}.`;
+  }
+  return null;
 }
 
 /**

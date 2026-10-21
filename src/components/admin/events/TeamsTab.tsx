@@ -11,41 +11,68 @@ import {
   Field,
   Modal,
   Panel,
+  Select,
   Stepper,
   plural,
 } from "@/components/ui";
 import { Money, PlayerChip, playerName } from "@/components/draft";
 import { MAX_TEAMS, MIN_TEAMS } from "@/lib/draft-policy";
+import type { ApplicantView } from "@/lib/events";
 import {
+  type RosterMove,
   type TeamFields,
   type TeamsImpact,
+  placeOnRosterAction,
+  previewTeamCountAction,
   previewTeamsAction,
+  removeFromRosterAction,
   saveTeamsAction,
+  setTeamCountAction,
 } from "@/app/admin/events/draft-actions";
 import SaveRow, { type SaveState } from "./SaveRow";
 import type { DraftTabData } from "./types";
 
 /**
- * Teams — two to eight of them, named, seeded and funded.
+ * Teams — two to eight of them, named, seeded, funded and filled (UC-15).
  *
- * ## The minimum is not nagged about
+ * ## The count is one control and one action
  *
- * `setTeams` enforces the maximum of eight and deliberately does not enforce
- * the minimum of two, because an admin types the names one at a time and being
- * told "you need two teams" while typing the first one is the sort of
- * validation that makes people stop using a form. §9's minimum is a
- * publish-time question, so this screen says it once, quietly, in muted text —
- * never as an error and never on the Save button.
+ * UC-15 1 is "the manager sets the number of teams", and that is now what the
+ * screen asks: a figure between two and eight, and a button that writes it.
+ * It used to be "+ Add a team" eight times, each click inventing a row that the
+ * list save then posted — and the invented rows carried invented *names*, which
+ * is how a placeholder reached `setTeams` looking exactly like something
+ * somebody had typed. `setTeamCount` writes the placeholders itself and records
+ * them as placeholders, so the name box below is now unambiguously the manager
+ * talking: type over "Team 3" and it is yours for good (UC-15 4a).
  *
- * ## Removing a team says what it costs first
+ * The minimum is enforced on the count, and only there. `setTeams` still does
+ * not nag about it while names are being typed one at a time, for the reason
+ * its docblock gives; a count is a single number chosen in full, so "between
+ * two and eight" is answerable the moment it is submitted.
  *
- * `setTeams` reports `removed` in its *result*, which is one moment too late
- * for a confirm dialog: by then the rosters are gone. So this asks first, the
- * way `DaysTab` does — `previewTeamsAction` counts the roster rows and the
- * money against the same reads the write uses, and the dialog names the players
- * who would lose their team. A team that has actually won lots is refused
- * outright by `setTeams`, and the dialog says so before the admin meets it as
- * an error.
+ * ## Lowering it says what it costs first
+ *
+ * Both writes ask before they clear anything — `previewTeamCountAction` for the
+ * count and `previewTeamsAction` for the list — because `setTeams` reports
+ * `removed` in its *result*, which is one moment too late for a confirm dialog
+ * (R-161 / UC-15 E1). A team that has actually won lots is refused outright,
+ * and the dialog says so before the admin meets it as an error.
+ *
+ * ## Rosters are moved one player at a time, and only accepted ones
+ *
+ * UC-15 5 is the manager placing the remaining players by hand, so each move is
+ * its own write rather than a pending edit on a Save button: a roster is shared
+ * ground — the draft writes it, the captains write it — and a screenful of
+ * staged moves posted at once would be a screenful of decisions taken against
+ * a roster that has since changed. `placeOnRoster` hands back every roster as
+ * it now stands and the tab adopts it, the same way the team list adopts the
+ * ids it is given.
+ *
+ * Only accepted applicants are offered, because only accepted applicants may be
+ * placed: a waitlisted member on a roster is a seat given away by the back
+ * door. The server holds that rule — it is re-read inside the write — and this
+ * screen does not offer what the server would refuse.
  *
  * ## Balances follow the mode, and the mode lives on the Draft tab
  *
@@ -65,14 +92,65 @@ type DraftTeam = {
   balanceStart: number;
 };
 
+/* ------------------------------------------------------------------ */
+/* What the screen may offer                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The accepted applicants who are on no roster — everybody UC-15 5 is about.
+ *
+ * Two filters, and both of them are rules rather than tidiness. **Accepted**,
+ * because `placeOnRoster` refuses anybody else and a chip that produces a
+ * refusal is worse than no chip. **Not already placed**, because somebody on a
+ * roster is moved from where they are, not placed again — offering them twice
+ * is how a screen ends up asking the server to put one person on two teams.
+ *
+ * Application order, which is the order the Applicants tab shows.
+ */
+export function unplacedAccepted(
+  applicants: readonly ApplicantView[],
+  rosters: readonly RosterMove[]
+): string[] {
+  const placed = new Set(rosters.map((row) => row.userId));
+  return applicants
+    .filter((row) => row.status === "accepted" && !placed.has(row.member.id))
+    .map((row) => row.member.id);
+}
+
+/**
+ * The teams a player may be put on: not the one they are already on, and not
+ * one whose roster is full.
+ *
+ * A full roster is `rosterTarget` including the captain (§14), which is the
+ * same count `placeOnRoster` refuses on. The team they are on is left out
+ * because "move to where you are" is not a move — the server treats it as a
+ * no-op rather than an error, and an option that does nothing still should not
+ * be in the list.
+ */
+export function teamsOpenTo(
+  teams: readonly { id: string; name: string }[],
+  rosters: readonly RosterMove[],
+  target: number,
+  userId: string
+): { id: string; name: string }[] {
+  const on = rosters.find((row) => row.userId === userId)?.teamId ?? null;
+  return teams.filter(
+    (team) =>
+      team.id !== on &&
+      rosters.filter((row) => row.teamId === team.id).length < target
+  );
+}
+
 let counter = 0;
 const nextKey = () => `new-${(counter += 1)}`;
 
 export default function TeamsTab({
   eventId,
+  applicants,
   data,
 }: {
   eventId: string;
+  applicants: ApplicantView[];
   data: DraftTabData;
 }) {
   const router = useRouter();
@@ -94,6 +172,22 @@ export default function TeamsTab({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [note, setNote] = useState<string | null>(null);
   const [impact, setImpact] = useState<TeamsImpact | null>(null);
+
+  /* --- The count ------------------------------------------------- */
+
+  const [count, setCount] = useState<number | null>(data.teams.length || MIN_TEAMS);
+  const [countBusy, setCountBusy] = useState(false);
+  const [countError, setCountError] = useState<string | null>(null);
+  /** The figure the pending confirm would write. Null when none is pending. */
+  const [pendingCount, setPendingCount] = useState<number | null>(null);
+
+  /* --- The rosters ----------------------------------------------- */
+
+  const [rosters, setRosters] = useState<RosterMove[]>(() =>
+    data.teams.flatMap((team) => team.members.map((member) => ({ ...member })))
+  );
+  const [moving, setMoving] = useState<string | null>(null);
+  const [rosterError, setRosterError] = useState<string | null>(null);
 
   const touch = () => {
     setState("dirty");
@@ -124,31 +218,6 @@ export default function TeamsTab({
     touch();
   };
 
-  const add = () => {
-    if (teams.length >= MAX_TEAMS) return;
-    setTeams((current) => [
-      ...current,
-      {
-        key: nextKey(),
-        /*
-         * A placeholder, not a blank. `setTeams` refuses an unnamed team, and
-         * this is the name the captain replaces: assign somebody to lead this
-         * team and "Team 3" becomes "Team Bob", because that is what everyone
-         * in the Discord will call them anyway. Type over it and it stays.
-         */
-        name: `Team ${current.length + 1}`,
-        seed: current.length + 1,
-        balanceStart: config.defaultBalance,
-      },
-    ]);
-    touch();
-  };
-
-  const remove = (key: string) => {
-    setTeams((current) => current.filter((team) => team.key !== key));
-    touch();
-  };
-
   /** Seeds straight down the list — the common case, one click instead of eight. */
   const seedByOrder = () => {
     setTeams((current) => current.map((team, index) => ({ ...team, seed: index + 1 })));
@@ -163,6 +232,71 @@ export default function TeamsTab({
       balanceStart: perTeam ? team.balanceStart : config.defaultBalance,
     }));
 
+  /** Adopt what the server wrote — ids, names and rosters alike. */
+  const adopt = (written: Array<TeamFields & { id: string }>) => {
+    setTeams(
+      written.map((team) => ({
+        key: team.id,
+        id: team.id,
+        name: team.name,
+        seed: team.seed,
+        balanceStart: team.balanceStart,
+      }))
+    );
+    setCount(written.length);
+  };
+
+  /* --- Writing the count ----------------------------------------- */
+
+  const attemptCount = async () => {
+    if (count === null) return;
+    setCountBusy(true);
+    setCountError(null);
+    try {
+      if (count < teams.length) {
+        const preview = await previewTeamCountAction(eventId, count);
+        if (preview.removed.length > 0) {
+          setImpact(preview);
+          setPendingCount(count);
+          return;
+        }
+      }
+      await commitCount(count);
+    } catch {
+      setCountError("Could not reach the server. Nothing was saved.");
+    } finally {
+      setCountBusy(false);
+    }
+  };
+
+  const commitCount = async (wanted: number) => {
+    setCountBusy(true);
+    setCountError(null);
+    try {
+      const result = await setTeamCountAction(eventId, wanted);
+      if (!result.ok) {
+        setCountError(result.error);
+        return;
+      }
+      setImpact(null);
+      setPendingCount(null);
+      adopt(result.data.teams);
+      // A removal takes rosters with it, so the local copy is stale the moment
+      // it lands. The teams that remain carry theirs; the rest are gone.
+      const alive = new Set(result.data.teams.map((team) => team.id));
+      setRosters((current) => current.filter((row) => alive.has(row.teamId)));
+      setState("idle");
+      setNote(null);
+      router.refresh();
+    } catch {
+      setCountError("Could not reach the server. Nothing was saved.");
+    } finally {
+      setCountBusy(false);
+    }
+  };
+
+  /* --- Writing the list ------------------------------------------ */
+
   /** Ask what this would cost. Only writes once the answer has been read. */
   const attemptSave = async () => {
     setState("saving");
@@ -172,6 +306,7 @@ export default function TeamsTab({
       const preview = await previewTeamsAction(eventId, fields());
       if (preview.removed.length > 0) {
         setImpact(preview);
+        setPendingCount(null);
         setState("dirty");
         return;
       }
@@ -197,15 +332,7 @@ export default function TeamsTab({
       // Adopt the ids the server just wrote. Without this the tab still thinks
       // every team is new, so the next save would delete these rows — and the
       // rosters, balances and prices with them.
-      setTeams(
-        result.data.teams.map((team) => ({
-          key: team.id,
-          id: team.id,
-          name: team.name,
-          seed: team.seed,
-          balanceStart: team.balanceStart,
-        }))
-      );
+      adopt(result.data.teams);
       setNote(
         result.data.removed > 0 ? `Saved · ${plural(result.data.removed, "team")} removed` : null
       );
@@ -217,18 +344,99 @@ export default function TeamsTab({
     }
   };
 
+  /* --- Writing a roster ------------------------------------------ */
+
+  const place = async (userId: string, teamId: string) => {
+    setMoving(userId);
+    setRosterError(null);
+    try {
+      const result = await placeOnRosterAction(teamId, userId);
+      if (!result.ok) {
+        setRosterError(result.error);
+        return;
+      }
+      setRosters(result.data.rosters);
+      router.refresh();
+    } catch {
+      setRosterError("Could not reach the server. Nothing was saved.");
+    } finally {
+      setMoving(null);
+    }
+  };
+
+  const unplace = async (userId: string, teamId: string) => {
+    setMoving(userId);
+    setRosterError(null);
+    try {
+      const result = await removeFromRosterAction(teamId, userId);
+      if (!result.ok) {
+        setRosterError(result.error);
+        return;
+      }
+      setRosters(result.data.rosters);
+      router.refresh();
+    } catch {
+      setRosterError("Could not reach the server. Nothing was saved.");
+    } finally {
+      setMoving(null);
+    }
+  };
+
   const named = teams.filter((team) => team.name.trim().length > 0).length;
+  const placeable = unplacedAccepted(applicants, rosters);
+  const sized = teams.filter((team): team is DraftTeam & { id: string } =>
+    team.id !== undefined
+  );
 
   return (
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
 
-      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
+      {/* --- How many (UC-15 1) ------------------------------------ */}
+      <Panel as="section" padding="none" className="space-y-5">
         <div className="flex flex-wrap items-baseline gap-3">
-          <Eyebrow>Teams</Eyebrow>
-          <Badge tone={teams.length > MAX_TEAMS ? "flare" : "default"}>
+          <Eyebrow>How many teams</Eyebrow>
+          <Badge tone="default">
             {teams.length}/{MAX_TEAMS}
           </Badge>
+        </div>
+
+        {countError && <Alert>{countError}</Alert>}
+
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="min-w-[11rem]">
+            <span className="eyebrow mb-1 block">Teams</span>
+            <Stepper
+              value={count}
+              min={MIN_TEAMS}
+              max={MAX_TEAMS}
+              aria-label="Number of teams"
+              disabled={countBusy}
+              onChange={(value) => {
+                setCount(value);
+                setCountError(null);
+              }}
+            />
+          </label>
+          <Button
+            size="sm"
+            variant="union"
+            disabled={countBusy || count === null || count === teams.length}
+            onClick={() => void attemptCount()}
+          >
+            {countBusy ? "Saving…" : "Set team count"}
+          </Button>
+          <span className="max-w-prose text-12 text-muted">
+            New teams arrive as “Team 1”, “Team 2” and so on. Choose a captain and the
+            name becomes theirs — type a name below instead and it stays yours.
+          </span>
+        </div>
+      </Panel>
+
+      {/* --- Names, seeds, balances ------------------------------- */}
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <Eyebrow>Names and seeds</Eyebrow>
           {perTeam ? (
             <span className="eyebrow text-dim">Per-team balances</span>
           ) : (
@@ -241,8 +449,8 @@ export default function TeamsTab({
 
         {teams.length === 0 ? (
           <EmptyState>
-            No teams yet. Add between {MIN_TEAMS} and {MAX_TEAMS} of them — the draft, the
-            bracket and the schedule all count from here.
+            No teams yet. Set the count above to between {MIN_TEAMS} and {MAX_TEAMS} — the
+            draft, the bracket and the schedule all count from there.
           </EmptyState>
         ) : (
           <ul className="divide-y divide-hair/60 rounded-lg border border-hair">
@@ -316,21 +524,7 @@ export default function TeamsTab({
                       >
                         ↓
                       </Button>
-                      <Button
-                        size="sm"
-                        variant="flare"
-                        aria-label={`Remove team ${index + 1}`}
-                        onClick={() => remove(team.key)}
-                      >
-                        Remove
-                      </Button>
                     </span>
-
-                    {team.id === undefined && (
-                      <Badge tone="union" className="self-center">
-                        New
-                      </Badge>
-                    )}
                   </div>
 
                   {existing && (
@@ -372,8 +566,7 @@ export default function TeamsTab({
 
         {named > 0 && named < MIN_TEAMS && (
           <p className="text-12 text-muted">
-            A draft needs {MIN_TEAMS} teams to run. That is a publish-time question, not
-            something to fix mid-sentence — carry on naming them.
+            A draft needs {MIN_TEAMS} teams to run. Set the count above.
           </p>
         )}
 
@@ -381,11 +574,8 @@ export default function TeamsTab({
           state={state}
           note={note}
           onSave={() => void attemptSave()}
-          label="Save teams"
+          label="Save names and seeds"
         >
-          <Button size="sm" disabled={teams.length >= MAX_TEAMS} onClick={add}>
-            + Add a team
-          </Button>
           <Button size="sm" disabled={teams.length === 0} onClick={seedByOrder}>
             Seed by list order
           </Button>
@@ -395,11 +585,160 @@ export default function TeamsTab({
         </SaveRow>
       </Panel>
 
+      {/* --- Rosters by hand (UC-15 5, 6) ------------------------- */}
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <Eyebrow>Rosters</Eyebrow>
+          <span className="eyebrow text-dim">
+            {plural(config.rosterTarget, "place")} a team, captain included
+          </span>
+        </div>
+
+        {rosterError && <Alert tone="flare">{rosterError}</Alert>}
+
+        {data.started && (
+          <Alert tone="union">
+            <span className="block font-medium">The draft has started</span>
+            <span className="mt-1 block opacity-90">
+              Rosters are filled in the draft room from here on. Void the lots first if one
+              has to be changed by hand.
+            </span>
+          </Alert>
+        )}
+
+        {sized.length === 0 ? (
+          <EmptyState>Set the team count above and the rosters appear here.</EmptyState>
+        ) : (
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {sized.map((team) => {
+              const on = rosters.filter((row) => row.teamId === team.id);
+              const full = on.length >= config.rosterTarget;
+
+              return (
+                <li key={team.id} className="rounded-lg border border-hair p-3">
+                  <div className="mb-2 flex flex-wrap items-baseline gap-2">
+                    <span className="font-display text-16">{team.name}</span>
+                    <Badge tone={full ? "union" : "default"}>
+                      {on.length}/{config.rosterTarget}
+                    </Badge>
+                  </div>
+
+                  {on.length === 0 ? (
+                    <EmptyState size="sm">Nobody on this roster yet.</EmptyState>
+                  ) : (
+                    <ul>
+                      {[...on]
+                        .sort((a, b) => Number(b.isCaptain) - Number(a.isCaptain))
+                        .map((member) => (
+                          <li key={member.userId}>
+                            <PlayerChip
+                              name={playerName(players, member.userId)}
+                              trailing={
+                                member.isCaptain ? (
+                                  <Badge tone="union">Captain</Badge>
+                                ) : member.price > 0 ? (
+                                  <Money value={member.price} size="sm" />
+                                ) : null
+                              }
+                              dimmed={moving === member.userId}
+                              actions={
+                                member.isCaptain ? (
+                                  <span className="text-11 text-dim">Captains tab</span>
+                                ) : (
+                                  <span className="flex items-center gap-1">
+                                    <Select
+                                      aria-label={`Move ${playerName(players, member.userId)} to another team`}
+                                      value=""
+                                      disabled={moving !== null || data.started}
+                                      className="text-12"
+                                      onChange={(input) => {
+                                        const to = input.target.value;
+                                        if (to) void place(member.userId, to);
+                                      }}
+                                    >
+                                      <option value="">Move to…</option>
+                                      {teamsOpenTo(
+                                        sized,
+                                        rosters,
+                                        config.rosterTarget,
+                                        member.userId
+                                      ).map((other) => (
+                                        <option key={other.id} value={other.id}>
+                                          {other.name}
+                                        </option>
+                                      ))}
+                                    </Select>
+                                    <Button
+                                      size="sm"
+                                      variant="flare"
+                                      disabled={moving !== null || data.started}
+                                      onClick={() => void unplace(member.userId, team.id)}
+                                    >
+                                      Off
+                                    </Button>
+                                  </span>
+                                )
+                              }
+                            />
+                          </li>
+                        ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        <div className="space-y-2">
+          <Eyebrow>Accepted and not on a team</Eyebrow>
+          {placeable.length === 0 ? (
+            <EmptyState size="sm">
+              Everybody accepted has a team. Accept more on the Applicants tab to place
+              them here.
+            </EmptyState>
+          ) : (
+            <ul>
+              {placeable.map((userId) => (
+                <li key={userId}>
+                  <PlayerChip
+                    name={playerName(players, userId)}
+                    dimmed={moving === userId}
+                    actions={
+                      <Select
+                        aria-label={`Place ${playerName(players, userId)} on a team`}
+                        value=""
+                        disabled={moving !== null || data.started || sized.length === 0}
+                        className="text-12"
+                        onChange={(input) => {
+                          const to = input.target.value;
+                          if (to) void place(userId, to);
+                        }}
+                      >
+                        <option value="">Place on…</option>
+                        {teamsOpenTo(sized, rosters, config.rosterTarget, userId).map(
+                          (team) => (
+                            <option key={team.id} value={team.id}>
+                              {team.name}
+                            </option>
+                          )
+                        )}
+                      </Select>
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Panel>
+
       {/* --- The confirm ------------------------------------------- */}
       <Modal
         open={impact !== null}
         onClose={() => {
           setImpact(null);
+          setPendingCount(null);
           setState("dirty");
         }}
         size="sm"
@@ -413,6 +752,7 @@ export default function TeamsTab({
               size="sm"
               onClick={() => {
                 setImpact(null);
+                setPendingCount(null);
                 setState("dirty");
               }}
             >
@@ -421,10 +761,12 @@ export default function TeamsTab({
             <Button
               size="sm"
               variant="flare"
-              disabled={state === "saving" || impact?.anyBlocked}
-              onClick={() => void commit()}
+              disabled={state === "saving" || countBusy || impact?.anyBlocked}
+              onClick={() =>
+                void (pendingCount === null ? commit() : commitCount(pendingCount))
+              }
             >
-              {state === "saving" ? "Saving…" : "Remove and save"}
+              {state === "saving" || countBusy ? "Saving…" : "Remove and save"}
             </Button>
           </>
         }

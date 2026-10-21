@@ -27,10 +27,13 @@ import {
   moveToReserve,
   openLot,
   placeBid,
+  placeOnRoster,
+  removeFromRoster,
   setCaptains,
   setDraftConfig,
   setDraftPool,
   setPoolKind,
+  setTeamCount,
   setTeams,
   voidLastLot,
   voidLot,
@@ -301,6 +304,11 @@ const WRITES: Write[] = [
     false,
     (f) => setCaptains(f.eventId, [{ teamId: f.teamIds[1], userId: f.members[4] }], db),
   ],
+  // The count this fixture already has, for the `setDraftConfig` reason below:
+  // two teams, one of which has won a lot, so *lowering* it would be refused
+  // by the standing rule rather than by the archive lock, and this table is
+  // about the archive lock.
+  ["setTeamCount", false, (f) => setTeamCount(f.eventId, 2, db)],
   /*
    * These two ask for no change at all, which is deliberate.
    *
@@ -362,6 +370,23 @@ describe("a finished event refuses every change (UC-09 6b)", () => {
   it.each<Write>([
     ...WRITES,
     ["applyToEvent", false, (f) => applyToEvent(f.eventId, f.outsider, {}, db)],
+    /*
+     * The two hand-placement writes (UC-15 5) are here rather than in `WRITES`
+     * for the same reason `applyToEvent` is: they get past the lock to a rule
+     * of their own. This fixture has awarded a lot, and UC-15 5a hands rosters
+     * to the draft from the first lot onwards — a rule a reopen does not undo,
+     * because reopening an event does not un-open the lot the room watched. So
+     * they cannot be expected to succeed after the reopen; what matters here is
+     * that `lockRefusal` is asked first, so a finished event answers with
+     * `REFUSAL` rather than with the draft's sentence. The reopen half is
+     * asserted below.
+     */
+    ["placeOnRoster", false, (f) => placeOnRoster(f.eventId, f.members[4], f.teamIds[1], db)],
+    [
+      "removeFromRoster",
+      false,
+      (f) => removeFromRoster(f.eventId, f.members[2], f.teamIds[0], db),
+    ],
   ])("%s is refused and writes nothing", async (_, midLot, attempt) => {
     const fixture = await finishedEvent(midLot);
     const before = await census();
@@ -406,6 +431,36 @@ describe("a reopened event takes the same changes again (UC-09 6a)", () => {
     const result = await attempt(fixture);
 
     expect(result).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    [
+      "placeOnRoster",
+      (f: Fixture) => placeOnRoster(f.eventId, f.members[4], f.teamIds[1], db),
+    ],
+    [
+      "removeFromRoster",
+      (f: Fixture) => removeFromRoster(f.eventId, f.members[2], f.teamIds[0], db),
+    ],
+  ])("%s gets past the lock to the draft's own refusal", async (_, attempt) => {
+    // A reopened event whose draft has already run still refuses a hand
+    // placement — but with the draft's sentence, not the archive's, which is
+    // what proves the lock was the thing that moved.
+    //
+    // Not "UC-15 5a", which this used to say: that flow is the *manager*
+    // skipping step 5 on a draft event, not a server refusal. The rule here is
+    // `rosterGuard`'s, and its docblock gives the reasoning and the way back
+    // out (void the lots — R-67 / UC-16 7a).
+    const fixture = await finishedEvent();
+    await reopen(fixture);
+
+    const result = await attempt(fixture);
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        "The draft has started, so rosters are filled in the draft room. Void the lots first if a roster has to be changed by hand.",
+    });
   });
 
   it("applyToEvent gets past the lock to its own rule", async () => {

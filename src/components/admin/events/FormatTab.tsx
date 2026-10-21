@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Alert,
   Badge,
@@ -51,13 +51,13 @@ import {
 } from "@/lib/format-policy";
 // Type-only: `src/lib/format.ts` reaches Postgres, and a value import here
 // would drag Drizzle and PGlite into the browser bundle.
-import type { FormatView } from "@/lib/format";
+import type { FormatView, StageClearing, SyncResult } from "@/lib/format";
 import { resolveMatches } from "@/lib/format-resolve";
+import { formatWhen } from "@/lib/time";
 import {
   type StageFields,
-  type StageImpact,
-  generateStageAction,
   previewStagesAction,
+  rebuildStageAction,
   saveStagesAction,
 } from "@/app/admin/events/format-actions";
 import SaveRow, { type SaveState } from "./SaveRow";
@@ -65,6 +65,28 @@ import SaveRow, { type SaveState } from "./SaveRow";
 /**
  * Format — the stages, the series lengths, the maps and the bracket options
  * (plan §8.2), with a preview of exactly what they produce.
+ *
+ * ## The matches are not this screen's job any more (R-73 / UC-18 9)
+ *
+ * They used to be. An effect here compared every stage's row count against the
+ * shape it should have and called the generate action for each one that
+ * disagreed — which worked, and had two defects that no amount of care here
+ * could fix.
+ *
+ * The first is the acceptance criterion of Task 21: it only ran while somebody
+ * had this tab open. Change the teams on the Teams tab, close the editor, and
+ * the bracket stayed on four teams until the next person opened Format.
+ *
+ * The second is that a row count cannot tell a stale stage from a current one.
+ * A stage moved from Bo3 to Bo5 has exactly the same number of matches, and so
+ * does a four-team round robin after one team is swapped for another — and the
+ * second one is six matches pointing at a team that is not in the event.
+ *
+ * Both are now the server's answer: `syncStages` runs inside whichever action
+ * changed the teams or the stages, compares the whole generated shape against
+ * the stored rows, and rebuilds or marks out of date. So this screen *reports*:
+ * `stage.outOfDateSince` is the one state it has a button for, and the button
+ * is "Rebuild anyway", which says what it will clear and then clears it.
  *
  * ## The preview is the generator, not a drawing of it
  *
@@ -80,13 +102,16 @@ import SaveRow, { type SaveState } from "./SaveRow";
  *
  * ## Regenerating is destructive, so it asks first
  *
- * `generateMatches` deletes every match in the stage and refuses outright once
- * a single game has been ticked off — but it reports that as an *error*, which
- * is one moment too late to be useful. So this asks `previewStagesAction`
- * first, exactly as `DaysTab` asks `previewEventDays` and `TeamsTab` asks
- * `previewTeams`, and the dialog names the results that would go rather than
- * counting them. The same number governs the stage list: changing a played
- * stage's shape, or removing it, is refused by `setStages` for the same reason.
+ * `rebuildStage` deletes every match in the stage, recorded results included,
+ * and it will not take an instruction on its own: it demands back the
+ * `confirm` token of the clearing report the manager was shown, recomputes it
+ * under the event's row lock, and refuses if anything has changed since. So
+ * this asks `previewStagesAction` first, exactly as `DaysTab` asks
+ * `previewEventDays` and `TeamsTab` asks `previewTeams`, the dialog names the
+ * results that would go rather than counting them, and the token it hands back
+ * is what makes "I read this and I meant it" a fact rather than a flag. The
+ * same report governs the stage list: changing a played stage's shape, or
+ * removing it, is refused by `setStages` for the same reason.
  *
  * ## The team count is not editable here
  *
@@ -175,7 +200,7 @@ export default function FormatTab({
   const [state, setState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  const [impacts, setImpacts] = useState<StageImpact[] | null>(null);
+  const [impacts, setImpacts] = useState<StageClearing[] | null>(null);
   /**
    * The stage a confirm dialog is currently about, and which of the two
    * destructive paths it is standing in front of. The dialog says the same
@@ -184,7 +209,7 @@ export default function FormatTab({
    * stage whose *shape* is changing has an id too.
    */
   const [pending, setPending] = useState<
-    { mode: "save" | "generate"; stage: DraftStage; impact: StageImpact } | null
+    { mode: "save" | "rebuild"; stage: DraftStage; impact: StageClearing } | null
   >(null);
   const [busy, setBusy] = useState(false);
 
@@ -313,7 +338,7 @@ export default function FormatTab({
           config: normaliseStageConfig(stage.kind as StageKind, stage.config),
         }))
       );
-      setNote("Saved");
+      setNote(syncNote(result.data.sync) ?? "Saved");
       setState("saved");
       router.refresh();
     } catch {
@@ -322,8 +347,17 @@ export default function FormatTab({
     }
   };
 
-  /** Generate a stage's matches, asking first when there is anything to lose. */
-  const attemptGenerate = async (stage: DraftStage) => {
+  /**
+   * Ask what rebuilding this stage would clear, and put the answer in front of
+   * the manager (UC-18 9a).
+   *
+   * There is deliberately no path from this button straight to the write. The
+   * report carries the `confirm` token `rebuildStageAction` demands back, so
+   * the only way to rebuild a stage is through the dialog that said what it
+   * costs — and if a result lands while that dialog is open, the token is stale
+   * and the server refuses rather than clearing something nobody was shown.
+   */
+  const attemptRebuild = async (stage: DraftStage) => {
     if (!stage.id) return;
     setError(null);
     setBusy(true);
@@ -331,158 +365,39 @@ export default function FormatTab({
       const preview = await previewStagesAction(eventId);
       setImpacts(preview);
       const impact = preview.find((row) => row.stageId === stage.id);
-      if (impact && impact.matches > 0) {
-        setPending({ mode: "generate", stage, impact });
+      if (!impact) {
+        setError("That stage is not on the server any more. Reload the page.");
         return;
       }
-      await generate(stage);
+      setPending({ mode: "rebuild", stage, impact });
     } catch {
-      setError("Could not reach the server. Nothing was generated.");
+      setError("Could not reach the server. Nothing was rebuilt.");
     } finally {
       setBusy(false);
     }
   };
 
-  const generate = async (stage: DraftStage) => {
+  /** Rebuild, over the top of whatever the dialog just listed. */
+  const rebuild = async (stage: DraftStage, impact: StageClearing) => {
     if (!stage.id) return;
     setBusy(true);
     setError(null);
     try {
-      const result = await generateStageAction(stage.id);
+      const result = await rebuildStageAction(stage.id, impact.confirm);
       if (!result.ok) {
         setError(result.error);
         return;
       }
       setPending(null);
-      setNote(`${plural(result.data.created, "match", "matches")} generated`);
+      setNote(`${plural(result.data.created, "match", "matches")} rebuilt`);
       setState("saved");
       router.refresh();
     } catch {
-      setError("Could not reach the server. Nothing was generated.");
+      setError("Could not reach the server. Nothing was rebuilt.");
     } finally {
       setBusy(false);
     }
   };
-
-  /*
-   * Generating is not a button any more.
-   *
-   * It never should have been. "Generate matches" asked the admin to know that
-   * a stage's shape and the rows in the database are two different things, and
-   * to remember to reconcile them by hand after every change — including after
-   * changing the teams, which is on another screen entirely. Forget once and
-   * the schedule and the results screens are quietly built on a bracket that no
-   * longer matches the format.
-   *
-   * So it happens on its own: a saved stage whose rows do not match the shape
-   * it should have, for the number of teams there are now, is rebuilt. The
-   * count comes from the same pure `generateStage` the preview draws with, so
-   * "what the rows should be" and "what you are looking at" cannot disagree.
-   *
-   * **It never runs over a result.** The preview call is what makes that safe —
-   * anything with a played game, a decided series, an override or even a typed
-   * but unticked score is left exactly as it is, and says so. Automation that
-   * can destroy work is worse than the button was.
-   */
-  const rowsFor = useCallback(
-    (stage: FormatView["stages"][number]) =>
-      stage.matches.filter((match) => matchIds[match.slot]).length,
-    [matchIds]
-  );
-
-  const wantedFor = useCallback(
-    (stage: FormatView["stages"][number]) =>
-      generateStage(stage.kind, teamCount, normaliseStageConfig(stage.kind, stage.config))
-        .matches.length,
-    [teamCount]
-  );
-
-  /** Stages already tried this mount, so a refusal cannot become a loop. */
-  const attempted = useRef(new Set<string>());
-  const [autoNote, setAutoNote] = useState<string | null>(null);
-  /** True only while the rebuild is actually in flight, so the line can say so. */
-  const [rebuilding, setRebuilding] = useState(false);
-  const [held, setHeld] = useState<readonly string[]>([]);
-
-  const heldNames = useMemo(() => new Set(held), [held]);
-
-  useEffect(() => {
-    // Never while the admin is mid-edit: the shapes on screen are not the
-    // shapes in the database yet, and rebuilding to the stored ones would
-    // silently contradict what they are looking at.
-    if (state === "dirty" || state === "saving" || busy || pending) return;
-    if (usingPlaceholders) return;
-
-    const stale = format.stages.filter((stage) => {
-      const want = wantedFor(stage);
-      if (want === 0) return false;
-      if (rowsFor(stage) === want) return false;
-      return !attempted.current.has(`${stage.id}:${teamCount}:${want}`);
-    });
-    if (stale.length === 0) return;
-
-    let cancelled = false;
-    setRebuilding(true);
-    void (async () => {
-      try {
-        const preview = await previewStagesAction(eventId);
-        if (cancelled) return;
-        setImpacts(preview);
-
-        const blocked: string[] = [];
-        let built = 0;
-
-        for (const stage of stale) {
-          attempted.current.add(`${stage.id}:${teamCount}:${wantedFor(stage)}`);
-          const impact = preview.find((row) => row.stageId === stage.id);
-          const carrying =
-            impact !== undefined &&
-            (impact.blocked ||
-              impact.decided > 0 ||
-              impact.playedGames > 0 ||
-              impact.overrides > 0 ||
-              impact.finished > 0 ||
-              impact.draftedScores > 0);
-          if (carrying) {
-            blocked.push(stage.name);
-            continue;
-          }
-          const result = await generateStageAction(stage.id);
-          if (cancelled) return;
-          if (result.ok) built += result.data.created;
-          else blocked.push(stage.name);
-        }
-
-        if (cancelled) return;
-        setHeld(blocked);
-        if (built > 0) {
-          setAutoNote(`${plural(built, "match", "matches")} built`);
-          router.refresh();
-        }
-      } catch {
-        // Offline, or the action threw. Leave the rows alone and say nothing —
-        // the stage still shows its row count, which is the honest picture.
-      } finally {
-        if (!cancelled) setRebuilding(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      setRebuilding(false);
-    };
-  }, [
-    eventId,
-    format.stages,
-    state,
-    busy,
-    pending,
-    usingPlaceholders,
-    teamCount,
-    rowsFor,
-    wantedFor,
-    router,
-  ]);
 
   return (
     <div className="space-y-6">
@@ -560,10 +475,8 @@ export default function FormatTab({
               onConfig={(change) => setConfig(stage.key, change)}
               onMove={(direction) => move(index, direction)}
               onRemove={() => remove(stage.key)}
-              onGenerate={() => void attemptGenerate(stage)}
-              held={stage.name.trim().length > 0 && heldNames.has(stage.name.trim())}
+              onRebuild={() => void attemptRebuild(stage)}
               placeholders={usingPlaceholders}
-              working={rebuilding}
             />
           ))}
 
@@ -593,9 +506,9 @@ export default function FormatTab({
           label="Save format"
         >
           <span className="text-12 text-muted">
-            {stages.length}/{maxStages} stages · the matches are rebuilt to match whenever
-            you save or the teams change, and never over a recorded result.
-            {autoNote && <span className="ml-1 text-body">{autoNote}</span>}
+            {stages.length}/{maxStages} stages · saving rebuilds the matches to match, and
+            so does changing the teams — wherever you change them. Never over a recorded
+            result: a stage carrying one is marked out of date instead, and says so.
           </span>
         </SaveRow>
       </Panel>
@@ -610,8 +523,10 @@ export default function FormatTab({
         size="sm"
         eyebrow="Before this is written"
         title={
-          pending?.impact.blocked
-            ? "That stage has results, so it cannot be rebuilt"
+          pending?.mode === "rebuild"
+            ? pending.impact.blocked
+              ? "This deletes recorded results"
+              : "This deletes the matches in that stage"
             : "This deletes the matches in that stage"
         }
         footer={
@@ -628,45 +543,86 @@ export default function FormatTab({
             <Button
               size="sm"
               variant="flare"
-              disabled={busy || state === "saving" || pending?.impact.blocked}
+              /*
+               * A rebuild is never disabled here, which is the change UC-18 9a
+               * asks for: "rebuild anyway" has to be able to go through a
+               * recorded result, having said what it will lose. Saving the
+               * stage list still cannot — `setStages` refuses to remove or
+               * reshape a played stage outright — so that button is left
+               * disabled rather than offering a write that will fail.
+               */
+              disabled={
+                busy ||
+                state === "saving" ||
+                (pending?.mode === "save" && pending.impact.blocked)
+              }
               onClick={() => {
                 if (!pending) return;
-                // Generating rebuilds one stage; saving rewrites the list. The
-                // dialog is the same because the thing at risk is the same.
-                void (pending.mode === "generate" ? generate(pending.stage) : commit());
+                // Rebuilding replaces one stage's matches; saving rewrites the
+                // list. The dialog is the same because what is at risk is.
+                void (pending.mode === "rebuild"
+                  ? rebuild(pending.stage, pending.impact)
+                  : commit());
               }}
             >
-              {busy || state === "saving" ? "Working…" : "Delete them and continue"}
+              {busy || state === "saving"
+                ? "Working…"
+                : pending?.impact.blocked
+                  ? "Clear them and rebuild"
+                  : "Delete them and continue"}
             </Button>
           </>
         }
       >
-        {pending && <ImpactBody impact={pending.impact} />}
+        {pending && <ImpactBody impact={pending.impact} mode={pending.mode} />}
       </Modal>
     </div>
   );
 }
 
-function ImpactBody({ impact }: { impact: StageImpact }) {
+/**
+ * What this is about to clear, named rather than counted (UC-18 9a, E6).
+ *
+ * The two modes are a real difference and not a wording one. **Rebuilding** can
+ * go through a recorded result — that is what "rebuild anyway" means — so the
+ * body's job is to list what will be lost in enough detail that pressing the
+ * button is a decision. **Saving** a stage list that removes or reshapes a
+ * played stage cannot: `setStages` refuses it outright, so the body's job is to
+ * say so before the manager meets it as an error.
+ */
+function ImpactBody({ impact, mode }: { impact: StageClearing; mode: "save" | "rebuild" }) {
+  const destroys = impact.blocked || impact.draftedScores > 0;
   return (
     <>
-      <Alert tone={impact.blocked ? "flare" : "union"}>
+      <Alert tone={destroys ? "flare" : "union"}>
         <span className="block font-medium">
           {plural(impact.matches, "match", "matches")} in “{impact.name}”
           {impact.playedGames > 0 && ` · ${plural(impact.playedGames, "game")} played`}
+          {impact.decided > 0 && ` · ${plural(impact.decided, "series")} decided`}
+          {impact.overrides > 0 && ` · ${plural(impact.overrides, "called series")}`}
           {impact.scheduled > 0 && ` · ${plural(impact.scheduled, "start time")}`}
         </span>
         <span className="mt-1 block opacity-90">
-          {impact.blocked
-            ? "A stage with a played game, a recorded finish or a winner override is refused outright — rebuilding it would erase a completed result, which nothing on this site may do. Clear those results first."
-            : "Nothing has been played, so nothing is lost but the schedule. The matches are rebuilt from the current settings."}
+          {mode === "save" && impact.blocked
+            ? "A stage with a played game, a recorded finish or a winner override cannot be removed or reshaped by a save — that would erase a completed result as a side effect of editing a list. Clear those results first, or rebuild the stage from its own row."
+            : impact.blocked
+              ? "Every one of those results goes, and there is no way back to it. Nothing else on this site deletes a completed result, so read the list below before you press the button."
+              : "Nothing has been played, so nothing is lost but the schedule. The matches are rebuilt from the current settings."}
         </span>
       </Alert>
 
+      {impact.handEdited && (
+        <p className="text-12 leading-relaxed text-muted">
+          Start times in this stage were moved by hand. Those moves go with the matches, and
+          the running order is laid out again from the day starts on the Schedule tab.
+        </p>
+      )}
+
       {impact.draftedScores > 0 && (
         <p className="text-12 leading-relaxed text-muted">
-          {plural(impact.draftedScores, "score")} typed in but never ticked off. Those count
-          for nothing anywhere, so they are not what is stopping this.
+          {plural(impact.draftedScores, "score")} typed in but never ticked off. They count
+          for nothing on any board — but somebody typed them, so they are listed here rather
+          than thrown away quietly.
         </p>
       )}
 
@@ -725,17 +681,15 @@ function StagePanel({
   onConfig,
   onMove,
   onRemove,
-  onGenerate,
-  held,
+  onRebuild,
   placeholders,
-  working,
 }: {
   stage: DraftStage;
   index: number;
   count: number;
   teams: FormatView["teams"];
   seeded: boolean;
-  impact: StageImpact | null;
+  impact: StageClearing | null;
   /** The stage as it currently stands in the database, when it exists. */
   live: FormatView["stages"][number] | null;
   matchIds: Record<string, string>;
@@ -744,13 +698,10 @@ function StagePanel({
   onConfig: (change: Partial<StageConfig>) => void;
   onMove: (direction: "up" | "down") => void;
   onRemove: () => void;
-  onGenerate: () => void;
-  /** The automation found results here and left the rows alone. */
-  held: boolean;
+  /** Ask what rebuilding this stage would clear. The only destructive button. */
+  onRebuild: () => void;
   /** The team list is stand-ins, so nothing is written for this stage yet. */
   placeholders: boolean;
-  /** A rebuild is in flight right now. */
-  working: boolean;
 }) {
   // Shut by default. The settings are the part you set once and then stop
   // looking at, and eight open settings blocks is what made this screen long.
@@ -898,21 +849,22 @@ function StagePanel({
       </p>
 
       {/*
-        The matches line. It reports rather than asks — see the note on the
-        auto-generate effect. The only button here is for the one case the
-        automation deliberately will not touch: a stage carrying results.
+        The matches line. It reports rather than asks — see the note at the top
+        of the file. The only button here is for the one case the server
+        deliberately will not touch on its own: a stage the sync has marked out
+        of date because it is carrying work a rebuild would clear.
       */}
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <MatchesState
           saved={Boolean(stage.id)}
           rows={generated}
           wanted={spec.matches.length}
-          held={held}
+          outOfDateSince={live?.outOfDateSince ?? null}
+          handEdited={Boolean(live?.handEditedAt)}
           placeholders={placeholders}
-          working={working}
         />
-        {held && (
-          <Button size="sm" disabled={busy} onClick={onGenerate}>
+        {live?.outOfDateSince && (
+          <Button size="sm" variant="flare" disabled={busy} onClick={onRebuild}>
             Rebuild anyway
           </Button>
         )}
@@ -988,24 +940,32 @@ function StagePanel({
 /**
  * What the database holds for this stage, in one line.
  *
- * Four states, and the difference matters: nothing saved yet, built and
- * current, being rebuilt right now, and held back because there are results in
- * the way. Only the last is a decision for the admin, and only it has a button.
+ * Four states, and the difference matters: nothing saved yet, placeholder
+ * teams so nothing is written at all, **out of date** — the server found the
+ * rows no longer match and would not replace them, because the stage is
+ * carrying work (UC-18 9a) — and current. Only the out-of-date one is a
+ * decision for the manager, and only it has a button.
+ *
+ * `outOfDateSince` is the server's answer, not a comparison made here. The
+ * version of this line that compared `rows` against `wanted` itself could not
+ * tell a stale stage from a current one whose series length had changed, and
+ * said "it is rebuilt when you save" about stages that never would be.
  */
 function MatchesState({
   saved,
   rows,
   wanted,
-  held,
+  outOfDateSince,
+  handEdited,
   placeholders,
-  working,
 }: {
   saved: boolean;
   rows: number;
   wanted: number;
-  held: boolean;
+  /** When the server last found these rows out of step. Null means current. */
+  outOfDateSince: string | null;
+  handEdited: boolean;
   placeholders: boolean;
-  working: boolean;
 }) {
   if (!saved) {
     return (
@@ -1022,11 +982,14 @@ function MatchesState({
       </span>
     );
   }
-  if (held) {
+  if (outOfDateSince) {
     return (
       <span className="text-12 text-flare">
-        {plural(rows, "match", "matches")} stored, and this shape wants {wanted}. Results
-        have been recorded, so nothing was touched.
+        Out of date since {formatWhen(outOfDateSince) ?? "the last change"}.{" "}
+        {plural(rows, "match", "matches")} stored, and this shape wants {wanted}.{" "}
+        {handEdited
+          ? "There are results or hand-moved times in the way, so nothing was touched."
+          : "There are results in the way, so nothing was touched."}
       </span>
     );
   }
@@ -1037,22 +1000,39 @@ function MatchesState({
       </span>
     );
   }
-  if (working) {
-    return (
-      <span className="text-12 text-muted">
-        Building {plural(wanted, "match", "matches")}…
-      </span>
-    );
-  }
-  // Out of step, and not being fixed right now — which happens when a confirm
-  // is open over another stage, or when the rebuild could not reach the
-  // server. Saying "building" here would be a lie the admin waits on.
+  // Saved, not out of date, and the counts disagree — which is what the screen
+  // looks like between editing a setting and saving it. The shape above is
+  // what is typed; the rows are what is stored.
   return (
     <span className="text-12 text-muted">
-      {plural(rows, "match", "matches")} stored, and this shape wants {wanted}. It is
-      rebuilt when you save.
+      {plural(rows, "match", "matches")} in the database. This shape wants {wanted}, and
+      saving builds them.
     </span>
   );
+}
+
+/**
+ * The sync's own sentence, for the save row — or null when it did nothing
+ * worth reporting, which is the ordinary case.
+ */
+function syncNote(sync: SyncResult | null): string | null {
+  if (!sync) return null;
+  const rebuilt = sync.stages.filter((stage) => stage.state === "rebuilt");
+  const stale = sync.stages.filter((stage) => stage.state === "out_of_date");
+  const refused = sync.stages.filter((stage) => stage.state === "refused" && stage.reason);
+
+  if (rebuilt.length === 0 && stale.length === 0 && refused.length === 0) return null;
+  const parts: string[] = [];
+  if (rebuilt.length > 0) {
+    parts.push(
+      `${plural(rebuilt.reduce((total, stage) => total + stage.created, 0), "match", "matches")} rebuilt`
+    );
+  }
+  if (stale.length > 0) parts.push(`${plural(stale.length, "stage")} out of date`);
+  // The named range from UC-18 2a, which is the one thing here a manager has to
+  // act on rather than merely notice.
+  if (refused.length > 0) parts.push(refused[0].reason as string);
+  return parts.join(" · ");
 }
 
 /** The series settings, for the folded header. */

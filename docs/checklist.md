@@ -187,8 +187,9 @@ you. Same product, fewer steps, but no separate `dev` branch unless you add one.
       activate/deactivate; edit the rank ladder; add, retype, reorder and delete questions,
       with the number of answers an edit or delete would destroy shown first
 - [x] Development sign-in (`/dev-login`), so the pages above could be built and driven in a
-      browser before the Discord app exists. Requires `NODE_ENV=development` **and**
-      `DEV_LOGIN=1`; unreachable from a deployment, and loudly banner-ed while live
+      browser before the Discord app exists. Requires `NODE_ENV=development`, `DEV_LOGIN=1`
+      **and** a local database (no `DATABASE_URL`, UC-30 1a); unreachable from a deployment,
+      and loudly banner-ed while live
 - [x] Session-aware navigation — Profile for members, Admin as well for admins
 - [x] Legacy password login left running alongside, so the draft board keeps working
 

@@ -24,15 +24,21 @@
  * screen diffs the board it already had against the one it just got back, and
  * says which matches moved.
  *
- * ## The one place this file does arithmetic
+ * ## It does no arithmetic at all any more
  *
- * `previewStages` counts what regenerating a stage would erase. `generateMatches`
- * reports nothing beforehand — it either rewrites the stage or refuses it — and
- * a confirm dialog needs the number *before* the write, which is the same
- * problem `previewEventDays` solves for days. So this reads `formatFor` (the
- * same read the write itself uses) and counts. It decides nothing: whether a
- * regeneration is allowed at all is still `generateMatches`'s answer, and the
- * dialog says what it would cost rather than promising it will work.
+ * It used to count what regenerating a stage would erase, because the library
+ * had no function for it. That count is now `stageClearings` in
+ * `src/lib/format.ts`, beside the `rebuildStage` that consumes it — and the
+ * move is not tidying. The dialog's numbers and the write's refusal have to
+ * come from one read, or a dialog can promise a rebuild the write then declines
+ * and a manager learns what their format costs from an error message.
+ *
+ * ## The matches are kept in step here, not on a screen
+ *
+ * `saveStagesAction` calls `syncStages` in the same action that wrote the
+ * stages, and `./draft-actions.ts` calls it in the same action that wrote the
+ * teams. The Format tab used to do it in an effect, which meant it only
+ * happened while somebody had that tab open (R-73 / UC-18 8, 9).
  */
 
 import { revalidatePath } from "next/cache";
@@ -40,18 +46,24 @@ import {
   type FormatResult,
   type FormatView,
   type GamePatch,
+  type StageClearing,
   type StageInput,
+  type SyncResult,
   applySchedule,
+  auditStageSync,
   clearMatch,
   formatFor,
   generateMatches,
   matchIdsFor,
+  rebuildStage,
   recordGames,
   reflipMatch,
   scheduleSettingsFrom,
   setMatchSchedule,
   setStages,
   setWinnerOverride,
+  stageClearings,
+  syncStages,
 } from "@/lib/format";
 import type { FormatTiming, MatchSlot, StageConfig } from "@/lib/format-policy";
 import { updateEvent } from "@/lib/events";
@@ -87,102 +99,16 @@ export type StageFields = {
 };
 
 /**
- * What a stage is carrying that a regeneration — or a change of shape, or a
- * removal — would erase.
- *
- * `blocked` mirrors `stageHasResults` exactly: a game ticked off, an admin's
- * winner override, or a recorded finish. A score typed in but never ticked is
- * not a result, which is the one state an admin may still change their mind
- * about, so it does not block anything and is counted separately.
- */
-export type StageImpact = {
-  stageId: string;
-  name: string;
-  /** Rows in the database — *not* the generated spec's length. See `impactOf`. */
-  matches: number;
-  playedGames: number;
-  /** Series with a winner — the ones a regeneration would actually lose. */
-  decided: number;
-  overrides: number;
-  finished: number;
-  scheduled: number;
-  /** Scores typed in but never ticked off. Not a result; not a blocker. */
-  draftedScores: number;
-  /** True when `generateMatches` and `setStages` will refuse outright. */
-  blocked: boolean;
-  /** The results themselves, so the dialog can name them rather than count them. */
-  results: Array<{ slot: string; label: string; line: string }>;
-};
-
-/**
- * Count what one stage is carrying — over the matches that actually *exist*.
- *
- * `formatFor` resolves a stage's matches from its generated spec whether or not
- * a single row has been written, which is exactly what lets a bracket be
- * previewed before it exists. It also means `stage.matches.length` is never
- * zero and cannot answer "has this been generated yet". `matchIdsFor` can: a
- * slot with no row id has no row. Getting this wrong would put a confirm dialog
- * in front of the very first generate, warning about six matches that are not
- * there.
- */
-function impactOf(
-  stage: FormatView["stages"][number],
-  ids: Record<string, string>
-): StageImpact {
-  const results: StageImpact["results"] = [];
-  const stored = stage.matches.filter((match) => ids[match.slot]);
-  let playedGames = 0;
-  let overrides = 0;
-  let finished = 0;
-  let scheduled = 0;
-  let decided = 0;
-  let draftedScores = 0;
-
-  for (const match of stored) {
-    const played = match.games.filter((game) => game.played);
-    playedGames += played.length;
-    draftedScores += match.games.filter(
-      (game) => !game.played && (game.scoreA > 0 || game.scoreB > 0)
-    ).length;
-    if (match.winnerOverrideId) overrides += 1;
-    if (match.finishedAt) finished += 1;
-    if (match.scheduledAt) scheduled += 1;
-    if (match.status === "done") decided += 1;
-
-    if (played.length > 0 || match.winnerOverrideId || match.finishedAt) {
-      results.push({
-        slot: match.slot,
-        label: match.displayLabel,
-        line: `${match.nameA} ${match.gamesWonA}–${match.gamesWonB} ${match.nameB}`,
-      });
-    }
-  }
-
-  return {
-    stageId: stage.id,
-    name: stage.name,
-    matches: stored.length,
-    playedGames,
-    decided,
-    overrides,
-    finished,
-    scheduled,
-    draftedScores,
-    blocked: playedGames > 0 || overrides > 0 || finished > 0,
-    results,
-  };
-}
-
-/**
  * What every stage of this event is currently carrying — asked *before* any
- * write, so the screen can say what changing the format costs.
+ * write, so the screen can say what changing the format costs (R-162 /
+ * UC-18 E6).
  *
- * Read-only, and it decides nothing.
+ * Read-only, and it decides nothing. Every number in it, and the `confirm`
+ * token `rebuildStageAction` demands back, comes from `stageClearings`.
  */
-export async function previewStagesAction(eventId: string): Promise<StageImpact[]> {
+export async function previewStagesAction(eventId: string): Promise<StageClearing[]> {
   await requireEventManager(eventId);
-  const [view, ids] = await Promise.all([formatFor(eventId), matchIdsFor(eventId)]);
-  return view ? view.stages.map((stage) => impactOf(stage, ids)) : [];
+  return stageClearings(eventId);
 }
 
 /**
@@ -197,7 +123,9 @@ export async function previewStagesAction(eventId: string): Promise<StageImpact[
 export async function saveStagesAction(
   eventId: string,
   input: StageFields[]
-): Promise<FormatResult<{ stages: Array<StageFields & { id: string }> }>> {
+): Promise<
+  FormatResult<{ stages: Array<StageFields & { id: string }>; sync: SyncResult | null }>
+> {
   const admin = await requireEventManager(eventId);
 
   const stages: StageInput[] = input.map((stage) => ({
@@ -210,6 +138,17 @@ export async function saveStagesAction(
   const result = await setStages(eventId, stages);
   if (!result.ok) return result;
 
+  /*
+   * The matches follow the settings, in the same action that changed them
+   * (R-73 / UC-18 5). This is one of the two halves of the effect that used to
+   * live in the Format tab; the other is the team writes in `./draft-actions.ts`.
+   *
+   * After the write rather than inside it, and deliberately: `setStages` owns
+   * whether the list may change at all, and a sync that refused a stage must
+   * not roll back a stage list the manager has been told was saved.
+   */
+  const sync = await syncStages(eventId);
+
   await recordAudit({
     action: "format.stages",
     actor: admin,
@@ -217,11 +156,13 @@ export async function saveStagesAction(
     summary: `Set the format to ${result.data.map((stage) => `${stage.name ?? stage.kind} (${stage.kind})`).join(" then ")}.`,
     detail: { stages: result.data.length },
   });
+  await auditStageSync(admin, eventId, sync);
 
   refresh(eventId);
   return {
     ok: true,
     data: {
+      sync: sync.ok ? sync.data : null,
       stages: result.data.map((stage) => ({
         id: stage.id,
         name: stage.name ?? "",
@@ -237,10 +178,67 @@ export async function saveStagesAction(
 }
 
 /**
+ * **Rebuild one stage over the top of what it is carrying** — UC-18 9a's
+ * "rebuild anyway", and the only path on the site that can delete a recorded
+ * result along with the match it belongs to.
+ *
+ * `confirm` is the `StageClearing.confirm` the dialog was built from.
+ * `rebuildStage` recomputes it inside its own transaction under the event's row
+ * lock and refuses if it has moved, so a result recorded in another tab while
+ * the dialog was open stops the rebuild rather than disappearing into it. The
+ * screen's job is to show what will go; this action's job is to prove that is
+ * still what would go.
+ */
+export async function rebuildStageAction(
+  stageId: string,
+  confirm: string
+): Promise<FormatResult<{ created: number; cleared: StageClearing; view: FormatView | null }>> {
+  /*
+   * Authorised on the row about to be written, and every read and audit line
+   * after it uses the event that row belongs to. There is deliberately no
+   * `eventId` argument: one sent by the browser would let a host of one event
+   * read another's board by passing a foreign id beside their own stage.
+   * See `src/lib/event-scope.ts`.
+   */
+  const { user: admin, eventId } = await requireManagerOfChild(() =>
+    eventIdOfStage(stageId)
+  );
+
+  const result = await rebuildStage(stageId, confirm);
+  if (!result.ok) return result;
+
+  const { cleared } = result.data;
+  // What went, named, because afterwards there is no way to find out.
+  const lost = cleared.results.map((row) => `${row.label}: ${row.line}`);
+  await recordAudit({
+    action: "format.generated",
+    actor: admin,
+    eventId,
+    subject: stageId,
+    summary:
+      lost.length > 0
+        ? `Rebuilt “${cleared.name}” over ${lost.length} recorded ${lost.length === 1 ? "result" : "results"} — ${lost.join("; ")} — and generated ${result.data.created} matches.`
+        : `Rebuilt “${cleared.name}” — ${cleared.matches} ${cleared.matches === 1 ? "match" : "matches"} replaced by ${result.data.created}.`,
+    detail: {
+      created: result.data.created,
+      cleared: cleared.matches,
+      playedGames: cleared.playedGames,
+      decided: cleared.decided,
+      overrides: cleared.overrides,
+      draftedScores: cleared.draftedScores,
+    },
+  });
+
+  refresh(eventId);
+  return { ok: true, data: { ...result.data, view: await formatFor(eventId) } };
+}
+
+/**
  * Generate — or regenerate — every match of one stage.
  *
  * Refused by `generateMatches` the moment a single game has been ticked off, so
- * the screen asks `previewStagesAction` first and says what would go.
+ * the screen asks `previewStagesAction` first and says what would go — and
+ * `rebuildStageAction` is the way through that refusal once it has.
  */
 export async function generateStageAction(
   stageId: string

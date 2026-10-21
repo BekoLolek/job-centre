@@ -804,14 +804,16 @@ export async function saveEventPlacementsAction(
 /**
  * The word each decision reads as in the log.
  *
- * `pending` is not here and cannot be: an approval event's application arrives
- * pending and is never sent back to it (`ApplicationDecision`).
+ * `pending` and `withdrawn` are not here and cannot be: an approval event's
+ * application arrives pending and is never sent back to it, and withdrawing is
+ * the applicant's own doing (`ApplicationDecision`). A `Record` over that type
+ * rather than a lookup with a fallback, so adding a decision that nobody has
+ * written a verb for fails to compile instead of logging "undefined".
  */
 const DECISION_VERB: Record<ApplicationDecision, string> = {
   accepted: "Accepted",
   waitlisted: "Waitlisted",
   declined: "Declined",
-  withdrawn: "Withdrew",
 };
 
 export type DecisionResult = {
@@ -904,8 +906,7 @@ export async function decideApplicationAction(
    * server; this tells the person, and it is the one kind that cannot be
    * switched off — it is the reply to something they asked for.
    */
-  // "withdrawn" is the member's own doing, so there is nobody to tell.
-  if (named?.userId && status !== "withdrawn") {
+  if (named?.userId) {
     notifyApplicationDecided(eventId, named.userId, status);
   }
   for (const promoted of result.data.promoted) {
@@ -936,14 +937,14 @@ export async function decideApplicationAction(
  */
 export async function saveApplicationNoteAction(
   applicationId: string,
-  note: string | null,
-  eventId: string
+  note: string | null
 ): Promise<EventResult<null>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign application id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and the event it belongs to is
+   * what gets revalidated. There is deliberately **no `eventId` argument**:
+   * one sent by the browser would let a host of one event act on another's by
+   * passing their own id alongside a foreign application id, and it had no
+   * other use once `scope` replaced it. See `src/lib/event-scope.ts`.
    */
   const { eventId: scope } = await requireManagerOfChild(() => eventIdOfApplication(applicationId));
 
@@ -961,6 +962,23 @@ export async function saveApplicationNoteAction(
  * Days are checked against this application's own event inside
  * `setAvailability`, so a stale page cannot write an answer onto a day that
  * belongs somewhere else.
+ *
+ * **Audited** (R-120 / UC-14 E2: "System saves it and audits who changed it").
+ * It was not, which made this the one manager write on the applicant list that
+ * left no trace — and the one most in need of one, because what it overwrites
+ * is something the *member* said. "Why does it say I can make Sunday" has to
+ * have an answer, and UC-14's outcome is that every decision here is in the
+ * log. Only the day ids and the states go in the detail; which day that is by
+ * name is the event's to say, and names move.
+ *
+ * **A line only when something moved.** The audit used to fire on every `ok`,
+ * so an empty `byDay` wrote "Corrected an applicant's answers for 0 days." and
+ * re-picking the answer that was already there wrote a correction that
+ * corrected nothing. A log full of changes that were not changes is a log
+ * nobody reads, which costs the entries that *are* real. `setAvailability`
+ * compares against the stored answers inside its own transaction and says
+ * which days it moved; that list is what is logged, and an empty one is logged
+ * as nothing at all.
  */
 export async function setApplicantAvailabilityAction(
   applicationId: string,
@@ -973,11 +991,28 @@ export async function setApplicantAvailabilityAction(
    * trusting it here would let a host of one event act on another's by passing
    * their own id alongside a foreign application id. See `src/lib/event-scope.ts`.
    */
-  const { eventId: scope } = await requireManagerOfChild(() => eventIdOfApplication(applicationId));
+  const { user: manager, eventId: scope } = await requireManagerOfChild(() =>
+    eventIdOfApplication(applicationId)
+  );
 
   const result = await setAvailability(applicationId, byDay);
   if (!result.ok) return fail(result.error);
 
+  const { answers, changed } = result.data;
+  if (changed.length > 0) {
+    await recordAudit({
+      action: "application.availability",
+      actor: manager,
+      eventId: scope,
+      subject: applicationId,
+      summary:
+        changed.length === 1
+          ? `Corrected an applicant's answer for one day.`
+          : `Corrected an applicant's answers for ${changed.length} days.`,
+      detail: { days: changed.join(","), answers: JSON.stringify(answers) },
+    });
+  }
+
   refresh(scope);
-  return result;
+  return { ok: true, data: answers };
 }

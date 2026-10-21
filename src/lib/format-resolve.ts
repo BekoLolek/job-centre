@@ -765,6 +765,19 @@ export class StageResolution {
   private wholeTableRanking(): string[] | null {
     const specs = this.stage.matches.filter((m) => m.bracket === "rr");
     if (specs.length === 0) return null;
+    /*
+     * A Swiss is the one table whose matches are not all generated at the
+     * start: only the rounds that have been paired are in the spec (see
+     * `generateStage`). So "every match decided" is not "the stage is over" —
+     * after round 1 of three it is true and the table is still two rounds from
+     * final. Handing that order to the next stage would seed a bracket off a
+     * table that is about to move, which is exactly what this method's null
+     * exists to prevent.
+     */
+    if (this.stage.kind === "swiss") {
+      const played = new Set(specs.map((m) => m.round)).size;
+      if (played < this.stage.config.rounds) return null;
+    }
     for (const spec of specs) {
       const record = this.records.get(spec.slot);
       if (

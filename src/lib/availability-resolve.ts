@@ -4,6 +4,7 @@ import {
   addDays,
   clockWithDay,
   formatDate,
+  parseDate,
   weekdayOf,
   zonedToInstant,
 } from "./zoned-time";
@@ -283,6 +284,39 @@ export function refusedOn(
   return named.length > 0 && named.every((exception) => exception.state === "no");
 }
 
+/**
+ * The noted date overrides a person has inside `days`, as instants
+ * (R-134 / UC-06 E1).
+ *
+ * Unlike {@link resolveFor} this keeps the `no` windows — they are the ones
+ * worth reading — and drops everything with nothing written on it. The zone is
+ * the person's, for the same reason it is there.
+ */
+export function notedWindows(
+  person: Pick<PersonAvailability, "exceptions" | "timezone">,
+  days: readonly PlainDate[],
+  fallbackZone: string
+): Array<{ from: number; to: number; note: string; state: AvailabilityState }> {
+  const zone = person.timezone ?? fallbackZone;
+  const wanted = new Set(days.map(formatDate));
+
+  const out: Array<{ from: number; to: number; note: string; state: AvailabilityState }> = [];
+  for (const exception of person.exceptions) {
+    const note = (exception.note ?? "").trim();
+    if (!note) continue;
+    if (!wanted.has(exception.date)) continue;
+    const day = parseDate(exception.date);
+    if (!day) continue;
+    out.push({
+      from: zonedToInstant(day, exception.startMinute, zone).getTime(),
+      to: zonedToInstant(day, exception.endMinute, zone).getTime(),
+      note,
+      state: exception.state,
+    });
+  }
+  return out;
+}
+
 /** The seven dates of the week beginning `monday`. */
 export function weekDays(monday: PlainDate): PlainDate[] {
   return Array.from({ length: 7 }, (_unused, index) => addDays(monday, index));
@@ -292,12 +326,30 @@ export function weekDays(monday: PlainDate): PlainDate[] {
 /* The grid                                                           */
 /* ------------------------------------------------------------------ */
 
+/** One member's reason for a date override, as the slot list reads it back. */
+export type SlotNote = {
+  name: string;
+  note: string;
+  /** What the override said, so "away" and "free after all" read differently. */
+  state: AvailabilityState;
+};
+
 export type SlotTally = {
   /** Slot start, absolute. */
   from: number;
   to: number;
   yes: string[];
   maybe: string[];
+  /**
+   * Why somebody named this date (R-134 / UC-06 E1), for the admin's slot list
+   * in UC-07 6.
+   *
+   * Separate from `yes` and `maybe` because the note that matters most belongs
+   * to an override that takes somebody *out* — "away at a wedding" is E1's own
+   * example, and a `no` window produces no interval at all, so a note folded
+   * into the two name lists would be exactly the one note nobody ever saw.
+   */
+  notes: SlotNote[];
 };
 
 /**
@@ -345,6 +397,8 @@ export function tallyWeek(
   const resolved = people.map((person) => ({
     name: person.name,
     intervals: resolveFor(person, days, viewerZone),
+    // R-134 / UC-06 E1: resolved once per person, not once per slot.
+    noted: notedWindows(person, days, viewerZone),
   }));
   const step = slotMinutes * 60_000;
 
@@ -358,14 +412,29 @@ export function tallyWeek(
 
       const yes: string[] = [];
       const maybe: string[] = [];
+      const notes: SlotNote[] = [];
       for (const person of resolved) {
+        /*
+         * A note only has to *overlap* the slot, where being counted free
+         * needs the whole of it. The two tests differ because they answer
+         * different questions: "can a match be scheduled here" is all-or-
+         * nothing, while "is there anything the admin should read about this
+         * half hour" is not — somebody out from eight has a reason that
+         * belongs on the 19:30–20:00 slot's neighbour, not on it.
+         */
+        for (const window of person.noted) {
+          if (window.from < to && window.to > from) {
+            notes.push({ name: person.name, note: window.note, state: window.state });
+          }
+        }
+
         const covering = person.intervals.find(
           (interval) => interval.from <= from && interval.to >= to
         );
         if (!covering) continue;
         (covering.state === "maybe" ? maybe : yes).push(person.name);
       }
-      column.push({ from, to, yes, maybe });
+      column.push({ from, to, yes, maybe, notes });
     }
     return column;
   });

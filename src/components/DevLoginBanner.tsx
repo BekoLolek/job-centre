@@ -16,7 +16,8 @@ import { DEV_LOGIN_PATH, devLoginConfig, devLoginEnabled } from "@/lib/dev-login
 import { getCurrentUser } from "@/lib/session-guards";
 
 export default async function DevLoginBanner() {
-  // First and cheapest: two environment reads, no I/O.
+  // First and cheapest: three environment reads, no I/O (`devLoginEnabled`
+  // also asks which driver `DATABASE_URL` would pick, which is a string test).
   if (!devLoginEnabled()) return null;
 
   const config = devLoginConfig();

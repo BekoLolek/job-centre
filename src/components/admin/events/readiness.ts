@@ -253,6 +253,34 @@ export function readiness(event: EventDetail): ReadinessCheck[] {
     });
   }
 
+  /* --- a rank rule with no rank question (UC-08 E5) -------------------- */
+  /*
+   * E5's third named example, and the one this list did not have: "a rank rule
+   * with no rank question". The check above is its mirror and was standing in
+   * for it, which is not the same thing.
+   *
+   * Why it matters: the gate reads the member's *profile* rank for this game
+   * (`memberRank`), and a member who has not recorded one is refused before
+   * the form with "Add your rank to your profile first" (`rankMeetsMinimum`,
+   * `no_rank`). If nothing on this event's form asks for a rank there is
+   * nowhere on the application to give one, so that member is sent off to
+   * `/me/profile` and back — precisely the friction §8.3 exists to remove.
+   * Linking a rank question to the profile field fixes it, because a linked
+   * answer is written to the profile (UC-12 3a).
+   *
+   * Advice, never a blocker: E5 is explicit that this list does not block, and
+   * an event whose members all have a rank recorded already works perfectly.
+   */
+  if (thresholds.length > 0 && event.rankLadder.length > 0 && rankQuestions.length === 0) {
+    checks.push({
+      key: "rank-rule-no-question",
+      label: "A rank rule with no rank question",
+      level: "warn",
+      detail:
+        "The rule reads the rank on the member's profile, and nothing on this form asks for one — so anybody who has not set theirs is turned away before the form and has to go to their profile first. Add a rank question linked to the profile field.",
+    });
+  }
+
   return checks;
 }
 

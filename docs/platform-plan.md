@@ -596,8 +596,8 @@ real scheduling bugs, both fixed with regression tests.
 gate, `/me/profile` and `/admin/games`. Local development and tests run on PGlite (Postgres
 compiled to WASM), so the whole phase was built and tested without a cloud account; the same
 schema points at Neon in production by setting one variable. A development-only sign-in
-(`/dev-login`, gated on `NODE_ENV=development` **and** `DEV_LOGIN=1`) stands in for Discord
-until the application below exists.
+(`/dev-login`, gated on `NODE_ENV=development`, `DEV_LOGIN=1` **and** a local database — no
+`DATABASE_URL`, UC-30 1a) stands in for Discord until the application below exists.
 
 **Phase 2 — done.** Events, days, questions and the admin editor; then the public side and
 the member flow: the hub, `/events`, `/events/[slug]`, `/events/[slug]/apply`, `/me` and

@@ -275,6 +275,21 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   - [ ] `cleanTemplateName`'s space-collapsing and the index agree on what "the same name" means
 - **Depends on:** Task 13, Task 35. Needs a migration, so it must not run beside another that holds one.
 
+### Task 54: A stale draft pool can still seat somebody who is not accepted (found in Task 18/33 review)
+
+- **Serves:** R-61, R-62, R-66 / UC-15 outcome, UC-16 7, and the same rule as Tasks 8, 14 and 19 — a decision about a seat has to reach everything built on top of it
+- **Files:** `src/lib/draft.ts` (`openLot`, `awardLot`, and the pool reads behind them), `src/lib/__tests__/draft.test.ts`
+- **Do:** `setDraftPool` snapshots the accepted applicants into `draft_pool_entries`, and nothing invalidates that snapshot afterwards. `openLot` and `awardLot` never re-read application status, so: accept somebody, pool them, then decline, waitlist or withdraw them, then open their lot and award it — and a team pays real money for a seat the event has already taken away, with a withdrawn member left sitting on a team roster that the draft room, the rosters on the event page and the format all read as real. It is the same shape as the bug Task 8 fixed one layer up: a status change that other tables were not told about.
+  Re-read acceptance **inside the award transaction**, with the event row already locked, exactly as `placeOnRoster`'s `rosterGuard` does today (which is why hand placement is clean and this is not). Awarding to somebody no longer accepted is a refusal naming them, not a silent skip — the room is watching, and a lot that quietly does nothing is worse than one that says why. Decide at the same time what `openLot` should do about an entry that has gone stale: refusing to open it is the honest answer, and the pool read the room sees should not be offering them either.
+  Left for its own task rather than folded into Task 18: Task 18 owns forming teams by hand, this is the draft room's award path (Task 19's area), and the fix needs a decision about the stale pool entries themselves — whether a status change prunes the pool eagerly or the award path alone holds the line. Eager pruning is tempting and is the trap: it would mean a decline silently rewriting a pool the manager built, which is the kind of quiet change this project refuses elsewhere.
+- **Acceptance criteria:**
+  - [ ] Accept → pool → decline, then award: refused, naming the person, with no `team_members` row and no balance moved
+  - [ ] The same for waitlisted and for withdrawn, since all three are "not accepted" and only one of them is the member's own doing
+  - [ ] Opening a lot on a pooled player who is no longer accepted is refused too, so the room is never shown a lot that cannot be awarded
+  - [ ] A member who was accepted all along is unaffected: the existing award tests still pass untouched
+  - [ ] Nothing is stored to make this work — acceptance is re-read, never copied onto the pool entry
+- **Depends on:** Task 19. Touches `src/lib/draft.ts`, so it must not run beside Task 18 or Task 19.
+
 ## I. Championship (R-171 to R-198)
 
 Added 2026-09-20. A season of two to four events a month across different games, with one

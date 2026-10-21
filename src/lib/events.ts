@@ -102,9 +102,11 @@ import {
   missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
+  readWebAddress,
   recomputeWaitlist,
   signupWindowProblem,
   waivedRulesFrom,
+  webAddressRefusal,
 } from "./events-policy";
 import { type ProfileSectionView, loadProfileForGame } from "./profile";
 import {
@@ -274,7 +276,18 @@ export type OutstandingAnswer = {
   where: "profile" | "event";
 };
 
-export type MyApplicationView = ApplicationView & {
+/**
+ * One of the member's **own** applications, as the member may see it.
+ *
+ * `note` is dropped, and that is the point of the `Omit` rather than a comment
+ * asking pages not to render it. UC-14 E1 says a manager's note on an
+ * application is "visible to managers only"; `ApplicationView` spreads the
+ * whole row, so every member-facing read of it was carrying the note one
+ * forgetful `{...row}` away from the browser. The pages happened to build
+ * explicit DTOs; a type that cannot hold it is what makes that a rule instead
+ * of a habit.
+ */
+export type MyApplicationView = Omit<ApplicationView, "note"> & {
   event: EventRow;
   seats: CapacityState;
   /**
@@ -1243,6 +1256,17 @@ export type UpdateEventInput = EventFieldsInput & {
 const STATUS_CHANGED = "The event changed meanwhile - reload.";
 
 /**
+ * What a declined member is told, wherever they push on the decision
+ * (R-122 / UC-12 E2).
+ *
+ * One sentence, shared by `applyToEvent` and `withdrawApplication`, because
+ * they are two doors onto one fact. Two wordings would read as two different
+ * problems with two different fixes, and there is no fix — the decision is a
+ * manager's to reverse (UC-14, `Declined → Accepted`).
+ */
+const DECLINED_REFUSAL = "Your application to this event was declined.";
+
+/**
  * One place to check the things a title and a calendar can get wrong
  * (UC-08 10, 10c).
  *
@@ -1288,7 +1312,14 @@ function validateFields(
   return null;
 }
 
-/** A slug nobody else holds. Unlike a game key, this one disambiguates itself. */
+/**
+ * A slug nobody else holds, derived from a title the admin typed.
+ *
+ * Disambiguating is right **here and only here**: the address at creation is
+ * derived from the title rather than asked for (UC-08 2), so there is nothing
+ * the admin said for a `-2` to contradict. An address they typed themselves is
+ * a different question — see {@link webAddressRefusal}.
+ */
 async function freeSlug(
   database: Database,
   desired: string,
@@ -1300,6 +1331,20 @@ async function freeSlug(
     .from(events)
     .where(exceptEventId ? ne(events.id, exceptEventId) : undefined);
   return uniqueKey(desired || fallback, taken.map((row) => row.slug), "event");
+}
+
+/** Does another event already hold this address? (UC-08 E2a, "taken".) */
+async function webAddressTaken(
+  database: Database,
+  address: string,
+  exceptEventId: string
+): Promise<boolean> {
+  const [row] = await database
+    .select({ id: events.id })
+    .from(events)
+    .where(and(eq(events.slug, address), ne(events.id, exceptEventId)))
+    .limit(1);
+  return Boolean(row);
 }
 
 /**
@@ -1544,11 +1589,27 @@ export async function updateEvent(
     if (refusal) return fail(refusal);
   }
 
+  /*
+   * UC-08 E2, E2a. The manager typed this one, so it is checked and refused —
+   * never run through `slugify` and never disambiguated with a `-2`. Both of
+   * those used to happen here, and both are the same mistake: an address the
+   * manager did not choose, saved as though they had, with the link they
+   * already shared pointing at the old one. "The old address stays" is what
+   * E2a asks for, and returning before `changes` is assembled is what gives
+   * it: nothing else in the patch lands either, exactly as 10c's refusals
+   * behave.
+   */
   let slug = current.slug;
   if ("slug" in patch && patch.slug !== undefined) {
-    const wanted = slugify(patch.slug);
-    if (!wanted) return fail("That slug has no letters or numbers in it.");
-    slug = wanted === current.slug ? current.slug : await freeSlug(database, wanted, wanted, eventId);
+    const wanted = readWebAddress(patch.slug);
+    const refusal = webAddressRefusal(wanted);
+    if (refusal) return fail(refusal);
+    if (wanted !== current.slug) {
+      if (await webAddressTaken(database, wanted, eventId)) {
+        return fail(`/events/${wanted} is already another event's address.`);
+      }
+      slug = wanted;
+    }
   }
 
   const changes: Partial<typeof events.$inferInsert> = { updatedAt: new Date() };
@@ -2478,9 +2539,7 @@ export async function applyToEvent(
     ) {
       return fail("You have already applied to this event.");
     }
-    if (mine && mine.status === "declined") {
-      return fail("Your application to this event was declined.");
-    }
+    if (mine && mine.status === "declined") return fail(DECLINED_REFUSAL);
 
     // Counts exclude this member's own withdrawn row, which holds no seat.
     const others = existing.filter((row) => row.id !== mine?.id);
@@ -2903,6 +2962,20 @@ export async function editApplicationAnswers(
  * so there is no instant at which the seat is free and the queue still says #1.
  *
  * Withdrawing twice is not an error — it says withdrawn, and it is.
+ *
+ * ## A declined application cannot be withdrawn
+ *
+ * `docs/diagrams/application-state.md` has three edges into `Withdrawn` —
+ * from `Pending`, `Waitlisted` and `Accepted` — and no `Declined → Withdrawn`.
+ * This function used to allow it anyway, and the consequence was not cosmetic:
+ * `applyToEvent` refuses a **declined** member and lets a **withdrawn** one
+ * back in (R-122 "Beats R-121" / UC-12 E1, E2), so decline-then-withdraw
+ * turned the refusal off. One POST to the withdraw action — which is a public
+ * endpoint whatever the card chooses to render — and the manager's decision
+ * was a suggestion.
+ *
+ * So it is refused, with the sentence `applyToEvent` gives: the member hears
+ * one story about the same decision rather than two.
  */
 export async function withdrawApplication(
   eventId: string,
@@ -2922,6 +2995,7 @@ export async function withdrawApplication(
     if (mine.status === "withdrawn") {
       return withData({ application: await decorateOne(tx, mine), promoted: [] });
     }
+    if (mine.status === "declined") return fail(DECLINED_REFUSAL);
 
     await tx
       .update(applications)
@@ -2992,6 +3066,21 @@ export async function setApplicationStatus(
   // Pending is where an application arrives, never where a manager sends one
   // (docs/diagrams/application-state.md has no edge into it).
   if (status === "pending") return fail("An application cannot be put back to pending review.");
+  /*
+   * And withdrawing is the applicant's, not a decision anybody takes for them:
+   * every `→ Withdrawn` edge on that diagram reads "applicant withdraws".
+   *
+   * Refused here and not only by `ApplicationDecision`, because this function
+   * takes the whole `ApplicationStatus` and the action above it is a public
+   * POST — and the consequence is the one `withdrawApplication` is already
+   * closed against: `applyToEvent` refuses a **declined** member and lets a
+   * **withdrawn** one back in (R-122 "Beats R-121" / UC-12 E1, E2), so writing
+   * `withdrawn` over a declined row is how a manager's decision becomes a
+   * suggestion. Nothing is lost by refusing it: a seat somebody has given up
+   * is `withdrawApplication`'s job, and a manager who wants them out of the
+   * event declines them.
+   */
+  if (status === "withdrawn") return fail("Only the applicant withdraws an application.");
 
   return database.transaction(async (tx) => {
     const [current] = await tx
@@ -3100,18 +3189,36 @@ export async function setApplicationNote(
   });
 }
 
+/** What one availability save left behind. */
+export type AvailabilityWrite = {
+  /** Every day this application now has an answer for. */
+  answers: Record<string, AvailabilityState>;
+  /**
+   * The days this save actually moved, which is **not** the days it named: a
+   * save can arrive carrying answers identical to the stored ones, and an
+   * empty object is a legal request that changes nothing at all. The caller
+   * that writes the audit line needs to know the difference, because "changed
+   * nothing" is not an event worth a line in the log.
+   */
+  changed: string[];
+};
+
 /**
  * Set one application's per-day availability.
  *
  * Days are checked against *this application's* event: a day id from another
  * event is refused rather than ignored, because the only ways to send one are a
  * stale page and a forgery, and both deserve to be told.
+ *
+ * The answers as they stood are read inside the same transaction, so `changed`
+ * is a comparison and not a guess. Nothing about it is stored — it describes
+ * this one call, and the next read of the row derives it again or not at all.
  */
 export async function setAvailability(
   applicationId: string,
   byDay: Record<string, AvailabilityState | null>,
   database: Database = defaultDb
-): Promise<EventResult<Record<string, AvailabilityState>>> {
+): Promise<EventResult<AvailabilityWrite>> {
   return database.transaction(async (tx) => {
     const [application] = await tx
       .select()
@@ -3130,10 +3237,21 @@ export async function setAvailability(
       if (!dayIds.has(dayId)) return fail("That day is not part of this event.");
     }
 
+    const stored = await tx
+      .select({ dayId: availability.eventDayId, state: availability.state })
+      .from(availability)
+      .where(eq(availability.applicationId, applicationId));
+    const was = new Map(stored.map((row) => [row.dayId, row.state]));
+
     await writeAvailability(tx, applicationId, byDay, dayIds);
 
     const view = await decorateOne(tx, application);
-    return withData(view.availability);
+    return withData({
+      answers: view.availability,
+      changed: Object.keys(byDay).filter(
+        (dayId) => (was.get(dayId) ?? null) !== (byDay[dayId] ?? null)
+      ),
+    });
   });
 }
 
@@ -3290,20 +3408,44 @@ export type ListEventsOptions = {
 };
 
 /**
+ * Soonest first, and the one copy of what that means.
+ *
+ * The order is "what is coming up next" (R-40, R-41, UC-10 4), and that is the
+ * first day's start — not a column, so `order by` cannot do it. Sorted here,
+ * after the dates are in hand, matching Postgres's own `asc` exactly so the
+ * lists read as they always have: ascending by start, an event with no date
+ * last rather than first (it is not coming up sooner than everything else —
+ * nobody has said when it is), and the newest created first within a tie.
+ *
+ * Shared by {@link listEvents} and {@link listEventOptions} rather than copied
+ * into each: they order the same events for the same readers, and a second
+ * comparator would be a second answer to "which event comes first" waiting to
+ * drift from this one.
+ */
+function bySoonest(
+  left: { startsAt: Date | null; createdAt: Date },
+  right: { startsAt: Date | null; createdAt: Date }
+): number {
+  const a = left.startsAt?.getTime() ?? null;
+  const b = right.startsAt?.getTime() ?? null;
+  if (a !== b) {
+    if (a === null) return 1;
+    if (b === null) return -1;
+    return a - b;
+  }
+  return right.createdAt.getTime() - left.createdAt.getTime();
+}
+
+/**
  * The list behind the hub, the events index and the archive.
  *
  * Seat counts and dates come back grouped from Postgres rather than per event,
  * because twenty events would otherwise be twenty round trips — and on Neon
  * that is twenty HTTP requests.
  *
- * ## Soonest first, ordered here rather than in SQL
- *
- * The order is "what is coming up next" (R-40, R-41, UC-10 4), and that is the
- * first day's start — not a column, so `order by` cannot do it. It is sorted
- * after the dates are in hand, matching Postgres's own `asc` exactly so the
- * lists read as they always have: ascending by start, an event with no date
- * last rather than first (it is not coming up sooner than everything else —
- * nobody has said when it is), and the newest created first within a tie.
+ * Ordered by {@link bySoonest}. A caller that wants nothing but the names —
+ * a filter, a picker — wants {@link listEventOptions}, which is the same list
+ * in the same order without the seat counts.
  */
 export async function listEvents(
   options: ListEventsOptions = {},
@@ -3351,16 +3493,7 @@ export async function listEvents(
         now
       )
     )
-    .sort((a, b) => {
-      const left = a.startsAt?.getTime() ?? null;
-      const right = b.startsAt?.getTime() ?? null;
-      if (left !== right) {
-        if (left === null) return 1;
-        if (right === null) return -1;
-        return left - right;
-      }
-      return b.createdAt.getTime() - a.createdAt.getTime();
-    });
+    .sort(bySoonest);
 
   if (options.upcoming === undefined) return summaries;
 
@@ -3375,6 +3508,47 @@ export async function listEvents(
   );
   // The archive reads newest first; what is coming up reads soonest first.
   return options.upcoming ? filtered : filtered.reverse();
+}
+
+/** As much of an event as it takes to name one in a list a human picks from. */
+export type EventOption = { id: string; title: string };
+
+/**
+ * Every event, as a title and an id and nothing else (R-110 / UC-27 3).
+ *
+ * `/admin/audit` fills its filter from this and resolves `?event=` against it.
+ * It used to call {@link listEvents}, which groups a count over the whole
+ * `applications` table to build seat summaries a dropdown has no use for — on
+ * a `force-dynamic` page, so on every render, including the unknown-id branch
+ * that reads no audit rows at all.
+ *
+ * **Every status, and no limit.** The filter has to reach a draft, a cancelled
+ * event and one that finished a year ago, because a log is asked about things
+ * that have already happened — which is exactly what falls off the end of a
+ * list that is capped or filtered by status.
+ *
+ * `event_days` is still read, because {@link bySoonest} is the order the rest
+ * of the admin lists in and a dropdown that disagreed with them would be its
+ * own small bug. That is at most four rows an event and the only place an
+ * event's dates live (R-24); the unbounded grouped count over every
+ * application ever made is the read this exists to drop.
+ */
+export async function listEventOptions(
+  database: Database = defaultDb
+): Promise<EventOption[]> {
+  const rows = await database
+    .select({ id: events.id, title: events.title, createdAt: events.createdAt })
+    .from(events);
+
+  const dates = await readDatesFor(
+    database,
+    rows.map((row) => row.id)
+  );
+
+  return rows
+    .map((row) => ({ ...row, startsAt: dates.get(row.id)?.startsAt ?? null }))
+    .sort(bySoonest)
+    .map((row) => ({ id: row.id, title: row.title }));
 }
 
 /**
@@ -3779,9 +3953,12 @@ export async function getMyApplications(
     .flatMap((view): MyApplicationView[] => {
       const event = eventById.get(view.eventId);
       if (!event) return [];
+      // The manager's note is dropped rather than carried and ignored: it is
+      // theirs, not the applicant's (UC-14 E1). See `MyApplicationView`.
+      const { note: _managersOnly, ...mine } = view;
       return [
         {
-          ...view,
+          ...mine,
           event,
           seats: capacityState(event, byEvent.get(event.id) ?? []),
           outstanding: outstanding.get(event.id) ?? [],

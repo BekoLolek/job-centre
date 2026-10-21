@@ -1,0 +1,71 @@
+-- Has a person touched this stage, and when did its matches stop matching the
+-- format? (R-73, R-157 / UC-18 9a, UC-19 E2, Task 21.)
+--
+-- Two nullable instants on `stages`, and that is the whole file.
+--
+-- ## Why two columns and not one
+--
+-- They answer different questions and are written by different things.
+--
+--   * `hand_edited_at` is **provenance**: a manager moved a match's start time
+--     (UC-19 E2), so this stage must never be rebuilt from under them. It
+--     cannot be recovered from the rows afterwards, because `scheduled_at` is
+--     written by the auto-fill, by the live re-flow and by a manager dragging
+--     one match, and the stored instant is identical whichever wrote it. The
+--     same argument as `teams.name_is_custom` in drizzle/0023: provenance is
+--     not recoverable from a value, so it is recorded when the value is.
+--   * `out_of_date_since` is **what the sync decided**: the teams or the stage
+--     settings changed, the matches no longer match, and the rebuild was
+--     declined because the stage is carrying results or hand-moved times
+--     (UC-18 9a). Whether the rows currently match is computable; *when they
+--     stopped matching* is not, and "out of date since Saturday" is the
+--     sentence a manager can act on.
+--
+-- Folding them into one column would mean a hand-moved start time instantly
+-- reading as "out of date" on a stage whose bracket is perfectly current — a
+-- warning about nothing, on the screen where warnings have to mean something.
+--
+-- ## Nothing here touches a row that already exists
+--
+-- Two `ADD COLUMN ... timestamp with time zone`, both nullable, neither with a
+-- default. No `UPDATE`, no backfill, no new constraint over data this working
+-- copy cannot see — `DATABASE_URL` is blank here and production cannot be
+-- inspected from it, which is the same reason drizzle/0021, 0022 and 0023 chose
+-- the shapes they did. A nullable `ADD COLUMN` with no default is a catalogue
+-- change: Postgres does not rewrite the table, so this cannot fail on data and
+-- cannot be slow on a big one.
+--
+-- drizzle/0020_event_days_backfill.sql is this repo's precedent for a data
+-- statement proven on a throwaway PGlite with a before/after. **It does not
+-- apply to this migration**, because there is no data statement here to prove.
+--
+-- ## What `null` for every existing row claims, and why it is the safe end
+--
+-- `null` means "nobody has hand-edited this stage" and "its matches are not
+-- known to be out of date". Both are the *weaker* claim, and the direction that
+-- cannot destroy anything on its own:
+--
+--   * A stage that really does have hand-moved times from before this commit
+--     reads as untouched here — but it is still protected, because the sync
+--     refuses to rebuild any stage carrying a played game, a winner override,
+--     a recorded finish or even a typed-but-unticked score, and a stage with
+--     hand-moved times is overwhelmingly a stage mid-tournament. The one gap is
+--     a stage whose times were moved before a single game was played, and the
+--     cost there is a rebuilt running order on a stage with no results in it.
+--   * The reverse default — marking every stage hand-edited — would freeze
+--     every existing stage's matches for good: changing the teams would never
+--     again update a bracket that nobody has touched, which is the defect
+--     R-73 exists to remove.
+--
+-- `out_of_date_since` has no honest non-null value to backfill at all: it is
+-- stamped by the sync at the moment it declines a rebuild, and no such decision
+-- has been made yet for any existing row. The first team or stage change on
+-- each event records it.
+--
+-- ## Idempotent on re-run, like every migration here
+--
+-- `npm run db:migrate` re-runs the applied list on each deploy; drizzle's
+-- journal makes that a no-op for this file, and there is no data statement in
+-- it that would do anything if it ran twice.
+ALTER TABLE "stages" ADD COLUMN "hand_edited_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "stages" ADD COLUMN "out_of_date_since" timestamp with time zone;

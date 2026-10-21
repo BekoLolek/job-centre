@@ -16,7 +16,14 @@ import {
 import { EVENT_TYPE_SUGGESTIONS, localInput } from "@/components/events";
 import type { EventDetail } from "@/lib/events";
 import type { EntryMode } from "@/db/schema";
-import { MIN_CAPACITY, entryMode, waitlistEnabled } from "@/lib/events-policy";
+import {
+  MIN_CAPACITY,
+  SLUG_MAX,
+  entryMode,
+  readWebAddress,
+  waitlistEnabled,
+  webAddressRefusal,
+} from "@/lib/events-policy";
 import { slugify } from "@/lib/profile-fields";
 import { toInstant, zoneLabel } from "@/lib/time";
 import { saveBasicsAction } from "@/app/admin/events/actions";
@@ -31,9 +38,13 @@ import type { GameOption } from "./types";
  * **The slug follows the title until it is touched.** An admin should never
  * have to think about a URL segment, but they must be able to fix one, and a
  * slug that silently keeps rewriting itself after being edited is worse than
- * one that never suggested anything. So: suggest until touched, then stop. The
- * server disambiguates a clash (`freeSlug`) and the result is read back, so
- * "saved as rivals-2" is visible rather than discovered later.
+ * one that never suggested anything. So: suggest until touched, then stop.
+ *
+ * Once it *has* been touched it is the manager's text and nothing rewrites it
+ * (UC-08 E2a). The suggestion still goes through `slugify`, because a title is
+ * not an address; a typed address is refused by name — `webAddressRefusal`,
+ * the server's own rule — and a clash comes back from the save as an error, so
+ * neither one is quietly turned into something else.
  *
  * **Status does not live here.** It has one control, `EventStatusControls`, on
  * the events list and the Publish step (UC-09).
@@ -65,6 +76,13 @@ export default function BasicsTab({
   const [waitlist, setWaitlist] = useState(waitlistEnabled(event.config));
   const [signupOpensAt, setSignupOpensAt] = useState(localInput(event.signupOpensAt));
   const [signupClosesAt, setSignupClosesAt] = useState(localInput(event.signupClosesAt));
+
+  /**
+   * The server's own refusal for the typed address (UC-08 E2a), shown under the
+   * box before a save rather than after one. Taken-ness is not here — that
+   * needs the database — so a clash still comes back as an error from `save`.
+   */
+  const addressProblem = webAddressRefusal(readWebAddress(slug));
 
   const [state, setState] = useState<SaveState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +138,24 @@ export default function BasicsTab({
 
   const usingCustomType = !KNOWN_TYPES.includes(type as (typeof KNOWN_TYPES)[number]);
 
+  /*
+   * UC-03 E2: hiding a game "stops offering it for new events … existing
+   * events, answers and history keep it."
+   *
+   * Both halves, and the second is why this is a filter rather than a
+   * narrower read: the picker still has to carry the hidden game *this* event
+   * already belongs to, or opening the Basics tab on it would show an empty
+   * Game box and the next save would silently detach the event from its own
+   * game. So: every active game, plus this event's own whatever its state.
+   *
+   * `hostableGames` is the same rule on the server side, for host
+   * applications; `loadProfile` is the third. This screen was the one surface
+   * that had not got it, and it even labelled the offer "(hidden)" — which
+   * read as an explanation rather than the bug it was.
+   */
+  const offerable = games.filter((game) => game.isActive || game.id === event.gameId);
+  const keptHidden = offerable.find((game) => !game.isActive) ?? null;
+
   return (
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
@@ -137,17 +173,28 @@ export default function BasicsTab({
             onChange={(input) => changeTitle(input.target.value)}
           />
 
+          {/*
+            No `onBlur` repair. It used to run `slugify` over whatever had been
+            typed the moment the box lost focus, which meant "Summer Cup!"
+            became "summer-cup" with nothing said — UC-08 E2a asks for the
+            opposite ("System rejects with the reason; the old address stays").
+            `webAddressRefusal` is the server's own rule, imported rather than
+            restated, so the sentence under the box is the sentence the save
+            would have come back with.
+          */}
           <Field
             label="Slug"
-            hint={`The public URL: /events/${slug || "…"}. Must be unique.`}
+            hint={
+              addressProblem ??
+              `The public URL: /events/${slug || "…"}. Letters, numbers and hyphens; must be unique.`
+            }
             value={slug}
-            maxLength={64}
+            maxLength={SLUG_MAX}
             onChange={(input) => {
               setSlugTouched(true);
               setSlug(input.target.value);
               touch();
             }}
-            onBlur={() => setSlug((current) => slugify(current))}
           />
         </div>
 
@@ -237,7 +284,7 @@ export default function BasicsTab({
           }}
         >
           <option value="">No game (movie night, social…)</option>
-          {games.map((game) => (
+          {offerable.map((game) => (
             <option key={game.id} value={game.id}>
               {game.name}
               {game.isActive ? "" : " (hidden)"}
@@ -245,6 +292,12 @@ export default function BasicsTab({
             </option>
           ))}
         </Select>
+        {keptHidden && (
+          <p className="-mt-2 max-w-sm text-12 leading-relaxed text-muted">
+            {keptHidden.name} is hidden, so it is no longer offered for other events — but
+            this one already belongs to it and keeps it (UC-03 E2).
+          </p>
+        )}
 
         <div>
           <Eyebrow className="mb-2 text-chalk/70">Capacity</Eyebrow>
@@ -379,7 +432,7 @@ export default function BasicsTab({
           state={state}
           note={note}
           onSave={() => void save()}
-          disabled={!title.trim() || !slug.trim()}
+          disabled={!title.trim() || addressProblem !== null}
           label="Save basics"
         />
       </Panel>

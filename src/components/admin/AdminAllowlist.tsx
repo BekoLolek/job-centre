@@ -188,7 +188,25 @@ function Row({
           {row.account?.isAdmin && <Badge tone="success">Admin now</Badge>}
           {inEnv && <Badge>Also in the deployment</Badge>}
         </div>
-        {row.note && <p className="mt-1 text-13 text-muted">{row.note}</p>}
+        {/*
+          UC-02 E2: "System stores it with the granting admin; the admin list
+          shows both." The note was already here; the admin was stored and
+          never read back, which is a record that cannot be checked (R-139).
+          The verb follows the row, because the same column accounts for a
+          grant and for a bar and "Added by" over a barred id reads as the
+          opposite of what happened.
+        */}
+        {(row.note || row.addedBy) && (
+          <p className="mt-1 text-13 text-muted">
+            {row.note}
+            {row.note && row.addedBy && " · "}
+            {row.addedBy && (
+              <span className="text-dim">
+                {row.allowed ? "Added by" : "Barred by"} {row.addedBy.name}
+              </span>
+            )}
+          </p>
+        )}
       </div>
 
       <div className="flex shrink-0 items-center gap-2">

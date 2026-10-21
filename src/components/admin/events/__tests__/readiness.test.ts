@@ -324,3 +324,91 @@ describe("readiness", () => {
     expect(detailOf(checks, "rules")).toMatch(/Anybody can enter/);
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* UC-08 E5's third named example (R-117)                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * > **E5.** At any step, System lists what is still missing or worth checking
+ * > (no questions, no cap, **a rank rule with no rank question**). The list
+ * > advises; it does not block — only UC-09 2a blocks.
+ *
+ * The first two were here and the third was not. Its mirror was — "a rank
+ * question with no ladder behind it" — which reads similar and is a different
+ * event: one is a question that can offer nothing, this is a rule nobody on
+ * the form can satisfy.
+ *
+ * What it costs: the gate reads the rank on the member's **profile**
+ * (`memberRank`), and somebody who has not set one is refused before the form
+ * with "Add your rank to your profile first". With no rank question on the
+ * event, there is nowhere on the application to give one, so that member is
+ * sent off to `/me/profile` and back — the friction §8.3 exists to remove, on
+ * an event that looks finished.
+ */
+describe("a rank rule with no rank question (UC-08 E5)", () => {
+  /** The healthy event with its rank question swapped for a plain one. */
+  async function withThresholdAndNoRankQuestion(): Promise<string> {
+    const eventId = await healthyEvent();
+    expectOk(await updateEvent(eventId, { minRankToEnter: "Platinum III" }, db));
+    expectOk(
+      await setEventQuestions(eventId, [{ label: "Anything else?", type: "text" }], db)
+    );
+    return eventId;
+  }
+
+  it("warns when the form asks for no rank", async () => {
+    const checks = await checksFor(await withThresholdAndNoRankQuestion());
+
+    expect(levelOf(checks, "rank-rule-no-question")).toBe("warn");
+    expect(detailOf(checks, "rank-rule-no-question")).toMatch(/profile/i);
+    expect(detailOf(checks, "rank-rule-no-question")).toMatch(/turned away/i);
+  });
+
+  it("advises and does not block, which is E5's own sentence", async () => {
+    const checks = await checksFor(await withThresholdAndNoRankQuestion());
+
+    expect(blockers(checks)).toEqual([]);
+    expect(gaps(checks).map((check) => check.key)).toContain("rank-rule-no-question");
+  });
+
+  it("says nothing once the form asks for a rank", async () => {
+    const eventId = await withThresholdAndNoRankQuestion();
+    expectOk(
+      await setEventQuestions(
+        eventId,
+        [{ label: "Your rank", type: "rank", profileFieldId: rankFieldId }],
+        db
+      )
+    );
+
+    expect(levelOf(await checksFor(eventId), "rank-rule-no-question")).toBeUndefined();
+  });
+
+  it("says nothing when the event sets no rank rule at all", async () => {
+    const eventId = await healthyEvent();
+    expectOk(await setEventQuestions(eventId, [{ label: "Anything else?", type: "text" }], db));
+
+    expect(levelOf(await checksFor(eventId), "rank-rule-no-question")).toBeUndefined();
+  });
+
+  it("says nothing when the game has no ladder, because the rule is dead anyway", async () => {
+    // `rankMeetsMinimum` answers `no_ladder` / `ok` there, so nobody is turned
+    // away and the "rules" check already explains it is not being enforced.
+    const eventId = await withThresholdAndNoRankQuestion();
+    await db.update(events).set({ gameId: jackboxId }).where(eq(events.id, eventId));
+
+    const checks = await checksFor(eventId);
+    expect(levelOf(checks, "rank-rule-no-question")).toBeUndefined();
+    expect(levelOf(checks, "rules")).toBe("warn");
+  });
+
+  it("warns on a rule that only gates captaining, too", async () => {
+    // A captain bar is read off the same profile rank, so it has the same gap.
+    const eventId = await healthyEvent();
+    expectOk(await updateEvent(eventId, { minRankToCaptain: "Diamond II" }, db));
+    expectOk(await setEventQuestions(eventId, [{ label: "Anything else?", type: "text" }], db));
+
+    expect(levelOf(await checksFor(eventId), "rank-rule-no-question")).toBe("warn");
+  });
+});

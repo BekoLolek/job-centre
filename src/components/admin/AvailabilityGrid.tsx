@@ -315,46 +315,88 @@ export default function AvailabilityGrid({
             Point at a slot to see who is free in it. The darker the cell, the more people.
           </p>
         ) : (
-          <div className="space-y-2">
-            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              {/* Both ends read off the slot's own instants, so the panel
-                  tells the truth on the day the clocks go too. */}
-              <span className="text-14 text-chalk">
-                {DAY_LABELS[hovered!.day]} {days[hovered!.day].day}{" "}
-                {clockAt(active.from, zone)} – {clockAt(active.to, zone)}
-              </span>
-              <Badge tone={active.yes.length > 0 ? "union" : undefined}>
-                {plural(active.yes.length, "free")}
-              </Badge>
-              {active.maybe.length > 0 && <Badge>{active.maybe.length} maybe</Badge>}
-            </div>
-
-            {active.yes.length === 0 && active.maybe.length === 0 ? (
-              <p className="text-13 text-muted">Nobody.</p>
-            ) : (
-              <div className="flex flex-wrap gap-x-2 gap-y-1.5">
-                {active.yes.map((name) => (
-                  <span
-                    key={`y-${name}`}
-                    className="rounded bg-union/15 px-2 py-0.5 text-13 text-chalk"
-                  >
-                    {name}
-                  </span>
-                ))}
-                {active.maybe.map((name) => (
-                  <span
-                    key={`m-${name}`}
-                    className="rounded bg-overlay-2 px-2 py-0.5 text-13 text-muted"
-                    title="Said maybe"
-                  >
-                    {name} ·
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
+          <SlotDetail
+            slot={active}
+            day={`${DAY_LABELS[hovered!.day]} ${days[hovered!.day].day}`}
+            zone={zone}
+          />
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * One slot, spelled out: when it is, how many are free, who, and why anybody
+ * named the date (UC-07 6; R-134 / UC-06 E1).
+ *
+ * Its own component so it can be handed a `SlotTally` and rendered — the
+ * hovered state of the grid is otherwise unreachable without a DOM, and the
+ * list of who is free is the thing most worth asserting on.
+ */
+export function SlotDetail({
+  slot,
+  /** "Wed 26" — the column's label, which only the grid knows. */
+  day,
+  zone,
+}: {
+  slot: SlotTally;
+  day: string;
+  zone: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        {/* Both ends read off the slot's own instants, so the panel tells the
+            truth on the day the clocks go too. */}
+        <span className="text-14 text-chalk">
+          {day} {clockAt(slot.from, zone)} – {clockAt(slot.to, zone)}
+        </span>
+        <Badge tone={slot.yes.length > 0 ? "union" : undefined}>
+          {plural(slot.yes.length, "free")}
+        </Badge>
+        {slot.maybe.length > 0 && <Badge>{slot.maybe.length} maybe</Badge>}
+      </div>
+
+      {slot.yes.length === 0 && slot.maybe.length === 0 ? (
+        <p className="text-13 text-muted">Nobody.</p>
+      ) : (
+        <div className="flex flex-wrap gap-x-2 gap-y-1.5">
+          {slot.yes.map((name) => (
+            <span key={`y-${name}`} className="rounded bg-union/15 px-2 py-0.5 text-13 text-chalk">
+              {name}
+            </span>
+          ))}
+          {slot.maybe.map((name) => (
+            <span
+              key={`m-${name}`}
+              className="rounded bg-overlay-2 px-2 py-0.5 text-13 text-muted"
+              title="Said maybe"
+            >
+              {name} ·
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/*
+        R-134 / UC-06 E1: "member adds a note ('away at a wedding') — System
+        stores it … and shows it to admins in UC-07's slot list." Under the
+        names rather than among them, because the note that matters most
+        belongs to somebody who is *not* in either list: a "not available"
+        override produces no name at all, and it is the one the admin most
+        needs to read before picking the evening.
+      */}
+      {slot.notes.length > 0 && (
+        <ul className="space-y-1 border-t border-hair pt-2">
+          {slot.notes.map((entry) => (
+            <li key={`n-${entry.name}-${entry.note}`} className="text-12 text-muted">
+              <span className="text-chalk/70">{entry.name}</span>{" "}
+              {entry.state === "no" ? "cannot make it" : "said"}: {entry.note}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

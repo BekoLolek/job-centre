@@ -41,6 +41,7 @@ import {
 import { getEventById, getMyApplications, listEvents } from "@/lib/events";
 import { handleOf } from "@/lib/players";
 import { loadProfile } from "@/lib/profile";
+import { hasAnswer } from "@/lib/profile-fields";
 import { requireUser } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -190,14 +191,41 @@ export default async function MePage() {
     });
   }
 
-  const appliedTo = new Set(
-    mine
-      .filter((row) => row.status !== "withdrawn" && row.status !== "declined")
-      .map((row) => row.eventId)
+  /*
+   * UC-13 E1: "System also lists events taking applications that the member
+   * has not applied to."
+   *
+   * Which means: not the ones where applying would be refused. Two statuses
+   * are not "applied" any more, and they are not the same case:
+   *
+   *  - **withdrawn** — UC-12 E1 lets them apply again, at the back of the
+   *    queue, so the event belongs on this list.
+   *  - **declined** — UC-12 E2 refuses with "You were declined for this
+   *    event" and offers no form. It used to be excluded alongside withdrawn,
+   *    so the dashboard offered a declined member an Apply button on the one
+   *    event in the site they cannot apply to, and `applyToEvent` turned it
+   *    down. A to-do list that invites somebody into a refusal is worse than
+   *    one that is short.
+   */
+  const settled = new Set(
+    mine.filter((row) => row.status !== "withdrawn").map((row) => row.eventId)
   );
   const open = upcoming.filter(
-    (event) => event.applicationsState.open && !appliedTo.has(event.id)
+    (event) => event.applicationsState.open && !settled.has(event.id)
   );
+
+  /*
+   * UC-13 E2 / R-124: "System shows how many of the member's profile details
+   * are answered, linking the profile."
+   *
+   * Every detail the site asks of them, not only the required ones — the
+   * question is "how complete is my profile", and a counter that ignored the
+   * optional half would read 4/4 for somebody who has answered four questions
+   * out of twenty. `hasAnswer` is the profile's own test for an answer, so
+   * this tile and `/me/profile` cannot disagree about what counts as one.
+   */
+  const details = profile.sections.flatMap((section) => section.fields);
+  const detailsAnswered = details.filter((field) => hasAnswer(field.value)).length;
 
   const name = user.displayName ?? user.name ?? "Member";
 
@@ -234,6 +262,26 @@ export default async function MePage() {
                 value={todos.length}
                 valueClassName={todos.length > 0 ? "text-union" : "text-muted"}
               />
+              {/*
+                UC-13 E2 / R-124. The figure, and a link to the one place it
+                can be changed — "what is left to fill in" is only useful next
+                to the way to fill it in. Dropped entirely when the admin has
+                defined no questions at all, because "0 of 0" is not a fact
+                about the member.
+              */}
+              {details.length > 0 && (
+                <StatTile
+                  label="Profile details"
+                  value={
+                    <Link href="/me/profile" className="hover:text-union">
+                      {`${detailsAnswered}/${details.length}`}
+                    </Link>
+                  }
+                  valueClassName={
+                    detailsAnswered === details.length ? "text-success" : "text-muted"
+                  }
+                />
+              )}
             </div>
           </div>
         </Panel>

@@ -1,7 +1,9 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Database,
+  type Team,
+  applications as applicationsTable,
   draftLots,
   draftPoolEntries,
   teamMembers,
@@ -26,16 +28,19 @@ import {
   moveToReserve,
   openLot,
   placeBid,
+  placeOnRoster,
+  removeFromRoster,
   setCaptains,
   setDraftConfig,
   setDraftPool,
   setPoolKind,
+  setTeamCount,
   setTeams,
   viewerFor,
   voidLastLot,
   voidLot,
 } from "@/lib/draft";
-import { SPIN_DURATION_MS } from "@/lib/draft-policy";
+import { MAX_TEAMS, MIN_TEAMS, SPIN_DURATION_MS } from "@/lib/draft-policy";
 import { applyToEvent, createEvent, publishEvent, setApplicationStatus } from "@/lib/events";
 
 /**
@@ -317,37 +322,98 @@ describe("setCaptains", () => {
 
   /* --- Team names from captains -------------------------------- */
 
+  /*
+   * These four used to create their placeholder through `setTeams`, which is
+   * what the Teams tab did and what made the old guess necessary: a name typed
+   * into a box and a name the site invented arrived through the same argument,
+   * and `setCaptains` had to tell them apart afterwards by looking at the
+   * characters. `setTeamCount` writes the placeholder *and* records that it is
+   * one, so the fixture here is now the path the screen actually takes.
+   */
+
+  /** UC-15 1-2 then 4: the placeholder path, which is `setTeamCount`. */
+  async function countedTeams(fixture: Fixture, count = MIN_TEAMS): Promise<Team[]> {
+    return unwrap(await setTeamCount(fixture.eventId, count, db)).teams;
+  }
+
   it("names a team after its captain when nobody has named it", async () => {
     const fixture = await seededEvent(2);
-    // What the Teams tab creates: a placeholder, because a blank is refused.
-    const written = unwrap(await setTeams(fixture.eventId, [{ name: "Team 1" }], db));
+    const [team] = await countedTeams(fixture);
+    expect(team.name).toBe("Team 1");
 
     unwrap(
-      await setCaptains(
-        fixture.eventId,
-        [{ teamId: written.teams[0].id, userId: fixture.members[0] }],
-        db
-      )
+      await setCaptains(fixture.eventId, [{ teamId: team.id, userId: fixture.members[0] }], db)
     );
 
-    const [team] = await getTeams(fixture.eventId, db);
-    expect(team.name).toMatch(/^Team Player /);
+    const [named] = await getTeams(fixture.eventId, db);
+    expect(named.name).toMatch(/^Team Player /);
   });
 
-  it("replaces a seed placeholder, because nobody chose that either", async () => {
-    const fixture = await seededEvent(2);
-    const written = unwrap(await setTeams(fixture.eventId, [{ name: "Team 1" }], db));
+  it("keeps a name typed as 'Team 3' when the captain changes", async () => {
+    /*
+     * Task 18's acceptance criterion, and the whole reason `name_is_custom`
+     * exists (R-63 / UC-15 4a).
+     *
+     * "Team 3" is both a perfectly ordinary name for a team and exactly what
+     * the old `/^team\s+\d+$/i` treated as the site's own placeholder — so a
+     * manager who typed it had it rewritten to "Team Player 1-0" the moment a
+     * captain was chosen, and rewritten again every time the captaincy moved.
+     * Nothing about the characters can distinguish the two; only a record of
+     * who wrote them can, which is what the save below leaves behind.
+     */
+    const fixture = await seededEvent(3);
+    const [first] = await countedTeams(fixture);
+
+    const typed = unwrap(await setTeams(fixture.eventId, [{ id: first.id, name: "Team 3" }], db));
+    // The flag, not only the consequence: this is the branch of `setTeams`'
+    // `nameIsCustom` that *claims* a name, and the test below pins the other.
+    expect(typed.teams[0].nameIsCustom).toBe(true);
 
     unwrap(
-      await setCaptains(
-        fixture.eventId,
-        [{ teamId: written.teams[0].id, userId: fixture.members[0] }],
-        db
-      )
+      await setCaptains(fixture.eventId, [{ teamId: first.id, userId: fixture.members[0] }], db)
+    );
+    expect((await getTeams(fixture.eventId, db))[0].name).toBe("Team 3");
+
+    // And again when it moves, which is the line UC-15 4a actually says.
+    unwrap(
+      await setCaptains(fixture.eventId, [{ teamId: first.id, userId: fixture.members[1] }], db)
+    );
+    expect((await getTeams(fixture.eventId, db))[0].name).toBe("Team 3");
+  });
+
+  it("leaves the flag alone when a save posts the stored name back unchanged", async () => {
+    /*
+     * The other half of `setTeams`' `name_is_custom` rule (R-63 / UC-15 4), and
+     * the half nothing used to watch.
+     *
+     * `TeamsTab`'s `fields()` posts **every** team's name, seed and balance on
+     * every "Save names and seeds", so a manager who touches only a seed — or
+     * who presses "Seed by list order" — posts eight *unchanged* names. If an
+     * unchanged name counted as a typed one, every placeholder would be marked
+     * the manager's own on the first save of the tab and `setCaptains` would
+     * never name a team after its captain again. Nothing about that failure is
+     * visible at the time: it is a flag on a row, and the symptom arrives one
+     * screen later as a team still called "Team 1".
+     *
+     * So both the flag and its consequence are asserted here: the column
+     * immediately after the save, and the rename that depends on it.
+     */
+    const fixture = await seededEvent(2);
+    const [first] = await countedTeams(fixture);
+    expect(first.name).toBe("Team 1");
+
+    // The stored name, verbatim, beside the seed the manager actually moved.
+    const saved = unwrap(
+      await setTeams(fixture.eventId, [{ id: first.id, name: first.name, seed: 4 }], db)
+    );
+    expect(saved.teams[0].seed).toBe(4);
+    expect(saved.teams[0].nameIsCustom).toBe(false);
+
+    unwrap(
+      await setCaptains(fixture.eventId, [{ teamId: first.id, userId: fixture.members[0] }], db)
     );
 
-    const [team] = await getTeams(fixture.eventId, db);
-    expect(team.name).toMatch(/^Team Player /);
+    expect((await getTeams(fixture.eventId, db))[0].name).toMatch(/^Team Player /);
   });
 
   it("leaves a name an admin actually typed alone", async () => {
@@ -368,8 +434,8 @@ describe("setCaptains", () => {
 
   it("follows the captaincy when it moves, because the name was ours", async () => {
     const fixture = await seededEvent(3);
-    const written = unwrap(await setTeams(fixture.eventId, [{ name: "Team 1" }], db));
-    const teamId = written.teams[0].id;
+    const [only] = await countedTeams(fixture);
+    const teamId = only.id;
 
     unwrap(await setCaptains(fixture.eventId, [{ teamId, userId: fixture.members[0] }], db));
     const first = (await getTeams(fixture.eventId, db))[0].name;
@@ -391,15 +457,13 @@ describe("setCaptains", () => {
       .set({ displayName: "Sam" })
       .where(inArray(usersTable.id, [fixture.members[0], fixture.members[1]]));
 
-    const written = unwrap(
-      await setTeams(fixture.eventId, [{ name: "Team 1" }, { name: "Team 2" }], db)
-    );
+    const written = await countedTeams(fixture, 2);
     unwrap(
       await setCaptains(
         fixture.eventId,
         [
-          { teamId: written.teams[0].id, userId: fixture.members[0] },
-          { teamId: written.teams[1].id, userId: fixture.members[1] },
+          { teamId: written[0].id, userId: fixture.members[0] },
+          { teamId: written[1].id, userId: fixture.members[1] },
         ],
         db
       )
@@ -507,6 +571,478 @@ describe("setCaptains", () => {
 
     const result = await setCaptains(fixture.eventId, [{ teamId: b, userId: fixture.members[2] }], db);
     expect(result.ok === false && result.errors?.[b]).toMatch(/already been drafted/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* How many teams — UC-15 1, 2                                        */
+/* ------------------------------------------------------------------ */
+
+describe("setTeamCount", () => {
+  /** Every roster row of an event, which is what a removal takes with it. */
+  async function rosterRows(eventId: string) {
+    return db.select().from(teamMembers).where(eq(teamMembers.eventId, eventId));
+  }
+
+  it("creates that many teams in one call, named and seeded (UC-15 1, 2)", async () => {
+    const fixture = await seededEvent(0);
+
+    const written = unwrap(await setTeamCount(fixture.eventId, 4, db));
+
+    expect(written.added).toBe(4);
+    expect(written.removed).toBe(0);
+    expect(written.teams.map((team) => team.name)).toEqual([
+      "Team 1",
+      "Team 2",
+      "Team 3",
+      "Team 4",
+    ]);
+    expect(written.teams.map((team) => team.seed)).toEqual([1, 2, 3, 4]);
+    expect(written.teams.map((team) => team.sort)).toEqual([0, 1, 2, 3]);
+    expect(written.teams.every((team) => team.balanceStart === 1000)).toBe(true);
+  });
+
+  it("refuses a count outside two to eight (§8.1)", async () => {
+    const fixture = await seededEvent(0);
+
+    for (const count of [1, 0, -1, MAX_TEAMS + 1, 2.5]) {
+      const result = await setTeamCount(fixture.eventId, count, db);
+      expect(result).toEqual({
+        ok: false,
+        error: `An event needs between ${MIN_TEAMS} and ${MAX_TEAMS} teams.`,
+      });
+    }
+    expect(await getTeams(fixture.eventId, db)).toEqual([]);
+  });
+
+  it("marks the names it writes as the site's own (UC-15 4)", async () => {
+    // The one thing only this path can do: a placeholder written here is
+    // *recorded* as a placeholder, so choosing a captain replaces it. Asserted
+    // on the column rather than on the rename, because the column is the fact
+    // and the rename is the consequence.
+    const fixture = await seededEvent(0);
+
+    const written = unwrap(await setTeamCount(fixture.eventId, 2, db));
+
+    expect(written.teams.map((team) => team.nameIsCustom)).toEqual([false, false]);
+  });
+
+  it("numbers past a name somebody has already typed (UC-15 6a)", async () => {
+    const fixture = await seededEvent(0);
+    const [first, second] = unwrap(await setTeamCount(fixture.eventId, 2, db)).teams;
+    // The manager renames the second team to the number the third would take.
+    unwrap(
+      await setTeams(
+        fixture.eventId,
+        [
+          { id: first.id, name: "Team 1" },
+          { id: second.id, name: "Team 3" },
+        ],
+        db
+      )
+    );
+
+    const written = unwrap(await setTeamCount(fixture.eventId, 4, db));
+
+    // "Team 3" is taken, so the generated names move on rather than collide —
+    // and the typed one is untouched.
+    expect(written.teams.map((team) => team.name)).toEqual([
+      "Team 1",
+      "Team 3",
+      "Team 4",
+      "Team 5",
+    ]);
+    expect(new Set(written.teams.map((team) => team.name)).size).toBe(4);
+  });
+
+  it("leaves the teams already there alone when it is raised (UC-15 2)", async () => {
+    const fixture = await seededEvent(3);
+    const { a } = await twoTeams(fixture);
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+
+    const written = unwrap(await setTeamCount(fixture.eventId, 4, db));
+
+    expect(written.added).toBe(2);
+    expect(written.teams.slice(0, 2).map((team) => team.name)).toEqual(["Alpha", "Bravo"]);
+    // Three rosters rows survive: two captains and the hand-placed player.
+    expect(await rosterRows(fixture.eventId)).toHaveLength(3);
+  });
+
+  it("lowers it from the end and clears those rosters (R-161 / UC-15 E1)", async () => {
+    const fixture = await seededEvent(4);
+    const written = unwrap(await setTeamCount(fixture.eventId, 3, db)).teams;
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [
+          { teamId: written[0].id, userId: fixture.members[0] },
+          { teamId: written[1].id, userId: fixture.members[1] },
+        ],
+        db
+      )
+    );
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], written[2].id, db));
+    expect(await rosterRows(fixture.eventId)).toHaveLength(3);
+
+    const lowered = unwrap(await setTeamCount(fixture.eventId, 2, db));
+
+    expect(lowered.removed).toBe(1);
+    expect(lowered.teams.map((team) => team.id)).toEqual([written[0].id, written[1].id]);
+    // The roster of the team that went, gone with it — two captains left.
+    expect(await rosterRows(fixture.eventId)).toHaveLength(2);
+  });
+
+  it("refuses to remove a team that has drafted players", async () => {
+    const fixture = await seededEvent(5);
+    const written = unwrap(await setTeamCount(fixture.eventId, 3, db)).teams;
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [
+          { teamId: written[0].id, userId: fixture.members[0] },
+          { teamId: written[1].id, userId: fixture.members[1] },
+        ],
+        db
+      )
+    );
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    // The last team by sort is the one a lower count would drop, so that is
+    // the one given a price to erase.
+    await buy(fixture.eventId, fixture.members[2], written[2].id, 200);
+
+    const result = await setTeamCount(fixture.eventId, 2, db);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(
+      /has already drafted players, so removing the team would erase what they paid/
+    );
+    expect(await getTeams(fixture.eventId, db)).toHaveLength(3);
+    expect(await rosterRows(fixture.eventId)).toHaveLength(3);
+  });
+
+  it("does not duplicate teams when two managers set the count at once", async () => {
+    /*
+     * Sequenced rather than raced, like the undo race below.
+     *
+     * Both managers see two teams and both ask for four. Read outside a lock,
+     * each would add two and the event would end up with six — past the
+     * maximum, on an event nobody asked to have six teams. The count is read
+     * and written inside the event's row lock, so the second call sees the
+     * four the first one wrote and adds nothing.
+     */
+    const fixture = await seededEvent(0);
+    unwrap(await setTeamCount(fixture.eventId, 2, db));
+
+    const second = unwrap(
+      await setTeamCount(
+        fixture.eventId,
+        4,
+        committingAfter(() => setTeamCount(fixture.eventId, 4, db))
+      )
+    );
+
+    expect(second.added).toBe(0);
+    expect(second.teams).toHaveLength(4);
+    expect(await getTeams(fixture.eventId, db)).toHaveLength(4);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Rosters by hand — UC-15 5, 6                                       */
+/* ------------------------------------------------------------------ */
+
+describe("placing players on rosters by hand", () => {
+  async function rosterOf(eventId: string, userId: string) {
+    return db
+      .select()
+      .from(teamMembers)
+      .where(and(eq(teamMembers.eventId, eventId), eq(teamMembers.userId, userId)));
+  }
+
+  it("puts an accepted player on a roster and saves it (UC-15 5, 6)", async () => {
+    const fixture = await seededEvent(3);
+    const { a } = await twoTeams(fixture);
+
+    const placed = unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+
+    expect(placed.fromTeamId).toBeNull();
+    expect(placed.toTeamId).toBe(a);
+    expect(placed.member).toMatchObject({ teamId: a, price: 0, isCaptain: false, lotId: null });
+    const roster = (await getTeams(fixture.eventId, db)).find((team) => team.id === a);
+    expect(roster?.members.map((member) => member.userId)).toContain(fixture.members[2]);
+  });
+
+  it("takes them out of the draft pool, because they are not for sale", async () => {
+    const fixture = await seededEvent(4);
+    const { a } = await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    expect((await getDraftPool(fixture.eventId, db)).main.map((e) => e.userId)).toContain(
+      fixture.members[2]
+    );
+
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+
+    const pool = await getDraftPool(fixture.eventId, db);
+    expect(pool.main.map((entry) => entry.userId)).not.toContain(fixture.members[2]);
+    expect(pool.reserve.map((entry) => entry.userId)).not.toContain(fixture.members[2]);
+  });
+
+  it.each(["waitlisted", "declined", "pending", "withdrawn"] as const)(
+    "refuses a %s applicant — a roster place is a seat (R-61)",
+    async (status) => {
+      const fixture = await seededEvent(3);
+      const { a } = await twoTeams(fixture);
+      const [application] = await db
+        .select({ id: applicationsTable.id })
+        .from(applicationsTable)
+        .where(
+          and(
+            eq(applicationsTable.eventId, fixture.eventId),
+            eq(applicationsTable.userId, fixture.members[2])
+          )
+        );
+      await db
+        .update(applicationsTable)
+        .set({ status })
+        .where(eq(applicationsTable.id, application.id));
+
+      const result = await placeOnRoster(fixture.eventId, fixture.members[2], a, db);
+
+      expect(result).toEqual({
+        ok: false,
+        error:
+          "Only an accepted applicant can be put on a roster. Accept them on the Applicants tab first.",
+      });
+      expect(await rosterOf(fixture.eventId, fixture.members[2])).toEqual([]);
+    }
+  );
+
+  it("refuses somebody who never applied at all (R-61)", async () => {
+    const fixture = await seededEvent(2);
+    const { a } = await twoTeams(fixture);
+    const stranger = await makeUser(db);
+
+    const result = await placeOnRoster(fixture.eventId, stranger, a, db);
+
+    expect(result.ok).toBe(false);
+    expect(await rosterOf(fixture.eventId, stranger)).toEqual([]);
+  });
+
+  it("moves a player between teams without duplicating the row (UC-15 5)", async () => {
+    const fixture = await seededEvent(3);
+    const { a, b } = await twoTeams(fixture);
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+
+    const moved = unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], b, db));
+
+    expect(moved.fromTeamId).toBe(a);
+    expect(moved.toTeamId).toBe(b);
+    const rows = await rosterOf(fixture.eventId, fixture.members[2]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].teamId).toBe(b);
+  });
+
+  it("takes the same answer twice for the same team", async () => {
+    // Not an error: it is what a double-clicked button asks for, and what the
+    // loser of a race between two managers choosing the same team asked for.
+    const fixture = await seededEvent(3);
+    const { a } = await twoTeams(fixture);
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+
+    const again = unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+
+    expect(again.toTeamId).toBe(a);
+    expect(await rosterOf(fixture.eventId, fixture.members[2])).toHaveLength(1);
+  });
+
+  it("refuses a team belonging to another event", async () => {
+    // The write is keyed on the team, so the team is re-read with the event in
+    // the predicate — see `event-scope.ts`.
+    const mine = await seededEvent(3);
+    const theirs = await seededEvent(2);
+    await twoTeams(mine);
+    const elsewhere = (await twoTeams(theirs)).a;
+
+    const result = await placeOnRoster(mine.eventId, mine.members[2], elsewhere, db);
+
+    expect(result).toEqual({ ok: false, error: "That team is not in this event." });
+    expect(await rosterOf(mine.eventId, mine.members[2])).toEqual([]);
+  });
+
+  it("refuses when the destination roster is full (R-64)", async () => {
+    const fixture = await seededEvent(5);
+    const { a, b } = await twoTeams(fixture);
+    // R-64's roster size, counted with the captain in it (§14): captain plus
+    // two makes three, which is the whole roster.
+    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 3 }, db));
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[3], a, db));
+
+    const result = await placeOnRoster(fixture.eventId, fixture.members[4], a, db);
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.error).toMatch(/roster is full — 3 of 3/);
+    // And the roster they could not join is unchanged, rather than overfilled.
+    expect(await rosterOf(fixture.eventId, fixture.members[4])).toEqual([]);
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[4], b, db));
+  });
+
+  it("will not move a captain by hand (UC-15 3)", async () => {
+    // §14 makes a captain a roster row, but `teams.captain_user_id` is what
+    // makes them one: moving the row alone would leave a team led by somebody
+    // sitting on another roster.
+    const fixture = await seededEvent(3);
+    const { a, b } = await twoTeams(fixture);
+
+    const moved = await placeOnRoster(fixture.eventId, fixture.members[0], b, db);
+    const removed = await removeFromRoster(fixture.eventId, fixture.members[0], a, db);
+
+    for (const result of [moved, removed]) {
+      expect(result.ok).toBe(false);
+      expect(result.ok === false && result.error).toMatch(/Captains tab/);
+    }
+    const rows = await rosterOf(fixture.eventId, fixture.members[0]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ teamId: a, isCaptain: true });
+  });
+
+  it("refuses every hand placement once a lot has opened (UC-15 5a)", async () => {
+    const fixture = await seededEvent(4);
+    const { a, b } = await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+    unwrap(await openLot(fixture.eventId, { userId: fixture.members[3] }, db));
+
+    const placed = await placeOnRoster(fixture.eventId, fixture.members[3], b, db);
+    const moved = await placeOnRoster(fixture.eventId, fixture.members[2], b, db);
+    const removed = await removeFromRoster(fixture.eventId, fixture.members[2], a, db);
+
+    for (const result of [placed, moved, removed]) {
+      expect(result.ok).toBe(false);
+      expect(result.ok === false && result.error).toMatch(/draft has started/);
+    }
+    // Still on the team the hand placed them on, and still nobody else's.
+    expect((await rosterOf(fixture.eventId, fixture.members[2]))[0].teamId).toBe(a);
+    expect(await rosterOf(fixture.eventId, fixture.members[3])).toEqual([]);
+  });
+
+  it("takes a player off a roster (UC-15 5)", async () => {
+    const fixture = await seededEvent(3);
+    const { a } = await twoTeams(fixture);
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+
+    const off = unwrap(await removeFromRoster(fixture.eventId, fixture.members[2], a, db));
+
+    expect(off).toMatchObject({ member: null, fromTeamId: a, toTeamId: null });
+    expect(await rosterOf(fixture.eventId, fixture.members[2])).toEqual([]);
+  });
+
+  it("refuses a removal aimed at a team they are no longer on", async () => {
+    const fixture = await seededEvent(3);
+    const { a, b } = await twoTeams(fixture);
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], b, db));
+
+    const stale = await removeFromRoster(fixture.eventId, fixture.members[2], a, db);
+
+    expect(stale.ok).toBe(false);
+    expect(stale.ok === false && stale.error).toMatch(/already been moved off/);
+    expect((await rosterOf(fixture.eventId, fixture.members[2]))[0].teamId).toBe(b);
+  });
+
+  it("refuses a removal for somebody on no roster", async () => {
+    const fixture = await seededEvent(3);
+    const { a } = await twoTeams(fixture);
+
+    const result = await removeFromRoster(fixture.eventId, fixture.members[2], a, db);
+
+    expect(result).toEqual({ ok: false, error: "They are not on a roster." });
+  });
+
+  it("leaves one roster row when two managers move the same player at once", async () => {
+    /*
+     * The race, sequenced rather than run — `committingAfter`, as the undo
+     * race below uses, because a test that had to *win* a race would pass by
+     * luck on the days it did not.
+     *
+     * Both managers are looking at a player on Alpha. One moves them to
+     * Bravo; the other, from the same screen, moves them to Charlie. Read
+     * outside the event's lock, the second call still believes the row is on
+     * Alpha — and the obvious implementation, delete the old row and insert
+     * the new one, then has two insert paths racing one unique constraint:
+     * either a duplicate, or a window with the player on no roster at all.
+     *
+     * Everything is read and written inside the lock, and a move is an
+     * `update` of the one row, so the second manager simply moves the row the
+     * first one wrote. One row throughout, and the later click wins.
+     */
+    const fixture = await seededEvent(4);
+    const written = unwrap(await setTeamCount(fixture.eventId, 3, db)).teams;
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [
+          { teamId: written[0].id, userId: fixture.members[0] },
+          { teamId: written[1].id, userId: fixture.members[1] },
+        ],
+        db
+      )
+    );
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], written[0].id, db));
+
+    const second = unwrap(
+      await placeOnRoster(
+        fixture.eventId,
+        fixture.members[2],
+        written[2].id,
+        committingAfter(() =>
+          placeOnRoster(fixture.eventId, fixture.members[2], written[1].id, db)
+        )
+      )
+    );
+
+    // It moved them off the team the *other* manager had just written, not off
+    // the stale one this call read before it started.
+    expect(second.fromTeamId).toBe(written[1].id);
+    expect(second.toTeamId).toBe(written[2].id);
+    const rows = await rosterOf(fixture.eventId, fixture.members[2]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].teamId).toBe(written[2].id);
+  });
+
+  it("neither duplicates nor loses a row when a move lands as a lot is awarded", async () => {
+    /*
+     * The other interleave, and the one with money in it: a manager drags
+     * somebody onto a roster in the instant the draft room awards that same
+     * player to a team.
+     *
+     * The award commits first. The hand placement then opens its transaction,
+     * takes the lock, and finds a draft that has begun — so it is refused, and
+     * the award's row, its `lot_id` and its price are exactly as the room saw
+     * them. Without the lock and the re-read, the placement would have
+     * inserted a second row for a player who already has one (refused by
+     * `team_members_event_user_uniq`, as an error nobody wrote a message for)
+     * or overwritten the awarded row's team, which is a player sold to one
+     * team and playing for another.
+     */
+    const fixture = await seededEvent(4);
+    const { a, b } = await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.members[2] }, db));
+    unwrap(await placeBid(lot.id, a, 300, {}, db));
+
+    const placed = await placeOnRoster(
+      fixture.eventId,
+      fixture.members[2],
+      b,
+      committingAfter(() => awardLot(lot.id, a, {}, db))
+    );
+
+    expect(placed.ok).toBe(false);
+    const rows = await rosterOf(fixture.eventId, fixture.members[2]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ teamId: a, price: 300, lotId: lot.id });
+    expect(await balanceOf(fixture.eventId, a)).toBe(700);
   });
 });
 

@@ -50,7 +50,7 @@ vi.mock("@/lib/audit", async (importOriginal) => {
 
 const { default: AdminAuditPage } = await import("../page");
 const { listAudit, recordAudit } = await import("@/lib/audit");
-const { createEvent } = await import("@/lib/events");
+const { createEvent, listEvents } = await import("@/lib/events");
 
 let handle: TestDatabase;
 let db: Database;
@@ -149,11 +149,39 @@ async function line(summary: string, eventId: string | null): Promise<void> {
   await recordAudit({ action: "event.status", summary, eventId }, db);
 }
 
-async function anEvent(title: string): Promise<string> {
-  const created = await createEvent({ ...PUBLISHABLE, title }, db);
+async function anEvent(title: string, startsAt?: Date): Promise<string> {
+  const created = await createEvent(
+    { ...PUBLISHABLE, title, ...(startsAt ? { days: [{ startsAt }] } : {}) },
+    db
+  );
   if (!created.ok) throw new Error(created.error);
   return created.data.id;
 }
+
+/**
+ * Every statement Postgres ran while the page rendered.
+ *
+ * Task 48 is about a query, and no assertion about the screen can see it: a
+ * page that groups a count over `applications` and throws the seat summaries
+ * away renders exactly like one that never asked. PGlite is the real thing, so
+ * the statements it is handed are the statements the page makes.
+ */
+async function statementsWhileRendering(
+  params: Record<string, string | undefined> = {}
+): Promise<string[]> {
+  const spy = vi.spyOn(handle.client, "query");
+  try {
+    await render(params);
+    return spy.mock.calls.map((call) => String(call[0]));
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+const reads = (statements: readonly string[], table: string): string[] =>
+  statements.filter((statement) =>
+    new RegExp(`from\\s+"?${table}"?`, "i").test(statement)
+  );
 
 /* ------------------------------------------------------------------ */
 /* The filter covers all the events                                   */
@@ -198,6 +226,70 @@ describe("the event filter", () => {
 
     expect(text).toContain("about summer");
     expect(text).toContain("about nothing in particular");
+  });
+
+  it("offers a draft, a cancelled event and a finished one as well", async () => {
+    /*
+     * The narrow read behind the filter (Task 48) must not have quietly
+     * acquired a status filter on its way in. These three are the statuses a
+     * public list leaves out and an audit question is most often about.
+     */
+    const draft = await anEvent("Never published");
+    const cancelled = await anEvent("Called off");
+    const complete = await anEvent("Finished last year");
+    await db.update(events).set({ status: "cancelled" }).where(eq(events.id, cancelled));
+    await db.update(events).set({ status: "complete" }).where(eq(events.id, complete));
+
+    const values = optionValues(await render());
+
+    expect(values).toContain(draft);
+    expect(values).toContain(cancelled);
+    expect(values).toContain(complete);
+  });
+
+  it("lists them in the order the admin's own event lists use", async () => {
+    // Pinned against `listEvents` rather than against a hand-written order, so
+    // the dropdown and the lists cannot drift apart without this failing.
+    await anEvent("Third", new Date("2100-03-01T18:00:00Z"));
+    await anEvent("First", new Date("2100-01-05T18:00:00Z"));
+    await anEvent("Second", new Date("2100-02-01T18:00:00Z"));
+
+    const expected = (await listEvents({}, db)).map((event) => event.id);
+    expect(expected).toHaveLength(3);
+    expect(optionValues(await render()).filter(Boolean)).toEqual(expected);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* What filling the filter costs — Task 48, R-110 / UC-27 3           */
+/* ------------------------------------------------------------------ */
+
+describe("what the page reads", () => {
+  it("does not read the applications table to fill the filter", async () => {
+    /*
+     * It used to: the filter came from `listEvents`, which groups a count over
+     * the whole `applications` table to build seat summaries a `<select>`
+     * discards — on every render, because the page is `force-dynamic`.
+     */
+    const event = await anEvent("Summer Cup");
+    await line("about summer", event);
+
+    const statements = await statementsWhileRendering();
+
+    // The log *was* read, which is what makes the line below a fact about this
+    // page rather than about a spy nothing reaches.
+    expect(reads(statements, "audit_log")).not.toHaveLength(0);
+    expect(reads(statements, "applications")).toEqual([]);
+  });
+
+  it("reads neither the log nor the applications for an id that names no event", async () => {
+    const real = await anEvent("Summer Cup");
+    await line("about summer", real);
+
+    const statements = await statementsWhileRendering({ event: "not-a-uuid" });
+
+    expect(reads(statements, "audit_log")).toEqual([]);
+    expect(reads(statements, "applications")).toEqual([]);
   });
 });
 

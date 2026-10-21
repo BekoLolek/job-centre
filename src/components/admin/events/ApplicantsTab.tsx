@@ -780,7 +780,7 @@ export function ApplicantDetail({
     setSavingNote(true);
     setSavedNote(false);
     try {
-      const result = await saveApplicationNoteAction(row.id, note.trim() || null, event.id);
+      const result = await saveApplicationNoteAction(row.id, note.trim() || null);
       if (!result.ok) onError(result.error);
       else {
         setSavedNote(true);

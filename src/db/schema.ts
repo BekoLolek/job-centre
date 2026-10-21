@@ -1498,6 +1498,32 @@ export const teams = pgTable(
      * a team that has already drafted a roster.
      */
     captainUserId: uuid("captain_user_id").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * Did a person type this name? (R-63 / UC-15 4, 4a.)
+     *
+     * It replaces a regex, and the regex is the point. `setCaptains` renames a
+     * team after its new captain — "Team Bob" — but only when the name it is
+     * about to overwrite was one of ours, and it used to decide that by looking
+     * at the name: blank, or matching `/^team\s+\d+$/i`, or equal to the
+     * *previous* captain's auto name. Which means a manager who genuinely
+     * typed "Team 3" had it silently rewritten the moment the captain changed,
+     * and no amount of pattern-tuning fixes that, because "Team 3" typed by a
+     * person and "Team 3" written by the Teams tab are the same eleven
+     * characters. A guess about provenance cannot be recovered from the value;
+     * it has to be *recorded when the name is written*, which is this column.
+     *
+     * False means "ours to maintain": `setTeamCount` writes the placeholder
+     * and `setCaptains` is free to replace it. True means a person chose it and
+     * nothing overwrites it, ever.
+     *
+     * The default is **true**, and it fails safe in both directions. For the
+     * rows that existed before the column, see drizzle/0023: every current name
+     * is treated as chosen, because being left with a visible placeholder costs
+     * one edit and silently losing a typed name costs the name. For a future
+     * insert that forgets the column, the same default means a new code path
+     * can never quietly acquire the licence to rewrite somebody's name.
+     */
+    nameIsCustom: boolean("name_is_custom").notNull().default(true),
     /** Bracket seeding (Phase 4). Null while it is undecided. */
     seed: integer("seed"),
     /** What this team had to spend before the draft started. */
@@ -1922,6 +1948,41 @@ export const stages = pgTable(
     config: json<StageConfigJson>("config")
       .notNull()
       .default(sql`'{}'::jsonb`),
+    /**
+     * When a manager last changed something about this stage **by hand** that a
+     * regeneration would undo — today, moving a match's start time (R-157 /
+     * UC-19 E2).
+     *
+     * ## Provenance, not a derived flag
+     *
+     * It cannot be read back off the rows afterwards, which is the whole reason
+     * it is a column. `matches.scheduled_at` is written by three different
+     * things — the auto-fill, the live re-flow, and a manager dragging one
+     * match — and the stored instant looks identical whichever wrote it. So
+     * "has a person moved anything here" has to be recorded at the moment it
+     * happens, exactly as `teams.name_is_custom` records who typed a name.
+     *
+     * A stage with a value here is never regenerated automatically (UC-18 9a):
+     * the regeneration deletes every match in the stage, so it would silently
+     * throw away the times a manager typed. `rebuildStage` is the way through
+     * it, and it says what it will clear first.
+     *
+     * Cleared by a rebuild, because afterwards there are no hand-moved times
+     * left to protect.
+     */
+    handEditedAt: instant("hand_edited_at"),
+    /**
+     * When this stage's matches stopped matching the format and the teams
+     * (UC-18 9a) — set by the sync that *declined* to rebuild it, and the
+     * reason the board can say "out of date" rather than quietly disagreeing
+     * with the settings above it.
+     *
+     * Also provenance rather than a derivation: whether the rows match the
+     * current `(kind, team count, config)` is computable, but *when they
+     * stopped* is not, and "out of date since Saturday" is the sentence a
+     * manager can act on. Cleared the moment a rebuild succeeds.
+     */
+    outOfDateSince: instant("out_of_date_since"),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
   (table) => [

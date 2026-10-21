@@ -85,8 +85,12 @@ export async function setMyAvailabilityAction(
   if (!application) return { ok: false, error: "That is not one of your applications." };
 
   const result = await setAvailability(applicationId, byDay);
-  if (result.ok) refresh(application.event.slug);
-  return result;
+  if (!result.ok) return result;
+
+  // The answers, not the write's own account of what moved: the card renders
+  // the day chips from this, and which days changed is the audit's question.
+  refresh(application.event.slug);
+  return { ok: true, data: result.data.answers };
 }
 
 export type ConfirmationOutcome = {

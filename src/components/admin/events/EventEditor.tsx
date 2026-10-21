@@ -310,7 +310,9 @@ function EditorBody({
         )}
 
         {tab === "applicants" && <ApplicantsTab event={event} applicants={applicants} />}
-        {tab === "teams" && <TeamsTab eventId={event.id} data={draft} />}
+        {tab === "teams" && (
+          <TeamsTab eventId={event.id} applicants={applicants} data={draft} />
+        )}
         {tab === "captains" && (
           <CaptainsTab eventId={event.id} event={event} applicants={applicants} data={draft} />
         )}

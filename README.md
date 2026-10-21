@@ -87,8 +87,9 @@ is production, the build applies pending migrations to production. Use `npm run 
 to compile without touching a database.
 
 Discord sign-in needs a real application; see `docs/checklist.md` for the by-hand setup.
-Without it, `/dev-login` mints a real session locally — it requires `NODE_ENV=development`
-**and** `DEV_LOGIN=1`, and cannot exist in a deployment.
+Without it, `/dev-login` mints a real session locally — it requires all three of
+`NODE_ENV=development`, `DEV_LOGIN=1` **and** no `DATABASE_URL`, so it can only ever write to
+the local PGlite file (UC-30 1a) and cannot exist in a deployment.
 
 ## Layout
 

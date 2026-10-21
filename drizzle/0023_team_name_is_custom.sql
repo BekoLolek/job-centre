@@ -1,0 +1,79 @@
+-- Did a person type this team's name? (R-63 / UC-15 4, 4a, Task 18.)
+--
+-- The column replaces a guess. `setCaptains` renames a team after its new
+-- captain, but only when the name it is about to overwrite was one the site
+-- wrote itself, and until now it decided that by *looking at the name*: blank,
+-- or matching `/^team\s+\d+$/i`, or equal to the previous captain's auto name.
+-- So a manager who genuinely typed "Team 3" had it silently rewritten the
+-- moment the captain changed. No pattern fixes that, because "Team 3" typed by
+-- a person and "Team 3" written by the Teams tab are the same eleven
+-- characters. Provenance is not recoverable from a value; it has to be recorded
+-- when the value is written, and from this commit on it is.
+--
+-- ## Nothing here touches a row that already exists
+--
+-- One `ADD COLUMN ... boolean DEFAULT true NOT NULL`, and that is the whole
+-- file. No `UPDATE`, no backfill, no new constraint over data this working copy
+-- cannot see — `DATABASE_URL` is blank here and production cannot be inspected
+-- from it, which is the same reason drizzle/0021 and drizzle/0022 chose the
+-- shapes they did. On Postgres 11+ an `ADD COLUMN` with a non-volatile default
+-- stores the default in the catalogue and does not rewrite the table, so this
+-- cannot fail on data and cannot be slow on a big one.
+--
+-- drizzle/0020_event_days_backfill.sql is this repo's precedent for a data
+-- statement proven on a throwaway PGlite, with a before/after. **It does not
+-- apply to this migration**, because there is no data statement here to prove.
+--
+-- ## What `true` for every existing row does and does not claim
+--
+-- The inference is deliberately the only one a current name can carry without
+-- guessing: **every name that is in the table now was put there by a person and
+-- is not ours to overwrite.** That is literally true of how the names got
+-- there — the Teams tab's name box is the only thing that has ever written one,
+-- including the "Team 3" it pre-fills into a new row — and it is the direction
+-- that loses least, because the two mistakes are not the same size:
+--
+--   * Marked custom when it was in fact the tab's placeholder: the team keeps
+--     reading "Team 3" after a captain is chosen instead of becoming "Team
+--     Bob". The manager sees it on the Teams tab and types a name. One edit,
+--     nothing destroyed, and the Teams tab is the screen they are already on.
+--   * Marked automatic when a person typed it: the name is gone the next time
+--     the captain changes, with nothing on screen to say it is about to happen
+--     and no copy of it anywhere. That is the defect this column exists to
+--     remove, and a migration that reintroduced it for a subset of rows would
+--     be shipping the bug with a smaller blast radius rather than fixing it.
+--
+-- ## What this migration cannot know, stated plainly
+--
+-- Which of the existing names were chosen. A name that *looks* automatic may
+-- have been typed ("Team 3" is a perfectly ordinary thing to call a team), and
+-- a name that looks chosen may have been generated ("Team Bob" is exactly what
+-- `setCaptains` writes). The narrower inferences were considered and rejected
+-- for that reason:
+--
+--   * `name_is_custom = false WHERE name ~* '^team\s+\d+$'` — the retired regex,
+--     run once over live rows instead of on every write. It gets the tab's
+--     placeholders right and the manager who typed "Team 3" wrong, which is the
+--     one case the acceptance criterion names.
+--   * ... `AND captain_user_id IS NULL`, on the argument that the placeholder
+--     only survives while no captain has been set. Narrower, and still wrong in
+--     the same direction: a manager who types "Team 3" before picking a captain
+--     — the ordinary order of UC-15's steps 1 and 3 — is exactly the row it
+--     would mark automatic, and their name would be overwritten by step 4.
+--   * `false WHERE name = 'Team ' || <the current captain's display name>` —
+--     true of most such rows, unprovable for any one of them, and it needs a
+--     join through `users` to a display name that may have been edited since
+--     the team was named, so it is a guess about a value that has itself moved.
+--
+-- Every one of those buys back a cosmetic convenience for in-flight events at
+-- the price of a silent rewrite for somebody. The convenience is recovered the
+-- moment a team is created the new way: `setTeamCount` writes the placeholder
+-- *and* records `name_is_custom = false`, so from here on a name that follows
+-- its captain does so because it was marked, not because it matched.
+--
+-- ## Idempotent on re-run, like every migration here
+--
+-- `npm run db:migrate` re-runs the applied list on each deploy; drizzle's
+-- journal makes that a no-op for this file, and there is no data statement in
+-- it that would do anything if it ran twice.
+ALTER TABLE "teams" ADD COLUMN "name_is_custom" boolean DEFAULT true NOT NULL;

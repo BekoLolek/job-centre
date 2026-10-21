@@ -1,11 +1,14 @@
 /**
  * `/dev-login` — the development sign-in escape hatch.
  *
- * **404 unless `NODE_ENV=development` and `DEV_LOGIN=1`**, both. See
- * `src/lib/dev-login.ts` for why that combination cannot be true in a
- * deployment: `next build` and `next start` — which is what Vercel runs — always
- * set `NODE_ENV=production`, so this page does not exist there even if someone
- * pastes `DEV_LOGIN=1` into the dashboard.
+ * **404 unless `NODE_ENV=development`, `DEV_LOGIN=1` and no `DATABASE_URL`** —
+ * all three (UC-30 precondition 1, 1a). See `src/lib/dev-login.ts` for why that
+ * combination cannot be true in a deployment: `next build` and `next start` —
+ * which is what Vercel runs — always set `NODE_ENV=production`, so this page
+ * does not exist there even if someone pastes `DEV_LOGIN=1` into the dashboard,
+ * and the third condition closes the one accident the first two do not — a
+ * developer whose `.env.local` points at a real Postgres while `next dev` still
+ * reports `development`.
  *
  * It exists because the Discord application does not exist yet (checklist.md,
  * "Blocked on you"), so without it `/me/profile` and `/admin/games` could be
@@ -69,9 +72,11 @@ export default async function DevLoginPage({
           <span className="block font-medium">This is not a real sign-in</span>
           <span className="mt-1 block opacity-90">
             There is no Discord application configured yet, so this mints a session for a
-            local user instead. It works only when <code>NODE_ENV=development</code> and{" "}
-            <code>DEV_LOGIN=1</code> — both — which is why a deployment cannot reach this
-            page at all. Turn it off in <code>.env.local</code> once Discord sign-in works.
+            local user instead. It works only when <code>NODE_ENV=development</code>,{" "}
+            <code>DEV_LOGIN=1</code> and <code>DATABASE_URL</code> is unset — all three —
+            which is why a deployment cannot reach this page at all, and why pointing this
+            checkout at a real Postgres closes it too. Turn it off in{" "}
+            <code>.env.local</code> once Discord sign-in works.
           </span>
         </Alert>
 

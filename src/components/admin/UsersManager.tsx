@@ -54,7 +54,8 @@ import {
  * count would get wrong.
  */
 
-type Filter = "all" | "admins";
+/** UC-02 E1's facet, both ways round. Mirrors `UserFilter` in the rules module. */
+type Filter = "all" | "admins" | "members";
 
 export default function UsersManager({
   view,
@@ -75,6 +76,7 @@ export default function UsersManager({
     const wanted = search.trim().toLowerCase();
     return view.users.filter((row) => {
       if (filter === "admins" && !row.isAdmin) return false;
+      if (filter === "members" && row.isAdmin) return false;
       if (!wanted) return true;
       return (
         row.displayName.toLowerCase().includes(wanted) ||
@@ -170,6 +172,11 @@ export default function UsersManager({
             </ChoiceChip>
             <ChoiceChip selected={filter === "admins"} onClick={() => setFilter("admins")}>
               Admins ({view.admins})
+            </ChoiceChip>
+            {/* The other half of UC-02 E1's facet — "filters by admin / not
+                admin" — which this row offered no way to reach. */}
+            <ChoiceChip selected={filter === "members"} onClick={() => setFilter("members")}>
+              Not admins ({view.total - view.admins})
             </ChoiceChip>
           </ChoiceRow>
         </div>

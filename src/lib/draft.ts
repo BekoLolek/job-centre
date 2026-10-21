@@ -80,6 +80,7 @@ import {
   type TeamMemberView,
   type TeamStanding,
   MAX_TEAMS,
+  MIN_TEAMS,
   SPIN_DURATION_MS,
   SPIN_TURNS,
   awardableTeamIds,
@@ -294,6 +295,38 @@ export type SetTeamsResult = {
 };
 
 /**
+ * Delete these teams, or say why not — the one rule shared by every path that
+ * removes one (`setTeams`'s list, `setTeamCount`'s lower figure).
+ *
+ * Returns a refusal sentence, or `null` once the rows are gone. A team that has
+ * won lots is not removed: checklist.md's standing rule is that nothing is
+ * destructive, and a roster with prices on it is a completed part of the
+ * record. Two callers meant two copies of that, and the copy that drifts is the
+ * one that lets a draft's prices vanish.
+ */
+async function removeTeamsIn(tx: Database, doomed: readonly Team[]): Promise<string | null> {
+  if (doomed.length === 0) return null;
+
+  const ids = doomed.map((team) => team.id);
+  const lots = await tx
+    .select({ winnerTeamId: draftLots.winnerTeamId })
+    .from(draftLots)
+    .where(inArray(draftLots.winnerTeamId, ids));
+
+  if (lots.length > 0) {
+    const held = new Set(lots.map((row) => row.winnerTeamId));
+    const named = doomed
+      .filter((team) => held.has(team.id))
+      .map((team) => team.name)
+      .join(", ");
+    return `${named} has already drafted players, so removing the team would erase what they paid. Void those lots first.`;
+  }
+
+  await tx.delete(teams).where(inArray(teams.id, ids));
+  return null;
+}
+
+/**
  * Write the whole team list for an event.
  *
  * The list is authoritative: a team whose id is absent is removed — unless it
@@ -311,6 +344,22 @@ export type SetTeamsResult = {
  * default and any per-team number in the input is ignored, because a mode that
  * says the balances are equal and a form that says otherwise is a
  * disagreement, and the mode should win.
+ *
+ * ## This is also where a name becomes the manager's
+ *
+ * `teams.name_is_custom` records who wrote a name, because it cannot be read
+ * back off the characters afterwards (see the column's docblock). This write is
+ * the manager's name box, so the rule is the plainest one available: **a name
+ * that arrives different from the stored one was typed**, and from then on
+ * nothing overwrites it. A name that arrives unchanged leaves the flag exactly
+ * as it was, so saving seeds or balances does not quietly adopt a placeholder
+ * `setTeamCount` wrote and `setCaptains` is still entitled to replace.
+ *
+ * The one case it cannot see is a manager retyping, character for character,
+ * the placeholder that was already there — indistinguishable from not touching
+ * the field, because nothing arrived that differs from what is stored. They
+ * get the automatic rename they would have got anyway, and typing any other
+ * name is what claims it.
  */
 export async function setTeams(
   eventId: string,
@@ -322,7 +371,12 @@ export async function setTeams(
   }
 
   return database.transaction(async (tx) => {
-    const event = await readEvent(tx, eventId);
+    // The row lock, for the reason the money writes take it: this rewrites
+    // `teams` and deletes `team_members` through the cascade, and
+    // `placeOnRoster`, `setCaptains` and the award path all write the same two
+    // tables. Serialising them on the event is what stops two managers' reads
+    // of "which teams exist" both being acted on.
+    const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
     const config = await readConfig(tx, eventId);
@@ -330,7 +384,7 @@ export async function setTeams(
 
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
-    const existingIds = new Set(existing.map((team) => team.id));
+    const byExistingId = new Map(existing.map((team) => [team.id, team]));
 
     const errors: Record<string, string> = {};
     const cleaned: Array<{
@@ -339,22 +393,34 @@ export async function setTeams(
       seed: number | null;
       balanceStart: number;
       sort: number;
+      /** True when this save is what made the name the manager's own. */
+      nameIsCustom: boolean;
     }> = [];
     const names = new Set<string>();
 
     for (const [index, team] of input.entries()) {
       const at = team.id ?? `new-${index}`;
 
-      if (team.id && !existingIds.has(team.id)) {
+      if (team.id && !byExistingId.has(team.id)) {
         errors[at] = "That team belongs to a different event.";
         continue;
       }
+      const stored = team.id ? byExistingId.get(team.id) : undefined;
 
       const name = cleanText(team.name, NAME_MAX);
       if (!name) {
         errors[at] = "Give the team a name.";
         continue;
       }
+      // UC-15 6a's second half, and the half the Gate-2 amendment settled:
+      // **a typed duplicate is refused.** Only a name the site generated gets
+      // a distinguishing suffix (`setTeamCount`, `setCaptains`); silently
+      // renaming what somebody typed is worse than telling them.
+      //
+      // Folded case, and so stricter than `teams_event_name_uniq` — which is
+      // `unique(event_id, name)` over plain `text` and would take "alpha"
+      // beside "Alpha". Deliberately: the refusal is about two names a reader
+      // cannot tell apart, not about what the index happens to allow.
       if (names.has(name.toLowerCase())) {
         errors[at] = "Two teams cannot share a name.";
         continue;
@@ -376,6 +442,10 @@ export async function setTeams(
         seed: team.seed ?? null,
         balanceStart: wanted,
         sort: index,
+        // A new row's name was typed into the box that created it. An existing
+        // row's was typed only if it differs from what is stored — see the
+        // docblock. Fails to `true`, the direction that never rewrites a name.
+        nameIsCustom: stored === undefined || name !== stored.name,
       });
     }
 
@@ -386,33 +456,8 @@ export async function setTeams(
     const keeping = new Set(cleaned.map((team) => team.id).filter(Boolean));
     const doomed = existing.filter((team) => !keeping.has(team.id));
 
-    if (doomed.length > 0) {
-      const lots = await tx
-        .select({ winnerTeamId: draftLots.winnerTeamId })
-        .from(draftLots)
-        .where(
-          inArray(
-            draftLots.winnerTeamId,
-            doomed.map((team) => team.id)
-          )
-        );
-      if (lots.length > 0) {
-        const held = new Set(lots.map((row) => row.winnerTeamId));
-        const named = doomed
-          .filter((team) => held.has(team.id))
-          .map((team) => team.name)
-          .join(", ");
-        return fail(
-          `${named} has already drafted players, so removing the team would erase what they paid. Void those lots first.`
-        );
-      }
-      await tx.delete(teams).where(
-        inArray(
-          teams.id,
-          doomed.map((team) => team.id)
-        )
-      );
-    }
+    const refusal = await removeTeamsIn(tx, doomed);
+    if (refusal) return fail(refusal);
 
     // A starting balance is not a label. Every remaining balance on the site is
     // derived — `balanceFor` is `balanceStart` minus the awarded lots, which is
@@ -459,13 +504,151 @@ export async function setTeams(
         sort: team.sort,
       };
       if (team.id) {
-        await tx.update(teams).set(values).where(eq(teams.id, team.id));
+        // `name_is_custom` is only ever *set*, never cleared, and only by a
+        // save that changed the name. Writing `false` back on an unchanged
+        // name would hand a placeholder's licence to a name somebody typed
+        // three saves ago.
+        await tx
+          .update(teams)
+          .set(team.nameIsCustom ? { ...values, nameIsCustom: true } : values)
+          .where(eq(teams.id, team.id));
       } else {
-        await tx.insert(teams).values({ eventId, ...values });
+        await tx.insert(teams).values({ eventId, ...values, nameIsCustom: true });
       }
     }
 
     return withData({ teams: await readTeams(tx, eventId), removed: doomed.length });
+  });
+}
+
+export type SetTeamCountResult = {
+  teams: Team[];
+  /** Teams this call created. */
+  added: number;
+  /** Teams it removed. */
+  removed: number;
+};
+
+/**
+ * The next free "Team <n>" for an event — the placeholder, and UC-15 6a's
+ * suffix for a generated name.
+ *
+ * A placeholder's distinguishing mark *is* its number, so a clash is settled by
+ * moving on to the next one rather than by inventing "Team 3 (2)": an event
+ * whose third team is called "Team 3" because somebody typed it gets "Team 4"
+ * for the one after, which is the name a manager would have reached for anyway.
+ * `taken` is compared case-insensitively, which is **stricter than the
+ * database**: `teams_event_name_uniq` is `unique(event_id, name)` over plain
+ * `text`, so Postgres would happily hold "team 3" beside "Team 3". That is the
+ * reason for folding case here rather than an excuse — two names a reader
+ * cannot tell apart are two names an admin has to untangle by hand, and a
+ * generated name is the one kind nobody chose. So the site declines to write
+ * the second and moves on to the next number.
+ *
+ * The ceiling is `MAX_TEAMS` numbers past the last candidate, which cannot be
+ * exhausted: at most eight teams exist, so at most eight numbers are taken.
+ */
+function nextPlaceholderName(taken: Set<string>, from: number): string {
+  for (let n = Math.max(1, from); n <= from + MAX_TEAMS; n += 1) {
+    const candidate = `Team ${n}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+  // Unreachable with at most `MAX_TEAMS` rows, and a thrown error in a
+  // transaction would be worse than a name nobody loves.
+  return `Team ${from}`;
+}
+
+/**
+ * How many teams this event has — UC-15 steps 1 and 2, in one write.
+ *
+ * ## Why a count is its own action
+ *
+ * `setTeams` takes the whole list and is the right shape for *editing* teams:
+ * names, seeds, balances, and a removal expressed by leaving a row out. It is
+ * the wrong shape for "make it four", which is the first thing a manager does
+ * and the only thing UC-15 1 asks for. Done through the list it takes two
+ * steps — the screen invents four rows, then posts them — and the invented
+ * rows carry invented *names*, which is precisely how the old placeholder
+ * reached `setTeams` looking exactly like something a manager had typed. A
+ * count writes the placeholders itself, so it is the one path that can
+ * truthfully record `name_is_custom = false` (R-63 / UC-15 4).
+ *
+ * ## Both ends of 2–8 are enforced here, unlike `setTeams`
+ *
+ * `setTeams` deliberately does not hold the minimum, because an admin types
+ * names one at a time and being told "you need two teams" while typing the
+ * first is the validation that makes people stop using a form. A count is not
+ * typed one team at a time: it is one number, chosen in full, so "between two
+ * and eight" is answerable the moment it arrives (§8.1).
+ *
+ * ## Lowering it removes from the end, and may be refused
+ *
+ * The teams that go are the last by `sort` — the order the Teams tab shows and
+ * the manager reorders — and they go through `removeTeamsIn`, so a team that
+ * has won lots refuses the whole call rather than having its prices erased.
+ * What a removal costs is reported *before* the write by
+ * `previewTeamCountAction`, because by the time this returns the rosters are
+ * gone (R-161 / UC-15 E1).
+ */
+export async function setTeamCount(
+  eventId: string,
+  count: number,
+  database: Database = defaultDb
+): Promise<DraftResult<SetTeamCountResult>> {
+  if (!Number.isInteger(count) || count < MIN_TEAMS || count > MAX_TEAMS) {
+    return fail(`An event needs between ${MIN_TEAMS} and ${MAX_TEAMS} teams.`);
+  }
+
+  return database.transaction(async (tx) => {
+    // Locked, not merely read: `placeOnRoster` and the award path write
+    // `team_members`, and the cascade from a deleted team takes those rows with
+    // it. Two managers setting a count at once, or a count landing as a lot is
+    // awarded, serialise on this row.
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
+
+    const config = await readConfig(tx, eventId);
+    const existing = await readTeams(tx, eventId);
+
+    if (count === existing.length) {
+      return withData({ teams: existing, added: 0, removed: 0 });
+    }
+
+    if (count < existing.length) {
+      const doomed = existing.slice(count);
+      const refusal = await removeTeamsIn(tx, doomed);
+      if (refusal) return fail(refusal);
+      return withData({
+        teams: await readTeams(tx, eventId),
+        added: 0,
+        removed: doomed.length,
+      });
+    }
+
+    const taken = new Set(existing.map((team) => team.name.trim().toLowerCase()));
+    for (let index = existing.length; index < count; index += 1) {
+      const name = nextPlaceholderName(taken, index + 1);
+      taken.add(name.toLowerCase());
+      await tx.insert(teams).values({
+        eventId,
+        name,
+        // The whole point of this path: the site wrote this name, so the site
+        // may replace it when a captain is chosen (UC-15 4).
+        nameIsCustom: false,
+        seed: index + 1,
+        balanceStart: config.defaultBalance,
+        sort: index,
+      });
+    }
+
+    return withData({
+      teams: await readTeams(tx, eventId),
+      added: count - existing.length,
+      removed: 0,
+    });
   });
 }
 
@@ -510,7 +693,10 @@ export async function setCaptains(
   database: Database = defaultDb
 ): Promise<DraftResult<SetCaptainsResult>> {
   return database.transaction(async (tx) => {
-    const event = await readEvent(tx, eventId);
+    // The row lock, for the reason `setTeams` and `placeOnRoster` take it:
+    // this writes `team_members` as well as `teams`, and it is the same roster
+    // the hand-placement path and the award path write.
+    const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
     const eventTeams = await readTeams(tx, eventId);
@@ -633,14 +819,13 @@ export async function setCaptains(
     }
 
     /*
-     * Names for the auto-title. Both the incoming captains and the outgoing
-     * ones: knowing who *used* to hold a team is what tells us whether its
-     * current name was chosen or generated.
+     * Names for the auto-title. Only the incoming captains are needed now:
+     * whether a team's name is ours to replace is a column on the row
+     * (`name_is_custom`), so the *previous* captain's display name — which
+     * used to be one of the three things the old guess compared against — is
+     * no longer read at all.
      */
     const nameIds = new Set<string>(claimed);
-    for (const team of eventTeams) {
-      if (team.captainUserId) nameIds.add(team.captainUserId);
-    }
     const nameOf = new Map<string, string>();
     if (nameIds.size > 0) {
       const rows = await tx
@@ -668,17 +853,20 @@ export async function setCaptains(
       .where(and(inArray(teamMembers.teamId, touched), eq(teamMembers.isCaptain, true)));
 
     /*
-     * "Team Bob", unless somebody has said otherwise.
+     * "Team Bob", unless somebody has said otherwise (R-63 / UC-15 4, 4a).
      *
      * A team is named before anyone knows who will lead it, so the name it
-     * starts with is a placeholder — blank, or "Team 3" off the seed. Once a
-     * captain is set, that placeholder should become their name, because that
-     * is what everybody in the Discord will call the team anyway.
+     * starts with is a placeholder — "Team 3", written by `setTeamCount`. Once
+     * a captain is set that placeholder becomes their name, because that is
+     * what everybody in the Discord will call the team anyway.
      *
-     * A name is only overwritten when we can show it was never chosen: it is
-     * empty, it is "Team <number>", or it is the *previous* captain's auto
-     * name. Anything else an admin typed survives, including a name that
-     * happens to look like one of ours.
+     * **What decides it is `name_is_custom`, not the name.** It used to be the
+     * name: empty, or `/^team\s+\d+$/i`, or equal to the previous captain's
+     * auto name. That read a value to answer a question about where the value
+     * came from, and the two are not the same question — so a manager who
+     * typed "Team 3" had it silently rewritten at the next captain change
+     * (UC-15 4a, and Task 18's acceptance criterion). The flag is written by
+     * whoever wrote the name, which is the only place the answer exists.
      */
     const autoName = (person: string) => `Team ${person}`;
     const taken = new Set(
@@ -694,21 +882,23 @@ export async function setCaptains(
 
       const team = byId.get(teamId);
       const current = team?.name.trim() ?? "";
-      const previous = team?.captainUserId ? nameOf.get(team.captainUserId) : undefined;
-      const generated =
-        current === "" ||
-        /^team\s+\d+$/i.test(current) ||
-        (previous !== undefined && current === autoName(previous));
 
-      if (generated) {
+      // `team === undefined` is unreachable — every id in `wanted` was checked
+      // against `byId` above — and the shape still has to fail closed, because
+      // the failure that matters is overwriting a name nobody asked us to.
+      if (team !== undefined && !team.nameIsCustom) {
         const person = nameOf.get(userId);
         let proposed = person ? autoName(person) : current;
-        // Two captains can share a display name. Fall back to the seed rather
-        // than writing a duplicate an admin would then have to untangle.
+        // UC-15 6a: a *generated* name that clashes gets a distinguishing
+        // suffix. Two captains answering to the same display name is an
+        // ordinary Discord Tuesday, and a duplicate team name is something an
+        // admin would then have to untangle by hand.
         if (proposed && taken.has(proposed.toLowerCase())) {
-          proposed = `${proposed} (${team?.seed ?? teamId.slice(0, 4)})`;
+          proposed = `${proposed} (${team.seed ?? teamId.slice(0, 4)})`;
         }
         if (proposed && proposed !== current) {
+          // The name stays ours: still generated, so the next captain change
+          // follows the captaincy too (UC-15 4a's complement).
           await tx.update(teams).set({ name: proposed }).where(eq(teams.id, teamId));
           taken.add(proposed.toLowerCase());
         }
@@ -732,6 +922,272 @@ export async function setCaptains(
       teams: await readTeams(tx, eventId),
       members: await readMembers(tx, eventId),
     });
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Rosters by hand (UC-15 5, 6)                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which event a team belongs to.
+ *
+ * The same shape as the resolvers in `src/lib/event-scope.ts`, and here for the
+ * same reason its docblock gives: **authorise on the row you are about to
+ * write, never on an id beside it.** `placeOnRoster` is keyed on a team, so the
+ * action resolves the event *from that team* and never trusts an `eventId` the
+ * browser sent alongside it — otherwise a host satisfies the guard with their
+ * own event and names somebody else's team in the write.
+ *
+ * It lives here rather than in `event-scope.ts` because `teams` is this
+ * module's table; the rule is the imported one.
+ */
+export async function eventIdOfTeam(
+  teamId: string,
+  database: Database = defaultDb
+): Promise<string | null> {
+  const [row] = await database
+    .select({ eventId: teams.eventId })
+    .from(teams)
+    .where(eq(teams.id, teamId))
+    .limit(1);
+  return row?.eventId ?? null;
+}
+
+export type RosterPlacement = {
+  /** The row as it now stands, or `null` once they are off every roster. */
+  member: TeamMember | null;
+  /** The team they were on before this call, if any. */
+  fromTeamId: string | null;
+  /** The team they are on after it, or `null`. */
+  toTeamId: string | null;
+};
+
+/**
+ * Everything a hand placement has to be true of before a row is written, read
+ * inside the caller's transaction and with the event already locked.
+ *
+ * Shared by `placeOnRoster` and `removeFromRoster` so that the two cannot
+ * disagree about what a captain is or about who the draft owns. Returns the
+ * member row this player already has (possibly `null`), or a refusal.
+ */
+async function rosterGuard(
+  tx: Database,
+  event: EventRow,
+  userId: string
+): Promise<{ ok: true; member: TeamMember | null } | { ok: false; error: string }> {
+  const locked = lockRefusal(event);
+  if (locked) return { ok: false, error: locked };
+
+  /*
+   * Once the draft has started, rosters belong to it.
+   *
+   * **No use-case line says this in so many words**, and it used to cite UC-15
+   * 5a, which does not: 5a is the *manager* skipping step 5 because the event
+   * uses a draft ("players are placed by UC-16"), an instruction to a person
+   * rather than a refusal by the server. The rule this enforces is the one
+   * UC-16 6-7 implies by owning what a roster is from the first lot onwards: a
+   * seat is won and paid for there, and the way to take one back is the undo
+   * UC-16 7a gives — void the lot, which is what the sentence below asks for
+   * (R-66, R-67). Hand placement is R-61's "events without a draft", and this
+   * is where the two stop overlapping.
+   *
+   * "Has ever opened a lot", the same question `setDraftConfig` asks for
+   * UC-16 1a — not "is a lot open now". A hand placement between two lots is
+   * still a seat appearing in a draft the room is watching, and it moves
+   * `rosterState`, which is what every remaining bid is checked against. Before
+   * the first lot it is ordinary setup: `setDraftPool` leaves anybody already
+   * on a roster out of the pool, so a pre-placed player is simply not for sale.
+   */
+  if (await draftHasBegun(tx, event.id)) {
+    return {
+      ok: false,
+      error:
+        "The draft has started, so rosters are filled in the draft room. Void the lots first if a roster has to be changed by hand.",
+    };
+  }
+
+  const [member] = await tx
+    .select()
+    .from(teamMembers)
+    .where(and(eq(teamMembers.eventId, event.id), eq(teamMembers.userId, userId)))
+    .limit(1);
+
+  if (member === undefined) return { ok: true, member: null };
+
+  // §14: a captain is a roster row, but it is `teams.captain_user_id` that
+  // makes them one. Moving the row on its own would leave a team led by
+  // somebody sitting on another roster, so the captaincy is changed where it
+  // is stored (UC-15 3).
+  if (member.isCaptain) {
+    return {
+      ok: false,
+      error: "They captain this team. Change the captain on the Captains tab instead.",
+    };
+  }
+
+  // A row with a lot behind it is a price somebody paid. Unreachable while the
+  // refusal above holds — a lot cannot exist without the draft having begun —
+  // and kept because it is the invariant, not the consequence: it is what makes
+  // "nothing destructive" true of this path even if the gate above ever moves.
+  if (member.lotId !== null || member.price > 0) {
+    return {
+      ok: false,
+      error:
+        "They were won in the draft, so moving them by hand would erase what was paid. Void that lot first.",
+    };
+  }
+
+  return { ok: true, member };
+}
+
+/**
+ * Put an accepted player on a roster, or move them to another one — UC-15 5.
+ *
+ * ## Only accepted players, checked against the row being written
+ *
+ * A roster place is a seat at the event. A waitlisted or declined member on one
+ * is a seat given away by the back door — they were never accepted, so nothing
+ * on the Applicants tab says they are playing, and every count on the site that
+ * reads rosters would then disagree with the one that reads applications.
+ *
+ * So acceptance is re-read here, inside the transaction, on the event the
+ * *team* belongs to. UC-15 5's "the remaining players" are what is left of the
+ * accepted applicants that step 3 drew the captains from, and R-61 asks for
+ * those rosters to be settable by hand — not for a side door into the event.
+ * It is the same wall `setCaptains` holds for R-62's "from the accepted
+ * applicants", and the override is the same one: accept them on the Applicants
+ * tab, where accepting somebody unusual is recorded as a decision rather than
+ * smuggled in as a roster row.
+ *
+ * ## One row, moved, never deleted and re-inserted
+ *
+ * A move is an `update` of `team_id` on the row the player already has. Two
+ * managers moving the same player at once therefore cannot duplicate them —
+ * `team_members_event_user_uniq` would refuse the second insert anyway, but the
+ * second manager would have had to *handle* that refusal, and a delete-then-
+ * insert pair has a window in the middle where the player is on no roster at
+ * all. With the event's row lock taken first, the second call simply reads the
+ * row the first one wrote and moves it again: one row throughout, and the last
+ * manager's choice wins, which is what two people clicking means.
+ *
+ * ## What it does not do
+ *
+ * It does not touch the draft pool except to take the player out of it, for the
+ * reason `setDraftPool` does the same: somebody on a roster is not still for
+ * sale. Taking them *off* a roster does not put them back in the pool —
+ * re-seeding is its own action, and inventing a pool entry here would decide
+ * something the manager has not been asked.
+ */
+export async function placeOnRoster(
+  eventId: string,
+  userId: string,
+  teamId: string,
+  database: Database = defaultDb
+): Promise<DraftResult<RosterPlacement>> {
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    // Nothing here believes the request: the team is re-read with the event id
+    // in the predicate, so a team from another event is refused rather than
+    // written to.
+    const [team] = await tx
+      .select()
+      .from(teams)
+      .where(and(eq(teams.id, teamId), eq(teams.eventId, eventId)))
+      .limit(1);
+    if (!team) return fail("That team is not in this event.");
+
+    const guard = await rosterGuard(tx, event, userId);
+    if (!guard.ok) return fail(guard.error);
+
+    const [accepted] = await tx
+      .select({ id: applications.id })
+      .from(applications)
+      .where(
+        and(
+          eq(applications.eventId, eventId),
+          eq(applications.userId, userId),
+          eq(applications.status, "accepted")
+        )
+      )
+      .limit(1);
+    if (!accepted) {
+      return fail(
+        "Only an accepted applicant can be put on a roster. Accept them on the Applicants tab first."
+      );
+    }
+
+    // Already there. Not an error: it is what the loser of a race between two
+    // managers choosing the same team asked for, and what a double-clicked
+    // button asks for twice.
+    if (guard.member && guard.member.teamId === teamId) {
+      return withData({ member: guard.member, fromTeamId: teamId, toTeamId: teamId });
+    }
+
+    const config = await readConfig(tx, eventId);
+    const members = await readMembers(tx, eventId);
+    // R-64's roster size, with the captain counted in it (§14).
+    const roster = rosterState(team, asMemberViews(members), config);
+    if (roster.full) {
+      return fail(
+        `${team.name}'s roster is full — ${roster.size} of ${roster.target}. Take somebody off it first, or raise the roster size on the Draft tab.`
+      );
+    }
+
+    const [written] = guard.member
+      ? await tx
+          .update(teamMembers)
+          .set({ teamId })
+          .where(eq(teamMembers.id, guard.member.id))
+          .returning()
+      : await tx
+          .insert(teamMembers)
+          .values({ teamId, eventId, userId, price: 0, isCaptain: false, lotId: null })
+          .returning();
+
+    await tx
+      .delete(draftPoolEntries)
+      .where(and(eq(draftPoolEntries.eventId, eventId), eq(draftPoolEntries.userId, userId)));
+
+    return withData({
+      member: written,
+      fromTeamId: guard.member?.teamId ?? null,
+      toTeamId: teamId,
+    });
+  });
+}
+
+/**
+ * Take a player off a roster — the other half of UC-15 5.
+ *
+ * `teamId` is the team the manager is looking at, and it has to match the row:
+ * a stale screen asking to remove somebody from a team they have since been
+ * moved off would otherwise take them off whichever roster they are on now.
+ * The same guard as `placeOnRoster`, so a captain and a drafted player are
+ * refused here too.
+ */
+export async function removeFromRoster(
+  eventId: string,
+  userId: string,
+  teamId: string,
+  database: Database = defaultDb
+): Promise<DraftResult<RosterPlacement>> {
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+
+    const guard = await rosterGuard(tx, event, userId);
+    if (!guard.ok) return fail(guard.error);
+    if (!guard.member) return fail("They are not on a roster.");
+    if (guard.member.teamId !== teamId) {
+      return fail("They have already been moved off that team. Reload and try again.");
+    }
+
+    await tx.delete(teamMembers).where(eq(teamMembers.id, guard.member.id));
+
+    return withData({ member: null, fromTeamId: teamId, toTeamId: null });
   });
 }
 

@@ -1,4 +1,4 @@
-import { type SQL, and, eq } from "drizzle-orm";
+import { type SQL, and, eq, inArray } from "drizzle-orm";
 import { type Database, adminAllowlist, db as defaultDb, users } from "@/db";
 import { revokeRefusal } from "./admin-users-policy";
 import { normaliseDiscordId } from "./auth-policy";
@@ -13,24 +13,46 @@ import { normaliseDiscordId } from "./auth-policy";
  * belongs to somebody who has actually turned up yet.
  */
 
+/** Whoever put a row on the list, for the line that has to account for it. */
+export type AllowlistAuthor = { id: string; name: string; handle: string | null };
+
 export type AllowlistRow = {
   discordId: string;
   allowed: boolean;
   note: string | null;
   updatedAt: Date;
+  /**
+   * The admin who last decided this row (R-139 / UC-02 E2) — who granted it,
+   * or who barred it. Null for a row written before the column existed, or by
+   * a seed or script with nobody to name.
+   */
+  addedBy: AllowlistAuthor | null;
   /** The account, once they have signed in at least once. */
   account: { id: string; name: string; handle: string | null; isAdmin: boolean } | null;
 };
 
 export type AllowlistResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-/** Every row, with whoever it turned out to be. */
+/**
+ * Every row, with whoever it turned out to be — and whoever put it there.
+ *
+ * `added_by_user_id` is read and resolved here rather than being left on the
+ * row: UC-02 E2 says the admin list "shows both" the note and the granting
+ * admin, and R-139 is the whole of "so that grants are accountable". The
+ * column was being written and never read, which is a record nobody can see.
+ *
+ * A second statement rather than a second `leftJoin` on an alias of `users`:
+ * the granter is usually the same handful of people across the whole list, so
+ * this is one small `in` query, and the join would have made both halves of
+ * the row harder to read for nothing.
+ */
 export async function getAllowlist(database: Database = defaultDb): Promise<AllowlistRow[]> {
   const rows = await database
     .select({
       discordId: adminAllowlist.discordId,
       allowed: adminAllowlist.allowed,
       note: adminAllowlist.note,
+      addedByUserId: adminAllowlist.addedByUserId,
       updatedAt: adminAllowlist.updatedAt,
       userId: users.id,
       displayName: users.displayName,
@@ -41,12 +63,35 @@ export async function getAllowlist(database: Database = defaultDb): Promise<Allo
     .from(adminAllowlist)
     .leftJoin(users, eq(users.discordId, adminAllowlist.discordId));
 
+  const authorIds = [
+    ...new Set(rows.map((row) => row.addedByUserId).filter((id): id is string => Boolean(id))),
+  ];
+  const authors =
+    authorIds.length > 0
+      ? await database
+          .select({
+            id: users.id,
+            displayName: users.displayName,
+            name: users.name,
+            handle: users.handle,
+          })
+          .from(users)
+          .where(inArray(users.id, authorIds))
+      : [];
+  const authorById = new Map(
+    authors.map((row): [string, AllowlistAuthor] => [
+      row.id,
+      { id: row.id, name: row.displayName ?? row.name ?? row.handle ?? "An admin", handle: row.handle },
+    ])
+  );
+
   return rows
     .map((row) => ({
       discordId: row.discordId,
       allowed: row.allowed,
       note: row.note,
       updatedAt: row.updatedAt,
+      addedBy: row.addedByUserId ? (authorById.get(row.addedByUserId) ?? null) : null,
       account: row.userId
         ? {
             id: row.userId,
@@ -107,7 +152,17 @@ export async function allowAdmin(
       .values(value)
       .onConflictDoUpdate({
         target: adminAllowlist.discordId,
-        set: { allowed: true, note: value.note, updatedAt: value.updatedAt },
+        // `added_by_user_id` was missing from this set, so re-allowing an id
+        // somebody else had barred left the row crediting *them* with the
+        // grant (R-139). Only overwritten when this caller knows who is
+        // acting: a seed or a script passes nothing, and nulling out a real
+        // name would be a worse answer than keeping the previous one.
+        set: {
+          allowed: true,
+          note: value.note,
+          updatedAt: value.updatedAt,
+          ...(value.addedByUserId ? { addedByUserId: value.addedByUserId } : {}),
+        },
       });
 
     const [existing] = await tx
@@ -228,7 +283,14 @@ async function barWithin(
       })
       .onConflictDoUpdate({
         target: adminAllowlist.discordId,
-        set: { allowed: false, note, updatedAt },
+        // As in `allowAdmin`: whoever barred the id is who the row should
+        // credit, and a caller with nobody to name leaves the old one alone.
+        set: {
+          allowed: false,
+          note,
+          updatedAt,
+          ...(input.addedByUserId ? { addedByUserId: input.addedByUserId } : {}),
+        },
       });
   }
 

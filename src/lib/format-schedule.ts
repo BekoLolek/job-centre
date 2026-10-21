@@ -214,6 +214,86 @@ export function dayMinutes(blocks: PlannedBlock[]): number[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* Days that do not fit in a day (UC-18 7a)                           */
+/* ------------------------------------------------------------------ */
+
+/** One day whose running order does not finish on the day it started. */
+export type DayOverrun = {
+  /** 1-based, as `PlannedBlock.day` is. */
+  day: number;
+  startsAt: string;
+  endsAt: string;
+  /** Minutes from the day's start to its last block's end. */
+  lengthMin: number;
+  /** The end is on a later calendar date than the start, in the local zone. */
+  pastMidnight: boolean;
+  /** The end is after the *next* day's own start time, so the two overlap. */
+  intoNextDay: boolean;
+};
+
+/** The local calendar date of an instant — "2026-03-28". */
+function localDate(instant: string): string {
+  const at = new Date(instant);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`;
+}
+
+/**
+ * **Which days run past midnight, or into the next day** (UC-18 7a).
+ *
+ * It is a warning and not a refusal, which is the use case's own wording:
+ * a final that starts at 22:00 and ends at 00:40 is a real tournament and the
+ * site has no business rejecting it. What it has business doing is saying so
+ * before the manager publishes a running order whose last block is on a date
+ * nobody announced.
+ *
+ * Two different problems, reported separately because they have different
+ * answers:
+ *
+ *  - **Past midnight** — the day ends on tomorrow's date. Start earlier, or
+ *    accept it and tell the players.
+ *  - **Into the next day** — the day ends after the next day's start, so two
+ *    days of the event overlap and the schedule claims a team is in two
+ *    lobbies at once. That one usually wants a block moved.
+ *
+ * Calendar dates come from the ambient zone, like every other time the site
+ * prints: an instant is only "past midnight" relative to somebody's clock, and
+ * the clock that matters is the one in the room.
+ */
+export function dayOverruns(
+  blocks: PlannedBlock[],
+  dayStarts: Array<string | null | undefined>
+): DayOverrun[] {
+  const totals = dayMinutes(blocks);
+  const out: DayOverrun[] = [];
+
+  for (let day = 1; day <= totals.length; day += 1) {
+    const start = dayStarts[day - 1];
+    if (!start) continue;
+    const startsAt = addMinutesTo(start, 0);
+    const endsAt = startsAt ? addMinutesTo(startsAt, totals[day - 1]) : null;
+    if (!startsAt || !endsAt) continue;
+
+    const nextStart = dayStarts[day];
+    const nextAt = nextStart ? addMinutesTo(nextStart, 0) : null;
+    const pastMidnight = localDate(endsAt) > localDate(startsAt);
+    const intoNextDay = nextAt !== null && endsAt > nextAt;
+    if (!pastMidnight && !intoNextDay) continue;
+
+    out.push({
+      day,
+      startsAt,
+      endsAt,
+      lengthMin: totals[day - 1],
+      pastMidnight,
+      intoNextDay,
+    });
+  }
+
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
 /* Stamping the schedule onto matches                                 */
 /* ------------------------------------------------------------------ */
 
