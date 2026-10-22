@@ -7,7 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, createPgliteDatabase, driverFor, games } from "@/db";
 import { applyMigrations } from "@/db/migrate";
 import { DEFAULT_POINTS_TABLE } from "@/lib/championship-policy";
-import { type TestDatabase, freshDatabase, tableNames } from "./helpers";
+import { canManageEvent } from "@/lib/hosting";
+import { type TestDatabase, expectRejection, freshDatabase, tableNames } from "./helpers";
 
 /**
  * The budget for a test that stands up a WASM Postgres of its own.
@@ -93,6 +94,76 @@ describe("migrations", () => {
       "user_notes",
       "users",
       "verification_tokens",
+    ]);
+  });
+
+  /*
+   * drizzle/0026, from the schema side: an event's dates are its days'
+   * (R-24 / UC-11 2), so `events` has no date of its own to read.
+   *
+   * The whole column list rather than two `not.toContain`s, because the claim
+   * worth pinning is "there is no second place an event's dates could live",
+   * and a column added later that happened not to be called `starts_at` would
+   * satisfy the narrower assertion. This is also the assertion that three unit
+   * tests used to make by writing a row and checking the column came back null:
+   * they could only ever prove the column was *empty*, and this proves there is
+   * no column.
+   */
+  it("leaves the events table no dates of its own", async () => {
+    const columns = await ctx.client.query<{ column_name: string }>(
+      `select column_name from information_schema.columns
+       where table_schema = 'public' and table_name = 'events'
+       order by column_name`
+    );
+    expect(columns.rows.map((row) => row.column_name)).toEqual([
+      "banner_url",
+      "capacity",
+      "config",
+      "created_at",
+      "created_by",
+      "created_from_template_id",
+      "description",
+      "game_id",
+      "id",
+      "min_rank_to_captain",
+      "min_rank_to_enter",
+      // The sign-up window is the event's own and stays: it is typed on Basics
+      // and is derived from nothing (R-25).
+      "signup_closes_at",
+      "signup_opens_at",
+      "slug",
+      "status",
+      "title",
+      "type",
+      "updated_at",
+    ]);
+  });
+
+  /*
+   * And the index that only read one of them. `events_status_starts_at_idx` was
+   * `(status, starts_at)`; nothing orders or filters by that column — the
+   * soonest-first order is `eventDates` over `event_days`, in TypeScript — so
+   * it was two columns of write cost for a query nobody makes.
+   *
+   * The assertion that earns its place here is the *list*, not the absence.
+   * Postgres drops an index with the last column it covers, so 0026's explicit
+   * `DROP INDEX` is belt and braces and no test can tell whether it ran. What
+   * nothing else would catch is a replacement: Task 50 says a new index must be
+   * justified by a query and measured first, and src/db/schema.ts names the one
+   * query that would use a plain `status` index and why it is not added on a
+   * guess. An index arriving unmeasured fails this.
+   */
+  it("leaves no index on the dropped date column", async () => {
+    const indexes = await ctx.client.query<{ indexname: string }>(
+      `select indexname from pg_indexes
+       where schemaname = 'public' and tablename = 'events'
+       order by indexname`
+    );
+    expect(indexes.rows.map((row) => row.indexname)).toEqual([
+      "events_created_from_template_idx",
+      "events_game_id_idx",
+      "events_pkey",
+      "events_slug_unique",
     ]);
   });
 
@@ -468,6 +539,504 @@ describe("the event-days backfill (drizzle/0020)", () => {
        where e.slug = 'sketched' and d.day_index = 0`
     );
     expect(new Date(moved.rows[0].starts_at).toISOString()).toBe("2026-08-15T20:00:00.000Z");
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});
+
+describe("one host per event (drizzle/0025)", () => {
+  /**
+   * The constraint, and what it does to the rows it finds.
+   *
+   * `CREATE UNIQUE INDEX` does not skip the rows that offend it — it fails, and
+   * takes the deploy and every later migration with it. `DATABASE_URL` is blank
+   * in this working copy by design, so nobody can look at production first and
+   * find out whether an event already has two host rows. That is what makes the
+   * three fixtures below the point of the test rather than a formality: an
+   * event nobody hosts, an event with one host, and the one that would have
+   * killed the deploy.
+   *
+   * Replayed by hand against the schema as it stood at 0024, for the same
+   * reason the two backfills above are: a fresh database has no host rows, so
+   * applying 0025 to one proves only that the SQL parses.
+   */
+  it("keeps the earlier grant, tells the member it dropped, and then holds the rule", async () => {
+    const client = new PGlite();
+    const { MIGRATIONS_FOLDER } = await import("@/db/migrate");
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const path = await import("node:path");
+
+    const run = async (tag: string) => {
+      const sql = readFileSync(path.join(MIGRATIONS_FOLDER, `${tag}.sql`), "utf8");
+      for (const statement of sql.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.exec(statement);
+      }
+    };
+
+    const earlier = readdirSync(MIGRATIONS_FOLDER)
+      .filter((name) => name.endsWith(".sql"))
+      .map((name) => name.replace(/\.sql$/, ""))
+      .sort()
+      .filter((tag) => tag < "0025");
+    for (const tag of earlier) await run(tag);
+
+    await client.exec(`insert into users (name, display_name) values
+      ('alone',   'Alone Ali'),
+      ('kept',    'Kept Kiri'),
+      ('dropped', 'Dropped Dee'),
+      ('later',   'Later Lena')`);
+    await client.exec(`insert into events (slug, title) values
+      ('nobody',    'Nobody hosts this'),
+      ('one-host',  'One host'),
+      ('two-hosts', 'Friday REPO night')`);
+    /*
+     * The two grants are three seconds apart, which is what the race looks like
+     * afterwards: two admins on two screens, both approving onto the event one
+     * of them had just created.
+     */
+    await client.exec(`insert into event_hosts (event_id, user_id, granted_at) values
+      ((select id from events where slug = 'one-host'),
+       (select id from users where name = 'alone'),   '2026-03-01T10:00:00Z'),
+      ((select id from events where slug = 'two-hosts'),
+       (select id from users where name = 'kept'),    '2026-03-02T19:04:11Z'),
+      ((select id from events where slug = 'two-hosts'),
+       (select id from users where name = 'dropped'), '2026-03-02T19:04:14Z')`);
+
+    const grants = async () =>
+      (
+        await client.query<{ slug: string; name: string }>(
+          `select e.slug, u.name from event_hosts h
+           join events e on e.id = h.event_id
+           join users u on u.id = h.user_id
+           order by e.slug, u.name`
+        )
+      ).rows;
+
+    // Before: the shape that fails the CREATE.
+    expect(await grants()).toEqual([
+      { slug: "one-host", name: "alone" },
+      { slug: "two-hosts", name: "dropped" },
+      { slug: "two-hosts", name: "kept" },
+    ]);
+
+    await run("0025_event_host_one_per_event");
+
+    /*
+     * After: the **earlier** of the two grants survives. A host grant is a
+     * permission somebody has been using rather than an intention they most
+     * recently had — the opposite of drizzle/0018, which kept the newest
+     * pending application for exactly that reason. `linkableEvents` stops
+     * offering an event the moment it has a host, so the later row was never
+     * something an admin was offered, and keeping it would take the event away
+     * from whoever has been running it.
+     */
+    expect(await grants()).toEqual([
+      { slug: "one-host", name: "alone" },
+      { slug: "two-hosts", name: "kept" },
+    ]);
+
+    /*
+     * And the member who lost it is told, rather than quietly losing a
+     * permission they were notified about when they got it (UC-21 4). The kind
+     * is the one their approval used, which is `fixed` in `notify-policy.ts`
+     * and so cannot have been muted.
+     */
+    const told = await client.query<{
+      name: string;
+      kind: string;
+      title: string;
+      href: string;
+      slug: string | null;
+    }>(`select u.name, n.kind, n.title, n.href, e.slug
+        from notifications n
+        join users u on u.id = n.user_id
+        left join events e on e.id = n.event_id`);
+    expect(told.rows).toEqual([
+      {
+        name: "dropped",
+        kind: "host_decision",
+        title: "You are no longer hosting Friday REPO night",
+        href: "/host",
+        slug: "two-hosts",
+      },
+    ]);
+
+    // And the admins are told, under the event, which is where the log gets
+    // filtered when somebody asks what happened (R-110 / UC-27 3).
+    const logged = await client.query<{
+      action: string;
+      slug: string;
+      summary: string;
+      detail: { keptUserId: string; removedUserId: string; removedGrantedAt: string };
+    }>(`select a.action, e.slug, a.summary, a.detail
+        from audit_log a join events e on e.id = a.event_id`);
+    expect(logged.rows).toHaveLength(1);
+    expect(logged.rows[0].action).toBe("host.grant_superseded");
+    expect(logged.rows[0].slug).toBe("two-hosts");
+    expect(logged.rows[0].summary).toMatch(/one grant per event \(R-86\)/);
+
+    const ids = new Map(
+      (
+        await client.query<{ name: string; id: string }>(`select name, id from users`)
+      ).rows.map((row) => [row.name, row.id])
+    );
+    expect(logged.rows[0].detail.keptUserId).toBe(ids.get("kept"));
+    expect(logged.rows[0].detail.removedUserId).toBe(ids.get("dropped"));
+    // UTC, not the deploy machine's zone: `::text` on a timestamptz renders in
+    // the session's TimeZone, and a logged instant that moves with the server
+    // is not a logged instant.
+    expect(logged.rows[0].detail.removedGrantedAt).toBe("2026-03-02T19:04:14Z");
+
+    /*
+     * The acceptance criterion a constraint like this quietly breaks: the host
+     * it keeps must still *be* a host. `requireEventManager` is
+     * `canManageEvent` plus a redirect, so a grant this migration orphaned
+     * would turn a working permission into a bounce to `/me`. Asked of the real
+     * permission function, over this throwaway database.
+     */
+    const db = createPgliteDatabase(client);
+    const eventIds = new Map(
+      (
+        await client.query<{ slug: string; id: string }>(`select slug, id from events`)
+      ).rows.map((row) => [row.slug, row.id])
+    );
+    const twoHosts = eventIds.get("two-hosts") as string;
+    expect(
+      await canManageEvent({ id: ids.get("kept") as string, isAdmin: false }, twoHosts, db)
+    ).toBe(true);
+    expect(
+      await canManageEvent({ id: ids.get("dropped") as string, isAdmin: false }, twoHosts, db)
+    ).toBe(false);
+    // And the event the migration had no reason to touch is untouched.
+    expect(
+      await canManageEvent(
+        { id: ids.get("alone") as string, isAdmin: false },
+        eventIds.get("one-host") as string,
+        db
+      )
+    ).toBe(true);
+
+    /*
+     * Applied twice by hand — which is the only way this file can be applied
+     * twice, since a deploy runs every pending migration inside one
+     * transaction and rolls the whole thing back. The DELETE leaves both
+     * inserts nothing to find, the notification has `ON CONFLICT DO NOTHING`
+     * besides, and the index is created `IF NOT EXISTS`, so a second pass must
+     * change nothing rather than throw, or write the dropped member a second
+     * copy of the same news. (A hand run stopped *before* the DELETE and then
+     * resumed is the one case that does double, and only the audit line; the
+     * file says so.)
+     */
+    await run("0025_event_host_one_per_event");
+    expect(await grants()).toEqual([
+      { slug: "one-host", name: "alone" },
+      { slug: "two-hosts", name: "kept" },
+    ]);
+    expect(
+      (
+        await client.query<{ total: string }>(
+          `select count(*)::text as total from notifications`
+        )
+      ).rows[0].total
+    ).toBe("1");
+    expect(
+      (await client.query<{ total: string }>(`select count(*)::text as total from audit_log`))
+        .rows[0].total
+    ).toBe("1");
+
+    // The event nobody hosted is still free, and may still be given a host.
+    await client.exec(`insert into event_hosts (event_id, user_id)
+      select (select id from events where slug = 'nobody'), id
+      from users where name = 'later'`);
+
+    // And from here the rule is the database's, not a read's.
+    await expectRejection(
+      () =>
+        client.query(
+          `insert into event_hosts (event_id, user_id)
+           select (select id from events where slug = 'nobody'), id
+           from users where name = 'dropped'`
+        ),
+      /event_hosts_one_host_per_event/
+    );
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});
+
+describe("dropping the dead date columns (drizzle/0026)", () => {
+  /**
+   * Replaying the migrations by hand, for the same reason the three backfills
+   * above do: a fresh database has no events, so applying 0026 to one proves
+   * only that the SQL parses. What has to be proved is what it does to the rows
+   * drizzle/0020 left behind — and in particular that the day 0020 wrote from
+   * the column is still there once the column is gone, which is the one thing
+   * this commit could silently destroy.
+   */
+  const replay = async (client: PGlite, upTo: string, from = "0000") => {
+    const { MIGRATIONS_FOLDER } = await import("@/db/migrate");
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const nodePath = await import("node:path");
+    const tags = readdirSync(MIGRATIONS_FOLDER)
+      .filter((name) => name.endsWith(".sql"))
+      .map((name) => name.replace(/\.sql$/, ""))
+      .sort()
+      .filter((tag) => tag >= from && tag < upTo);
+    for (const tag of tags) {
+      const sql = readFileSync(nodePath.join(MIGRATIONS_FOLDER, `${tag}.sql`), "utf8");
+      for (const statement of sql.split("--> statement-breakpoint")) {
+        if (statement.trim()) await client.exec(statement);
+      }
+    }
+  };
+
+  const runDrop = async (client: PGlite) => {
+    const { MIGRATIONS_FOLDER } = await import("@/db/migrate");
+    const { readFileSync } = await import("node:fs");
+    const nodePath = await import("node:path");
+    const sql = readFileSync(
+      nodePath.join(MIGRATIONS_FOLDER, "0026_event_dates_dropped.sql"),
+      "utf8"
+    );
+    for (const statement of sql.split("--> statement-breakpoint")) {
+      if (statement.trim()) await client.exec(statement);
+    }
+  };
+
+  /** Which of the two date columns are still on the table, alphabetical. */
+  const dateColumns = async (client: PGlite) =>
+    (
+      await client.query<{ column_name: string }>(
+        `select column_name from information_schema.columns
+         where table_name = 'events' and column_name in ('starts_at', 'ends_at')
+         order by column_name`
+      )
+    ).rows.map((row) => row.column_name);
+
+  const hasOldIndex = async (client: PGlite) =>
+    (
+      await client.query(
+        `select 1 from pg_indexes where tablename = 'events'
+           and indexname = 'events_status_starts_at_idx'`
+      )
+    ).rows.length > 0;
+
+  /** Every day row, as "slug#index=instant", so one assertion covers the lot. */
+  const dayRows = async (client: PGlite) =>
+    (
+      await client.query<{ slug: string; day_index: number | null; at: string | null }>(
+        `select e.slug, d.day_index,
+                to_char(d.starts_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as at
+         from events e left join event_days d on d.event_id = e.id
+         order by e.slug, d.day_index`
+      )
+    ).rows.map((row) => `${row.slug}#${row.day_index ?? "-"}=${row.at ?? "null"}`);
+
+  const auditTotal = async (client: PGlite) =>
+    (await client.query<{ total: string }>(`select count(*)::text as total from audit_log`))
+      .rows[0].total;
+
+  it("replays the backfill, then the drop, and the backfilled day survives", async () => {
+    const client = new PGlite();
+    await replay(client, "0020");
+
+    /*
+     * The rows as they were written while the event row *was* the calendar,
+     * covering every shape 0020 distinguishes:
+     *
+     *  - `only-column` has a start and no days at all. 0020's insert gives it
+     *    a Day 1 — and that day is the whole point of this test, because after
+     *    0026 it is the only record of when the event is on.
+     *  - `sketched` has a start and a day list with no times on it. 0020's
+     *    second statement dates its first day.
+     *  - `partly` has Day 2 dated and Day 1 not. 0020 leaves it alone on
+     *    purpose, so its `starts_at` is a start no day says.
+     *  - `span` was set up as one start plus one end. 0020 backfills the start
+     *    and never touches the end.
+     *  - `undated` never had a date at all, which is a supported state.
+     */
+    await client.exec(`insert into events (slug, title, starts_at, ends_at) values
+      ('only-column', 'Only the column', '2026-05-01T18:00:00Z', null),
+      ('sketched',    'Times to agree',  '2026-07-10T18:00:00Z', null),
+      ('partly',      'Partly dated',    '2026-07-20T18:00:00Z', null),
+      ('span',        'Start and end',   '2026-06-01T18:00:00Z', '2026-06-03T22:00:00Z'),
+      ('undated',     'Never timed',     null,                   null)`);
+    await client.exec(`insert into event_days (event_id, day_index, starts_at, label) values
+      ((select id from events where slug = 'sketched'), 0, null, 'Friday'),
+      ((select id from events where slug = 'sketched'), 1, null, 'Saturday'),
+      ((select id from events where slug = 'partly'),   0, null, null),
+      ((select id from events where slug = 'partly'),   1, '2026-07-21T19:00:00Z', null)`);
+
+    // 0020 onwards, on top of the database the fixtures were written into.
+    await replay(client, "0026", "0020");
+
+    // Before: both columns, the index, and the days 0020 produced.
+    expect(await dateColumns(client)).toEqual(["ends_at", "starts_at"]);
+    expect(await hasOldIndex(client)).toBe(true);
+    const before = await dayRows(client);
+    expect(before).toEqual([
+      "only-column#0=2026-05-01T18:00:00Z",
+      "partly#0=null",
+      "partly#1=2026-07-21T19:00:00Z",
+      "sketched#0=2026-07-10T18:00:00Z",
+      "sketched#1=null",
+      "span#0=2026-06-01T18:00:00Z",
+      "undated#-=null",
+    ]);
+
+    await runDrop(client);
+
+    // After: no columns, no index — and **every day row exactly as it was**.
+    expect(await dateColumns(client)).toEqual([]);
+    expect(await hasOldIndex(client)).toBe(false);
+    expect(await dayRows(client)).toEqual(before);
+
+    /*
+     * And the instants no day row holds are written down rather than deleted.
+     * 0020 said this was "the commit that should look at the live rows and
+     * decide whether any of them wants real days typed in"; nobody can look at
+     * a dropped column, so the two that disagree are logged against their
+     * event, which is where an admin filtering the log will look (R-110 /
+     * UC-27 3).
+     *
+     * `only-column` and `sketched` are **not** here, and that is the assertion
+     * that makes this mean something: their day rows already hold exactly what
+     * their columns held, so there is nothing to record.
+     */
+    const logged = await client.query<{
+      slug: string;
+      detail: {
+        columnStartsAt: string | null;
+        columnEndsAt: string | null;
+        firstDatedDay: string | null;
+      };
+    }>(`select e.slug, a.detail from audit_log a
+        join events e on e.id = a.event_id
+        where a.action = 'event.dates_column_dropped'
+        order by e.slug`);
+    expect(logged.rows.map((row) => row.slug)).toEqual(["partly", "span"]);
+
+    // The partially dated event: its column said the 20th, its days say the
+    // 21st, and the 21st is what the site reads. Both are in the log.
+    expect(logged.rows[0].detail.columnStartsAt).toBe("2026-07-20T18:00:00Z");
+    expect(logged.rows[0].detail.firstDatedDay).toBe("2026-07-21T19:00:00Z");
+
+    // And the end 0020 never backfilled, which was nowhere else at all.
+    expect(logged.rows[1].detail.columnEndsAt).toBe("2026-06-03T22:00:00Z");
+
+    /*
+     * Deploys re-run every applied migration. The block returns the moment the
+     * column is gone, so a second pass must change nothing — not throw on a
+     * column that no longer exists, and not write a second copy of the log.
+     */
+    await runDrop(client);
+    expect(await dateColumns(client)).toEqual([]);
+    expect(await dayRows(client)).toEqual(before);
+    expect(await auditTotal(client)).toBe("2");
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+
+  /**
+   * A start no dated day holds: written down, and **not** a failed deploy.
+   *
+   * This shape is the one the file used to `RAISE EXCEPTION` over, on the
+   * grounds that 0020's two statements leave no such row behind — so a row in
+   * it meant something wrote the column afterwards. There is a third cause, and
+   * it is an ordinary manager using the Days tab: `setEventDays` writes
+   * `startsAt: day.startsAt ?? null`, `dayListProblem` asks for neither a time
+   * nor a minimum day count, and an undated day list is the documented "times
+   * to be agreed" state. So all three ways in are exercised here:
+   *
+   *  - `orphan` had the column written after 0020 ran;
+   *  - `detimed` is a legacy event whose day 0020 backfilled and whose manager
+   *    then cleared the time on it;
+   *  - `daysgone` is the same event whose manager deleted the day list.
+   *
+   * None of them may stop the deploy, because none of them changes anything on
+   * screen: nothing in src/ has read either column since Task 12, and
+   * `eventDates` already answers `null` for an event with no dated day, so each
+   * of these read as undated before the drop and reads as undated after it.
+   * Stopping would halt every migration behind it over a state the site
+   * supports, and the old HINT's remedy — give them a dated day — would re-date
+   * an event somebody deliberately un-dated.
+   *
+   * What the file must still do is lose nothing: the audit insert covers this
+   * shape, so the instant is on the record against its event before the column
+   * goes. That is the assertion, and it is the one the exception was for.
+   */
+  it("records a start no day holds, however it got that way, and drops anyway", async () => {
+    const client = new PGlite();
+    await replay(client, "0020");
+
+    /*
+     * `detimed` and `daysgone` go in *before* 0020 with a start and no days, so
+     * 0020's insert backfills a Day 1 for each of them — which is what makes
+     * them legacy events rather than fixtures, and what their managers then
+     * undo below.
+     */
+    await client.exec(`insert into events (slug, title, starts_at) values
+      ('ordinary', 'Has a dated day',  '2026-04-01T18:00:00Z'),
+      ('detimed',  'Times withdrawn',  '2026-08-01T18:00:00Z'),
+      ('daysgone', 'Days deleted',     '2026-09-01T18:00:00Z')`);
+    await client.exec(`insert into event_days (event_id, day_index, starts_at)
+      select id, 0, '2026-04-01T18:00:00Z' from events where slug = 'ordinary'`);
+
+    await replay(client, "0026", "0020");
+    expect(await dayRows(client)).toEqual([
+      "daysgone#0=2026-09-01T18:00:00Z",
+      "detimed#0=2026-08-01T18:00:00Z",
+      "ordinary#0=2026-04-01T18:00:00Z",
+    ]);
+
+    // The manager's two edits, and the one thing 0020 cannot have left behind.
+    await client.exec(`update event_days set starts_at = null
+      where event_id = (select id from events where slug = 'detimed')`);
+    await client.exec(`delete from event_days
+      where event_id = (select id from events where slug = 'daysgone')`);
+    await client.exec(`insert into events (slug, title, starts_at)
+      values ('orphan', 'Only the column knows', '2026-10-10T18:00:00Z')`);
+
+    await runDrop(client);
+
+    // Dropped, and every day row exactly as its manager left it.
+    expect(await dateColumns(client)).toEqual([]);
+    expect(await hasOldIndex(client)).toBe(false);
+    expect(await dayRows(client)).toEqual([
+      "daysgone#-=null",
+      "detimed#0=null",
+      "ordinary#0=2026-04-01T18:00:00Z",
+      "orphan#-=null",
+    ]);
+
+    /*
+     * And all three instants are on the record, with `firstDatedDay` null —
+     * which is the whole point of the row: it says the column held a start and
+     * the days held none, so an admin can see what was there and decide.
+     *
+     * `ordinary` is **not** here, and that is the assertion that makes this mean
+     * something: its day holds exactly what its column held, so there is
+     * nothing to record.
+     */
+    const logged = await client.query<{
+      slug: string;
+      detail: { columnStartsAt: string | null; firstDatedDay: string | null };
+    }>(`select e.slug, a.detail from audit_log a
+        join events e on e.id = a.event_id
+        where a.action = 'event.dates_column_dropped'
+        order by e.slug`);
+    expect(
+      logged.rows.map((row) => [row.slug, row.detail.columnStartsAt, row.detail.firstDatedDay])
+    ).toEqual([
+      ["daysgone", "2026-09-01T18:00:00Z", null],
+      ["detimed", "2026-08-01T18:00:00Z", null],
+      ["orphan", "2026-10-10T18:00:00Z", null],
+    ]);
+
+    // Replayed: the block returns on the missing column, so nothing is logged
+    // twice and nothing throws.
+    await runDrop(client);
+    expect(await auditTotal(client)).toBe("3");
 
     await client.close();
   }, PGLITE_BOOT_BUDGET_MS);

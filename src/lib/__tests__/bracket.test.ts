@@ -491,7 +491,7 @@ describe("team counts outside the range", () => {
 });
 
 describe("configuration is data, not branches", () => {
-  it("takes the series length from the slot, then the round, then the half", () => {
+  it("takes the series length from the slot, then the half, then the round", () => {
     const stage = generateStage("double_elim", 4, {
       bestOf: 3,
       bestOfBySlot: { gf: 7 },
@@ -500,6 +500,17 @@ describe("configuration is data, not branches", () => {
     expect(stage.bySlot.gf.bestOf).toBe(7);
     expect(stage.bySlot.ubsf1.bestOf).toBe(1);
     expect(stage.bySlot.ubf.bestOf).toBe(3);
+
+    // The half beats the round where both name a match (UC-18 E2): the upper
+    // bracket is Bo5 throughout, round 1 or not.
+    const halved = generateStage("double_elim", 4, {
+      bestOf: 3,
+      bestOfBySlot: { gf: 7 },
+      bestOfByBracket: { upper: 5 },
+      bestOfByRound: { "1": 1 },
+    });
+    expect(halved.bySlot.ubsf1.bestOf).toBe(5);
+    expect(halved.bySlot.lbr1.bestOf).toBe(1);
   });
 
   it("takes the mode sequence from config, so [convoy, convoy, domination] is one instance", () => {

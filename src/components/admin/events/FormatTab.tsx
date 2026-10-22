@@ -884,7 +884,7 @@ function StagePanel({
           onOpenChange={setOpen}
           size="sm"
         >
-          <StageSettings stage={stage} spec={spec} onConfig={onConfig} />
+          <StageSettings kind={stage.kind} spec={spec} onConfig={onConfig} />
         </Disclosure>
 
         {spec.groups.length > 0 && (
@@ -1063,17 +1063,30 @@ function bracketSummary(spec: GeneratedStage): string {
 /* The settings for one stage                                         */
 /* ------------------------------------------------------------------ */
 
-function StageSettings({
-  stage,
+/**
+ * One stage's settings — the series lengths, the mode sequences, the bracket
+ * options and the table scoring (UC-18 3, 4, E1, E2, E3). The concurrency and
+ * the breaks of UC-18 6 are per *event* and live on the Schedule tab.
+ *
+ * Exported for the reason `FlaggedAlert` is: `Disclosure` unmounts what it is
+ * shut over, so this whole panel is absent from a server render of the tab and
+ * the only way to read back what it says — which length wins, which modes a
+ * Bo3 plays, whether a round's own length applies at all — is to render it.
+ *
+ * It takes a `kind` rather than the draft stage because the kind is all it ever
+ * used: everything else it needs is on `spec.config`, which is the *normalised*
+ * config and therefore what will actually be stored.
+ */
+export function StageSettings({
+  kind,
   spec,
   onConfig,
 }: {
-  stage: DraftStage;
+  kind: StageKind;
   spec: GeneratedStage;
   onConfig: (change: Partial<StageConfig>) => void;
 }) {
   const config = spec.config;
-  const kind = stage.kind;
   const bracketKind: StageKind = kind === "group_playoff" ? config.playoffKind : kind;
   const halvesInUse = new Set(spec.matches.map((match) => match.bracket));
   const roundsInUse = [...new Set(spec.matches.map((match) => match.round))].sort((x, y) => x - y);
@@ -1089,10 +1102,11 @@ function StageSettings({
       <section className="space-y-3">
         <Eyebrow>Series lengths</Eyebrow>
         <p className="text-12 leading-relaxed text-muted">
-          The most specific setting wins: a named match beats a round number, which beats a
-          half of the bracket, which beats the stage default. Round numbers restart in each
-          half, so “round 1” means the upper bracket’s and the lower bracket’s alike — use the
-          per-half row to tell them apart.
+          A named match wins outright, then a half of the bracket, then a round number, then
+          the stage default. The half beats the round because round numbers restart in each
+          half: “round 1” means the upper bracket’s and the lower bracket’s alike, and a
+          group stage’s first circle round as well, so only the per-half row can tell them
+          apart.
         </p>
 
         <div className="flex flex-wrap items-end gap-3">
@@ -1131,6 +1145,24 @@ function StageSettings({
               />
             ))}
           </div>
+        )}
+
+        {/*
+          The one place the precedence is visible rather than merely stated. A
+          round whose number is also covered by a half or a named match keeps
+          showing its own length in the select above while the matches in it
+          play something else — so the screen says which of the two is winning
+          rather than leaving the manager to read it off the bracket (UC-18 E2).
+        */}
+        {shadowedRounds(spec).length > 0 && (
+          <p className="text-12 leading-relaxed text-union">
+            {shadowedRounds(spec)
+              .map((round) => `Round ${round}`)
+              .join(", ")}{" "}
+            {shadowedRounds(spec).length === 1 ? "is" : "are"} also covered by a half of the
+            bracket or by a named match, and that wins — the length above does not apply
+            there.
+          </p>
         )}
 
         {namedSlots.length > 0 && (
@@ -1189,11 +1221,25 @@ function StageSettings({
         <section className="space-y-3 border-t border-hair pt-5">
           <Eyebrow>Third place and the grand final</Eyebrow>
 
+          {/*
+            Only the answers this bracket can express.
+
+            `normaliseStageConfig` reads "a separate bronze match" in a double
+            elimination as the lower final, and "the lower final doubles as
+            bronze" in a single elimination as a separate match — so all three
+            chips were offered while two of them stored the same thing, and the
+            row came out with *two* of them marked as the current choice. One
+            setting cannot have two selected states, so the chip that collapses
+            into another one is not offered here. The paragraph under the row
+            is what explains why the bracket only has two answers.
+          */}
           <ChoiceRow>
-            {BRONZE_CHOICES.map((choice) => (
+            {BRONZE_CHOICES.filter(
+              (choice) => bronzeFor(bracketKind, choice.value) === choice.value
+            ).map((choice) => (
               <ChoiceChip
                 key={choice.value}
-                selected={config.bronze === bronzeFor(bracketKind, choice.value)}
+                selected={config.bronze === choice.value}
                 onClick={() => onConfig({ bronze: choice.value })}
               >
                 {choice.label}
@@ -1333,6 +1379,29 @@ function StageSettings({
       )}
     </div>
   );
+}
+
+/**
+ * **The rounds whose own series length is not what their matches play**
+ * (UC-18 E2).
+ *
+ * `bestOfFor` reads a named match first, then a half of the bracket, then a
+ * round number — so a round key can be set, shown in its own select, and apply
+ * to nothing. Derived from the generated spec rather than from the config,
+ * because the question is "what do these matches actually play", and the spec
+ * is the only thing that has been through `bestOfFor`.
+ */
+export function shadowedRounds(spec: GeneratedStage): number[] {
+  const wantedFor = spec.config.bestOfByRound;
+  return [...new Set(spec.matches.map((match) => match.round))]
+    .filter((round) => {
+      const wanted = wantedFor[String(round)];
+      return (
+        wanted !== undefined &&
+        spec.matches.some((match) => match.round === round && match.bestOf !== wanted)
+      );
+    })
+    .sort((x, y) => x - y);
 }
 
 /** Set or clear one entry of a by-key series map, without mutating it. */

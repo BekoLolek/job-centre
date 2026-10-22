@@ -226,18 +226,49 @@ export const ALREADY_PENDING =
   "You already have an application waiting. Withdraw it first if you want to change it.";
 
 /**
- * Was this Postgres refusing a second pending application?
+ * What an admin is told when the event is already somebody's (R-86 / UC-21 3).
+ *
+ * One sentence, reached two ways: by the read inside the approval, and by the
+ * unique index on `event_hosts.event_id` when two approvals race past that
+ * read. An admin who loses the race must get the sentence, not a driver error
+ * with an index name in it — the two cases differ in timing and in nothing
+ * else, so they must not differ on screen.
+ */
+export const ALREADY_HOSTED = "Somebody else already hosts that event.";
+
+const ALREADY_HOSTED_FIELD =
+  "A host is one grant per event. Create this applicant an event of their own.";
+
+/** A fresh copy of the whole refusal, so the two paths cannot drift apart. */
+function alreadyHosted(): {
+  ok: false;
+  error: string;
+  errors: Record<string, string>;
+} {
+  return {
+    ok: false,
+    error: ALREADY_HOSTED,
+    errors: { eventId: ALREADY_HOSTED_FIELD },
+  };
+}
+
+/**
+ * Was this Postgres refusing the write because of that index?
  *
  * drizzle re-throws with a generic "Failed query" and hangs the real error off
  * `cause`, so the index name is looked for down the whole chain rather than on
  * the error it was handed.
+ *
+ * One walk for both rules this module leans on the database for — the one
+ * pending application per member and the one host per event. The chain is the
+ * fiddly part and there is no reason to have two copies of it.
  */
-function isSecondPending(error: unknown): boolean {
+function rejectedBy(error: unknown, index: string): boolean {
   let current: unknown = error;
   for (let depth = 0; current && depth < 10; depth += 1) {
     const step = current as { message?: string; constraint?: string; cause?: unknown };
     const text = `${step.message ?? ""} ${step.constraint ?? ""}`;
-    if (text.includes("host_applications_one_pending_per_user")) return true;
+    if (text.includes(index)) return true;
     current = step.cause;
   }
   return false;
@@ -293,7 +324,9 @@ export async function applyToHost(
 
     return { ok: true, data: { id: row.id } };
   } catch (error) {
-    if (isSecondPending(error)) return { ok: false, error: ALREADY_PENDING };
+    if (rejectedBy(error, "host_applications_one_pending_per_user")) {
+      return { ok: false, error: ALREADY_PENDING };
+    }
     throw error;
   }
 }
@@ -469,6 +502,17 @@ export async function declineHostApplication(
  * admin's screen, so without it an approval could be aimed at an event that is
  * already somebody's, and the person holding it would silently gain a co-host
  * with full rights over their evening.
+ *
+ * ## And the read is not enough on its own
+ *
+ * It is still a read-then-insert. Two admins approving two different
+ * applications onto the same event in the same instant both pass that read —
+ * each transaction sees the event unheld — and both inserts land. The rule is
+ * made true by `event_hosts_one_host_per_event`, the unique index on
+ * `event_hosts.event_id` (drizzle/0025): the second insert is refused by
+ * Postgres, the transaction holding it rolls back whole, and the rejection is
+ * turned back into {@link ALREADY_HOSTED} below — the same sentence the read
+ * produces. Exactly as `applyToHost` does for the one-pending index.
  */
 export async function approveHostApplication(
   id: string,
@@ -484,6 +528,27 @@ export async function approveHostApplication(
     };
   }
 
+  try {
+    return await approveInside(id, decidedByUserId, input, database);
+  } catch (error) {
+    /*
+     * The race, arriving as a rejected insert. Everything the transaction did
+     * is already rolled back — the insert is its first write, so there is
+     * nothing of this approval left anywhere, and the application is still
+     * pending for whoever looks at it next.
+     */
+    if (rejectedBy(error, "event_hosts_one_host_per_event")) return alreadyHosted();
+    throw error;
+  }
+}
+
+/** The transaction {@link approveHostApplication} wraps. */
+function approveInside(
+  id: string,
+  decidedByUserId: string,
+  input: { note?: string | null; eventId: string },
+  database: Database
+): Promise<HostResult<{ eventId: string }>> {
   return database.transaction(async (tx) => {
     const [application] = await tx
       .select({ userId: hostApplications.userId, status: hostApplications.status })
@@ -511,16 +576,7 @@ export async function approveHostApplication(
       .select({ userId: eventHosts.userId })
       .from(eventHosts)
       .where(eq(eventHosts.eventId, input.eventId));
-    if (held && held.userId !== application.userId) {
-      return {
-        ok: false as const,
-        error: "Somebody else already hosts that event.",
-        errors: {
-          eventId:
-            "A host is one grant per event. Create this applicant an event of their own.",
-        },
-      };
-    }
+    if (held && held.userId !== application.userId) return alreadyHosted();
 
     await tx
       .insert(eventHosts)
@@ -529,7 +585,15 @@ export async function approveHostApplication(
         userId: application.userId,
         grantedByUserId: decidedByUserId,
       })
-      .onConflictDoNothing();
+      /*
+       * Targeted at the primary key, and that is load-bearing. A bare
+       * `DO NOTHING` forgives *every* unique violation on the table, which
+       * since drizzle/0025 includes `event_hosts_one_host_per_event` — so the
+       * approval would be written against an event held by somebody else and
+       * nobody would ever be told. What this is for is the same grant written
+       * twice (`held.userId === application.userId` above), which is a no-op.
+       */
+      .onConflictDoNothing({ target: [eventHosts.eventId, eventHosts.userId] });
 
     await tx
       .update(hostApplications)

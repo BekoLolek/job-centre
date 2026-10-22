@@ -58,13 +58,27 @@ export async function makeUser(
  * export had no caller outside tests, and a permission nothing in the site can
  * reach is a permission nobody has thought about. A fixture is what the tests
  * wanted from them, so the fixture lives here with the other fixtures.
+ *
+ * ## Why the conflict is targeted
+ *
+ * At the primary key, which is what `approveHostApplication` does and for the
+ * same reason (R-86 / UC-21 5a). A bare `DO NOTHING` forgives *every* unique
+ * violation on the table, and since drizzle/0025 that includes
+ * `event_hosts_one_host_per_event` — so a fixture asking for a second host on
+ * one event would silently get one row and no error, which is exactly the state
+ * the index exists to refuse. A fixture that hides the rule it is set up under
+ * is worse than one that fails. What stays forgiven is the same grant written
+ * twice, which is the pair the key is on and a real no-op.
  */
 export async function makeHost(
   db: Database,
   eventId: string,
   userId: string
 ): Promise<void> {
-  await db.insert(eventHosts).values({ eventId, userId }).onConflictDoNothing();
+  await db
+    .insert(eventHosts)
+    .values({ eventId, userId })
+    .onConflictDoNothing({ target: [eventHosts.eventId, eventHosts.userId] });
 }
 
 /**

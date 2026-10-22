@@ -203,7 +203,7 @@ export type AnsweredQuestionView = EventQuestionView & {
   value: ProfileValue;
 };
 
-export type EventSummary = EventRow & {
+export type EventSummary = DatedEvent & {
   seats: CapacityState;
   /** Whether applications are open *now*, and why not when they are not. */
   applicationsState: ApplicationsState;
@@ -288,7 +288,7 @@ export type OutstandingAnswer = {
  * of a habit.
  */
 export type MyApplicationView = Omit<ApplicationView, "note"> & {
-  event: EventRow;
+  event: DatedEvent;
   seats: CapacityState;
   /**
    * What this application still needs from them — empty for the great majority
@@ -398,20 +398,31 @@ async function readDays(database: Database, eventId: string): Promise<EventDay[]
 
 /**
  * The event row as the rest of the site reads it: **its dates are its days'**
- * (R-24, UC-11 2).
+ * (R-24 / UC-11 2).
  *
- * Every read in this module goes through here, which is what makes "stop
- * reading `starts_at`" true rather than aspirational — the column is still on
- * the row until the follow-up migration drops it, and overwriting it on the way
- * out is what stops a stale copy leaking into a countdown, a listing order or
- * the answer deadline. `eventDates` is where the arithmetic lives.
+ * `events` has no `starts_at`/`ends_at` to read — drizzle/0026 dropped both —
+ * so this is not a row with two columns corrected on the way past, which is
+ * what the `withDates`/`withKnownDates` pair it replaces used to be. It is a
+ * row plus an answer the row cannot hold, and the `&` is the proof: a plain
+ * `EventRow` will not typecheck where a `DatedEvent` is wanted, so a read that
+ * forgets the days is a compile error rather than an event with no date on its
+ * card.
+ *
+ * `eventDates` in events-policy.ts is where the arithmetic lives, and
+ * {@link readDatesFor} is how a list of events gets it in one query.
  */
-function withDates(event: EventRow, days: readonly DayView[]): EventRow {
-  return { ...event, ...eventDates(days) };
-}
+export type DatedEvent = EventRow & EventDates;
 
-/** The same, for a row whose days have already been reduced to two instants. */
-function withKnownDates(event: EventRow, dates: EventDates): EventRow {
+/** No dated day, so no dates — the answer for an event nobody has scheduled. */
+const NO_DATES = { startsAt: null, endsAt: null } satisfies EventDates;
+
+/**
+ * Put the dates its days give it onto an event row.
+ *
+ * Every read in this module that hands an event out goes through here, which is
+ * what makes "an event's dates are its days'" true rather than aspirational.
+ */
+function dated(event: EventRow, dates: EventDates): DatedEvent {
   return { ...event, ...dates };
 }
 
@@ -432,9 +443,9 @@ function withKnownDates(event: EventRow, dates: EventDates): EventRow {
  * drift this module's `eventDates` exists to prevent. A one-event call is just
  * a one-row map rather than a special case worth its own function.
  *
- * {@link withDates} and {@link withKnownDates} stay private: they overwrite an
- * `EventRow`'s own columns, and these callers hold column projections, a row
- * they must not write dates onto, or no row at all.
+ * {@link DatedEvent}'s own constructor stays private, because these callers
+ * hold column projections or no row at all, and nothing but a whole `EventRow`
+ * can be made into one.
  */
 export async function readDatesFor(
   database: Database,
@@ -471,14 +482,13 @@ export async function readDatesFor(
  * `changedSetupFields` — and *is this an event anybody could have applied to*,
  * which is `status`.
  *
- * **Exactly those columns, and deliberately not the two dead ones.** The
- * version of this that returned a whole `EventRow` had to read `event_days` as
- * well, purely to overwrite `starts_at`/`ends_at` with the derived answer
- * (`withDates`) so that nobody could read the stale column off it — a second
+ * **Exactly those columns, and no dates.** The version of this that returned a
+ * whole `EventRow` had to read `event_days` as well, purely so that the two
+ * columns it carried could be overwritten with the derived answer — a second
  * round trip on every setup save, for dates none of these callers looks at
  * (`TOLD_ABOUT` has no dates in it, because a day moving is the Days tab's
- * notification to send). Projecting the columns instead is one query and makes
- * the stale read impossible rather than merely overwritten.
+ * notification to send). Those columns are gone (drizzle/0026) and this
+ * projection never wanted them.
  *
  * A caller that wants the dates wants {@link getEventById} (the game, the days
  * and the questions too) or {@link readDatesFor} (the dates alone).
@@ -1361,7 +1371,7 @@ async function webAddressTaken(
 export async function createEvent(
   input: CreateEventInput,
   database: Database = defaultDb
-): Promise<EventResult<EventRow>> {
+): Promise<EventResult<DatedEvent>> {
   const title = cleanText(input.title, TITLE_MAX);
   if (!title) return fail("Give the event a title.");
 
@@ -1436,10 +1446,12 @@ export async function createEvent(
   if (days.length > 0) {
     const written = await setEventDays(created.id, days, database);
     if (!written.ok) return fail(written.error, written.errors);
-    return withData(withDates(created, written.data.days));
+    return withData(dated(created, eventDates(written.data.days)));
   }
 
-  return withData(created);
+  // No days asked for, so no dates: an event can be created and scheduled
+  // later, and `event_days.starts_at` is nullable for exactly that (R-24).
+  return withData(dated(created, NO_DATES));
 }
 
 /** Turn a template's `profileFieldKey` references into real field ids. */
@@ -1523,7 +1535,7 @@ export async function updateEvent(
   eventId: string,
   patch: UpdateEventInput,
   database: Database = defaultDb
-): Promise<EventResult<EventRow>> {
+): Promise<EventResult<DatedEvent>> {
   const current = await readEvent(database, eventId);
   if (!current) return fail("That event no longer exists.");
   if (patch.from !== undefined && patch.from !== current.status) return fail(STATUS_CHANGED);
@@ -1644,7 +1656,7 @@ export async function updateEvent(
     .returning();
 
   if (!updated) return fail(STATUS_CHANGED);
-  return withData(withKnownDates(updated, dates));
+  return withData(dated(updated, dates));
 }
 
 /**
@@ -1657,11 +1669,11 @@ export async function updateEvent(
 export async function publishEvent(
   eventId: string,
   database: Database = defaultDb
-): Promise<EventResult<EventRow>> {
+): Promise<EventResult<DatedEvent>> {
   const current = await readEvent(database, eventId);
   if (!current) return fail("That event no longer exists.");
   const days = await readDays(database, eventId);
-  if (current.status === "published") return withData(withDates(current, days));
+  if (current.status === "published") return withData(dated(current, eventDates(days)));
 
   if (!canTransition(current.status, "published")) {
     return fail(`A ${current.status} event cannot be published.`);
@@ -1676,7 +1688,7 @@ export async function publishEvent(
     .returning();
 
   if (!updated) return fail(STATUS_CHANGED);
-  return withData(withDates(updated, days));
+  return withData(dated(updated, eventDates(days)));
 }
 
 /* ------------------------------------------------------------------ */
@@ -2522,7 +2534,7 @@ export async function applyToEvent(
     // already started is one of the reasons to refuse (`applicationsOpen`), and
     // that answer is its first day's (R-24).
     const days = await readDays(tx, eventId);
-    const event = withDates(row, days);
+    const event = dated(row, eventDates(days));
 
     const [member] = await tx.select().from(users).where(eq(users.id, userId)).limit(1);
     if (!member) return fail("We do not have an account for you.");
@@ -2886,7 +2898,7 @@ export async function editApplicationAnswers(
     if (locked) return fail(locked);
 
     const days = await readDays(tx, eventId);
-    const event = withDates(row, days);
+    const event = dated(row, eventDates(days));
 
     const existing = await readApplications(tx, eventId);
     const mine = existing.find((candidate) => candidate.userId === userId) ?? null;
@@ -3341,7 +3353,7 @@ export async function setConfirmation(
     // day's (R-24) — so a manager who moves the first day has moved the
     // deadline, and this reads the days rather than a column that would still
     // be describing the old date (`confirmationDeadline`).
-    const event = withDates(row, await readDays(tx, application.eventId));
+    const event = dated(row, eventDates(await readDays(tx, application.eventId)));
 
     if (application.status === "declined" || application.status === "withdrawn") {
       return fail("That application is not active, so there is nothing to confirm.");
@@ -3483,12 +3495,11 @@ export async function listEvents(
     database,
     rows.map((event) => event.id)
   );
-  const nowhere = { startsAt: null, endsAt: null } satisfies EventDates;
 
   const summaries = rows
     .map((event) =>
       summarise(
-        withKnownDates(event, dates.get(event.id) ?? nowhere),
+        dated(event, dates.get(event.id) ?? NO_DATES),
         byEvent.get(event.id) ?? [],
         now
       )
@@ -3497,7 +3508,7 @@ export async function listEvents(
 
   if (options.upcoming === undefined) return summaries;
 
-  const isPast = (event: EventRow): boolean => {
+  const isPast = (event: DatedEvent): boolean => {
     if (event.status === "complete" || event.status === "cancelled") return true;
     const end = event.endsAt ?? event.startsAt;
     return end !== null && end.getTime() < now.getTime();
@@ -3595,12 +3606,12 @@ export async function countApplicationsByStatus(
 /**
  * One event as a list renders it.
  *
- * `event` is expected to carry its derived dates already (`withDates`), because
- * whether applications are open depends on whether the event has started
- * (`applicationsOpen`) and that is the first day's answer (R-24).
+ * A {@link DatedEvent} rather than an `EventRow`, because whether applications
+ * are open depends on whether the event has started (`applicationsOpen`) and
+ * that is the first day's answer (R-24) — which the row itself cannot give.
  */
 function summarise(
-  event: EventRow,
+  event: DatedEvent,
   rows: ReadonlyArray<{ status: ApplicationStatus }>,
   now: Date
 ): EventSummary {
@@ -3632,7 +3643,7 @@ async function detail(
     // The days are read here anyway, so this is where the event's own dates
     // come from (R-24): the page's countdown, its date range and its list of
     // days are then three readings of one answer (UC-11 2).
-    ...summarise(withDates(event, days), rows, now),
+    ...summarise(dated(event, eventDates(days)), rows, now),
     game,
     rankLadder: [...ladder],
     days,
@@ -3931,7 +3942,7 @@ export async function getMyApplications(
   const eventById = new Map(
     eventRows.map((event) => [
       event.id,
-      withKnownDates(event, dates.get(event.id) ?? { startsAt: null, endsAt: null }),
+      dated(event, dates.get(event.id) ?? NO_DATES),
     ])
   );
   const byEvent = new Map<string, Array<{ status: ApplicationStatus }>>();

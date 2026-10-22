@@ -106,6 +106,30 @@ function timingFieldsFrom(timing: FormatTiming, modes: string[]): TimingFields {
   };
 }
 
+/**
+ * **The day overrides the planner may actually be given** (UC-18 E4, R-156).
+ *
+ * A manager's "the bracket is on Sunday" is one entry per block, in block
+ * order, so it only means anything against the plan it was set for. Change the
+ * concurrency, the format or the teams and there are a different number of
+ * blocks: entry 3 now names a different block, and `assignDays` carries the
+ * last given day forward over the tail, which is a running order nobody chose.
+ *
+ * It used to be ignored in one place and obeyed in two. `fields()` sent `null`
+ * to the server, the screen said "they are being ignored until you set them
+ * again" — and the preview underneath both was still built *with* them, so the
+ * blocks on screen were not the blocks the fill would write. One function, read
+ * by the preview and the write alike, is the fix: there is no third answer for
+ * them to disagree about.
+ */
+export function usableBlockDays(
+  blockDays: number[] | null,
+  blockCount: number
+): number[] | null {
+  if (!blockDays || blockDays.length === 0) return null;
+  return blockDays.length === blockCount ? blockDays : null;
+}
+
 function timingFrom(fields: TimingFields): FormatTiming {
   return normaliseFormatTiming({
     modeMinutes: Object.fromEntries(
@@ -176,6 +200,27 @@ export default function ScheduleTab({
 
   const numeric = timingFrom(timing);
 
+  /*
+   * How many blocks there are, asked of the balanced plan.
+   *
+   * `planBlocks` cuts the phases into blocks first and assigns days to them
+   * afterwards, so the count does not depend on the overrides — which is what
+   * lets the count decide whether the overrides still fit without the question
+   * being circular.
+   */
+  const blockCount = useMemo(
+    () =>
+      planBlocks(specs, {
+        timing: numeric,
+        concurrentLobbies: lobbies,
+        days,
+        blockDays: null,
+      }).length,
+    [specs, numeric, lobbies, days]
+  );
+  const overrides = usableBlockDays(blockDays, blockCount);
+  const staleOverrides = blockDays !== null && blockDays.length > 0 && overrides === null;
+
   // The planner itself, called on what is typed. Nothing here re-implements it.
   const blocks = useMemo(
     () =>
@@ -183,9 +228,9 @@ export default function ScheduleTab({
         timing: numeric,
         concurrentLobbies: lobbies,
         days,
-        blockDays: blockDays && blockDays.length === 0 ? null : blockDays,
+        blockDays: overrides,
       }),
-    [specs, numeric, lobbies, days, blockDays]
+    [specs, numeric, lobbies, days, overrides]
   );
 
   const preview = useMemo(
@@ -211,14 +256,13 @@ export default function ScheduleTab({
   const generated = format.stages
     .flatMap((stage) => stage.matches)
     .filter((match) => matchIds[match.slot]).length;
-  const staleOverrides = blockDays !== null && blockDays.length !== blocks.length;
   const anyStart = starts.slice(0, days).some((value) => value.trim() !== "");
 
   const fields = (): ScheduleSettingsFields => ({
     timing: numeric,
     concurrentLobbies: lobbies,
     days,
-    blockDays: staleOverrides ? null : blockDays,
+    blockDays: overrides,
   });
 
   const save = async () => {
@@ -512,8 +556,13 @@ export default function ScheduleTab({
           }}>
             Balance the days automatically
           </Button>
+          {/*
+            `overrides`, not `blockDays`: a set of choices the plan has
+            outgrown is not being followed, so a line saying it is would be the
+            third account of the same fact and the only one that is wrong.
+          */}
           <span className="text-12 text-muted">
-            {blockDays === null
+            {overrides === null
               ? `Blocks are split into ${plural(days, "day")} so the longest day is as short as it can be — they cannot be reordered, so the only choice is where the cuts go.`
               : "Following your overrides. A block with no override stays with the one before it."}
           </span>

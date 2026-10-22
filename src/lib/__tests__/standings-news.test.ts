@@ -5,6 +5,7 @@ import {
   type Database,
   applications,
   championships,
+  eventDays,
   events,
   teamMembers,
   teams,
@@ -97,13 +98,20 @@ async function season(status: ChampionshipStatusValue = "published"): Promise<st
   return made.data.id;
 }
 
-/** A counting event on a season, played at the given hour so the order is fixed. */
+/**
+ * A counting event on a season, played at the given hour so the order is fixed.
+ *
+ * The hour goes on an `event_days` row, because that is where an event's dates
+ * live (R-24) — `events` has no `starts_at` to write since drizzle/0026 dropped
+ * it, and a fixture that wrote one fixed no order at all.
+ */
 async function night(seasonId: string, title: string, startsAt: Date): Promise<string> {
   counter += 1;
   const [row] = await db
     .insert(events)
-    .values({ slug: `news-${counter}`, title, status: "complete", startsAt })
+    .values({ slug: `news-${counter}`, title, status: "complete" })
     .returning({ id: events.id });
+  await db.insert(eventDays).values({ eventId: row.id, dayIndex: 0, startsAt });
   const added = await addCountingEvent(seasonId, row.id, db);
   if (!added.ok) throw new Error(added.error);
   return row.id;

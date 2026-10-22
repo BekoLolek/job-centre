@@ -1121,13 +1121,10 @@ describe("loadAdminTemplates", () => {
     const undated = expectOk(await createEvent({ title: "Undated source" }, db));
 
     /*
-     * The column the screen used to read. Nothing writes it since the dates
-     * became derived (R-24), so asserting it is empty is what makes the date
-     * below provably the days' answer rather than the column's.
+     * The date below is the days' answer and can be nothing else: the column
+     * the screen used to read was dropped by drizzle/0026, which
+     * `migrations.test.ts` proves.
      */
-    const rows = await db.select().from(events);
-    expect(rows.map((row) => row.startsAt)).toEqual([null, null]);
-
     const view = await loadAdminTemplates(db);
 
     expect(view.sources.find((row) => row.id === dated.id)?.startsAt).toEqual(

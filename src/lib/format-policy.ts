@@ -11,10 +11,16 @@
  *
  *  | Hardcoded today | Here |
  *  | --- | --- |
- *  | Bo1 group games, Bo3 bracket, Bo5 grand final | `bestOf` + `bestOfByRound` + `bestOfBySlot` |
+ *  | Bo1 group games, Bo3 bracket, Bo5 grand final | `bestOf` + `bestOfByBracket` + `bestOfBySlot` |
  *  | `[convoy, convoy, domination]` | `modeSequence`, one entry per series length |
  *  | "Lower final · bronze" | `bronze` |
  *  | No bracket reset | `bracketReset`, defaulting **off** per §14 |
+ *
+ * `bestOfByBracket` and not `bestOfByRound` in that first row: round numbers
+ * restart in each half, so no round number can tell a group game from a bracket
+ * game — which is what `StageConfig`'s field docs and `bestOfFor`'s precedence
+ * say, and why the round map is the one of the three that cannot express the
+ * row. `DEFAULT_STAGE_CONFIG` below is that row written out.
  *
  * `modeSequence` maps a *series length* to an ordered list of mode names, and
  * the names are plain strings rather than an enum on purpose: the modes belong
@@ -167,7 +173,11 @@ export type StageConfig = {
    * round numbers restart in each half, so they cannot separate them.
    */
   bestOfByBracket: Record<string, SeriesLength>;
-  /** Keyed by round number as a string — "everything Bo3 but round 3 is Bo5". */
+  /**
+   * Keyed by round number as a string — "everything Bo3 but round 3 is Bo5".
+   * Read *after* `bestOfByBracket`, because a round number cannot tell two
+   * halves apart and a half can (UC-18 E2 — see `bestOfFor`).
+   */
   bestOfByRound: Record<string, SeriesLength>;
   /** Keyed by slot — "the grand final is Bo5". Beats both maps above. */
   bestOfBySlot: Record<string, SeriesLength>;
@@ -284,6 +294,24 @@ function modeName(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const clean = value.trim().toLowerCase().replace(/\s+/g, "_").slice(0, 40);
   return clean || null;
+}
+
+/**
+ * **One mode name, spelled the one way** — `"Payload Escort"` →
+ * `payload_escort` (R-152, R-153).
+ *
+ * The same function `modeSequence` is read through, exported because
+ * `match_games.mode` is the *other* half of the same vocabulary: the plan is
+ * what the Format tab typed and the record is what the Results card typed, and
+ * a board that prints "Convoy" on one card and "convoy" on the next is a board
+ * with two modes of one name. It is also what keeps a recorded mode comparable
+ * with the planned one, which `format.ts`'s shape lines depend on.
+ *
+ * Empty for anything that is not a name, so a caller can tell "no mode" from a
+ * mode called nothing.
+ */
+export function normaliseModeName(value: unknown): string {
+  return modeName(value) ?? "";
 }
 
 function modeSequences(value: unknown): Record<string, string[]> {
@@ -517,9 +545,26 @@ export function teamCountRefusal(
 }
 
 /**
- * The series length for one match: the slot wins, then the round, then the
- * half, then the stage default. That ordering is what makes "everything Bo3,
+ * The series length for one match: the slot wins, then the half, then the
+ * round, then the stage default. That ordering is what makes "everything Bo3,
  * grand final Bo5" a one-field config rather than a branch.
+ *
+ * ## The half beats the round, and that is UC-18 E2 rather than a preference
+ *
+ * *"Manager sets a series length for one bracket or one match — it wins over
+ * the stage and round lengths."* The order used to read slot, round, half, and
+ * the two disagree about exactly one match: one in a half that has its own
+ * length, in a round number that also has one.
+ *
+ * It matters because **round numbers restart in each half** — see
+ * `bestOfByBracket` — so a round key is not the narrower setting it looks like.
+ * "Round 1" in a group stage names the first circle round of every group *and*
+ * the first round of the playoff bracket, while `rr` names the table games and
+ * nothing else. Under the old order, a manager who set "round 1 Bo5" to
+ * lengthen the opening bracket tie silently lengthened every group's first
+ * round too, straight through the `bestOfByBracket: { rr: 1 }` that
+ * `defaultStageConfig` puts on a group stage to keep table games Bo1. The half
+ * is the setting that can separate them, so the half is the setting that wins.
  */
 export function bestOfFor(
   config: StageConfig,
@@ -528,11 +573,11 @@ export function bestOfFor(
   if (where.slot && config.bestOfBySlot[where.slot] !== undefined) {
     return config.bestOfBySlot[where.slot];
   }
-  if (where.round !== undefined && config.bestOfByRound[String(where.round)] !== undefined) {
-    return config.bestOfByRound[String(where.round)];
-  }
   if (where.bracket && config.bestOfByBracket[where.bracket] !== undefined) {
     return config.bestOfByBracket[where.bracket];
+  }
+  if (where.round !== undefined && config.bestOfByRound[String(where.round)] !== undefined) {
+    return config.bestOfByRound[String(where.round)];
   }
   return config.bestOf;
 }
@@ -636,6 +681,175 @@ export function mapChooserFor(firstSideChoice: unknown, gameIndex: number): Matc
  */
 export function tossForFirstSideChoice(random: () => number = Math.random): MatchSlot {
   return random() < 0.5 ? "a" : "b";
+}
+
+/* ------------------------------------------------------------------ */
+/* What is not a result (R-78 / UC-19 pre1, 4a, 5a)                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Recording a result is the one write on this site that can destroy a record of
+ * something that actually happened, so every one of these refusals is a
+ * sentence rather than a silent correction.
+ *
+ * That is the change of mind. The old `score()` in `./format.ts` clamped: a
+ * negative number, a decimal, a word and a number in the millions all resolved
+ * to "whatever is stored now", the write reported success, and the manager was
+ * told their scoreline was saved while a different one went to the database.
+ * A value nobody can read is not a smaller value — it is a question, and the
+ * only honest answer to a question about a result is to refuse and say why
+ * (UC-19 4a: "System rejects with the reason; nothing stored").
+ *
+ * All of it is pure, and none of it takes a database handle, for the reason the
+ * rest of this file does not: the refusals are the specification, so they are
+ * asserted directly rather than through a transaction.
+ */
+
+/** The ceiling on one game's score. Far above any real scoreline, and finite. */
+export const SCORE_MAX = 999;
+
+/** A number, or null for anything that is not one. `""` and `null` are not. */
+function numeric(raw: unknown): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/**
+ * **Why one score is not a score, or null when it is one** (UC-19 4a).
+ *
+ * `undefined` is not a refusal: an absent score leaves the stored one alone,
+ * which is what lets a patch set a referee without restating the scoreline.
+ *
+ * `gameNumber` is 1-based, as the card prints it — "Game 2" is what the manager
+ * is looking at, and `index: 1` is not.
+ */
+export function scoreRefusal(raw: unknown, gameNumber: number): string | null {
+  if (raw === undefined) return null;
+  const parsed = numeric(raw);
+  if (parsed === null) return `Game ${gameNumber}'s score is not a number.`;
+  if (!Number.isInteger(parsed)) {
+    return `Game ${gameNumber}'s score has to be a whole number — ${parsed} is not.`;
+  }
+  if (parsed < 0) return `Game ${gameNumber} cannot have a negative score.`;
+  if (parsed > SCORE_MAX) {
+    return `Game ${gameNumber}'s score is above ${SCORE_MAX}, which is not a scoreline.`;
+  }
+  return null;
+}
+
+/** A score that has already been through `scoreRefusal`. */
+export function readScore(raw: unknown, current: number): number {
+  const parsed = numeric(raw);
+  return parsed === null ? current : parsed;
+}
+
+/** One game of a series, as the shape rules below need it. */
+export type SeriesGame = { played: boolean; scoreA: number; scoreB: number };
+
+/**
+ * **Why this series is not a series, or null when it is one** (UC-19 4a, 5a).
+ *
+ * Asked of the *whole* series as it will stand after the write, never of the
+ * patch: "game 4 was played after the series was already won" is a fact about
+ * games 1 to 4 together, and a manager correcting game 2 of a Bo5 sends one
+ * game and changes which game decided it. A rule applied to the patch alone is
+ * a rule that two managers saving different halves of the same card can walk
+ * straight through.
+ *
+ * Three shapes, and each of them means something different went wrong:
+ *
+ *  - **A hole.** Game 3 has a result and game 2 does not. A series is played in
+ *    order, so this is a score typed into the wrong row — and the scoreline it
+ *    produces is right by accident at best.
+ *  - **A level single map in a knockout.** One map, no further map, and nobody
+ *    ahead: there is nothing for the series to resolve into. A drawn map inside
+ *    a longer series is a real result, and a drawn *table* game is a finished
+ *    match worth a point each (`DEFAULT_POINTS.draw`) — neither is this.
+ *  - **A game beyond the decider, in a knockout.** The series was won in game 3
+ *    and game 4 has a result, so the record is of a series that was over —
+ *    nobody played that map, because there was nothing left to play for. UC-19
+ *    5a from the other side: a map beyond the series.
+ *
+ *    A *table* series is deliberately not held to this. Every map played there
+ *    counts towards the table — `score_for` is one of the tiebreakers — so a
+ *    dead rubber after the series is mathematically won is a real result
+ *    somebody recorded, and refusing it would delete it.
+ *
+ * `elimination` is the resolver's own flag, not a second opinion about it: a
+ * table game and a knockout series differ on exactly the second and third
+ * rules, and which one a slot is is decided by `./bracket`.
+ */
+export function seriesRefusal(series: {
+  bestOf: number;
+  elimination: boolean;
+  games: readonly SeriesGame[];
+}): string | null {
+  const games = series.games;
+  const lastPlayed = games.reduce((last, game, index) => (game.played ? index : last), -1);
+  if (lastPlayed < 0) return null;
+
+  const hole = games.findIndex((game, index) => index < lastPlayed && !game.played);
+  if (hole >= 0) {
+    return `Game ${hole + 1} has no result, so game ${lastPlayed + 1} cannot have one — a series is played in order.`;
+  }
+
+  if (series.elimination && series.bestOf <= 1) {
+    const only = games[0];
+    if (only?.played && only.scoreA === only.scoreB) {
+      return "A single map cannot end level — one of the two teams has to advance. Record the map that was played, or clear the series and play it again.";
+    }
+  }
+
+  if (!series.elimination) return null;
+
+  const target = seriesTarget(series.bestOf);
+  let a = 0;
+  let b = 0;
+  for (const [index, game] of games.entries()) {
+    if (a >= target || b >= target) {
+      if (game.played) {
+        return `The series was already won in game ${index}, so game ${index + 1} cannot have been played.`;
+      }
+      continue;
+    }
+    if (!game.played) continue;
+    if (game.scoreA > game.scoreB) a += 1;
+    else if (game.scoreB > game.scoreA) b += 1;
+  }
+
+  return null;
+}
+
+/**
+ * **Why this match cannot have a result yet, or null when it can**
+ * (UC-19 precondition 1).
+ *
+ * A bracket slot says where its teams come from rather than which teams they
+ * are, so "Upper final" exists, is scheduled and has five empty game rows long
+ * before anybody can play it. A score against it is a score against nobody:
+ * whichever teams arrive later inherit a scoreline they did not play, and the
+ * slot above inherits a winner chosen by a bug.
+ *
+ * It names what the match is waiting on rather than saying "unresolved",
+ * because the placeholder is already the thing the board prints — "Upper semi 1
+ * winner" is both the refusal and the instruction.
+ */
+export function unresolvedSlotRefusal(match: {
+  teamAId: string | null;
+  teamBId: string | null;
+  nameA: string;
+  nameB: string;
+}): string | null {
+  const waiting = [
+    match.teamAId ? null : match.nameA,
+    match.teamBId ? null : match.nameB,
+  ].filter((name): name is string => typeof name === "string");
+  if (waiting.length === 0) return null;
+  return `This match is still waiting on ${waiting.join(" and ")}, so it cannot have a result yet.`;
 }
 
 /* ------------------------------------------------------------------ */

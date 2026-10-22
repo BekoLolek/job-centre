@@ -41,7 +41,13 @@ import {
   voidLot,
 } from "@/lib/draft";
 import { MAX_TEAMS, MIN_TEAMS, SPIN_DURATION_MS } from "@/lib/draft-policy";
-import { applyToEvent, createEvent, publishEvent, setApplicationStatus } from "@/lib/events";
+import {
+  applyToEvent,
+  createEvent,
+  publishEvent,
+  setApplicationStatus,
+  withdrawApplication,
+} from "@/lib/events";
 
 /**
  * The draft against real Postgres.
@@ -189,6 +195,35 @@ describe("setTeams", () => {
 
     const twice = await setTeams(fixture.eventId, [{ name: "Alpha" }, { name: "alpha" }], db);
     expect(twice.ok === false && twice.errors?.["new-1"]).toMatch(/share a name/);
+  });
+
+  it("refuses a seed that is not a rank, and keeps the duplicate it allows", async () => {
+    const fixture = await seededEvent(0);
+
+    // `seedOrderFrom` sorts on the number as typed, so each of these would rank
+    // ahead of, or between, the seeds a manager meant (R-160 / UC-18 E5).
+    for (const [index, seed] of [0, -3, 1.5].entries()) {
+      const result = await setTeams(fixture.eventId, [{ name: `Team ${index}`, seed }], db);
+      expect(result.ok).toBe(false);
+      expect(result.ok === false && result.errors?.["new-0"]).toMatch(
+        /whole number, 1 or more/
+      );
+    }
+
+    // And the one this deliberately does not refuse: a half-typed seeding, with
+    // a duplicate and a blank in it, still saves.
+    const written = unwrap(
+      await setTeams(
+        fixture.eventId,
+        [
+          { name: "Alpha", seed: 1 },
+          { name: "Bravo", seed: 1 },
+          { name: "Charlie", seed: null },
+        ],
+        db
+      )
+    );
+    expect(written.teams.map((team) => team.seed)).toEqual([1, 1, null]);
   });
 
   it("renames, reorders and swaps names without tripping the unique index", async () => {
@@ -2089,6 +2124,366 @@ describe("awardLot", () => {
     const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.members[4] }, db));
     const bid = await placeBid(lot.id, a, 10, {}, db);
     expect(bid.ok === false && bid.error).toMatch(/roster is full/);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* A pool entry whose seat the event has taken away                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The stale pool (R-61, R-62, R-66 / UC-15 outcome, UC-16 7).
+ *
+ * `setDraftPool` snapshots the accepted applicants and nothing invalidates
+ * that snapshot, so: accept somebody, pool them, then decline, waitlist or
+ * withdraw them, and their entry is still sitting there. These are the three
+ * ways a seat goes away and the two paths that used to act on the entry
+ * anyway — the wheel that puts them up, and the award that sells them.
+ *
+ * All three statuses are "not accepted" and only one of them is the member's
+ * own doing, so each is checked separately and against its own sentence: a
+ * single `/not accepted/` match would pass on a guard that had stopped being
+ * able to tell them apart.
+ */
+describe("a seat the event has taken away", () => {
+  /** The application row this member holds on this event. */
+  async function applicationOf(eventId: string, userId: string): Promise<string> {
+    const [row] = await db
+      .select({ id: applicationsTable.id })
+      .from(applicationsTable)
+      .where(
+        and(eq(applicationsTable.eventId, eventId), eq(applicationsTable.userId, userId))
+      )
+      .limit(1);
+    if (!row) throw new Error("fixture has no application for that member");
+    return row.id;
+  }
+
+  /**
+   * What the refusal has to call them.
+   *
+   * Thrown rather than defaulted on purpose: an empty string would make every
+   * `toContain(name)` below pass against any sentence at all, which is how a
+   * mutation escapes.
+   */
+  async function nameOf(userId: string): Promise<string> {
+    const [row] = await db
+      .select({ displayName: usersTable.displayName })
+      .from(usersTable)
+      .where(eq(usersTable.id, userId))
+      .limit(1);
+    const name = row?.displayName;
+    if (!name) throw new Error("fixture user has no display name to be named by");
+    return name;
+  }
+
+  async function statusOf(eventId: string, userId: string): Promise<string | undefined> {
+    const [row] = await db
+      .select({ status: applicationsTable.status })
+      .from(applicationsTable)
+      .where(
+        and(eq(applicationsTable.eventId, eventId), eq(applicationsTable.userId, userId))
+      )
+      .limit(1);
+    return row?.status;
+  }
+
+  async function poolRow(eventId: string, userId: string) {
+    const [row] = await db
+      .select()
+      .from(draftPoolEntries)
+      .where(and(eq(draftPoolEntries.eventId, eventId), eq(draftPoolEntries.userId, userId)))
+      .limit(1);
+    return row ?? null;
+  }
+
+  async function rosterRows(eventId: string, userId: string) {
+    return db
+      .select()
+      .from(teamMembers)
+      .where(and(eq(teamMembers.eventId, eventId), eq(teamMembers.userId, userId)));
+  }
+
+  type Standing = {
+    eventId: string;
+    /** The player who has been let go, and who the refusal must name. */
+    player: string;
+    name: string;
+    teams: { a: string; b: string };
+    /** Their lot, opened and bid on while they were still accepted. */
+    lotId: string;
+  };
+
+  /**
+   * Accepted, pooled, put up and bid on — and *then* let go.
+   *
+   * The lot is opened before the change, which is the only way to reach the
+   * award path at all now that `openLot` refuses a stale entry. It is also the
+   * sequence that loses the money in production: the room watched a legitimate
+   * lot open and the decision landed while the bidding was running.
+   */
+  async function pooledThenLetGo(
+    letGo: (eventId: string, player: string) => Promise<void>
+  ): Promise<Standing> {
+    const fixture = await seededEvent(3);
+    const teams = await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+
+    const player = fixture.members[2];
+    const lot = unwrap(await openLot(fixture.eventId, { userId: player }, db));
+    unwrap(await placeBid(lot.id, teams.a, 300, {}, db));
+
+    await letGo(fixture.eventId, player);
+
+    return {
+      eventId: fixture.eventId,
+      player,
+      name: await nameOf(player),
+      teams,
+      lotId: lot.id,
+    };
+  }
+
+  const decline = async (eventId: string, player: string) => {
+    unwrap(
+      await setApplicationStatus(await applicationOf(eventId, player), "declined", {}, db)
+    );
+  };
+  const waitlist = async (eventId: string, player: string) => {
+    unwrap(
+      await setApplicationStatus(await applicationOf(eventId, player), "waitlisted", {}, db)
+    );
+  };
+  const withdraw = async (eventId: string, player: string) => {
+    unwrap(await withdrawApplication(eventId, player, db));
+  };
+
+  /**
+   * Nothing of the award happened: no roster row, no money moved, the lot
+   * still open for the manager to settle another way — and the pool entry
+   * still exactly as the manager built it, because a decline does not reach
+   * into the pool and rewrite it.
+   */
+  async function expectNoSeatSold(standing: Standing, before: unknown): Promise<void> {
+    expect(await rosterRows(standing.eventId, standing.player)).toEqual([]);
+    expect(await balanceOf(standing.eventId, standing.teams.a)).toBe(1000);
+
+    const [lot] = await db.select().from(draftLots).where(eq(draftLots.id, standing.lotId));
+    expect(lot).toMatchObject({ status: "open", winnerTeamId: null, price: null });
+
+    expect(await poolRow(standing.eventId, standing.player)).toEqual(before);
+  }
+
+  it("refuses the award and names the player when they have been declined", async () => {
+    const standing = await pooledThenLetGo(decline);
+    const before = await poolRow(standing.eventId, standing.player);
+    expect(before).not.toBeNull();
+
+    const result = await awardLot(standing.lotId, standing.teams.a, {}, db);
+
+    expect(result.ok).toBe(false);
+    const error = result.ok === false ? result.error : "";
+    expect(error).toContain(standing.name);
+    expect(error).toMatch(/application has been declined/);
+    expect(error).toMatch(/no seat to sell/);
+    await expectNoSeatSold(standing, before);
+  });
+
+  it("refuses the award and names the player when they are back on the waitlist", async () => {
+    const standing = await pooledThenLetGo(waitlist);
+    const before = await poolRow(standing.eventId, standing.player);
+
+    const result = await awardLot(standing.lotId, standing.teams.a, {}, db);
+
+    expect(result.ok).toBe(false);
+    const error = result.ok === false ? result.error : "";
+    expect(error).toContain(standing.name);
+    expect(error).toMatch(/on the waitlist now/);
+    await expectNoSeatSold(standing, before);
+  });
+
+  it("refuses the award and names the player when they have withdrawn", async () => {
+    const standing = await pooledThenLetGo(withdraw);
+    const before = await poolRow(standing.eventId, standing.player);
+    expect(await statusOf(standing.eventId, standing.player)).toBe("withdrawn");
+
+    const result = await awardLot(standing.lotId, standing.teams.a, {}, db);
+
+    expect(result.ok).toBe(false);
+    const error = result.ok === false ? result.error : "";
+    expect(error).toContain(standing.name);
+    expect(error).toMatch(/has withdrawn from the event/);
+    await expectNoSeatSold(standing, before);
+  });
+
+  /*
+   * The window the console cannot see, pinned rather than raced
+   * (`committingAfter`, as the undo and the hand-placement races use it).
+   *
+   * The lot opened while they were accepted, so every read the console made is
+   * true of a moment that has passed. The decline then runs whole — read, write,
+   * commit — before `awardLot` opens its transaction, which is exactly the
+   * interleave a manager produces by deciding an application in one tab while
+   * the draft room sits open in another.
+   *
+   * There is no third possibility: `setApplicationStatus` takes the same event
+   * row lock this does, so a decision either commits ahead of the award, as
+   * here, or waits behind it. What this proves is that the read that decides
+   * comes *after* the lock rather than before it — a guard that read acceptance
+   * on the way in, or that trusted anything `openLot` established, would sell
+   * the seat.
+   */
+  it("refuses the award when the decline lands between the open and the award", async () => {
+    const fixture = await seededEvent(3);
+    const { a } = await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+
+    const player = fixture.members[2];
+    const lot = unwrap(await openLot(fixture.eventId, { userId: player }, db));
+    unwrap(await placeBid(lot.id, a, 300, {}, db));
+    const applicationId = await applicationOf(fixture.eventId, player);
+    const before = await poolRow(fixture.eventId, player);
+
+    const inTheGap = () => setApplicationStatus(applicationId, "declined", {}, db);
+    const result = await awardLot(lot.id, a, {}, committingAfter(inTheGap));
+
+    expect(result.ok).toBe(false);
+    const error = result.ok === false ? result.error : "";
+    expect(error).toContain(await nameOf(player));
+    expect(error).toMatch(/application has been declined/);
+
+    // The decline landed, and the award did not.
+    expect(await statusOf(fixture.eventId, player)).toBe("declined");
+    await expectNoSeatSold(
+      { eventId: fixture.eventId, player, name: "", teams: { a, b: a }, lotId: lot.id },
+      before
+    );
+  });
+
+  it("refuses to open a lot on a pooled player who is no longer accepted", async () => {
+    const fixture = await seededEvent(3);
+    await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+
+    const player = fixture.members[2];
+    await decline(fixture.eventId, player);
+    const before = await poolRow(fixture.eventId, player);
+    expect(before).not.toBeNull();
+
+    const result = await openLot(fixture.eventId, { userId: player }, db);
+
+    expect(result.ok).toBe(false);
+    const error = result.ok === false ? result.error : "";
+    expect(error).toContain(await nameOf(player));
+    expect(error).toMatch(/application has been declined/);
+    // Not "that player is not in that pool" — they are, and the manager can
+    // see them there.
+    expect(error).not.toMatch(/not in that pool/);
+    expect(error).toMatch(/take them out of the pool/);
+
+    // No lot was written, and the pool was not touched.
+    expect(await db.select().from(draftLots).where(eq(draftLots.eventId, fixture.eventId))).toEqual(
+      []
+    );
+    expect(await poolRow(fixture.eventId, player)).toEqual(before);
+  });
+
+  it("leaves them off the wheel, and calls the pool empty when they are all it holds", async () => {
+    const fixture = await seededEvent(4);
+    await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    await decline(fixture.eventId, fixture.members[2]);
+
+    // Two entries in the pool, one of them stale, so the wheel is offered one
+    // candidate — and it is the player who still has a seat.
+    const lengths: number[] = [];
+    const lot = unwrap(
+      await openLot(
+        fixture.eventId,
+        {
+          pick: (length) => {
+            lengths.push(length);
+            return 0;
+          },
+        },
+        db
+      )
+    );
+    expect(lengths).toEqual([1]);
+    expect(lot.playerUserId).toBe(fixture.members[3]);
+    expect(lot.spin?.pool).toEqual([fixture.members[3]]);
+
+    // And with nobody left in it but the declined player, the pool is empty
+    // rather than offering a lot that could not be awarded.
+    unwrap(await discardLot(lot.id, {}, db));
+    const empty = await openLot(fixture.eventId, {}, db);
+    expect(empty.ok === false && empty.error).toMatch(/pool is empty/);
+  });
+
+  it("keeps them out of the room's wheel while the pool editor still shows them", async () => {
+    const fixture = await seededEvent(4);
+    await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    await decline(fixture.eventId, fixture.members[2]);
+
+    // The room's read offers only the player who still has a seat...
+    const snapshot = await getDraftSnapshot(fixture.eventId, {}, db);
+    expect(snapshot?.pools.main.map((entry) => entry.userId)).toEqual([fixture.members[3]]);
+
+    // ...and the manager's own pool editor still shows the pool as they left
+    // it. Hiding the row from the person who put it there is the eager pruning
+    // this fix refuses: their next save would silently drop it.
+    const pool = await getDraftPool(fixture.eventId, db);
+    expect(pool.main.map((entry) => entry.userId)).toEqual([
+      fixture.members[2],
+      fixture.members[3],
+    ]);
+  });
+
+  it("stores nothing: the same entry awards again once they are accepted again", async () => {
+    const standing = await pooledThenLetGo(decline);
+    const before = await poolRow(standing.eventId, standing.player);
+
+    const refused = await awardLot(standing.lotId, standing.teams.a, {}, db);
+    expect(refused.ok).toBe(false);
+
+    // Accepted again on the Applicants tab — and nothing else. The pool entry
+    // is never written to, so if acceptance had been copied onto it this award
+    // would still be refused.
+    unwrap(
+      await setApplicationStatus(
+        await applicationOf(standing.eventId, standing.player),
+        "accepted",
+        {},
+        db
+      )
+    );
+    expect(await poolRow(standing.eventId, standing.player)).toEqual(before);
+
+    const awarded = unwrap(await awardLot(standing.lotId, standing.teams.a, {}, db));
+    expect(awarded.lot).toMatchObject({ status: "awarded", winnerTeamId: standing.teams.a });
+    expect(awarded.member).toMatchObject({ userId: standing.player, price: 300 });
+    expect(await balanceOf(standing.eventId, standing.teams.a)).toBe(700);
+  });
+
+  it("leaves a member who was accepted all along alone", async () => {
+    const fixture = await seededEvent(4);
+    const { a } = await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+
+    // One pooled player declined, to prove the guard is per-player rather than
+    // a switch the first bad status throws for the whole draft.
+    await decline(fixture.eventId, fixture.members[2]);
+
+    const player = fixture.members[3];
+    const lot = unwrap(await openLot(fixture.eventId, { userId: player }, db));
+    unwrap(await placeBid(lot.id, a, 250, {}, db));
+    const awarded = unwrap(await awardLot(lot.id, a, {}, db));
+
+    expect(awarded.lot).toMatchObject({ status: "awarded", winnerTeamId: a, price: 250 });
+    expect(awarded.member).toMatchObject({ userId: player, price: 250 });
+    expect(await balanceOf(fixture.eventId, a)).toBe(750);
+    expect(await rosterRows(fixture.eventId, player)).toHaveLength(1);
   });
 });
 

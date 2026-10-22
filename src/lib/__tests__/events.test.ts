@@ -17,6 +17,7 @@ import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__
 import { RIVALS_RANK_LADDER } from "@/db/seed";
 import {
   type CreateEventInput,
+  type DatedEvent,
   type EventQuestionInput,
   type EventResult,
   answersEditable,
@@ -138,7 +139,7 @@ function expectFail<T>(result: EventResult<T>): {
   return result;
 }
 
-async function makeEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow> {
+async function makeEvent(over: Partial<CreateEventInput> = {}): Promise<DatedEvent> {
   titleCounter += 1;
   return expectOk(
     await createEvent({ title: `Event ${titleCounter}`, ...over }, db)
@@ -146,7 +147,7 @@ async function makeEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow
 }
 
 /** An event members can actually apply to, with everything else left open. */
-async function openEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow> {
+async function openEvent(over: Partial<CreateEventInput> = {}): Promise<DatedEvent> {
   const event = await makeEvent({ ...PUBLISHABLE, ...over });
   return expectOk(await publishEvent(event.id, db));
 }
@@ -164,7 +165,7 @@ async function openEvent(over: Partial<CreateEventInput> = {}): Promise<EventRow
 async function datedEvent(
   startsAt: Date | null,
   over: Partial<CreateEventInput> = {}
-): Promise<EventRow> {
+): Promise<DatedEvent> {
   const dated = startsAt ?? PUBLISHABLE.days[0].startsAt;
   const event = await openEvent({
     days: [{ startsAt: dated }],
@@ -2680,12 +2681,10 @@ describe("the setup rules (UC-08 10, 10c)", () => {
 /**
  * Start and end, derived on every read (Task 12).
  *
- * There is no `starts_at` to read any more, so these are the tests that the
- * answer every screen shows comes from the day list — and, more importantly,
- * that it *follows* the day list when a manager moves it (UC-08 4). The
- * columns are still on the row until the follow-up commit drops them, which is
- * why one of these writes a disagreeing value straight into the database and
- * checks that nobody believes it.
+ * There is no `starts_at` to read any more — drizzle/0026 dropped both columns
+ * — so these are the tests that the answer every screen shows comes from the
+ * day list, and, more importantly, that it *follows* the day list when a
+ * manager moves it (UC-08 4) or stops dating it at all.
  */
 describe("an event's dates come from its days (R-24, UC-11 2)", () => {
   it("starts at the first day and ends at the last", async () => {
@@ -2726,26 +2725,39 @@ describe("an event's dates come from its days (R-24, UC-11 2)", () => {
   });
 
   /*
-   * The two columns are dead and this is what "dead" has to mean: a value
-   * sitting in them — left behind by a row written before the change, or by
-   * the backfill in drizzle/0020 — must not reach a countdown, a listing order
-   * or the answer deadline. Written straight to the database because nothing in
-   * the library will put a value there any more.
+   * There is no column left to read a stale date out of — drizzle/0026 dropped
+   * both, and `migrations.test.ts` proves the table has neither. What is left to
+   * pin is the half that is still a choice in this module: the dates an event
+   * hands out come from the day rows **as they stand at the time of the read**,
+   * so an event whose days were all undated reads as one nobody has scheduled
+   * rather than keeping whatever it last said.
+   *
+   * This is the test that used to write a value into `events.starts_at` and
+   * check it was ignored. The write is gone; the thing it was really defending
+   * — a date surviving the day that produced it — is asserted directly.
    */
-  it("ignores a stale value left in the old columns", async () => {
-    const event = await datedEvent(hours(24), { title: "Stale column" });
-    await db
-      .update(events)
-      .set({ startsAt: hours(-500), endsAt: hours(-400) })
-      .where(eq(events.id, event.id));
+  it("forgets an event's dates when its days stop being dated", async () => {
+    const event = await datedEvent(hours(24), { title: "Untimed again" });
 
-    const detail = await getEventBySlug(event.slug, { now: NOW }, db);
-    expect(detail?.startsAt).toEqual(hours(24));
-    expect(detail?.endsAt).toBeNull();
-    // And it is still listed as coming up, which reading the column would not
-    // have been (R-40, R-41).
+    const before = await getEventBySlug(event.slug, { now: NOW }, db);
+    expect(before?.startsAt).toEqual(hours(24));
+
+    expectOk(await setEventDays(event.id, [{ startsAt: null }], db));
+
+    const after = await getEventBySlug(event.slug, { now: NOW }, db);
+    expect(after?.startsAt).toBeNull();
+    expect(after?.endsAt).toBeNull();
+
+    // And the listings read the same day rows, so it loses its date there too —
+    // still listed, because an event nobody has timed is not an event that has
+    // happened, but with no date and therefore last (R-40, R-41, UC-10 4).
     const upcoming = await listEvents({ upcoming: true, now: NOW }, db);
-    expect(upcoming.map((row) => row.id)).toContain(event.id);
+    const at = upcoming.findIndex((row) => row.id === event.id);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(upcoming[at].startsAt).toBeNull();
+    // And in the undated tail: nothing with a date comes after an event nobody
+    // has timed, which is what reading a stale date would have done to it.
+    expect(upcoming.slice(at).every((row) => row.startsAt === null)).toBe(true);
   });
 
   // R-41, UC-10 4: "lists matching published events, soonest first" — ordered

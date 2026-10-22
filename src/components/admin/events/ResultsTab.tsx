@@ -28,8 +28,8 @@ import {
   shiftText,
   type ScheduleShift,
 } from "@/components/format";
-import type { FormatView } from "@/lib/format";
-import { type MatchSlot, otherSlot } from "@/lib/format-policy";
+import type { DependentFlag, FormatView } from "@/lib/format";
+import { type MatchSlot, otherSlot, unresolvedSlotRefusal } from "@/lib/format-policy";
 import type { ResolvedMatch } from "@/lib/format-resolve";
 import { formatClock, toInstant, toLocalInput } from "@/lib/time";
 import {
@@ -72,12 +72,37 @@ import {
  * series was played under that coin, and moving it afterwards would silently
  * re-attribute every map in it.
  *
+ * ## The mode a map was played on is recorded here (R-153 / UC-19 E1)
+ *
+ * `config.modeSequence` is the *plan* — "a Bo3 is convoy, convoy, domination"
+ * — and the Format tab owns it. What the room actually played is a different
+ * fact, and UC-19 E1 puts it on this card beside the map and the score. Every
+ * game's mode field arrives filled in from the plan, so an untouched card
+ * records exactly what was intended and only an edit says otherwise.
+ *
  * ## A drawn series is not a finished one
  *
  * Every game in and nobody ahead is a *stall*, not a result: somebody has to
  * advance, and nothing downstream resolves until an admin says who. Those
  * matches are collected at the top of the tab rather than left to be found, and
  * the override is one tap from there as well as from inside the card.
+ *
+ * ## A card with nobody in it cannot be filled in (UC-19 precondition 1)
+ *
+ * "Upper final" exists as five empty game rows from the moment the bracket is
+ * generated, long before anybody can play it. Recording against it would give
+ * whichever teams arrive later a scoreline they did not play, so the editor does
+ * not open: the card says what the slot is waiting on instead. `recordGames`
+ * refuses it too — this only stops the click, exactly as the coin does.
+ *
+ * ## And a correction that moved a later team is said out loud
+ *
+ * Correcting a map re-propagates the bracket on the next read, which is the
+ * whole design — but a *later* match that already had maps recorded is the one
+ * case propagation cannot fix, because those maps were played by the team that
+ * used to resolve there. The save hands those matches back (UC-19 3a) and they
+ * are shown beside what moved in the schedule, because neither is something an
+ * admin should have to go looking for.
  */
 
 type View = "day" | "bracket";
@@ -112,6 +137,8 @@ export default function ResultsTab({
   const [error, setError] = useState<string | null>(null);
   const [busySlot, setBusySlot] = useState<string | null>(null);
   const [shifts, setShifts] = useState<ScheduleShift[] | null>(null);
+  /** UC-19 3a — later matches the last save moved a team under. */
+  const [flagged, setFlagged] = useState<DependentFlag[]>([]);
   const [openSlot, setOpenSlot] = useState<string | null>(null);
 
   /**
@@ -150,11 +177,12 @@ export default function ResultsTab({
   }
 
   /** Apply a board the server just handed back, and say what moved. */
-  const adopt = (next: FormatView | null, editedSlot: string) => {
+  const adopt = (next: FormatView | null, editedSlot: string, flags: DependentFlag[] = []) => {
     if (!next) return;
     const moved = scheduleShifts(board, next).filter((shift) => shift.slot !== editedSlot);
     setBoard(next);
     setShifts(moved.length > 0 ? moved : []);
+    setFlagged(flags);
     router.refresh();
   };
 
@@ -173,6 +201,7 @@ export default function ResultsTab({
         return;
       }
       let next = result.data.view;
+      let flags = result.data.flagged;
 
       // The override is its own write because it is its own decision: the games
       // say what happened, the override says who advances anyway.
@@ -183,9 +212,11 @@ export default function ResultsTab({
           return;
         }
         next = decided.data.view;
+        // Both writes moved the board, so both their flags belong to this save.
+        flags = [...flags, ...decided.data.flagged.filter((flag) => !flags.some((seen) => seen.slot === flag.slot))];
       }
 
-      adopt(next, match.slot);
+      adopt(next, match.slot, flags);
       setOpenSlot(null);
     } catch {
       setError("Could not reach the server. Nothing was saved.");
@@ -205,7 +236,7 @@ export default function ResultsTab({
         setError(result.error);
         return;
       }
-      adopt(result.data.view, match.slot);
+      adopt(result.data.view, match.slot, result.data.flagged);
     } catch {
       setError("Could not reach the server. Nothing was saved.");
     } finally {
@@ -243,7 +274,7 @@ export default function ResultsTab({
         setError(result.error);
         return;
       }
-      adopt(result.data.view, match.slot);
+      adopt(result.data.view, match.slot, result.data.flagged);
       setOpenSlot(null);
     } catch {
       setError("Could not reach the server. Nothing was saved.");
@@ -305,6 +336,13 @@ export default function ResultsTab({
           )}
         </Alert>
       )}
+
+      {/* --- A later match whose team moved under recorded maps (3a) - */}
+      <FlaggedAlert
+        flagged={flagged}
+        teams={board.teams}
+        onDismiss={() => setFlagged([])}
+      />
 
       {/* --- Drawn series waiting on a decision --------------------- */}
       {undecided.length > 0 && (
@@ -492,6 +530,73 @@ export default function ResultsTab({
 }
 
 /* ------------------------------------------------------------------ */
+/* What a correction moved (UC-19 3a)                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The later matches the last save moved a team under, said in full.
+ *
+ * Its own component rather than a branch inside the tab because this is the
+ * message that has to be *right*: it is what a manager reads before deciding
+ * whether a recorded series still happened. A component can be rendered and
+ * read back in a test; a branch three hundred lines inside a client component
+ * driven by state cannot.
+ *
+ * It names teams rather than ids, and "nobody" rather than a blank, because a
+ * slot that has gone back to waiting is the same trouble as one that changed
+ * hands and a gap in a sentence reads like a bug.
+ */
+export function FlaggedAlert({
+  flagged,
+  teams,
+  onDismiss,
+}: {
+  flagged: DependentFlag[];
+  teams: FormatView["teams"];
+  onDismiss: () => void;
+}) {
+  if (flagged.length === 0) return null;
+  const named = (id: string | null): string =>
+    (id && teams.find((team) => team.id === id)?.name) || "nobody";
+  const one = flagged.length === 1;
+
+  return (
+    <Alert tone="flare">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <span className="font-medium">
+          {plural(flagged.length, "later match", "later matches")} now{" "}
+          {one ? "has" : "have"} a different team, and {one ? "has" : "have"} maps
+          recorded already
+        </span>
+        <button
+          type="button"
+          className="eyebrow underline decoration-dotted"
+          onClick={onDismiss}
+        >
+          Dismiss
+        </button>
+      </div>
+      <ul className="mt-2 space-y-0.5 text-12 opacity-90">
+        {flagged.map((flag) => (
+          <li key={flag.slot} className="flex flex-wrap items-baseline gap-2">
+            <span>{flag.label}</span>
+            <span className="num">
+              {named(flag.before.a)} v {named(flag.before.b)} → {named(flag.after.a)} v{" "}
+              {named(flag.after.b)}
+            </span>
+            <span className="opacity-70">({plural(flag.playedGames, "map")} recorded)</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-12 leading-relaxed">
+        Those maps were played by the teams on the left. Check each one and clear it if it is
+        no longer the series that was played — nothing has been changed for you.
+      </p>
+    </Alert>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* The editor                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -500,6 +605,8 @@ type Draft = {
   durationMin: string;
   winnerOverride: string;
   games: Array<{
+    /** Which mode this map was actually played on (R-153 / UC-19 E1). */
+    mode: string;
     map: string;
     referee: string;
     scoreA: string;
@@ -510,13 +617,24 @@ type Draft = {
   }>;
 };
 
-function draftFrom(match: ResolvedMatch): Draft {
+/**
+ * What a freshly opened card holds.
+ *
+ * Exported beside `recordFieldsFrom` and `MatchEditor`, because the pair of
+ * them is the whole round trip — what the card shows and what it posts — and a
+ * test that wrote its own copy of this would be testing its own copy.
+ */
+export function draftFrom(match: ResolvedMatch): Draft {
   return {
     // The input is naive; it shows the instant in the admin's own zone.
     scheduledAt: toLocalInput(match.scheduledAt),
     durationMin: match.durationMin === null ? "" : String(match.durationMin),
     winnerOverride: match.winnerOverrideId ?? "",
-    games: match.games.map((game) => ({
+    games: match.games.map((game, index) => ({
+      // The generated plan is what a card starts with — `blankGamesFor` copies
+      // the stage's mode sequence onto every game — so an untouched field posts
+      // the mode back unchanged and only an edit records a different one.
+      mode: game.mode || match.modes[index] || "",
       map: game.map,
       referee: game.referee,
       scoreA: String(game.scoreA),
@@ -527,7 +645,53 @@ function draftFrom(match: ResolvedMatch): Draft {
   };
 }
 
-function MatchEditor({
+/**
+ * **What one card posts** (UC-19 3, E1, E3).
+ *
+ * Exported because `renderToStaticMarkup` runs no handlers, so the only way to
+ * read back what Save sends is to call the function that builds it — the same
+ * argument `FlaggedAlert` is exported under.
+ *
+ * ## The start is left out unless it moved (R-157 / UC-19 E2)
+ *
+ * `recordGamesAction` passes `scheduledAt` to `setMatchSchedule` whenever the
+ * key is *present*, and a start time moved by hand marks its stage hand-edited
+ * so that nothing ever regenerates it automatically (UC-18 9a). A form posts
+ * every field it holds, so sending the card's own start back on every save
+ * marked the stage on the strength of a field nobody touched — including on a
+ * card with no start time at all, where the write was `null` over `null`.
+ *
+ * Compared as the *field's* text rather than as two instants, because that is
+ * the question being asked: a `datetime-local` value carries minutes, so a
+ * start stored with seconds on it would never match its own round trip.
+ */
+export function recordFieldsFrom(match: ResolvedMatch, form: Draft): RecordFields {
+  const moved = form.scheduledAt !== toLocalInput(match.scheduledAt);
+  return {
+    ...(moved ? { scheduledAt: form.scheduledAt ? toInstant(form.scheduledAt) : null } : {}),
+    durationMin: form.durationMin === "" ? null : Number(form.durationMin),
+    games: form.games.map((game, index) => ({
+      index,
+      mode: game.mode,
+      map: game.map,
+      referee: game.referee,
+      scoreA: Number(game.scoreA || 0),
+      scoreB: Number(game.scoreB || 0),
+      played: game.played,
+      sideChosen: game.sideChosen || null,
+    })),
+  };
+}
+
+/**
+ * One card's editor — the times, the coin, a row per game and the override.
+ *
+ * Exported for the reason `FlaggedAlert` is: it is shut until somebody clicks
+ * it open, so a server render of the tab holds none of it, and the fields it
+ * offers — the mode a map was played on, the minutes the match took — are
+ * exactly what UC-19 E1 and E3 are about.
+ */
+export function MatchEditor({
   match,
   open,
   busy,
@@ -554,6 +718,44 @@ function MatchEditor({
   useEffect(() => {
     if (!open) setForm(draftFrom(match));
   }, [match, open]);
+
+  /*
+   * UC-19 precondition 1. A slot that has not resolved has no teams to record
+   * for, so the editor never opens on one — `unresolvedSlotRefusal` is the same
+   * sentence `recordGames` would answer with, said before the click rather than
+   * after it. The clear button is still reachable from an open card, which is
+   * what the server's own erasing exemption is for.
+   */
+  const waiting = unresolvedSlotRefusal(match);
+
+  if (waiting) {
+    const recorded = match.games.some((game) => game.played);
+    return (
+      <div className="space-y-2">
+        <Button className="w-full py-1.5" disabled>
+          Not played yet
+        </Button>
+        <p className="text-11 leading-relaxed text-dim">{waiting}</p>
+        {/*
+          A slot that has *stopped* resolving while carrying maps is UC-19 3a,
+          and clearing it is the only way out — so the one destructive button is
+          the one thing still offered here.
+        */}
+        {recorded && (
+          <Button
+            variant="flare"
+            className="w-full py-1.5"
+            disabled={busy}
+            onClick={() => {
+              if (confirm(`Clear every recorded game for ${match.displayLabel}?`)) onClear();
+            }}
+          >
+            {busy ? "Clearing…" : "Clear the maps recorded here"}
+          </Button>
+        )}
+      </div>
+    );
+  }
 
   if (!open) {
     return (
@@ -618,22 +820,7 @@ function MatchEditor({
   const first = match.choices[0];
 
   const save = () => {
-    onSave(
-      {
-        scheduledAt: form.scheduledAt ? toInstant(form.scheduledAt) : null,
-        durationMin: form.durationMin === "" ? null : Number(form.durationMin),
-        games: form.games.map((game, index) => ({
-          index,
-          map: game.map,
-          referee: game.referee,
-          scoreA: Number(game.scoreA || 0),
-          scoreB: Number(game.scoreB || 0),
-          played: game.played,
-          sideChosen: game.sideChosen || null,
-        })),
-      },
-      form.winnerOverride
-    );
+    onSave(recordFieldsFrom(match, form), form.winnerOverride);
   };
 
   return (
@@ -648,11 +835,20 @@ function MatchEditor({
             onChange={(input) => setForm({ ...form, scheduledAt: input.target.value })}
           />
         </label>
+        {/*
+          How long the match took (R-158 / UC-19 E3). Not a note: an explicit
+          duration fixes the finish at the start plus these minutes, and every
+          later block of the day re-flows off that finish rather than off the
+          planned length — which is the whole of "System uses it for that day's
+          schedule". Left blank, the finish is stamped from the clock and the
+          duration is derived from it.
+        */}
         <label className="w-24">
           <span className="eyebrow mb-1 block">Mins</span>
           <Field
             inputMode="numeric"
             className="py-1.5 text-11"
+            aria-label="How long the match took, in minutes"
             value={form.durationMin}
             onChange={(input) =>
               setForm({ ...form, durationMin: input.target.value.replace(/[^0-9]/g, "") })
@@ -700,7 +896,7 @@ function MatchEditor({
         <div key={index} className="rounded-lg border border-hair p-2">
           <div className="mb-1.5 flex items-center justify-between">
             <Eyebrow as="span">
-              G{index + 1} · {modeLabel(match.games[index]?.mode ?? match.modes[index] ?? "")}
+              G{index + 1} · {modeLabel(game.mode)}
             </Eyebrow>
             <label className="eyebrow flex cursor-pointer items-center gap-1.5">
               <input
@@ -718,6 +914,23 @@ function MatchEditor({
             </p>
           )}
 
+          {/*
+            The mode this map was *actually* played on (R-153 / UC-19 E1).
+            It arrives filled in from the stage's mode sequence, which is the
+            plan — a Bo3's third map is a domination until somebody says the
+            room played a convoy instead, and R-153 asks for the record to be
+            able to say so. Editable here and nowhere else: the Format tab sets
+            the sequence a series is *planned* under, which is a different fact
+            and lives in `config.modeSequence`.
+          */}
+          <Field
+            className="mb-1.5 py-1.5 text-11"
+            placeholder="Mode"
+            aria-label={`Mode played, game ${index + 1}`}
+            maxLength={40}
+            value={game.mode}
+            onChange={(input) => patchGame(index, { mode: input.target.value })}
+          />
           <Field
             className="mb-1.5 py-1.5 text-11"
             placeholder="Map"
@@ -788,7 +1001,8 @@ function MatchEditor({
 
       <p className="text-11 leading-relaxed text-muted">
         {seriesLabel(match.bestOf)} · typing a score ticks the game off. Saving finishes the
-        match once it is decided, and re-flows the rest of that day.
+        match once it is decided, and re-flows the rest of that day — from the minutes above
+        when they are filled in, and from the clock when they are not.
       </p>
 
       <div className="flex gap-2">

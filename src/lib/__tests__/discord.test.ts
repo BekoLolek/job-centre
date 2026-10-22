@@ -128,9 +128,9 @@ function posted(): DiscordMessage[] {
 /*
  * R-107 / UC-26 4: "System posts to the channel with a link to the event." The
  * one fact a reader needs before deciding whether to apply is when it is on,
- * and an event's dates are its days' (R-24) — `events.starts_at` is a dead
- * column that nothing has written since Task 12, so an announcer reading it
- * posts an embed with no "Starts" field at all. `announce.test.ts` covers the
+ * and an event's dates are its days' (R-24) — `events` has no `starts_at` at
+ * all since drizzle/0026, and the announcer that read it while it was there
+ * posted an embed with no "Starts" field at all. `announce.test.ts` covers the
  * message *builder* with a date handed to it; this covers the announcer that
  * has to find the date.
  */

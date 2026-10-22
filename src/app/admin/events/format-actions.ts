@@ -43,6 +43,7 @@
 
 import { revalidatePath } from "next/cache";
 import {
+  type DependentFlag,
   type FormatResult,
   type FormatView,
   type GamePatch,
@@ -378,11 +379,17 @@ export type RecordFields = {
  * duration from it. Both re-flow the rest of the day inside their own
  * transaction, so the board that comes back at the end is consistent whichever
  * of the two the admin actually changed.
+ *
+ * The dependent flags (UC-19 3a) come back untouched from `recordGames` and are
+ * also written into the audit line, which is the only durable half of them: the
+ * flag itself is derived from two reads around one write, so there is nothing to
+ * store, but "which correction moved a team under five recorded maps" is exactly
+ * the question somebody asks a week later.
  */
 export async function recordGamesAction(
   matchId: string,
   fields: RecordFields
-): Promise<FormatResult<{ view: FormatView | null }>> {
+): Promise<FormatResult<{ view: FormatView | null; flagged: DependentFlag[] }>> {
   /*
    * Authorised on the row about to be written, and every read and audit line
    * after it uses the event that row belongs to. There is deliberately no
@@ -417,15 +424,33 @@ export async function recordGamesAction(
     actor: admin,
     eventId,
     subject: matchId,
-    summary: line ? `Recorded ${line}.` : "Recorded a result.",
-    detail: { games: fields.games.length },
+    summary: `Recorded ${line ?? "a result"}.${flagNote(result.data.flagged)}`,
+    detail: { games: fields.games.length, flagged: result.data.flagged },
   });
 
   // Only a decided series is announced; `announceMatchResult` re-reads the
   // board and returns without posting for a card that is half filled in.
   announceMatchResult(matchId);
 
-  return { ok: true, data: { view } };
+  return { ok: true, data: { view, flagged: result.data.flagged } };
+}
+
+/**
+ * The dependent flags as a clause on an audit summary, or nothing at all
+ * (UC-19 3a).
+ *
+ * Labels and counts only — the team ids are in `detail`, and a log line that
+ * named teams would be a fourth place this file describes a match.
+ */
+function flagNote(flagged: DependentFlag[]): string {
+  if (flagged.length === 0) return "";
+  const named = flagged
+    .map(
+      (flag) =>
+        `${flag.label} (${flag.playedGames} ${flag.playedGames === 1 ? "map" : "maps"} recorded)`
+    )
+    .join(", ");
+  return ` Needs checking — a different team now resolves into ${named}.`;
 }
 
 /**
@@ -458,7 +483,7 @@ function matchLine(
 export async function setWinnerOverrideAction(
   matchId: string,
   teamId: string | null
-): Promise<FormatResult<{ view: FormatView | null }>> {
+): Promise<FormatResult<{ view: FormatView | null; flagged: DependentFlag[] }>> {
   /*
    * Authorised on the row about to be written, and every read and audit line
    * after it uses the event that row belongs to. There is deliberately no
@@ -486,17 +511,18 @@ export async function setWinnerOverrideAction(
     actor: admin,
     eventId,
     subject: matchId,
-    summary: named
-      ? `Called ${line ?? "a series"} for ${named}.`
-      : `Dropped the winner override on ${line ?? "a series"}.`,
-    detail: { teamId },
+    summary:
+      (named
+        ? `Called ${line ?? "a series"} for ${named}.`
+        : `Dropped the winner override on ${line ?? "a series"}.`) + flagNote(result.data.flagged),
+    detail: { teamId, flagged: result.data.flagged },
   });
 
   // An override is what settles a drawn series, so it is a result like any
   // other — and the one the room has actually been waiting for.
   announceMatchResult(matchId);
 
-  return { ok: true, data: { view } };
+  return { ok: true, data: { view, flagged: result.data.flagged } };
 }
 
 /**
@@ -567,7 +593,7 @@ export async function reflipMatchAction(
 export async function clearMatchAction(
   matchId: string,
   gameCount: number
-): Promise<FormatResult<{ view: FormatView | null }>> {
+): Promise<FormatResult<{ view: FormatView | null; flagged: DependentFlag[] }>> {
   /*
    * Authorised on the row about to be written, and every read and audit line
    * after it uses the event that row belongs to. There is deliberately no
@@ -591,10 +617,15 @@ export async function clearMatchAction(
     actor: admin,
     eventId,
     subject: matchId,
-    summary: before ? `Cleared ${before} back to an unplayed card.` : "Cleared a series.",
-    detail: { games: gameCount },
+    summary:
+      (before ? `Cleared ${before} back to an unplayed card.` : "Cleared a series.") +
+      flagNote(result.data.flagged),
+    detail: { games: gameCount, flagged: result.data.flagged },
   });
 
   refresh(eventId);
-  return { ok: true, data: { view: await formatFor(eventId) } };
+  return {
+    ok: true,
+    data: { view: await formatFor(eventId), flagged: result.data.flagged },
+  };
 }

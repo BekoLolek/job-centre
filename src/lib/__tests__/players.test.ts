@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Database, type EventStatus, events, users } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
@@ -189,7 +189,12 @@ async function playedEvent(): Promise<{
   const stages = unwrap(await setStages(event.id, [{ kind: "single_elim" }], db));
   unwrap(await generateMatches(stages[0].id, db));
 
-  // Play the whole (one-match) bracket so somebody is champion.
+  /*
+   * Play the whole (one-match) bracket so somebody is champion — and play it in
+   * the minimum number of maps, because a knockout series stops when it is won:
+   * a Bo3 recorded as three 1-0 games is a third map nobody could have played,
+   * and `recordGames` refuses it (UC-19 5a).
+   */
   const ids = await matchIdsFor(event.id, db);
   const view = await formatFor(event.id, db);
   for (const match of view?.stages.flatMap((stage) => stage.matches) ?? []) {
@@ -198,7 +203,12 @@ async function playedEvent(): Promise<{
     unwrap(
       await recordGames(
         id,
-        match.games.map((_, index) => ({ index, scoreA: 1, scoreB: 0, played: true })),
+        Array.from({ length: Math.floor(match.bestOf / 2) + 1 }, (_unused, index) => ({
+          index,
+          scoreA: 1,
+          scoreB: 0,
+          played: true,
+        })),
         {},
         db
       )
@@ -378,11 +388,12 @@ describe("what the profile refuses to show", () => {
 /**
  * A published event whose dates exist **only** on its `event_days` rows.
  *
- * Which is to say: an ordinary event. `createEvent` writes the day rows and
- * nothing writes `events.starts_at` any more (R-24), so this is what every
- * event created since looks like — and the assertion inside is here so a
- * fixture can never quietly start supplying the column the profile is not
- * allowed to read.
+ * Which is to say: an ordinary event — `createEvent` writes the day rows, and
+ * since drizzle/0026 there is no `events.starts_at` for a fixture to supply
+ * instead (R-24). The assertion that the columns were empty used to live here;
+ * it moved to `migrations.test.ts`, which asserts the table has no such column
+ * at all and so cannot be satisfied by an event that merely happens to be
+ * null.
  */
 async function eventRunningOn(title: string, dayStarts: readonly Date[]): Promise<string> {
   counter += 1;
@@ -399,10 +410,6 @@ async function eventRunningOn(title: string, dayStarts: readonly Date[]): Promis
     )
   );
   unwrap(await publishEvent(event.id, db));
-
-  const [row] = await db.select().from(events).where(eq(events.id, event.id));
-  expect([row.startsAt, row.endsAt]).toEqual([null, null]);
-
   return event.id;
 }
 
@@ -412,7 +419,7 @@ async function profileOf(userId: string) {
 }
 
 describe("when the profile says each event ran", () => {
-  it("takes the dates off the event's days, because the columns are empty", async () => {
+  it("takes the dates off the event's days, the only place they live", async () => {
     const eventId = await eventRunningOn("Two nighter", [
       new Date("2099-03-01T18:00:00Z"),
       new Date("2099-03-02T18:00:00Z"),

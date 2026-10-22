@@ -17,9 +17,13 @@ import {
   normaliseStageConfig,
   ordinal,
   parseSource,
+  readScore,
+  scoreRefusal,
   seriesMinutes,
+  seriesRefusal,
   seriesTarget,
   sourceDependency,
+  unresolvedSlotRefusal,
 } from "@/lib/format-policy";
 
 describe("stage kinds", () => {
@@ -136,16 +140,35 @@ describe("bestOfFor", () => {
     expect(bestOfFor(config, { slot: "gf", round: 2, bracket: "final" })).toBe(7);
   });
 
-  it("then the round", () => {
-    expect(bestOfFor(config, { slot: "ubf", round: 2, bracket: "upper" })).toBe(5);
-  });
-
   it("then the half", () => {
     expect(bestOfFor(config, { slot: "rr-1-2", round: 1, bracket: "rr" })).toBe(1);
   });
 
+  it("then the round", () => {
+    expect(bestOfFor(config, { slot: "ubf", round: 2, bracket: "upper" })).toBe(5);
+  });
+
   it("then the stage default", () => {
     expect(bestOfFor(config, { slot: "ubsf1", round: 1, bracket: "upper" })).toBe(3);
+  });
+
+  it("gives the half to a match a round number also names (UC-18 E2)", () => {
+    /*
+     * The one case the four above cannot separate: each of them has at most
+     * one key matching, so they fix the *fallback* order and say nothing about
+     * a conflict. UC-18 E2 does — a bracket length "wins over the stage and
+     * round lengths" — and round numbers restart in each half, so the half is
+     * the only key that can tell two halves apart.
+     */
+    const both = normaliseStageConfig("group_playoff", {
+      bestOf: 3,
+      bestOfByBracket: { rr: 1 },
+      bestOfByRound: { "1": 7 },
+    });
+    expect(bestOfFor(both, { slot: "ga-1-2", round: 1, bracket: "rr" })).toBe(1);
+    // And the same round number in a half with no length of its own still
+    // takes the round's, so the half wins rather than disabling the round.
+    expect(bestOfFor(both, { slot: "sf1", round: 1, bracket: "upper" })).toBe(7);
   });
 });
 
@@ -261,5 +284,231 @@ describe("small helpers", () => {
 
   it("names groups a, b, c", () => {
     expect([0, 1, 2].map(groupKey)).toEqual(["a", "b", "c"]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* UC-19 4a, 5a, pre1 — what is not a result                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The refusals, asserted directly.
+ *
+ * They are the specification of UC-19 4a ("System rejects with the reason;
+ * nothing stored") and of its precondition, and they are pure — so they are
+ * tested here rather than only through a transaction, and `format-db.test.ts`
+ * is left to prove that the write actually asks.
+ */
+describe("scoreRefusal (UC-19 4a)", () => {
+  it("accepts a score, and says nothing about one left alone", () => {
+    expect(scoreRefusal(0, 1)).toBeNull();
+    expect(scoreRefusal(13, 2)).toBeNull();
+    expect(scoreRefusal(999, 3)).toBeNull();
+    // Absent is not invalid: a patch may set a referee and not a scoreline.
+    expect(scoreRefusal(undefined, 1)).toBeNull();
+  });
+
+  it("refuses a negative score, and names the game the manager is looking at", () => {
+    expect(scoreRefusal(-5, 1)).toBe("Game 1 cannot have a negative score.");
+    // 1-based, like the card. `index: 1` is game 2.
+    expect(scoreRefusal(-1, 2)).toBe("Game 2 cannot have a negative score.");
+  });
+
+  it("refuses a score that is not a whole number rather than truncating it", () => {
+    expect(scoreRefusal(2.5, 1)).toBe(
+      "Game 1's score has to be a whole number — 2.5 is not."
+    );
+    expect(scoreRefusal(-0.5, 1)).toBe(
+      "Game 1's score has to be a whole number — -0.5 is not."
+    );
+  });
+
+  it("refuses a score that is not a number at all", () => {
+    for (const raw of ["two", "", "  ", null, {}, [], Number.NaN, Infinity, true]) {
+      expect(scoreRefusal(raw, 4)).toBe("Game 4's score is not a number.");
+    }
+  });
+
+  it("refuses a score above the ceiling", () => {
+    expect(scoreRefusal(1000, 2)).toBe(
+      "Game 2's score is above 999, which is not a scoreline."
+    );
+  });
+
+  it("reads a numeric string, because a form is where these come from", () => {
+    expect(scoreRefusal("13", 1)).toBeNull();
+    expect(readScore("13", 0)).toBe(13);
+    // And leaves the stored score alone when there is nothing to read.
+    expect(readScore(undefined, 7)).toBe(7);
+  });
+});
+
+describe("seriesRefusal (UC-19 4a, 5a)", () => {
+  const game = (
+    scoreA: number,
+    scoreB: number,
+    played = true
+  ): { played: boolean; scoreA: number; scoreB: number } => ({ played, scoreA, scoreB });
+
+  it("accepts a series nobody has played", () => {
+    expect(
+      seriesRefusal({
+        bestOf: 3,
+        elimination: true,
+        games: [game(0, 0, false), game(0, 0, false), game(0, 0, false)],
+      })
+    ).toBeNull();
+  });
+
+  it("accepts a knockout Bo3 won in two, with the third map untouched", () => {
+    expect(
+      seriesRefusal({
+        bestOf: 3,
+        elimination: true,
+        games: [game(13, 11), game(13, 9), game(0, 0, false)],
+      })
+    ).toBeNull();
+  });
+
+  it("accepts a Bo3 that went the distance and ends level — UC-19 E4's shape", () => {
+    expect(
+      seriesRefusal({
+        bestOf: 3,
+        elimination: true,
+        games: [game(13, 11), game(9, 13), game(12, 12)],
+      })
+    ).toBeNull();
+  });
+
+  it("does not assume the series length is odd (R-159, UC-19 E4)", () => {
+    // `matches_best_of_odd` refuses an even length in the database, so this is
+    // the layer where R-159's "series lengths may be even" can be asked at all.
+    // A Bo2 at one each is level and legal; a third map in a Bo2 is not.
+    expect(
+      seriesRefusal({ bestOf: 2, elimination: true, games: [game(13, 11), game(9, 13)] })
+    ).toBeNull();
+    expect(
+      seriesRefusal({
+        bestOf: 2,
+        elimination: true,
+        games: [game(13, 11), game(13, 9), game(13, 7)],
+      })
+    ).toBe("The series was already won in game 2, so game 3 cannot have been played.");
+  });
+
+  it("refuses a hole in the middle of the series", () => {
+    expect(
+      seriesRefusal({
+        bestOf: 3,
+        elimination: true,
+        games: [game(13, 11), game(0, 0, false), game(13, 9)],
+      })
+    ).toBe("Game 2 has no result, so game 3 cannot have one — a series is played in order.");
+  });
+
+  it("refuses a level single map in a knockout, where nothing can break it", () => {
+    expect(
+      seriesRefusal({ bestOf: 1, elimination: true, games: [game(12, 12)] })
+    ).toMatch(/^A single map cannot end level/);
+    // A 0–0 that has been ticked off is the same refusal: it is still level.
+    expect(
+      seriesRefusal({ bestOf: 1, elimination: true, games: [game(0, 0)] })
+    ).toMatch(/^A single map cannot end level/);
+  });
+
+  it("allows a level single map in a table, where it is a point each", () => {
+    // `DEFAULT_POINTS.draw` is 1. A drawn table game is a finished match.
+    expect(seriesRefusal({ bestOf: 1, elimination: false, games: [game(12, 12)] })).toBeNull();
+  });
+
+  it("allows a drawn map inside a longer knockout series", () => {
+    expect(
+      seriesRefusal({
+        bestOf: 3,
+        elimination: true,
+        games: [game(12, 12), game(0, 0, false), game(0, 0, false)],
+      })
+    ).toBeNull();
+  });
+
+  it("refuses a knockout game played after the series was already won", () => {
+    expect(
+      seriesRefusal({
+        bestOf: 3,
+        elimination: true,
+        games: [game(13, 11), game(13, 9), game(13, 7)],
+      })
+    ).toBe("The series was already won in game 2, so game 3 cannot have been played.");
+    // A Bo5 taken 3-0: games 4 and 5 are the same refusal, named in order.
+    expect(
+      seriesRefusal({
+        bestOf: 5,
+        elimination: true,
+        games: [game(1, 0), game(1, 0), game(1, 0), game(1, 0), game(1, 0)],
+      })
+    ).toBe("The series was already won in game 3, so game 4 cannot have been played.");
+  });
+
+  it("allows a dead rubber in a table, where every map counts towards the table", () => {
+    // `score_for` is a tiebreaker, so a third map after a 2-0 is a real record
+    // and refusing it would delete one.
+    expect(
+      seriesRefusal({
+        bestOf: 3,
+        elimination: false,
+        games: [game(13, 11), game(13, 9), game(13, 7)],
+      })
+    ).toBeNull();
+  });
+
+  it("accepts a knockout Bo5 corrected so that the decider moved to game 5", () => {
+    // The whole reason the rule is asked of the merged series and not of the
+    // patch: the same five rows are legal or not depending on who won which.
+    expect(
+      seriesRefusal({
+        bestOf: 5,
+        elimination: true,
+        games: [game(1, 0), game(0, 1), game(1, 0), game(0, 1), game(1, 0)],
+      })
+    ).toBeNull();
+  });
+});
+
+describe("unresolvedSlotRefusal (UC-19 precondition 1)", () => {
+  it("says nothing when both slots have a team", () => {
+    expect(
+      unresolvedSlotRefusal({
+        teamAId: "team-1",
+        teamBId: "team-2",
+        nameA: "Rivals Red",
+        nameB: "Rivals Blue",
+      })
+    ).toBeNull();
+  });
+
+  it("names the one slot that is waiting, with the placeholder the board prints", () => {
+    expect(
+      unresolvedSlotRefusal({
+        teamAId: "team-1",
+        teamBId: null,
+        nameA: "Rivals Red",
+        nameB: "Lower final winner",
+      })
+    ).toBe(
+      "This match is still waiting on Lower final winner, so it cannot have a result yet."
+    );
+  });
+
+  it("names both when neither has resolved", () => {
+    expect(
+      unresolvedSlotRefusal({
+        teamAId: null,
+        teamBId: null,
+        nameA: "Upper semi 1 winner",
+        nameB: "Upper semi 2 winner",
+      })
+    ).toBe(
+      "This match is still waiting on Upper semi 1 winner and Upper semi 2 winner, so it cannot have a result yet."
+    );
   });
 });

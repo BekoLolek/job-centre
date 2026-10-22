@@ -14,6 +14,11 @@
  * that looks right and is not, and a draft that is wrong about money is a draft
  * nobody trusts again.
  *
+ * That goes for the draft pool too, which is the one place it did not. The pool
+ * is a snapshot of the accepted applicants, taken once and never invalidated,
+ * so `openLot` and `awardLot` re-read acceptance rather than trusting the entry
+ * in front of them (see `acceptedAmong`). Nothing is stored to make that work.
+ *
  * ## Bidding and awarding are one transaction each, and they have to be
  *
  * "Read the balance, check the cap, write the row" is a race with a window in
@@ -41,6 +46,7 @@
 import { randomInt } from "node:crypto";
 import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import {
+  type ApplicationStatus,
   type Database,
   type DraftBid,
   type DraftLot,
@@ -185,6 +191,123 @@ async function readPool(database: Database, eventId: string): Promise<DraftPoolE
     .from(draftPoolEntries)
     .where(eq(draftPoolEntries.eventId, eventId))
     .orderBy(asc(draftPoolEntries.sort), asc(draftPoolEntries.addedAt));
+}
+
+/**
+ * Which of these players still hold an accepted place at the event.
+ *
+ * The draft pool is a snapshot the manager built (`setDraftPool`), and an
+ * application's status moves on afterwards without it. So every path that is
+ * about to *act* on a pool entry asks this instead of believing the entry —
+ * `openLot`, the draft console's own pool read, and `setCaptains` picking from
+ * "the accepted applicants" (R-62 / UC-15 3), which is the same question about
+ * a list of people and so the same read.
+ *
+ * {@link seatStatus} is this question about one person, and it is the one to
+ * call where the *answer* has to be named back ("is on the waitlist now"): a
+ * set of accepted ids cannot say which of the four other things somebody is.
+ *
+ * Nothing is written back. A pool entry carries no copy of a status, because a
+ * copy is the bug: it would be right at the moment it was taken and wrong from
+ * the next decision onwards.
+ */
+async function acceptedAmong(
+  database: Database,
+  eventId: string,
+  userIds: readonly string[]
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set();
+  const rows = await database
+    .select({ userId: applications.userId })
+    .from(applications)
+    .where(
+      and(
+        eq(applications.eventId, eventId),
+        eq(applications.status, "accepted"),
+        inArray(applications.userId, [...userIds])
+      )
+    );
+  return new Set(rows.map((row) => row.userId));
+}
+
+/**
+ * Where one player's application stands now, or null if they have none.
+ *
+ * One row by construction — `applications_event_user_uniq` — so the status is
+ * the answer and not the first of several. `placeOnRoster` and `awardLot` both
+ * ask it of the row they are about to write, which is the only place it can be
+ * asked and still be true when the write lands.
+ */
+async function seatStatus(
+  database: Database,
+  eventId: string,
+  userId: string
+): Promise<ApplicationStatus | null> {
+  const [row] = await database
+    .select({ status: applications.status })
+    .from(applications)
+    .where(and(eq(applications.eventId, eventId), eq(applications.userId, userId)))
+    .limit(1);
+  return row?.status ?? null;
+}
+
+/** What to call somebody in a refusal about them. */
+async function displayNameOf(database: Database, userId: string): Promise<string> {
+  const [row] = await database
+    .select({ displayName: users.displayName, name: users.name, handle: users.handle })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  return row?.displayName ?? row?.name ?? row?.handle ?? "That player";
+}
+
+/** Every application status except the one that holds a seat. */
+type NoSeatStatus = Exclude<ApplicationStatus, "accepted">;
+
+/**
+ * Why this player has no seat, in the manager's words — the first half of the
+ * refusals below.
+ *
+ * All four of these are "not accepted" and only one of them is the member's
+ * own doing, so the sentence says which: a manager who declined somebody and a
+ * manager looking at a member who pulled out at midnight are owed different
+ * sentences, and "not accepted" would be the same unhelpful word for both.
+ *
+ * ## Exhaustive, with `accepted` kept out of the type
+ *
+ * This was a chain of `if`s falling through to "has no application for this
+ * event" — which is true of a missing row and of nothing else. Every status
+ * `application_status` has today is covered, so the fall-through is unreachable
+ * today; a sixth member added to the enum would reach it and get a confidently
+ * wrong sentence about somebody whose application the site had just learnt a
+ * new word for. The switch makes tsc the guard instead: a new member fails the
+ * `never` arm at compile time, which is the last moment anybody can still
+ * decide what to say about it.
+ *
+ * `accepted` is excluded from the parameter rather than given a sentence,
+ * because there is no sentence to give it: both callers have already
+ * established that the seat is not held, and a phrase for "they do hold one"
+ * could only ever be glued on to "…so there is no seat to sell". Excluding it
+ * is what makes each caller read the status once and branch on it.
+ */
+function noSeatPhrase(name: string, status: NoSeatStatus | null): string {
+  switch (status) {
+    // No application row at all.
+    case null:
+      return `${name} has no application for this event`;
+    case "declined":
+      return `${name}'s application has been declined`;
+    case "waitlisted":
+      return `${name} is on the waitlist now`;
+    case "withdrawn":
+      return `${name} has withdrawn from the event`;
+    case "pending":
+      return `${name}'s application is back under review`;
+    default: {
+      const unhandled: never = status;
+      throw new Error(`No sentence for application status ${String(unhandled)}`);
+    }
+  }
 }
 
 async function readLots(database: Database, eventId: string): Promise<DraftLot[]> {
@@ -345,6 +468,10 @@ async function removeTeamsIn(tx: Database, doomed: readonly Team[]): Promise<str
  * says the balances are equal and a form that says otherwise is a
  * disagreement, and the mode should win.
  *
+ * Seeds are a rank and are checked as one — a whole number, 1 or more, or
+ * nothing at all. Duplicates are allowed on purpose; see the check for which
+ * shapes are refused and why they are different in kind.
+ *
  * ## This is also where a name becomes the manager's
  *
  * `teams.name_is_custom` records who wrote a name, because it cannot be read
@@ -436,10 +563,30 @@ export async function setTeams(
         continue;
       }
 
+      /*
+       * A seed is a rank, and `seedOrderFrom` sorts on the number exactly as it
+       * is typed — so `0` and `-3` rank *ahead* of seed 1, and `1.5` lands
+       * between two teams the bracket is meant to put side by side, in both
+       * cases with nothing on any screen to say why the bracket came out that
+       * way (R-160 / UC-18 E5).
+       *
+       * Duplicates are **not** refused, and that is a decision rather than an
+       * omission: two teams sharing a seed keep list order, which is pinned by a
+       * test, because a half-finished seeding is a real state a manager passes
+       * through while typing. `0`, a negative and a fraction are not states
+       * anybody passes through — a rank below the first rank is not a weaker
+       * answer to "which seed is this", it is a different question.
+       */
+      const seed = team.seed ?? null;
+      if (seed !== null && (!Number.isInteger(seed) || seed < 1)) {
+        errors[at] = "A seed has to be a whole number, 1 or more.";
+        continue;
+      }
+
       cleaned.push({
         id: team.id ?? "",
         name,
-        seed: team.seed ?? null,
+        seed,
         balanceStart: wanted,
         sort: index,
         // A new row's name was typed into the box that created it. An existing
@@ -728,17 +875,8 @@ export async function setCaptains(
 
     const userIds = [...claimed];
     if (userIds.length > 0) {
-      const accepted = await tx
-        .select({ userId: applications.userId })
-        .from(applications)
-        .where(
-          and(
-            eq(applications.eventId, eventId),
-            eq(applications.status, "accepted"),
-            inArray(applications.userId, userIds)
-          )
-        );
-      const ok = new Set(accepted.map((row) => row.userId));
+      // The one acceptance read, the same one the award path makes.
+      const ok = await acceptedAmong(tx, eventId, userIds);
 
       const alreadyDrafted = await tx
         .select({
@@ -1102,18 +1240,8 @@ export async function placeOnRoster(
     const guard = await rosterGuard(tx, event, userId);
     if (!guard.ok) return fail(guard.error);
 
-    const [accepted] = await tx
-      .select({ id: applications.id })
-      .from(applications)
-      .where(
-        and(
-          eq(applications.eventId, eventId),
-          eq(applications.userId, userId),
-          eq(applications.status, "accepted")
-        )
-      )
-      .limit(1);
-    if (!accepted) {
+    // The same read the award path makes on the row it is about to write.
+    if ((await seatStatus(tx, eventId, userId)) !== "accepted") {
       return fail(
         "Only an accepted applicant can be put on a roster. Accept them on the Applicants tab first."
       );
@@ -1456,7 +1584,17 @@ export async function setDraftPool(
   });
 }
 
-/** The pool as it stands, both halves, in wheel order. */
+/**
+ * The pool as it stands, both halves, in wheel order.
+ *
+ * **As the manager left it**, including anybody whose application has since
+ * moved on. This is the read behind the Draft tab's pool editor, and that
+ * screen is where the manager fixes a pool — hiding a row from the person who
+ * put it there would mean their next save silently dropped it, which is the
+ * eager pruning this fix deliberately refuses. The draft *room* is the other
+ * side of that coin: `getDraftSnapshot` leaves a stale entry out of the wheel,
+ * because there the pool is a list of lots to open.
+ */
 export async function getDraftPool(
   eventId: string,
   database: Database = defaultDb
@@ -1581,7 +1719,7 @@ function defaultPick(length: number): number {
  * partial unique index, because two admins clicking spin at the same moment is
  * a race no screen can see.
  *
- * ## Two refusals the wheel used not to have
+ * ## Three refusals the wheel used not to have
  *
  * **Every roster full** (UC-16 8). The draft ends when the rosters are full or
  * the pool is empty; opening a lot once every seat is taken puts a name on the
@@ -1594,6 +1732,14 @@ function defaultPick(length: number): number {
  * so they are not a candidate for it. Named explicitly they get a sentence
  * saying so; left to the wheel they are simply not on it, which is what the
  * room sees too.
+ *
+ * **A seat the event has taken away** (R-66 / UC-16 pre1, 7).
+ * The pool is a snapshot of the accepted applicants and nothing invalidates
+ * it, so a player declined, waitlisted or withdrawn after it was seeded is
+ * still sitting in it. They are not for sale: `awardLot` refuses to seat them,
+ * so opening the lot could only ever end in a refusal in front of the room.
+ * The same two shapes as the comeback limit — named, a sentence saying which
+ * of the three it is; left to the wheel, off it.
  */
 export async function openLot(
   eventId: string,
@@ -1614,8 +1760,27 @@ export async function openLot(
 
     const config = await readConfig(tx, eventId);
     const pool = await readPool(tx, eventId);
-    const main = pool.filter((entry) => entry.kind === "main");
-    const reserve = pool.filter((entry) => entry.kind === "reserve");
+    /*
+     * The pool, minus anybody the event has since let go (R-66 / UC-16 pre1,
+     * 7).
+     *
+     * Read here, inside the lock, never stored: the entries themselves are
+     * left exactly as the manager built them. Pruning them on a decline is the
+     * tempting fix and the wrong one — a decline would then silently rewrite a
+     * pool somebody else assembled, and this project refuses that kind of
+     * quiet change everywhere else. So the pool keeps the row and this read
+     * decides what is for sale.
+     *
+     * Everything below the split works off `live`: the wheel, the fall-through
+     * from the main pool to the reserve, and the "is the draft over" question.
+     * A main pool holding nothing but stale entries is empty as far as all
+     * three are concerned, which is the truth — there is nobody in it anybody
+     * may bid on.
+     */
+    const stillAccepted = await acceptedAmong(tx, eventId, pool.map((entry) => entry.userId));
+    const live = pool.filter((entry) => stillAccepted.has(entry.userId));
+    const main = live.filter((entry) => entry.kind === "main");
+    const reserve = live.filter((entry) => entry.kind === "reserve");
 
     // UC-16 8: the draft is over when every roster is full, so there is nothing
     // to put up. Asked of the real rosters rather than of a counter, because a
@@ -1655,6 +1820,31 @@ export async function openLot(
       // which is the same sentence for two quite different situations.
       index = candidates.findIndex((entry) => entry.userId === input.userId);
       if (index === -1) {
+        /*
+         * Named, pooled, and no longer accepted. Told *that*, rather than that
+         * they are not in the pool — they are, the manager can see them on the
+         * Draft tab, and "not in that pool" would send somebody looking for a
+         * row that is sitting there.
+         *
+         * Refusing to open it at all is the honest answer (UC-16 4, 7): the
+         * room would otherwise be shown a lot nobody may win, because the award
+         * below cannot settle it, and a lot that cannot be awarded wastes the
+         * one thing a draft room has — everybody's attention.
+         */
+        const named = input.userId;
+        if (pool.some((entry) => entry.userId === named)) {
+          // Asked of the row rather than of `stillAccepted`, which is the same
+          // answer from the same transaction under the same lock — but it is
+          // the status itself that the sentence has to name, and reading it
+          // once is what lets `noSeatPhrase` refuse to be handed `accepted`.
+          const seat = await seatStatus(tx, eventId, named);
+          if (seat !== "accepted") {
+            const phrase = noSeatPhrase(await displayNameOf(tx, named), seat);
+            return fail(
+              `${phrase}, so there is no seat to bid on. Accept them again on the Applicants tab, or take them out of the pool.`
+            );
+          }
+        }
         const spent =
           kind === "reserve" && reserve.some((entry) => entry.userId === input.userId);
         return fail(
@@ -1896,6 +2086,27 @@ export type AwardLotResult = {
  * decremented. The lot *is* the deduction, and `balanceFor` sums the awarded
  * ones. Two concurrent awards of the same lot cannot both land because the
  * second finds it already settled, inside the same lock.
+ *
+ * ## And only to somebody who still has a seat (R-66 / UC-16 pre1, 7)
+ *
+ * This is where the stale pool stops. `setDraftPool` snapshots the accepted
+ * applicants, and nothing invalidates that snapshot: accept somebody, pool
+ * them, then decline, waitlist or withdraw them, and their entry is still
+ * there. Until now this path never asked, so a team paid real money for a seat
+ * the event had already taken away and a withdrawn member sat on a roster that
+ * the draft room, the event page and the format all read as real. It is the
+ * same shape as the bug one layer up that `placeOnRoster` was closed against —
+ * a status change that the other tables were never told about — and it is
+ * closed the same way: re-read acceptance on the row about to be written, with
+ * the event already locked. It is the same roster in both, which is where R-61
+ * and R-62 come in: a seat bought here and a seat placed by hand have to answer
+ * to one rule about who may hold one.
+ *
+ * The refusal **names them**, and says which of the three it is. The room is
+ * watching a lot that will not settle, and a button that quietly does nothing
+ * is worse than one that says why — the manager's way out is to accept them
+ * again on the Applicants tab, where an unusual decision is recorded as a
+ * decision, or to discard the lot.
  */
 export async function awardLot(
   lotId: string,
@@ -1917,6 +2128,29 @@ export async function awardLot(
     if (lot.status !== "open") return fail("That lot has already settled.");
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
+
+    /*
+     * Do they still have a seat? — asked here, now, inside the lock.
+     *
+     * The pool entry this lot came from was written by `setDraftPool` and
+     * nothing has told it that the application moved on. The lock above is
+     * what makes this read worth anything: `setApplicationStatus` and
+     * `withdrawApplication` take the same event row, so a decision either
+     * committed before this transaction began and is in front of us, or waits
+     * until after it — there is no window where the answer changes underneath
+     * the write.
+     *
+     * Before the team, the bid and the price, because this is a fact about the
+     * lot rather than about the request: the money has nowhere to go whoever
+     * asks and whatever they bid.
+     */
+    const seat = await seatStatus(tx, lot.eventId, lot.playerUserId);
+    if (seat !== "accepted") {
+      const phrase = noSeatPhrase(await displayNameOf(tx, lot.playerUserId), seat);
+      return fail(
+        `${phrase}, so there is no seat to sell. Accept them again on the Applicants tab, or discard this lot.`
+      );
+    }
 
     const [team] = await tx
       .select()
@@ -2481,8 +2715,23 @@ export async function getDraftSnapshot(
     };
   });
 
-  const main = poolRows.filter((entry) => entry.kind === "main");
-  const reserve = poolRows.filter((entry) => entry.kind === "reserve");
+  /*
+   * The wheel the room bids from, minus anybody the event has let go — the
+   * same read `openLot` makes, so the console is never offering a lot that
+   * `openLot` would refuse to open and `awardLot` would refuse to settle.
+   *
+   * Filtered, not pruned. The row stays in `draft_pool_entries` exactly as the
+   * manager built it, and `getDraftPool` — the pool editor's read — still
+   * shows it to them.
+   */
+  const stillAccepted = await acceptedAmong(
+    database,
+    eventId,
+    poolRows.map((entry) => entry.userId)
+  );
+  const livePool = poolRows.filter((entry) => stillAccepted.has(entry.userId));
+  const main = livePool.filter((entry) => entry.kind === "main");
+  const reserve = livePool.filter((entry) => entry.kind === "reserve");
   const asPlayer = (entry: DraftPoolEntry): PoolPlayer => ({
     userId: entry.userId,
     kind: entry.kind,

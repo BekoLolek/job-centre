@@ -500,6 +500,8 @@ export const hostApplications = pgTable(
  * would carry co-hosts, and the helpers that would have managed a set of them
  * are gone — they were only ever called by tests, and a permission nothing in
  * the site can reach is a permission nobody has thought about.
+ *
+ * That rule is held in two places, and deliberately — see the index below.
  */
 export const eventHosts = pgTable(
   "event_hosts",
@@ -518,6 +520,28 @@ export const eventHosts = pgTable(
   (table) => [
     primaryKey({ columns: [table.eventId, table.userId] }),
     index("event_hosts_user_id_idx").on(table.userId),
+    /*
+     * One host per event, in the database (R-86 / UC-21 5a).
+     *
+     * `approveHostApplication` re-reads this table inside its transaction and
+     * refuses an event somebody already holds, which answers the second admin
+     * who clicks a minute later. It cannot answer two admins clicking in the
+     * same instant: both reads find the event unheld, both inserts land, and
+     * the first applicant has silently acquired a co-host with full rights
+     * over their evening — the exact thing that read exists to prevent. The
+     * index is the half of the rule a read-then-insert cannot enforce, and
+     * `hosting.ts` turns its rejection back into the same sentence the read
+     * produces.
+     *
+     * `event_id` alone, and so not the primary key above: the key is
+     * `(event_id, user_id)`, which refuses the *same* grant twice and happily
+     * takes two different people. The rule is about the event.
+     *
+     * Created by drizzle/0025, which first has to resolve any event that is
+     * already held twice — `CREATE UNIQUE INDEX` fails on those rows rather
+     * than skipping them, and takes the deploy with it.
+     */
+    uniqueIndex("event_hosts_one_host_per_event").on(table.eventId),
   ]
 );
 
@@ -1013,25 +1037,17 @@ export const events = pgTable(
     /** The signup window. Null at either end means "no bound that side". */
     signupOpensAt: instant("signup_opens_at"),
     signupClosesAt: instant("signup_closes_at"),
-    /**
-     * **Nothing reads these two any more, and nothing writes them.**
+    /*
+     * There is no `starts_at`/`ends_at` here, and that is the point.
      *
-     * An event's dates are its days' (R-24): `eventDates` in
-     * `src/lib/events-policy.ts` takes the first day's start and the last day's,
-     * and every read in `src/lib/events.ts` overwrites these columns with that
-     * answer on the way out. They are two stale copies of one question, which is
-     * the whole reason they are going.
-     *
-     * Still here only because dropping a column is a one-way door: drizzle/0020
-     * backfilled a day from `starts_at` for every event with no day that had a
-     * time on it, and these rows are what that backfill can be checked against
-     * until the follow-up commit drops both columns (docs/plan.md, Task 50). Do
-     * not read them — the derived value is the only one that is right after a
-     * manager moves a day, and the one read that was left behind here cost
-     * every publish announcement its "Starts" field (`announceEventPublished`).
+     * An event's dates are its days' (R-24 / UC-11 2): `eventDates` in
+     * `src/lib/events-policy.ts` takes the first dated day's start and the last
+     * one's, and `readDatesFor` in `src/lib/events.ts` is the only way to a
+     * date. The two columns that used to hold them were dropped by
+     * drizzle/0026 after drizzle/0020 had moved every event's date into
+     * `event_days`; they were stale copies of a derived fact, which is the one
+     * thing this project does not store (docs/domain-model.md).
      */
-    startsAt: instant("starts_at"),
-    endsAt: instant("ends_at"),
 
     /** Null is unlimited. Anything else is the accepted-seat count (§14). */
     capacity: integer("capacity"),
@@ -1072,20 +1088,34 @@ export const events = pgTable(
   },
   (table) => [
     /*
-     * The hub asks two questions: "what is on, soonest first" and "show me
-     * everything with this status".
+     * There is no index on `status` here, and `events_status_starts_at_idx` —
+     * `(status, starts_at)` — went with the column drizzle/0026 dropped.
      *
-     * Only the second of those is still a database question. `starts_at` is a
-     * dead column (see above), so nothing filters or orders by it any more —
-     * the soonest-first order is `eventDates` over `event_days`, in TypeScript.
-     * This index is therefore two columns of write cost for a query nobody
-     * makes, and it goes with the columns in the follow-up that drops them
-     * (docs/plan.md, Task 50), which is also where "is a plain `status` index
-     * worth having instead" gets measured. Not here: dropping an index is a
-     * separate decision from stopping reading a column, and this commit is
-     * already the one that has to be able to recover the dates.
+     * The hub asked two questions of this table: "what is on, soonest first"
+     * and "show me everything with this status". The first is no longer a
+     * database question at all: the soonest-first order is `eventDates` over
+     * `event_days`, in TypeScript (`listEvents`), so nothing filtered or
+     * ordered by `starts_at` and the second column of that index was pure
+     * write cost.
+     *
+     * **Nor is the first column kept on its own**, and that is a decision
+     * rather than an oversight. The query that would use it exists and is named
+     * here: `listEvents({ status: "live" })` on the front page (R-40), the one
+     * status-filtered read that is selective — there is rarely more than one
+     * live event. Every other caller asks for most of the table (`/events` and
+     * `/archive` pass four of the five statuses; `/admin/events` passes none at
+     * all) and then sorts in TypeScript, so a bitmap scan over nearly every row
+     * is a sequential scan with extra steps, which is what the planner picks
+     * anyway.
+     *
+     * It is still not added, because Task 50 asks for the replacement to be
+     * *measured* rather than inherited, and nothing here can measure it:
+     * `DATABASE_URL` is blank in this working copy by design, and an `events`
+     * table of a few hundred rows is one page of heap either way. Adding an
+     * index on the strength of a guess is how this project got
+     * `(status, starts_at)` in the first place. The query above is the one to
+     * `EXPLAIN` when the table is big enough for the answer to differ.
      */
-    index("events_status_starts_at_idx").on(table.status, table.startsAt),
     index("events_game_id_idx").on(table.gameId),
     // `/admin/templates` counts events per template, which is this index.
     index("events_created_from_template_idx").on(table.createdFromTemplateId),

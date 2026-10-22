@@ -100,10 +100,15 @@ import {
   isStageKind,
   normaliseFormatTiming,
   normaliseMatchSlot,
+  normaliseModeName,
   normalisePlaySide,
   normaliseStageConfig,
+  readScore,
+  scoreRefusal,
+  seriesRefusal,
   teamCountRefusal,
   tossForFirstSideChoice,
+  unresolvedSlotRefusal,
 } from "./format-policy";
 import {
   type GameChoice,
@@ -114,6 +119,7 @@ import {
   StageResolution,
   type TeamRef,
   blankGamesFor,
+  seedOrderFrom,
   seedingFrom,
 } from "./format-resolve";
 import {
@@ -748,13 +754,13 @@ async function insertGenerated(
   }
 }
 
-/** The teams in seed order — the `seed` column when it is set, else the sort order. */
+/**
+ * The teams in seed order — `seedOrderFrom`, which is also what the resolver
+ * reads, so a stored table pairing and a resolved bracket slot cannot disagree
+ * about who holds `seed:3` (R-160 / UC-18 E5).
+ */
 function seedOrderOf(rows: Team[]): string[] {
-  const seeded = rows.filter((row) => typeof row.seed === "number");
-  if (seeded.length === rows.length && rows.length > 0) {
-    return [...rows].sort((x, y) => (x.seed as number) - (y.seed as number)).map((r) => r.id);
-  }
-  return rows.map((r) => r.id);
+  return seedOrderFrom(rows);
 }
 
 function teamFromSource(source: string, seeded: string[]): string | null {
@@ -801,8 +807,36 @@ function shapeLines(spec: GeneratedStage, seeded: string[]): string[] {
     .sort();
 }
 
-/** The same line, read back off the rows that are actually stored. */
-function storedShapeLines(rows: MatchRow[], games: MatchGameRow[]): string[] {
+/**
+ * The same line, read back off the rows that are actually stored.
+ *
+ * ## A played game's mode is a record, so the spec's own mode is read there
+ * (R-153 / UC-19 E1)
+ *
+ * `match_games.mode` is two things at different times. Before the game it is
+ * the *plan* — `blankGamesFor` copies it out of `config.modeSequence`, and
+ * editing that sequence has to make the untouched rows stale, which is why the
+ * mode is in this line at all. After the game it is the **record**: UC-19 E1
+ * lets a manager write down that game 2 was actually a domination, and R-153
+ * asks for exactly that so "the record is complete".
+ *
+ * Comparing the second against the plan is comparing a fact against an
+ * intention, and it had two bad answers, both reproduced before this: on a
+ * stage nobody had played, `syncStages` called the stage out of shape and
+ * **rebuilt it**, deleting the mode somebody had just recorded; on a stage with
+ * results it marked the stage out of date for ever, with the Format tab
+ * explaining that "there are results in the way" about a stage whose only
+ * divergence was the record of what happened in it.
+ *
+ * So a played game's mode is read as whatever the spec says it would be: the
+ * record cannot make the rows stale, and an edited mode sequence still can,
+ * because the games it has not reached yet are still the plan.
+ */
+function storedShapeLines(
+  rows: MatchRow[],
+  games: MatchGameRow[],
+  spec: GeneratedStage
+): string[] {
   return rows
     .map((row) =>
       [
@@ -817,7 +851,9 @@ function storedShapeLines(rows: MatchRow[], games: MatchGameRow[]): string[] {
         games
           .filter((game) => game.matchId === row.id)
           .sort((x, y) => x.index - y.index)
-          .map((game) => game.mode)
+          .map((game) =>
+            game.played ? (spec.bySlot[row.slot]?.modes[game.index] ?? game.mode) : game.mode
+          )
           .join("+"),
       ].join("~")
     )
@@ -998,10 +1034,11 @@ export async function syncStages(
         // Nothing generated (UC-18 2a) — but rows that are already there and no
         // longer match are still out of date, and saying so is the only way the
         // screen can explain why the bracket on it is yesterday's.
+        const refusedSpec = generateStage(kind, teamRows.length, config);
         const stale =
           rows.length > 0 &&
-          lineOf(shapeLines(generateStage(kind, teamRows.length, config), seeded)) !==
-            lineOf(storedShapeLines(rows, gameRows));
+          lineOf(shapeLines(refusedSpec, seeded)) !==
+            lineOf(storedShapeLines(rows, gameRows, refusedSpec));
         if (stale) {
           await markOutOfDate(tx, stage, now);
           out.push({ ...base, kind, state: "out_of_date", reason: refusal });
@@ -1013,7 +1050,7 @@ export async function syncStages(
 
       const spec = generateStage(kind, teamRows.length, config);
       const wanted = lineOf(shapeLines(spec, seeded));
-      const stored = lineOf(storedShapeLines(rows, gameRows));
+      const stored = lineOf(storedShapeLines(rows, gameRows, spec));
 
       if (rows.length > 0 && wanted === stored) {
         // Current. If it was marked out of date — a rebuild ran, or the teams
@@ -1517,10 +1554,148 @@ export type GamePatch = {
   sideChosen?: PlaySide | string | null;
 };
 
-function score(value: unknown, current: number): number {
-  const parsed = Math.trunc(Number(value));
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 999 ? parsed : current;
+/**
+ * A patch that cannot *add* anything: no game ticked, no score, no map, no
+ * referee, no side taken, no mode.
+ *
+ * "Cannot add" and not "erases", because this says nothing about the fields a
+ * patch leaves out. The merge in `recordGames` **preserves** `mode`, `map`,
+ * `referee`, `played` and `sideChosen` when they are absent, so `{ index: 0 }`
+ * satisfies every clause here while changing nothing at all, and
+ * `{ index: 0, scoreA: 0 }` zeroes one score and leaves the tick where it was.
+ * What the predicate guarantees is a *direction*: whatever a patch that passes
+ * it writes, the series afterwards holds no result it did not hold before.
+ *
+ * It is the one shape allowed through the unresolved-slot refusal below, and
+ * `clearMatch` is why: clearing a series is the way back from a score typed
+ * against the wrong card, and a slot that has *stopped* resolving — because the
+ * match feeding it was corrected, or its teams were removed — is exactly the
+ * card that needs clearing. A refusal that caught it too would leave a wrong
+ * result on the board with no way to remove it, which is the opposite of what
+ * the refusal is for. Nothing can be recorded this way, so it is not a hole:
+ * the worst an erasing patch can do is what the manager asked for.
+ *
+ * Because it is only a direction, it is not on its own enough to earn the
+ * exemption — see `erasesSomething` and the pair of conditions below.
+ */
+function erasesOnly(patch: GamePatch): boolean {
+  return (
+    patch.played !== true &&
+    !patch.scoreA &&
+    !patch.scoreB &&
+    !cleanText(patch.map, 60) &&
+    !cleanText(patch.referee, NAME_MAX) &&
+    !patch.sideChosen &&
+    patch.mode === undefined
+  );
 }
+
+/**
+ * A patch that actually takes something away, rather than merely not adding.
+ *
+ * Read with `erasesOnly`: that one is about what the values *are*, this one is
+ * about which fields are **named**. Every field here is one the merge only
+ * leaves alone when it is absent, so a patch that mentions it and passes
+ * `erasesOnly` can only be removing what is in it — `played: false` unticks,
+ * `scoreA: 0` zeroes, `map: ""` and `referee: ""` blank, `sideChosen: null`
+ * clears. `mode` cannot appear: `erasesOnly` requires it absent.
+ */
+function erasesSomething(patch: GamePatch): boolean {
+  return (
+    patch.played !== undefined ||
+    patch.scoreA !== undefined ||
+    patch.scoreB !== undefined ||
+    patch.map !== undefined ||
+    patch.referee !== undefined ||
+    patch.sideChosen !== undefined
+  );
+}
+
+/**
+ * **A later match whose teams moved under a result that is already recorded**
+ * (R-79 / UC-19 3a).
+ *
+ * Correcting a map re-propagates the whole bracket, which is the point of
+ * resolving slots on read — but a later match that *already has maps recorded*
+ * is the one case the propagation cannot fix by itself. Its games were played
+ * by the teams that used to resolve there; after the correction a different
+ * pair resolves, and the scoreline on the board now says two teams played a
+ * series one of them was never in.
+ *
+ * So it is reported rather than resolved. There is no third answer the engine
+ * could pick for the manager: whether those maps were really played by the new
+ * team, or belong to a match that must now be cleared and replayed, is a fact
+ * about a room and not about a bracket.
+ *
+ * It carries ids and counts, not sentences — the board the caller already has
+ * holds the names, and `displayLabel` comes from the generated spec rather than
+ * from a column, like everything else about a match's label.
+ */
+export type DependentFlag = {
+  slot: string;
+  /** The generated label — "Upper final", not a slot key. */
+  label: string;
+  /** How many games were already ticked off when the teams moved. */
+  playedGames: number;
+  /** Who resolved there before the write, and who does now. */
+  before: { a: string | null; b: string | null };
+  after: { a: string | null; b: string | null };
+};
+
+type SlotSnapshot = { a: string | null; b: string | null; played: number; label: string };
+
+/** Every slot's resolved pair and played-game count, off one resolved board. */
+function snapshotOf(view: FormatView | null): Map<string, SlotSnapshot> {
+  const out = new Map<string, SlotSnapshot>();
+  for (const stage of view?.stages ?? []) {
+    for (const match of stage.matches) {
+      out.set(match.slot, {
+        a: match.teamAId,
+        b: match.teamBId,
+        played: match.games.filter((game) => game.played).length,
+        label: match.displayLabel,
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * The slots that changed hands while already carrying maps — the edited slot
+ * excluded, because the manager is looking at that one.
+ *
+ * A pair becoming *unresolved* counts. A later match whose team has gone back
+ * to "Upper semi 1 winner" while five maps sit against it is in the same
+ * trouble as one whose team changed, and for the same reason.
+ */
+function flagsBetween(
+  before: Map<string, SlotSnapshot>,
+  after: Map<string, SlotSnapshot>,
+  editedSlot: string
+): DependentFlag[] {
+  const out: DependentFlag[] = [];
+  for (const [slot, was] of before) {
+    if (slot === editedSlot || was.played === 0) continue;
+    const now = after.get(slot);
+    if (!now) continue;
+    if (now.a === was.a && now.b === was.b) continue;
+    out.push({
+      slot,
+      label: now.label,
+      playedGames: was.played,
+      before: { a: was.a, b: was.b },
+      after: { a: now.a, b: now.b },
+    });
+  }
+  return out;
+}
+
+export type RecordOutcome = {
+  finishedAt: string | null;
+  durationMin: number | null;
+  /** UC-19 3a. Empty whenever nothing later moved. */
+  flagged: DependentFlag[];
+};
 
 /**
  * Record part of a series, then keep the finish, the duration and the rest of
@@ -1531,24 +1706,85 @@ function score(value: unknown, current: number): number {
  * moves every later block of that day (§10). Doing them in one transaction is
  * what stops a page ever showing a finished match inside a block that has not
  * ended.
+ *
+ * ## Everything is checked before anything is written
+ *
+ * This function used to validate as it wrote, patch by patch, and that is not a
+ * detail: nothing in this codebase calls `tx.rollback()`, so returning a
+ * refusal from the middle of the loop **committed** every patch before it. A
+ * manager who sent five games and got "game 4's score is not a number" back
+ * would have had games 1 to 3 stored and been told nothing was. UC-19 4a says
+ * "nothing stored", so the two passes below are the requirement, not tidiness:
+ * read, decide, and only then write.
+ *
+ * ## Three refusals, and all of them are about a result that cannot exist
+ *
+ *  - **A slot that has not resolved** (UC-19 pre1). "Winner of upper semi 1"
+ *    cannot have a score. Only a write that takes something away is let
+ *    through — see `erasesOnly` and `erasesSomething`.
+ *  - **A score that is not a score** (UC-19 4a) — `scoreRefusal`, per game.
+ *  - **A series that is not a series** (UC-19 4a, 5a) — `seriesRefusal`, asked
+ *    of the merged state this write would leave behind rather than of the
+ *    patch, which is what makes it hold when two managers save different halves
+ *    of the same card.
+ *
+ * Every one of them is decided from reads taken **after** the event row lock,
+ * so a board that moved between the manager pressing Save and this transaction
+ * opening is refused against what is actually stored.
  */
 export async function recordGames(
   matchId: string,
   patches: GamePatch[],
   options: { durationMin?: number | null; now?: Date } = {},
   database: Database = defaultDb
-): Promise<FormatResult<{ finishedAt: string | null; durationMin: number | null }>> {
+): Promise<FormatResult<RecordOutcome>> {
   return database.transaction(async (tx) => {
-    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
-    if (!match) return fail("That match no longer exists.");
+    const [found] = await tx
+      .select({ id: matches.id, eventId: matches.eventId })
+      .from(matches)
+      .where(eq(matches.id, matchId))
+      .limit(1);
+    if (!found) return fail("That match no longer exists.");
 
-    const event = await lockEvent(tx, match.eventId);
+    const event = await lockEvent(tx, found.eventId);
     if (!event) return fail("That event no longer exists.");
 
     // This is the write that can untick a played game and zero its score, so
     // it is the single most important one to refuse on a finished event.
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
+
+    // Re-read under the lock. The first select only answered "which event is
+    // this", and `bestOf`, `slot` and the override all decide something below.
+    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
+    if (!match) return fail("That match no longer exists.");
+
+    const boardBefore = await formatFor(found.eventId, tx);
+    const resolved = boardBefore?.stages
+      .flatMap((stage) => stage.matches)
+      .find((entry) => entry.slot === match.slot);
+    if (!resolved) return fail("That match is not part of the current format.");
+
+    /*
+     * The exemption belongs to a write that takes something away, which is two
+     * conditions and not one. `every(erasesOnly)` alone is satisfied by two
+     * shapes that erase nothing: an empty list, because `[].every(…)` is
+     * vacuously true, and `{ index: 0 }`, because the fields `erasesOnly` cares
+     * about are all preserved when absent. Either one bought a bare
+     * `durationMin` — which `recordGamesAction` takes from the client beside
+     * `games` — an exemption from UC-19 pre1: a duration stamped on a match
+     * whose teams have not resolved, and `reflow` below then shifting the rest
+     * of that day off it. No score can be written that way, so the cost is a
+     * wrong schedule rather than a wrong result, but the refusal has to fire.
+     *
+     * `some(erasesSomething)` covers the empty list on its own — nothing to
+     * erase in nothing — so there is no separate length check to keep in step.
+     */
+    const erasing = patches.some(erasesSomething) && patches.every(erasesOnly);
+    if (!erasing) {
+      const waiting = unresolvedSlotRefusal(resolved);
+      if (waiting) return fail(waiting);
+    }
 
     const current = await tx
       .select()
@@ -1557,21 +1793,44 @@ export async function recordGames(
       .orderBy(asc(matchGames.index));
     const byIndex = new Map(current.map((row) => [row.index, row]));
 
+    // Pass one: decide. `staged` is what the rows would become, and not one of
+    // them has been written yet.
+    const staged: Array<{ id: string; values: Omit<MatchGameRow, "id" | "matchId" | "index"> }> = [];
     for (const patch of patches) {
       const row = byIndex.get(patch.index);
       if (!row) return fail(`This series has no game ${patch.index + 1}.`);
-      const next = {
-        mode: patch.mode === undefined ? row.mode : cleanText(patch.mode, 40),
+      const refusal =
+        scoreRefusal(patch.scoreA, patch.index + 1) ?? scoreRefusal(patch.scoreB, patch.index + 1);
+      if (refusal) return fail(refusal);
+
+      const values = {
+        // Through the same normaliser `config.modeSequence` is read with, so
+        // the mode a manager records and the mode the stage planned are the
+        // same string when they are the same mode (R-153 / UC-19 E1).
+        mode: patch.mode === undefined ? row.mode : normaliseModeName(patch.mode),
         map: patch.map === undefined ? row.map : cleanText(patch.map, 60),
         referee: patch.referee === undefined ? row.referee : cleanText(patch.referee, NAME_MAX),
-        scoreA: score(patch.scoreA, row.scoreA),
-        scoreB: score(patch.scoreB, row.scoreB),
+        scoreA: readScore(patch.scoreA, row.scoreA),
+        scoreB: readScore(patch.scoreB, row.scoreB),
         played: patch.played === undefined ? row.played : patch.played === true,
         sideChosen:
           patch.sideChosen === undefined ? row.sideChosen : normalisePlaySide(patch.sideChosen),
       };
-      await tx.update(matchGames).set(next).where(eq(matchGames.id, row.id));
-      byIndex.set(patch.index, { ...row, ...next });
+      staged.push({ id: row.id, values });
+      byIndex.set(patch.index, { ...row, ...values });
+    }
+
+    const finalGames = [...byIndex.values()].sort((x, y) => x.index - y.index);
+    const shape = seriesRefusal({
+      bestOf: match.bestOf,
+      elimination: resolved.elimination,
+      games: finalGames,
+    });
+    if (shape) return fail(shape);
+
+    // Pass two: write.
+    for (const row of staged) {
+      await tx.update(matchGames).set(row.values).where(eq(matchGames.id, row.id));
     }
 
     const durationWasGiven = options.durationMin !== undefined;
@@ -1582,9 +1841,7 @@ export async function recordGames(
       durationMin: durationWasGiven ? (options.durationMin ?? null) : match.durationMin,
       bestOf: match.bestOf,
       winnerOverrideId: match.winnerOverrideId,
-      games: [...byIndex.values()]
-        .sort((x, y) => x.index - y.index)
-        .map((g) => ({ played: g.played, scoreA: g.scoreA, scoreB: g.scoreB })),
+      games: finalGames.map((g) => ({ played: g.played, scoreA: g.scoreA, scoreB: g.scoreB })),
     };
     syncFinish(state, durationWasGiven, options.now);
 
@@ -1598,10 +1855,18 @@ export async function recordGames(
 
     // Before the re-flow, so a round that has just been paired is laid out with
     // the rest of its day rather than sitting at no time until the next write.
-    await advanceSwiss(tx, match.eventId);
-    await reflow(tx, match.eventId);
+    await advanceSwiss(tx, found.eventId);
+    await reflow(tx, found.eventId);
 
-    return withData({ finishedAt: state.finishedAt, durationMin: state.durationMin });
+    return withData({
+      finishedAt: state.finishedAt,
+      durationMin: state.durationMin,
+      flagged: flagsBetween(
+        snapshotOf(boardBefore),
+        snapshotOf(await formatFor(found.eventId, tx)),
+        match.slot
+      ),
+    });
   });
 }
 
@@ -1710,25 +1975,52 @@ async function advanceSwiss(database: Database, eventId: string): Promise<number
  *
  * The override has to name one of the two teams actually in the match, which
  * means resolving the slot first — a bracket slot's teams are not in its row.
+ *
+ * It reports the same dependent flags `recordGames` does (UC-19 3a), because it
+ * is the write that settles a drawn knockout series: the slot above it goes
+ * from "waiting on upper semi 1" to a named team on this one decision, and if
+ * that slot already has maps against it they were played by somebody else.
+ *
+ * ## Every deciding read is taken after the lock
+ *
+ * The first select below asks one question — which event is this — because the
+ * lock has to be named before it can be taken. Everything the function decides
+ * on comes from the re-read underneath it, `recordGames` and `reflipMatch`
+ * being the same shape. The row's **existence** is one of those decisions: a
+ * regeneration committing while this transaction waited for the lock deletes
+ * and re-inserts every match of its stage, and an existence check taken before
+ * the wait left the `update` below hitting no rows at all and this function
+ * answering `ok` with no flags — a decision reported as recorded against a row
+ * that is not there.
  */
 export async function setWinnerOverride(
   matchId: string,
   teamId: string | null,
   database: Database = defaultDb
-): Promise<FormatResult> {
+): Promise<FormatResult<{ flagged: DependentFlag[] }>> {
   return database.transaction(async (tx) => {
-    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
-    if (!match) return fail("That match no longer exists.");
+    const [found] = await tx
+      .select({ id: matches.id, eventId: matches.eventId })
+      .from(matches)
+      .where(eq(matches.id, matchId))
+      .limit(1);
+    if (!found) return fail("That match no longer exists.");
 
-    const event = await lockEvent(tx, match.eventId);
+    const event = await lockEvent(tx, found.eventId);
     if (!event) return fail("That event no longer exists.");
 
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
+    // Re-read under the lock. `slot` decides which card is resolved, which
+    // flags are reported and which one is excluded from them, and the row being
+    // here at all decides whether there is anything to override.
+    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
+    if (!match) return fail("That match no longer exists.");
+
+    const boardBefore = await formatFor(match.eventId, tx);
     if (teamId) {
-      const view = await formatFor(match.eventId, tx);
-      const resolved = view?.stages
+      const resolved = boardBefore?.stages
         .flatMap((stage) => stage.matches)
         .find((m) => m.slot === match.slot);
       if (!resolved) return fail("That match is not part of the current format.");
@@ -1742,7 +2034,13 @@ export async function setWinnerOverride(
     // writes that can complete a Swiss round (UC-18 swiss).
     await advanceSwiss(tx, match.eventId);
     await reflow(tx, match.eventId);
-    return withData(null);
+    return withData({
+      flagged: flagsBetween(
+        snapshotOf(boardBefore),
+        snapshotOf(await formatFor(match.eventId, tx)),
+        match.slot
+      ),
+    });
   });
 }
 
@@ -1824,14 +2122,25 @@ export async function reflipMatch(
  * Bo5 on a completed tournament could be erased by an admin who meant to clear
  * the card below it. The refusal has to be attached to the *operation*, and the
  * operation therefore has to be a function.
+ *
+ * ## Its dependent flags are measured around the whole operation
+ *
+ * The two writes below are two transactions, so each of them sees the other's
+ * work already done and neither can see what the board looked like before the
+ * clear began — the override is dropped first, which is itself what unresolves
+ * everything downstream. So the snapshot is taken out here, around both, and
+ * the diff is a report rather than a decision: nothing is refused on the
+ * strength of it, which is why reading it outside a transaction is honest.
+ * (Holding one lock across both writes is Task 36's lock-ordering work, and it
+ * is not this.)
  */
 export async function clearMatch(
   matchId: string,
   gameCount: number,
   database: Database = defaultDb
-): Promise<FormatResult> {
+): Promise<FormatResult<{ flagged: DependentFlag[] }>> {
   const [match] = await database
-    .select({ id: matches.id, eventId: matches.eventId })
+    .select({ id: matches.id, eventId: matches.eventId, slot: matches.slot })
     .from(matches)
     .where(eq(matches.id, matchId))
     .limit(1);
@@ -1842,6 +2151,8 @@ export async function clearMatch(
 
   const locked = lockRefusal(event);
   if (locked) return fail(locked);
+
+  const before = snapshotOf(await formatFor(match.eventId, database));
 
   const cleared = await setWinnerOverride(matchId, null, database);
   if (!cleared.ok) return cleared;
@@ -1861,7 +2172,13 @@ export async function clearMatch(
   );
   if (!result.ok) return fail(result.error);
 
-  return withData(null);
+  return withData({
+    flagged: flagsBetween(
+      before,
+      snapshotOf(await formatFor(match.eventId, database)),
+      match.slot
+    ),
+  });
 }
 
 /**
@@ -1891,6 +2208,40 @@ export async function clearMatch(
  * The re-flow below moves later matches of the same day, and those shifts are
  * consequences rather than edits: one manager moving one match does not mark
  * three stages.
+ *
+ * ## A start that has not moved is not a hand edit either
+ *
+ * The caller is a form, and a form posts every field it holds whether or not
+ * anybody touched it: `recordGamesAction` calls this whenever `scheduledAt` is
+ * *present*, and the Results tab's card always holds the match's own start. So
+ * recording a scoreline — or opening a card that has no start time at all and
+ * pressing Save — marked the stage hand-edited, for ever, having moved nothing.
+ *
+ * That is not a cosmetic lie. `stageTouchOf` reads the mark, so the stage stops
+ * being rebuilt automatically when the teams change (UC-18 9); `StageClearing`
+ * reads it, so the rebuild dialog claims "start times in this stage were moved
+ * by hand"; and `MatchesState` reads it, so the Format tab blames hand-moved
+ * times for an out-of-date stage nobody has touched. R-157's mark belongs to a
+ * *move*, so an instruction that lands on the instant already stored returns
+ * the stored one and writes nothing — including no re-flow, since nothing moved
+ * for the rest of the day to follow.
+ *
+ * ## Which is why the comparison is read after the lock
+ *
+ * The lock-ordering rule `recordGames` and `setWinnerOverride` follow, and this
+ * function needs it for the same reason they do — see `setWinnerOverride`'s
+ * docblock. The first select asks one question, which event is this, because the
+ * lock has to be named before it can be taken; `scheduled_at` comes from the
+ * re-read underneath it.
+ *
+ * Taken before the wait, that instant is stale by the time it is compared, and
+ * `reflow` is what makes it stale: it rewrites `scheduled_at` for every later
+ * match of the day, and `recordGamesAction` posts `scheduledAt` on every
+ * scoreline, so a card read before queueing for the lock is comparing the
+ * manager's value against a pre-reflow instant. Two ways that goes wrong, and
+ * both are the early return above firing on a move that was really asked for:
+ * it writes nothing, and it answers with the stale instant — breaking the
+ * promise below that the screen shows where the match actually ended up.
  */
 export async function setMatchSchedule(
   matchId: string,
@@ -1898,19 +2249,36 @@ export async function setMatchSchedule(
   database: Database = defaultDb
 ): Promise<FormatResult<{ scheduledAt: string | null }>> {
   return database.transaction(async (tx) => {
-    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
-    if (!match) return fail("That match no longer exists.");
+    const [found] = await tx
+      .select({ id: matches.id, eventId: matches.eventId })
+      .from(matches)
+      .where(eq(matches.id, matchId))
+      .limit(1);
+    if (!found) return fail("That match no longer exists.");
 
-    const event = await lockEvent(tx, match.eventId);
+    const event = await lockEvent(tx, found.eventId);
     if (!event) return fail("That event no longer exists.");
 
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
+    // Re-read under the lock. `scheduled_at` decides whether this is a move at
+    // all, `stage_id` decides which stage is marked hand-edited, and the row
+    // being here at all decides whether there is anything to move.
+    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
+    if (!match) return fail("That match no longer exists.");
+
     let at: Date | null = null;
     if (scheduledAt) {
       at = new Date(scheduledAt);
       if (Number.isNaN(at.getTime())) return fail("That start time is not a time.");
+    }
+
+    // Compared as instants rather than as the strings or the `Date` objects:
+    // the browser sends an ISO stamp and the column comes back as a `Date`, so
+    // `===` on either would call every unchanged start a move.
+    if (iso(at) === iso(match.scheduledAt)) {
+      return withData({ scheduledAt: iso(match.scheduledAt) });
     }
 
     await tx.update(matches).set({ scheduledAt: at }).where(eq(matches.id, matchId));

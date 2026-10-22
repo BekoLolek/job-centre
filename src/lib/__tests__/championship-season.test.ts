@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq, inArray } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import {
   type ChampionshipStatusValue,
   type Database,
@@ -70,12 +70,10 @@ async function season(
 /**
  * A counting event on a season, played at the given hour so the order is fixed.
  *
- * The date goes on a day row and **nowhere else**. `events.starts_at` is no
- * longer written by anything in the site (R-24: an event's dates are its days'),
- * so a fixture that set the column would be building an event no manager can
- * create any more — and `seasonEvents` would read its date from `event_days`
- * and find none. `null` means exactly what it means in the site: an event
- * nobody has given a time to yet.
+ * The date goes on a day row because there is nowhere else for it to go:
+ * `events.starts_at` was dropped by drizzle/0026 (R-24: an event's dates are
+ * its days'), and `seasonEvents` reads `event_days`. `null` means exactly what
+ * it means in the site: an event nobody has given a time to yet.
  */
 async function night(
   seasonId: string,
@@ -442,26 +440,20 @@ describe("the season's events", () => {
 
   it("dates each one from its days, orders the list by that, and keeps an undated night (R-24)", async () => {
     /*
-     * The regression this pins: an event's dates are its `event_days` rows'
-     * and nothing writes `events.starts_at` any more, so a night created
-     * today has null in the column. Reading the column here printed every
-     * event with no date at all and collapsed the played order into the
-     * alphabetical one `listCountingEvents` already gives.
+     * The regression this pins: an event's dates are its `event_days` rows',
+     * and `events` has no date column left to read instead — drizzle/0026
+     * dropped both, which `migrations.test.ts` proves. Reading the column here
+     * printed every event with no date at all and collapsed the played order
+     * into the alphabetical one `listCountingEvents` already gives.
      *
      * The titles are deliberately in the reverse of the date order, and one
      * night has no date: an assertion that holds for either order, or that
      * cannot tell a date from a null, is not asserting anything.
      */
     const id = await season("published");
-    const zulu = await night(id, "Zulu night", new Date("2026-03-01T19:00:00Z"));
-    const alpha = await night(id, "Alpha night", new Date("2026-03-08T19:00:00Z"));
-    const mike = await night(id, "Mike night", null);
-
-    const rows = await db
-      .select()
-      .from(events)
-      .where(inArray(events.id, [zulu, alpha, mike]));
-    expect(rows.map((row) => row.startsAt)).toEqual([null, null, null]);
+    await night(id, "Zulu night", new Date("2026-03-01T19:00:00Z"));
+    await night(id, "Alpha night", new Date("2026-03-08T19:00:00Z"));
+    await night(id, "Mike night", null);
 
     const { toCome } = await page(id);
 

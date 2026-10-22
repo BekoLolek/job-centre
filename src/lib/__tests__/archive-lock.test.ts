@@ -172,10 +172,15 @@ async function finishedEvent(midLot = false): Promise<Fixture> {
   const card = view?.stages
     .find((row) => row.id === stage.id)
     ?.matches.find((row) => row.slot === playedMatch.slot);
+  /*
+   * The minimum number of maps, not every row in the series: a knockout series
+   * stops when it is won, so a Bo3 recorded as three 1-0 games claims a third
+   * map nobody could have played and `recordGames` refuses it (UC-19 5a).
+   */
   unwrap(
     await recordGames(
       playedMatch.id,
-      (card?.games ?? []).map((_, index) => ({
+      Array.from({ length: Math.floor((card?.bestOf ?? 1) / 2) + 1 }, (_unused, index) => ({
         index,
         scoreA: 1,
         scoreB: 0,

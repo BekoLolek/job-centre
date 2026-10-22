@@ -114,6 +114,26 @@ describe("isMatchDecided", () => {
   it("is not vacuously true for a series with no games at all", () => {
     expect(isMatchDecided({ bestOf: 3, games: [], winnerOverrideId: null })).toBe(false);
   });
+
+  it("does not assume the series length is odd (R-159, UC-19 E4)", () => {
+    /*
+     * `SERIES_LENGTHS` is odd-only and `matches_best_of_odd` refuses an even
+     * one in the database, so this shape cannot be reached through a stage
+     * config today — but R-159's note is "series lengths may be even", and this
+     * function is where that assumption would hide. A Bo2 at one each is
+     * finished by exhaustion with nobody ahead, which is exactly the state
+     * UC-19 E4 hands to the manager.
+     */
+    const games = [
+      { index: 0, mode: "", map: "", referee: "", scoreA: 1, scoreB: 0, played: true, sideChosen: null },
+      { index: 1, mode: "", map: "", referee: "", scoreA: 0, scoreB: 1, played: true, sideChosen: null },
+    ];
+    expect(isMatchDecided({ bestOf: 2, games, winnerOverrideId: null })).toBe(true);
+    // And one game of two is not finished: the target is 2, not 1.
+    expect(
+      isMatchDecided({ bestOf: 2, games: [games[0], { ...games[1], played: false }], winnerOverrideId: null })
+    ).toBe(false);
+  });
 });
 
 describe("resolveMatches", () => {

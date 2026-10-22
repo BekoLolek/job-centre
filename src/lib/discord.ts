@@ -440,12 +440,14 @@ async function noteFailure(
  * An event went public.
  *
  * The "Starts" field is the event's **derived** start — its first dated day's
- * (R-24) — read with `readDatesFor` rather than off the event row. The two
- * date columns are dead (see `events.startsAt` in `src/db/schema.ts`): nothing
- * writes them any more, so on every event published from Task 12 on they are
- * null, and `eventPublishedMessage` drops the field when it is. The channel
- * message would then be missing the one fact a reader needs before deciding
- * whether to apply (R-107 / UC-26 4).
+ * (R-24) — read with `readDatesFor` rather than off the event row. There is no
+ * start on the event row to read: Task 12 stopped reading `events.starts_at`
+ * and `events.ends_at`, drizzle/0020 moved every event's date into
+ * `event_days`, and drizzle/0026 dropped both columns (Task 50). Taking the
+ * start off the row would not compile, and before the drop it was worse than
+ * that — it compiled, answered `null`, and `eventPublishedMessage` drops the
+ * field when it is null, so the channel message went out missing the one fact a
+ * reader needs before deciding whether to apply (R-107 / UC-26 4).
  *
  * The extra read is the days, which is the only place the answer exists.
  */

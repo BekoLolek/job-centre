@@ -176,6 +176,20 @@
       "when": 1792614256838,
       "tag": "0024_stage_out_of_date",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792617658289,
+      "tag": "0025_event_host_one_per_event",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792620832766,
+      "tag": "0026_event_dates_dropped",
+      "breakpoints": true
     }
   ]
 }

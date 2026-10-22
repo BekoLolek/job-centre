@@ -11,6 +11,7 @@ import {
 } from "@/db/__tests__/helpers";
 import { createEvent, getEventById, publishEvent, updateEvent } from "@/lib/events";
 import {
+  ALREADY_HOSTED,
   ALREADY_PENDING,
   applyToHost,
   approveHostApplication,
@@ -70,6 +71,71 @@ async function anEvent(): Promise<string> {
   const created = await createEvent({ title: `Hosted fixture ${counter}` }, db);
   if (!created.ok) throw new Error(created.error);
   return created.data.id;
+}
+
+/**
+ * This file's database, except that the transaction it opens is not one, and
+ * the first insert inside it runs `between` to completion before the statement
+ * is issued — `insertingAfter` in `championship-events.test.ts` and
+ * `waivers.test.ts`, `writingAfter` and `committingAfter` in `events.test.ts`.
+ *
+ * Sequenced rather than raced: the window it pins is one statement wide, and a
+ * test that had to *win* a race to see it would be a test that passes by luck.
+ *
+ * ## Why the transaction is flattened
+ *
+ * PGlite is a single connection and serialises everything behind one mutex, so
+ * a statement issued while a transaction is open on the same client never runs
+ * at all — it waits for a transaction that is waiting for it. (Measured: both
+ * a nested `transaction` and a plain `query` inside an open one hang
+ * indefinitely.) So the second approval cannot be run *inside* the first's
+ * transaction, and `Promise.all` over two of them would interleave two
+ * `BEGIN`s on one connection, which is not two admins — it is one broken
+ * session.
+ *
+ * The window is therefore pinned from the other side: the approval under test
+ * is handed this file's `db` where it expects a `tx`, which leaves the
+ * connection free for the approval in the gap to open, write and commit a real
+ * transaction of its own between the first's read and its insert.
+ *
+ * What that does not exercise is the first approval's rollback. It has nothing
+ * to roll back — the insert that gets refused is the first write its
+ * transaction makes — and the test says so out loud by asserting that the
+ * application is still pending and the grant is still the winner's.
+ */
+function insertingAfter(between: () => Promise<unknown>): Database {
+  let pending: (() => Promise<unknown>) | null = between;
+
+  const flattened = new Proxy(db, {
+    get(target, property, receiver) {
+      if (property !== "insert" || pending === null) {
+        return Reflect.get(target, property, receiver);
+      }
+      return (table: Parameters<Database["insert"]>[0]) => ({
+        values: (values: unknown) => ({
+          onConflictDoNothing: async (config: unknown) => {
+            const run = pending;
+            pending = null;
+            if (run) await run();
+            const builder = target.insert(table) as unknown as {
+              values: (of: unknown) => {
+                onConflictDoNothing: (on: unknown) => Promise<unknown>;
+              };
+            };
+            return builder.values(values).onConflictDoNothing(config);
+          },
+        }),
+      });
+    },
+  });
+
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property !== "transaction") return Reflect.get(target, property, receiver);
+      return async (run: Parameters<Database["transaction"]>[0]) =>
+        run(flattened as never);
+    },
+  });
 }
 
 const APPLICATION = {
@@ -397,6 +463,127 @@ describe("approving", () => {
 
     expect(again.ok).toBe(false);
     expect(again.ok === false && again.error).toMatch(/already been decided/);
+  });
+});
+
+describe("one host per event, in the database (R-86 / UC-21 5a)", () => {
+  it("is refused by Postgres, not only by the read in the approval", async () => {
+    // The rule as the database holds it. `approveHostApplication` is not
+    // involved: a second host row for one event cannot exist however it is
+    // written. The insert is a bare one so that what is being asserted is the
+    // index and not any one caller's conflict clause.
+    const eventId = await anEvent();
+    await makeHost(db, eventId, await makeUser(db));
+
+    const second = await makeUser(db);
+    await expectRejection(
+      () => db.insert(eventHosts).values({ eventId, userId: second }),
+      /event_hosts_one_host_per_event/
+    );
+    expect(await canManageEvent({ id: second, isAdmin: false }, eventId, db)).toBe(false);
+  });
+
+  it("is refused through the fixture too, which does not forgive it", async () => {
+    // `makeHost` targets the primary key rather than forgiving every conflict,
+    // so it cannot hide this rule from the fixtures set up under it: a test
+    // asking for a second host on one event is told, instead of quietly
+    // getting one row and running on against a permission nobody was granted.
+    const eventId = await anEvent();
+    await makeHost(db, eventId, await makeUser(db));
+
+    const second = await makeUser(db);
+    await expectRejection(
+      () => makeHost(db, eventId, second),
+      /event_hosts_one_host_per_event/
+    );
+    expect(await canManageEvent({ id: second, isAdmin: false }, eventId, db)).toBe(false);
+  });
+
+  it("still takes the same grant twice, because the key is the pair", async () => {
+    // The primary key is `(event_id, user_id)` and the new index is `event_id`
+    // alone, so they refuse different things: re-writing one person's own grant
+    // is a no-op, which is what the approval's `onConflictDoNothing` — and the
+    // fixture's, targeted at the same key — is for.
+    const eventId = await anEvent();
+    const host = await makeUser(db);
+    await makeHost(db, eventId, host);
+    await makeHost(db, eventId, host);
+
+    expect(
+      await db.select().from(eventHosts).where(eq(eventHosts.eventId, eventId))
+    ).toHaveLength(1);
+    expect(await canManageEvent({ id: host, isAdmin: false }, eventId, db)).toBe(true);
+  });
+
+  it("refuses the second of two approvals onto one event, in the same sentence", async () => {
+    /*
+     * The race Task 23's read cannot see, and the whole of Task 49.
+     *
+     * Two admins, two different applications, one event. The first approval
+     * reads: the application is pending, the event exists, nobody holds it. The
+     * second approval then runs whole — read, insert, commit — in the gap
+     * before the first one inserts. So the first one's read is now a lie, and
+     * the only thing left that can refuse it is the unique index.
+     *
+     * What it must not do is surface as a driver error with an index name in
+     * it. The admin who loses this race and the admin who clicks a minute late
+     * are in the same situation and must be told the same thing.
+     */
+    const eventId = await anEvent();
+    const readFirst = await makeUser(db, { displayName: "Admin Ada" });
+    const landsFirst = await makeUser(db, { displayName: "Admin Bo" });
+    const slow = await makeUser(db, { displayName: "Slow Sam" });
+    const quick = await makeUser(db, { displayName: "Quick Quinn" });
+    const slowApplication = unwrap(await applyToHost(slow, APPLICATION, db));
+    const quickApplication = unwrap(
+      await applyToHost(quick, { ...APPLICATION, title: "Saturday REPO night" }, db)
+    );
+
+    const inTheGap = () =>
+      approveHostApplication(quickApplication.id, landsFirst, { eventId }, db);
+
+    const result = await approveHostApplication(
+      slowApplication.id,
+      readFirst,
+      { eventId },
+      insertingAfter(inTheGap)
+    );
+
+    // Exactly one of them won, and it is the one whose insert landed.
+    expect(await canManageEvent({ id: quick, isAdmin: false }, eventId, db)).toBe(true);
+    expect((await getHostApplication(quickApplication.id, db))?.status).toBe("approved");
+    expect(
+      await db.select().from(eventHosts).where(eq(eventHosts.eventId, eventId))
+    ).toHaveLength(1);
+
+    // And the other was refused in words — the same words the read produces.
+    expect(refusal(result).error).toBe(ALREADY_HOSTED);
+    expect(refusal(result).errors.eventId).toMatch(/one grant per event/);
+
+    // Nothing of the losing approval survives anywhere: no grant, and an
+    // application still sitting in the queue for somebody to decide properly.
+    expect(await canManageEvent({ id: slow, isAdmin: false }, eventId, db)).toBe(false);
+    expect(await eventsHostedBy(slow, db)).toEqual([]);
+    const loser = await getHostApplication(slowApplication.id, db);
+    expect(loser?.status).toBe("pending");
+    expect(loser?.eventId).toBeNull();
+    expect(loser?.decidedAt).toBeNull();
+  });
+
+  it("says the same thing when the race is lost as when the event was taken first", async () => {
+    // The two paths to one sentence, side by side. If they ever drift apart,
+    // this is the test that notices.
+    const eventId = await anEvent();
+    const admin = await makeUser(db);
+    await makeHost(db, eventId, await makeUser(db));
+    const application = unwrap(await applyToHost(await makeUser(db), APPLICATION, db));
+
+    const fromTheRead = refusal(
+      await approveHostApplication(application.id, admin, { eventId }, db)
+    );
+
+    expect(fromTheRead.error).toBe(ALREADY_HOSTED);
+    expect(fromTheRead.errors.eventId).toMatch(/one grant per event/);
   });
 });
 

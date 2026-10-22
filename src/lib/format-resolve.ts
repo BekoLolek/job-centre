@@ -179,9 +179,12 @@ function gameWins(games: MatchGameRecord[]): { a: number; b: number } {
 }
 
 /**
- * Whether the games alone (or an override) settle a match — the teams are not
- * needed, which is what lets an admin record a series before the slot above it
- * has resolved.
+ * Whether the games alone (or an override) settle a match. The teams are not
+ * needed, and that is a fact about the arithmetic rather than a permission:
+ * `recordGames` refuses a score against a slot that has not resolved (UC-19
+ * precondition 1), so in practice a decided series always has two teams. What
+ * this independence buys is that a *preview* board — a generated stage with no
+ * rows at all — resolves without having to invent them.
  */
 export function isMatchDecided(match: Pick<MatchRecord, "bestOf" | "games" | "winnerOverrideId">): boolean {
   if (match.winnerOverrideId) return true;
@@ -799,18 +802,53 @@ export class StageResolution {
 /* ------------------------------------------------------------------ */
 
 /**
+ * **The teams in seed order, best first** (R-160 / UC-18 E5).
+ *
+ * The one place that reads `teams.seed`, so the stored bracket
+ * (`format.ts`'s `seedOrderOf`) and the resolved one cannot disagree about who
+ * holds `seed:3`.
+ *
+ * ## A seed that is set is obeyed, even when its neighbours are blank
+ *
+ * `teams.seed` is nullable and nothing makes a manager fill it in, so a half
+ * seeded list is a real state — and this used to demand *every* team have a
+ * number before it would honour a single one. Seed the top two of four,
+ * generate, and the bracket came out in list order with no hint that the two
+ * numbers had been dropped: UC-18 E5's "System pairs by seed", silently not
+ * done. So the rule is the weakest one that still obeys what was typed — the
+ * numbers that are there rank the teams, and a team with no number falls in
+ * behind them in the order the Teams tab shows.
+ *
+ * Stable throughout: `Array.prototype.sort` is, so two teams sharing a seed
+ * (nothing refuses that either) and two teams sharing "no seed" both keep list
+ * order rather than resolving differently from one read to the next. A list
+ * where nobody is seeded needs no special case for the same reason: every
+ * comparison is a tie, so the order it arrived in is the order it leaves in.
+ *
+ * The comparator is in two terms — seeded before unseeded, then seed against
+ * seed — rather than the shorter version that ranks an unseeded team at
+ * `Infinity`. That one is correct and reads as a bug: comparing two unseeded
+ * teams evaluates `Infinity - Infinity`, which is `NaN`, and it only sorts
+ * because the specification tells an implementation to treat a `NaN` comparison
+ * as `+0`. A comparator that can return `NaN` should not need a paragraph of
+ * the language specification to defend it.
+ */
+export function seedOrderFrom(teams: ReadonlyArray<{ id: string; seed?: number | null }>): string[] {
+  return [...teams]
+    .sort(
+      (x, y) =>
+        Number(x.seed == null) - Number(y.seed == null) || (x.seed ?? 0) - (y.seed ?? 0)
+    )
+    .map((team) => team.id);
+}
+
+/**
  * The seeding a stage starts from: the caller's explicit order, else the teams'
  * own `seed` column, else the order they arrived in.
  */
 export function seedingFrom(input: ResolveInput): Array<string | null> {
   if (input.seeds && input.seeds.length) return [...input.seeds];
-  const seeded = input.teams.filter((t) => typeof t.seed === "number");
-  if (seeded.length === input.teams.length && seeded.length > 0) {
-    return [...input.teams]
-      .sort((x, y) => (x.seed as number) - (y.seed as number))
-      .map((t) => t.id);
-  }
-  return input.teams.map((t) => t.id);
+  return seedOrderFrom(input.teams);
 }
 
 /** Resolve a stage. The generalised `resolveMatches`. */
