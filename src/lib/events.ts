@@ -1849,6 +1849,23 @@ export async function previewEventDays(
  * back in the result, the same way `/admin/games` says how many answers a
  * delete would destroy before it destroys them. {@link previewEventDays} asks
  * the same question early enough to put on a confirm dialog.
+ *
+ * ## One transaction, and the lock before the status (R-39 / UC-09 6b)
+ *
+ * This is the write that deletes days and takes everyone's availability with
+ * them through the cascade, and it used to run statement by statement on the
+ * handle it was given, with the finished-event refusal decided from a plain
+ * read. Two things were wrong with that at once: a completion committing after
+ * the read still let the delete through, and a crash partway down the
+ * renumbering loop — a constraint error, or {@link moveDaysInto}'s bound
+ * guard — left the day list half-moved, with a survivor parked on
+ * {@link SCRATCH_DAY_INDEX}. Not a *refusal*: every `fail` in this function is
+ * made before the first write (the delete below), so there is no refusal path
+ * that can expose the scratch index. So the whole job is one transaction, and
+ * the status it refuses on is read with the event's row lock held, exactly as
+ * `applyToEvent` does. It is called from `createEvent` with that function's own
+ * handle, which is not a transaction — PGlite serialises one connection, so a
+ * transaction opened inside an open one would wait for itself.
  */
 export async function setEventDays(
   eventId: string,
@@ -1857,88 +1874,93 @@ export async function setEventDays(
 ): Promise<
   EventResult<{ days: EventDay[]; clearedAvailability: number; changed: boolean }>
 > {
-  const event = await readEvent(database, eventId);
-  if (!event) return fail("That event no longer exists.");
-  const locked = lockRefusal(event);
-  if (locked) return fail(locked);
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
-  const refusal = dayListProblem(event, days);
-  if (refusal) return fail(refusal);
+    // The event's own sign-up window is one of the things a day list is checked
+    // against, so it comes off the locked row rather than from a reader that
+    // ran before the wait.
+    const refusal = dayListProblem(event, days);
+    if (refusal) return fail(refusal);
 
-  const existing = await readDays(database, eventId);
-  const existingIds = new Set(existing.map((day) => day.id));
+    const existing = await readDays(tx, eventId);
+    const existingIds = new Set(existing.map((day) => day.id));
 
-  for (const day of days) {
-    if (day.id && !existingIds.has(day.id)) {
-      return fail("One of those days belongs to a different event.");
+    for (const day of days) {
+      if (day.id && !existingIds.has(day.id)) {
+        return fail("One of those days belongs to a different event.");
+      }
     }
-  }
 
-  const keeping = new Set(days.map((day) => day.id).filter((id): id is string => Boolean(id)));
-  const doomed = existing.filter((day) => !keeping.has(day.id));
+    const keeping = new Set(days.map((day) => day.id).filter((id): id is string => Boolean(id)));
+    const doomed = existing.filter((day) => !keeping.has(day.id));
 
-  let clearedAvailability = 0;
-  if (doomed.length > 0) {
-    const [row] = await database
-      .select({ total: count() })
-      .from(availability)
-      .where(
+    let clearedAvailability = 0;
+    if (doomed.length > 0) {
+      const [row] = await tx
+        .select({ total: count() })
+        .from(availability)
+        .where(
+          inArray(
+            availability.eventDayId,
+            doomed.map((day) => day.id)
+          )
+        );
+      clearedAvailability = Number(row?.total ?? 0);
+      // Availability cascades from the day, so this one delete is the whole job.
+      await tx.delete(eventDays).where(
         inArray(
-          availability.eventDayId,
+          eventDays.id,
           doomed.map((day) => day.id)
         )
       );
-    clearedAvailability = Number(row?.total ?? 0);
-    // Availability cascades from the day, so this one delete is the whole job.
-    await database.delete(eventDays).where(
-      inArray(
-        eventDays.id,
-        doomed.map((day) => day.id)
+    }
+
+    const surviving = existing.filter((day) => keeping.has(day.id));
+    await moveDaysInto(
+      tx,
+      surviving,
+      new Map(
+        days.flatMap((day, index) => (day.id ? [[day.id, index] as [string, number]] : []))
       )
     );
-  }
 
-  const surviving = existing.filter((day) => keeping.has(day.id));
-  await moveDaysInto(
-    database,
-    surviving,
-    new Map(
-      days.flatMap((day, index) => (day.id ? [[day.id, index] as [string, number]] : []))
-    )
-  );
-
-  for (const [index, day] of days.entries()) {
-    const values = {
-      startsAt: day.startsAt ?? null,
-      label: cleanNullable(day.label, 60),
-    };
-    if (day.id) {
-      await database.update(eventDays).set(values).where(eq(eventDays.id, day.id));
-    } else {
-      await database.insert(eventDays).values({ eventId, dayIndex: index, ...values });
+    for (const [index, day] of days.entries()) {
+      const values = {
+        startsAt: day.startsAt ?? null,
+        label: cleanNullable(day.label, 60),
+      };
+      if (day.id) {
+        await tx.update(eventDays).set(values).where(eq(eventDays.id, day.id));
+      } else {
+        await tx.insert(eventDays).values({ eventId, dayIndex: index, ...values });
+      }
     }
-  }
 
-  const written = await readDays(database, eventId);
-  /*
-   * Whether this save moved anything, for the caller deciding whether there is
-   * any news to send (R-98, UC-08 10b). A manager who opens the Days tab and
-   * presses Save has not changed the dates, and an applicant told the event
-   * "has changed" would go and look for what moved.
-   */
-  const changed =
-    written.length !== existing.length ||
-    written.some((day, index) => {
-      const before = existing[index];
-      return (
-        before === undefined ||
-        before.id !== day.id ||
-        (before.startsAt?.getTime() ?? null) !== (day.startsAt?.getTime() ?? null) ||
-        before.label !== day.label
-      );
-    });
+    const written = await readDays(tx, eventId);
+    /*
+     * Whether this save moved anything, for the caller deciding whether there is
+     * any news to send (R-98, UC-08 10b). A manager who opens the Days tab and
+     * presses Save has not changed the dates, and an applicant told the event
+     * "has changed" would go and look for what moved.
+     */
+    const changed =
+      written.length !== existing.length ||
+      written.some((day, index) => {
+        const before = existing[index];
+        return (
+          before === undefined ||
+          before.id !== day.id ||
+          (before.startsAt?.getTime() ?? null) !== (day.startsAt?.getTime() ?? null) ||
+          before.label !== day.label
+        );
+      });
 
-  return withData({ days: written, clearedAvailability, changed });
+    return withData({ days: written, clearedAvailability, changed });
+  });
 }
 
 /** The slot `moveDaysInto` parks a row in. Never a resting value — see schema. */
@@ -1954,6 +1976,17 @@ const SCRATCH_DAY_INDEX = MAX_EVENT_DAYS;
  * slot is taken — four days being rotated, which is a pure cycle — it parks one
  * row on the scratch index to break the cycle and carries on. Days keep their
  * ids throughout, which is what stops a reorder wiping everyone's availability.
+ *
+ * ## The guard throws, because returning is worse than hanging
+ *
+ * The bound is there for a future change that breaks the argument above, not
+ * for today's code. But exhausting it used to be a `return`, and a `return`
+ * from here leaves a day parked on {@link SCRATCH_DAY_INDEX} and
+ * `setEventDays`'s transaction **commits** it — the half-moved day list that
+ * function's docblock says is prevented, written by the very check meant to
+ * catch it. Throwing is what the guard was for: inside that transaction it is a
+ * rollback, and a request that fails loudly is the cheap outcome next to a
+ * committed row on a slot that is never a resting value.
  */
 async function moveDaysInto(
   database: Database,
@@ -1992,6 +2025,13 @@ async function moveDaysInto(
     if (stuck === undefined) break;
     await move(stuck, SCRATCH_DAY_INDEX);
   }
+
+  if (pending.size > 0) {
+    throw new Error(
+      `Reordering this event's days did not settle: ${pending.size} day(s) left unseated, ` +
+        `one of them parked on the scratch index. Rolled back rather than committed.`
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -2019,6 +2059,18 @@ export type EventQuestionInput = {
  * the `answers` jsonb, every stored application is re-validated against the new
  * question set and anything that no longer parses is dropped — with the count
  * returned, so the admin screen can say what the edit cost.
+ *
+ * ## One transaction, and the lock before the status (R-39 / UC-09 6b)
+ *
+ * `setEventDays`'s reasoning, and the stakes are higher here: this deletes
+ * question rows, re-keys the survivors through a scratch prefix and rewrites
+ * every applicant's stored answers. Statement by statement on a bare handle, a
+ * crash or a constraint error halfway down left question keys parked on
+ * `tmp-…`, and the finished-event refusal was decided from a read that a
+ * completion committing behind it made stale. Not a *refusal*: every `fail`
+ * here — including the per-question one — is made before the delete below,
+ * which is the first write, so no refusal path can expose a `tmp-…` key. The
+ * status now comes off the event's locked row.
  */
 export async function setEventQuestions(
   eventId: string,
@@ -2027,175 +2079,177 @@ export async function setEventQuestions(
 ): Promise<
   EventResult<{ questions: EventQuestion[]; clearedAnswers: number; changed: boolean }>
 > {
-  const event = await readEvent(database, eventId);
-  if (!event) return fail("That event no longer exists.");
-  const locked = lockRefusal(event);
-  if (locked) return fail(locked);
-  if (questions.length > MAX_EVENT_QUESTIONS) {
-    return fail(`${MAX_EVENT_QUESTIONS} questions is already more than anyone will answer.`);
-  }
-
-  const game = await readGame(database, event.gameId);
-  const existing = await readQuestions(database, eventId);
-  const existingIds = new Set(existing.map((question) => question.id));
-
-  // Profile fields this event is allowed to prefill from: its game's, plus the
-  // global ones. A field belonging to another game would prefill an answer the
-  // member gave about a different game entirely.
-  const linkable = await database
-    .select()
-    .from(profileFields)
-    .where(
-      event.gameId
-        ? or(eq(profileFields.gameId, event.gameId), isNull(profileFields.gameId))
-        : isNull(profileFields.gameId)
-    );
-  const linkableById = new Map(linkable.map((field) => [field.id, field]));
-
-  const errors: Record<string, string> = {};
-  const cleaned: Array<Required<Omit<EventQuestionInput, "options">> & {
-    options: ProfileFieldOption[];
-    sort: number;
-  }> = [];
-  const takenKeys: string[] = [];
-
-  for (const [index, question] of questions.entries()) {
-    const at = question.id ?? `new-${index}`;
-
-    if (question.id && !existingIds.has(question.id)) {
-      errors[at] = "That question belongs to a different event.";
-      continue;
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
+    if (questions.length > MAX_EVENT_QUESTIONS) {
+      return fail(`${MAX_EVENT_QUESTIONS} questions is already more than anyone will answer.`);
     }
 
-    const label = cleanText(question.label, TITLE_MAX);
-    if (!label) {
-      errors[at] = "Give the question a label.";
-      continue;
-    }
-    if (!isFieldType(question.type)) {
-      errors[at] = "That is not one of the question types.";
-      continue;
-    }
+    const game = await readGame(tx, event.gameId);
+    const existing = await readQuestions(tx, eventId);
+    const existingIds = new Set(existing.map((question) => question.id));
 
-    const info = fieldTypeInfo(question.type);
-    const options = normaliseOptions(question.options);
-    if (info.needsOptions && options.length === 0) {
-      errors[at] = "A pick-one or pick-any question needs at least one option.";
-      continue;
-    }
-    if (info.usesRankLadder && (!game || game.rankLadder.length === 0)) {
-      errors[at] = "A rank question needs an event whose game has a rank ladder.";
-      continue;
-    }
+    // Profile fields this event is allowed to prefill from: its game's, plus the
+    // global ones. A field belonging to another game would prefill an answer the
+    // member gave about a different game entirely.
+    const linkable = await tx
+      .select()
+      .from(profileFields)
+      .where(
+        event.gameId
+          ? or(eq(profileFields.gameId, event.gameId), isNull(profileFields.gameId))
+          : isNull(profileFields.gameId)
+      );
+    const linkableById = new Map(linkable.map((field) => [field.id, field]));
 
-    let profileFieldId: string | null = question.profileFieldId ?? null;
-    if (profileFieldId) {
-      const field = linkableById.get(profileFieldId);
-      if (!field) {
-        errors[at] = "That profile question is not one this event can prefill from.";
+    const errors: Record<string, string> = {};
+    const cleaned: Array<Required<Omit<EventQuestionInput, "options">> & {
+      options: ProfileFieldOption[];
+      sort: number;
+    }> = [];
+    const takenKeys: string[] = [];
+
+    for (const [index, question] of questions.entries()) {
+      const at = question.id ?? `new-${index}`;
+
+      if (question.id && !existingIds.has(question.id)) {
+        errors[at] = "That question belongs to a different event.";
         continue;
       }
-      if (field.type !== question.type) {
-        errors[at] = `The profile question "${field.label}" is a different type, so it cannot prefill this one.`;
+
+      const label = cleanText(question.label, TITLE_MAX);
+      if (!label) {
+        errors[at] = "Give the question a label.";
         continue;
       }
+      if (!isFieldType(question.type)) {
+        errors[at] = "That is not one of the question types.";
+        continue;
+      }
+
+      const info = fieldTypeInfo(question.type);
+      const options = normaliseOptions(question.options);
+      if (info.needsOptions && options.length === 0) {
+        errors[at] = "A pick-one or pick-any question needs at least one option.";
+        continue;
+      }
+      if (info.usesRankLadder && (!game || game.rankLadder.length === 0)) {
+        errors[at] = "A rank question needs an event whose game has a rank ladder.";
+        continue;
+      }
+
+      let profileFieldId: string | null = question.profileFieldId ?? null;
+      if (profileFieldId) {
+        const field = linkableById.get(profileFieldId);
+        if (!field) {
+          errors[at] = "That profile question is not one this event can prefill from.";
+          continue;
+        }
+        if (field.type !== question.type) {
+          errors[at] = `The profile question "${field.label}" is a different type, so it cannot prefill this one.`;
+          continue;
+        }
+      }
+
+      const key = uniqueKey(question.key?.trim() || label, takenKeys, `question-${index + 1}`);
+      takenKeys.push(key);
+
+      cleaned.push({
+        id: question.id ?? "",
+        key,
+        label,
+        type: question.type,
+        options,
+        required: question.required ?? false,
+        profileFieldId,
+        sort: index,
+      });
     }
 
-    const key = uniqueKey(question.key?.trim() || label, takenKeys, `question-${index + 1}`);
-    takenKeys.push(key);
+    if (Object.keys(errors).length > 0) {
+      return fail("Some of those questions need another look.", errors);
+    }
 
-    cleaned.push({
-      id: question.id ?? "",
-      key,
-      label,
-      type: question.type,
-      options,
-      required: question.required ?? false,
-      profileFieldId,
-      sort: index,
-    });
-  }
+    const keeping = new Set(cleaned.map((question) => question.id).filter(Boolean));
+    const doomed = existing.filter((question) => !keeping.has(question.id));
+    if (doomed.length > 0) {
+      await tx.delete(eventQuestions).where(
+        inArray(
+          eventQuestions.id,
+          doomed.map((question) => question.id)
+        )
+      );
+    }
 
-  if (Object.keys(errors).length > 0) {
-    return fail("Some of those questions need another look.", errors);
-  }
-
-  const keeping = new Set(cleaned.map((question) => question.id).filter(Boolean));
-  const doomed = existing.filter((question) => !keeping.has(question.id));
-  if (doomed.length > 0) {
-    await database.delete(eventQuestions).where(
-      inArray(
-        eventQuestions.id,
-        doomed.map((question) => question.id)
-      )
-    );
-  }
-
-  // Keys are unique per event, so the same collision problem as day indexes:
-  // swapping two questions' keys in place would trip the constraint halfway.
-  // Prefixing every survivor first sidesteps it without dropping rows.
-  for (const question of existing) {
-    if (!keeping.has(question.id)) continue;
-    await database
-      .update(eventQuestions)
-      .set({ key: `tmp-${question.id}` })
-      .where(eq(eventQuestions.id, question.id));
-  }
-
-  for (const question of cleaned) {
-    const values = {
-      key: question.key,
-      label: question.label,
-      type: question.type,
-      options: question.options,
-      required: question.required,
-      sort: question.sort,
-      profileFieldId: question.profileFieldId,
-    };
-    if (question.id) {
-      await database
+    // Keys are unique per event, so the same collision problem as day indexes:
+    // swapping two questions' keys in place would trip the constraint halfway.
+    // Prefixing every survivor first sidesteps it without dropping rows.
+    for (const question of existing) {
+      if (!keeping.has(question.id)) continue;
+      await tx
         .update(eventQuestions)
-        .set(values)
+        .set({ key: `tmp-${question.id}` })
         .where(eq(eventQuestions.id, question.id));
-    } else {
-      await database.insert(eventQuestions).values({ eventId, ...values });
     }
-  }
 
-  const written = await readQuestions(database, eventId);
-  const clearedAnswers = await clearOrphanedAnswers(
-    database,
-    eventId,
-    written,
-    game?.rankLadder ?? []
-  );
+    for (const question of cleaned) {
+      const values = {
+        key: question.key,
+        label: question.label,
+        type: question.type,
+        options: question.options,
+        required: question.required,
+        sort: question.sort,
+        profileFieldId: question.profileFieldId,
+      };
+      if (question.id) {
+        await tx
+          .update(eventQuestions)
+          .set(values)
+          .where(eq(eventQuestions.id, question.id));
+      } else {
+        await tx.insert(eventQuestions).values({ eventId, ...values });
+      }
+    }
 
-  /*
-   * Whether the form anybody has already answered is actually different
-   * (R-99, UC-08 10b). A manager who opens the Questions tab and saves it back
-   * unchanged has given applicants nothing to re-check, and "the questions have
-   * changed" sends them looking for a change that is not there.
-   *
-   * Compared on what an applicant would notice — the wording, the type, the
-   * options, whether it is required, the order, and which question it is —
-   * rather than on the row wholesale: `key` is regenerated from the label on
-   * every save and is not something anybody reads.
-   */
-  const shapeFor = (question: EventQuestion): string =>
-    JSON.stringify([
-      question.id,
-      question.label,
-      question.type,
-      question.required,
-      question.sort,
-      question.profileFieldId,
-      question.options.map((option) => [option.value, option.label]),
-    ]);
-  const changed =
-    written.length !== existing.length ||
-    written.some((question, index) => shapeFor(question) !== shapeFor(existing[index]));
+    const written = await readQuestions(tx, eventId);
+    const clearedAnswers = await clearOrphanedAnswers(
+      tx,
+      eventId,
+      written,
+      game?.rankLadder ?? []
+    );
 
-  return withData({ questions: written, clearedAnswers, changed });
+    /*
+     * Whether the form anybody has already answered is actually different
+     * (R-99, UC-08 10b). A manager who opens the Questions tab and saves it back
+     * unchanged has given applicants nothing to re-check, and "the questions have
+     * changed" sends them looking for a change that is not there.
+     *
+     * Compared on what an applicant would notice — the wording, the type, the
+     * options, whether it is required, the order, and which question it is —
+     * rather than on the row wholesale: `key` is regenerated from the label on
+     * every save and is not something anybody reads.
+     */
+    const shapeFor = (question: EventQuestion): string =>
+      JSON.stringify([
+        question.id,
+        question.label,
+        question.type,
+        question.required,
+        question.sort,
+        question.profileFieldId,
+        question.options.map((option) => [option.value, option.label]),
+      ]);
+    const changed =
+      written.length !== existing.length ||
+      written.some((question, index) => shapeFor(question) !== shapeFor(existing[index]));
+
+    return withData({ questions: written, clearedAnswers, changed });
+  });
 }
 
 /**

@@ -1390,7 +1390,12 @@ export async function setDraftConfig(
   database: Database = defaultDb
 ): Promise<DraftResult<SetDraftConfigResult>> {
   return database.transaction(async (tx) => {
-    const event = await readEvent(tx, eventId);
+    // The row lock before the status that decides, for the reason `setTeams`
+    // takes it: a plain read of `status` is answered from a snapshot taken
+    // before this transaction queued, so an admin marking the event finished
+    // while it waited committed *after* the read and *before* these writes —
+    // and the rules of a finished draft moved anyway (R-39 / UC-09 6b).
+    const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
     const current = await readConfig(tx, eventId);
@@ -1495,7 +1500,11 @@ export async function setDraftPool(
   database: Database = defaultDb
 ): Promise<DraftResult<SetDraftPoolResult>> {
   return database.transaction(async (tx) => {
-    const event = await readEvent(tx, eventId);
+    // Locked before the status is read, the rule the rest of this module
+    // follows: this deletes pool entries and inserts others, and a plain read
+    // of `status` cannot see a completion that commits while the transaction
+    // queues for the lock (R-39 / UC-09 6b).
+    const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
     const members = await readMembers(tx, eventId);
@@ -1642,7 +1651,9 @@ export async function setPoolKind(
   database: Database = defaultDb
 ): Promise<DraftResult<{ main: PoolPlayer[]; reserve: PoolPlayer[]; moved: boolean }>> {
   return database.transaction(async (tx) => {
-    const event = await readEvent(tx, eventId);
+    // The lock first, then the status, then the write — `setDraftPool`'s
+    // reasoning, about the same two tables (R-39 / UC-09 6b).
+    const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
     const entries = await readPool(tx, eventId);
@@ -1984,23 +1995,44 @@ export async function placeBid(
   });
 }
 
-/** Take a bid back off a lot. Admin only — a captain's bid is their word. */
+/**
+ * Take a bid back off a lot. Admin only — a captain's bid is their word.
+ *
+ * ## Every deciding read is taken after the lock
+ *
+ * The first select asks one question — which event is this — because the lock
+ * has to be named before it can be taken, and `clearBids` beneath this is the
+ * same shape. Both of the things this function decides on come from under the
+ * lock: the event's status, and the lot's.
+ *
+ * It deletes a row, so it needs the same refusal as the rest: an open lot can
+ * outlive the moment an admin marked the event finished, and a bid is
+ * somebody's word. Read before the lock, that status is answered from a
+ * snapshot taken before this transaction queued — so a completion committing
+ * while it waited was invisible, and the bid went anyway (R-39 / UC-09 6b).
+ * The lot's own status is under the lock for the matching reason: an award
+ * committing in that window settles the lot, and clearing a bid off a settled
+ * lot rewrites what the winner paid.
+ */
 export async function clearBid(
   lotId: string,
   teamId: string,
   database: Database = defaultDb
 ): Promise<DraftResult<{ cleared: boolean }>> {
   return database.transaction(async (tx) => {
+    const [peek] = await tx
+      .select({ id: draftLots.id, eventId: draftLots.eventId })
+      .from(draftLots)
+      .where(eq(draftLots.id, lotId))
+      .limit(1);
+    if (!peek) return fail("That lot no longer exists.");
+
+    const event = await lockEvent(tx, peek.eventId);
+    if (!event) return fail("That event no longer exists.");
+
     const [lot] = await tx.select().from(draftLots).where(eq(draftLots.id, lotId)).limit(1);
     if (!lot) return fail("That lot no longer exists.");
     if (lot.status !== "open") return fail("That lot has already settled.");
-
-    // The one lot operation that used not to read the event at all. It deletes
-    // a row, so it needs the same refusal as the rest: an open lot can outlive
-    // the moment an admin marked the event finished, and a bid is somebody's
-    // word.
-    const event = await readEvent(tx, lot.eventId);
-    if (!event) return fail("That event no longer exists.");
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
 

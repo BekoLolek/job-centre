@@ -621,6 +621,46 @@ describe("recordGames", () => {
       "2025-08-16T14:00:00.000Z"
     );
   });
+
+  it("reads the event with its row lock, and reads it first", async () => {
+    /*
+     * The other half of the rule the two tests below assert for
+     * `setWinnerOverride` and `setMatchSchedule`: `lockEvent` first, then every
+     * read that decides, then the write. They ask where the *match* reads sit
+     * relative to the lock; this one asks whether the lock is taken at all.
+     *
+     * It is asserted rather than left to inspection, and rather than left to
+     * `archive-lock.test.ts`, whose `LOCK_FIRST` prose claimed this assertion
+     * lived here: `recordGames` is the write that unticks a played game and
+     * zeroes its score, so the status it refuses on (R-39 / UC-09 6b) has to be
+     * the one on the row at the moment the lock is taken, not one from before
+     * this transaction queued for it. Replacing its `lockEvent` with the plain
+     * `readEvent` beside it changes no behaviour PGlite can show — it is a
+     * single connection and serialises everything behind one mutex, so a plain
+     * read and a locking read issued at the same point in the same transaction
+     * behave identically — and the whole suite stayed green when it was tried.
+     * The statements are the only place the difference is visible.
+     *
+     * The *first* read of `events`, not merely one somewhere in the
+     * transaction: a write that decides on a plain read and locks afterwards
+     * has already decided on a status that may have moved.
+     */
+    const { eventId } = await boardEvent();
+    await db.update(events).set({ status: "live" }).where(eq(events.id, eventId));
+    const id = await matchId(eventId, "rr-1-2");
+
+    const log: string[] = [];
+    expect(
+      await recordGames(id, [{ index: 0, scoreA: 1, played: true }], {}, logging(log))
+    ).toMatchObject({ ok: true });
+
+    const firstEventRead = log.find((query) => /from "events"/.test(query));
+    expect(
+      firstEventRead,
+      "recordGames never read the event at all, so it cannot be refusing on it."
+    ).toBeDefined();
+    expect(firstEventRead).toMatch(/for update/i);
+  });
 });
 
 describe("setWinnerOverride", () => {
