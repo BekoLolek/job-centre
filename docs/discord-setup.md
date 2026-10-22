@@ -79,7 +79,32 @@ So this is one fewer thing to configure than it first looked.
 **Where:** two places, and they must match.
 - Vercel → Environment Variables (it is probably already set — `/api/cron/reminders` fails
   closed without it today).
-- GitHub → repo Settings → Secrets and variables → Actions → New repository secret.
+- GitHub → repo Settings → Secrets and variables → Actions → **Secrets** tab → New repository
+  secret.
+
+### And `CRON_URL`, on the Variables tab
+
+**Easy to miss, and the workflow will not run without it.** Same screen, the **Variables** tab
+rather than Secrets: name `CRON_URL`, value the site's origin with **no trailing slash**, e.g.
+`https://jobcentre.vercel.app`.
+
+It is a variable rather than a secret deliberately: a deployment URL is not a credential, and
+the thing that authorises the request is the `Authorization` header. No production URL appears
+anywhere in this repo, so it could not be hardcoded.
+
+Until **both** are set, every scheduled run **fails red** with `Not configured yet — missing: …`
+rather than going green while doing nothing. That is on purpose: a scheduled job that reports
+success while silently posting nothing is the worst of the available failure modes.
+
+Two more things about GitHub's scheduler worth knowing before you rely on it:
+
+- **Schedules only run on the default branch.** The workflow does nothing until it is on `main`.
+- **GitHub disables scheduled workflows after 60 days of repository inactivity.** If the site
+  goes quiet for two months, the reminders stop until somebody re-enables them.
+- It is best-effort and commonly runs 5–15 minutes late. Nothing compensates for that, because
+  nothing has to — the reminder windows are two hours and twenty-four hours wide against a
+  worst-case gap of thirty minutes between runs, and a claim makes the extra runs inside one
+  window no-ops.
 
 **Why GitHub too:** Vercel Hobby runs a cron job **at most once a day**, which
 `docs/requirements.md` carries as a constraint and `vercel.json` shows as `0 12 * * *`. A daily
