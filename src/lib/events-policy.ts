@@ -688,6 +688,47 @@ export type ApplicationDecision = Extract<
 /* Rank thresholds (§8.3)                                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Why these two rank thresholds cannot be saved against this game, or null when
+ * they can (UC-08 7, 10d / §8.3).
+ *
+ * A threshold is stored as a ladder *entry name*, so it is only meaningful
+ * beside the game whose ladder it names — which makes three things refusable: a
+ * threshold with no game at all, a threshold on a game that has no ladder, and
+ * a threshold naming a rank the ladder does not have.
+ *
+ * One function rather than a copy per caller, and that is the whole reason it
+ * is here rather than inline in `createEvent`. Two places write a threshold
+ * now: `validateFields` when an event is created or edited, and
+ * `createTemplate`/`updateTemplate` since drizzle/0027 gave a template columns
+ * to hold one. A template allowed to store "Diamond" against a game whose
+ * ladder stops at Gold would be a template that every `createEvent` from it
+ * refused — the refusal arriving at the wrong end, against the wrong person, on
+ * a setup they did not just type. Same check, same sentence, both ends.
+ *
+ * `ladderIndex`'s tolerance is deliberately *not* used here: this is the write
+ * path, where "Diamond " and "diamond" should be accepted and stored as the
+ * admin's string, but a rank that is simply not on the ladder must be refused.
+ * So the comparison folds case and trims, exactly as `ladderIndex` does, rather
+ * than as `=` would.
+ */
+export function rankGateProblem(
+  gates: ReadonlyArray<[rank: string | null, label: string]>,
+  game: { name: string; rankLadder: readonly string[] } | null
+): string | null {
+  for (const [rank, label] of gates) {
+    if (!rank) continue;
+    if (!game) return `Pick the game before setting a ${label}.`;
+    if (game.rankLadder.length === 0) {
+      return `${game.name} has no rank ladder to compare against.`;
+    }
+    if (ladderIndex(rank, game.rankLadder) === -1) {
+      return `"${rank}" is not one of ${game.name}'s ranks.`;
+    }
+  }
+  return null;
+}
+
 export type RankReason =
   /** No threshold set — everybody clears it. */
   | "no_minimum"

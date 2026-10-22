@@ -102,6 +102,7 @@ import {
   missingToPublish,
   nextWaitlistPosition,
   promoteFromWaitlist,
+  rankGateProblem,
   readWebAddress,
   recomputeWaitlist,
   signupWindowProblem,
@@ -1305,21 +1306,16 @@ function validateFields(
   const window = signupWindowProblem(next, next.startsAt);
   if (window) return window;
 
-  const gates: Array<[string | null, string]> = [
-    [next.minRankToEnter, "minimum rank to enter"],
-    [next.minRankToCaptain, "minimum rank to captain"],
-  ];
-  for (const [rank, label] of gates) {
-    if (!rank) continue;
-    if (!game) return `Pick the game before setting a ${label}.`;
-    if (game.rankLadder.length === 0) return `${game.name} has no rank ladder to compare against.`;
-    const known = game.rankLadder.some(
-      (entry) => entry.trim().toLowerCase() === rank.trim().toLowerCase()
-    );
-    if (!known) return `"${rank}" is not one of ${game.name}'s ranks.`;
-  }
-
-  return null;
+  // `rankGateProblem` rather than the loop that used to be here: a template can
+  // store a threshold too now (drizzle/0027), and two copies of this check
+  // would be two sentences for one rule.
+  return rankGateProblem(
+    [
+      [next.minRankToEnter, "minimum rank to enter"],
+      [next.minRankToCaptain, "minimum rank to captain"],
+    ],
+    game
+  );
 }
 
 /**
@@ -1367,6 +1363,26 @@ async function webAddressTaken(
  * A template is **copied**, never referenced: editing "Rivals tournament" next
  * month must not rewrite the questions of an event that is already taking
  * applications.
+ *
+ * ## What a template decides, and when (R-22 / UC-08 2)
+ *
+ * "System creates it unpublished with the template's settings" — so the type,
+ * the game, the config, the questions, the seat cap, both rank thresholds and
+ * the day list all come off the template **where the caller said nothing**.
+ * `undefined` is silence and the template answers; any other value is the
+ * caller's and wins, including `null` and `[]`. That is the rule `gameId` has
+ * always followed here, and the four fields added in drizzle/0027 follow it
+ * rather than inventing a second one.
+ *
+ * The distinction is load-bearing for `days`: `[]` has to mean "no days, and I
+ * mean it" or an admin could never create a dateless event from a template that
+ * carries three days. `createEventAction` passes neither, which is why the
+ * picker on `/admin/events` gets the whole setup from one click.
+ *
+ * Nothing is stored twice. The cap lands in `events.capacity` and nowhere
+ * else — in particular **not** in `events.config`, which is why
+ * `event_templates` got real columns instead of a `config.setup` block (the
+ * reasoning is on the table in `src/db/schema.ts` and in drizzle/0027).
  */
 export async function createEvent(
   input: CreateEventInput,
@@ -1391,14 +1407,33 @@ export async function createEvent(
   const game = await readGame(database, gameId);
   if (gameId && !game) return fail("That game no longer exists.");
 
-  const days = input.days ?? [];
-  const capacity = input.capacity ?? null;
+  /*
+   * The template's setup, used only where the caller was silent. `undefined`
+   * is silence; `null` and `[]` are answers and are left alone. Spelled out
+   * per field rather than hidden in a merge helper, because each one is a
+   * different type and the `??` that would read more neatly is the wrong
+   * operator — it would also swallow a deliberate `null`.
+   */
+  const days =
+    input.days !== undefined
+      ? input.days
+      : (template?.days ?? []).map((day) => ({ startsAt: null, label: day.label ?? null }));
+  const capacity =
+    input.capacity !== undefined ? input.capacity : (template?.capacity ?? null);
   const next = {
     capacity,
     signupOpensAt: input.signupOpensAt ?? null,
     signupClosesAt: input.signupClosesAt ?? null,
-    minRankToEnter: cleanNullable(input.minRankToEnter, 60),
-    minRankToCaptain: cleanNullable(input.minRankToCaptain, 60),
+    minRankToEnter: cleanNullable(
+      input.minRankToEnter !== undefined ? input.minRankToEnter : template?.minRankToEnter,
+      60
+    ),
+    minRankToCaptain: cleanNullable(
+      input.minRankToCaptain !== undefined
+        ? input.minRankToCaptain
+        : template?.minRankToCaptain,
+      60
+    ),
   };
 
   /*
@@ -1408,6 +1443,13 @@ export async function createEvent(
    * that the caller was told had not been created. The same rules run again in
    * `setEventDays`, which is the one that has to be right for an edit; this is
    * the create path refusing early rather than trusting it.
+   *
+   * The three checks read `days`, `capacity` and `next` *after* the template
+   * has been folded in, which is the point: a template's cap and thresholds are
+   * checked exactly as a typed one is, so a template carrying a one-seat cap or
+   * a rank this event's game has never heard of is refused here, before
+   * anything is written. Nothing from a template skips a rule, and no rule
+   * moved to after the insert to let one through.
    */
   const problem =
     capacityProblem(capacity) ??

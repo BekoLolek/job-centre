@@ -1,17 +1,34 @@
 import { and, asc, eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Database, applications, events } from "@/db";
-import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import * as schema from "@/db/schema";
+import { type Database, applications, eventTemplates, events } from "@/db";
+import {
+  PUBLISHABLE,
+  type TestDatabase,
+  expectRejection,
+  freshDatabase,
+  makeUser,
+} from "@/db/__tests__/helpers";
+import { createTemplate, duplicateTemplate } from "@/lib/admin-templates";
 import { MIN_CAPACITY } from "@/lib/events-policy";
 import { applyToEvent, createEvent, publishEvent } from "@/lib/events";
 
 /**
- * The last seat, wanted by two people at once.
+ * Two writes that both decided the same thing was free.
  *
- * "Count the accepted, then insert" reads fine and is wrong: between the count
- * and the insert, somebody else can take the seat you just decided was free.
- * `applyToEvent` closes the window by doing both inside one transaction that
- * holds a row lock on the event.
+ * "Read, decide, insert" reads fine and is wrong: between the read and the
+ * insert, somebody else can take the thing you just decided was free. Two of
+ * them live here — the last seat in an event, and a template's name — because
+ * they are one shape with two different closing moves, and the argument below
+ * about forcing the race is the same argument for both.
+ *
+ * `applyToEvent` closes its window by doing both halves inside one transaction
+ * that holds a row lock on the event. `createTemplate` cannot: there is no row
+ * to lock, because the conflict is between two rows that do not exist yet. Its
+ * closing move is a unique index (`event_templates_name_uniq`,
+ * drizzle/0028) whose rejection is turned back into the sentence the read
+ * produces.
  *
  * ## How this test forces the race rather than pretending to
  *
@@ -29,6 +46,25 @@ import { applyToEvent, createEvent, publishEvent } from "@/lib/events";
  * acceptance and this file would fail rather than pass for the wrong reason.
  * It produces two — the bug, reproduced on demand — and the real function,
  * given the identical harness, produces one.
+ *
+ * ## And why the name race needs a second kind of proof on top of that
+ *
+ * The seat race can be read off the *outcome*: two acceptances means the lock
+ * is missing. The name race cannot, and this is the trap. If the two creates
+ * happened to run in sequence, the second one's `nameTaken` would find the
+ * first one's row and refuse it — the same refusal, the same sentence, for
+ * entirely the wrong reason. A test reading only the outcome would stay green
+ * with the index dropped.
+ *
+ * So the name tests prove the *source* of the refusal rather than its text, in
+ * the two ways that are available without a second connection:
+ *
+ *  * the statements, with `logging()` — both calls reach an `insert into
+ *    "event_templates"`, which a call refused by the read never would. That is
+ *    the `logging()` shape `format-db.test.ts` and `archive-lock.test.ts` use
+ *    for lock ordering, asked here about which half did the refusing.
+ *  * the database itself, asked directly — a raw insert that no application
+ *    code has seen is rejected by name.
  */
 
 let harness: TestDatabase;
@@ -204,5 +240,176 @@ describe("applyToEvent under concurrency", () => {
     const refused = results.find((result) => !result.ok);
     expect(refused && !refused.ok && refused.error).toMatch(/already applied/i);
     expect(await statuses(eventId)).toEqual(["accepted"]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* One template name, wanted by two admins (R-125 / UC-28 4a)         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * This file's database again, over the same PGlite client, with every statement
+ * pushed onto `log` in the order it was issued.
+ *
+ * drizzle's own `logger` hook rather than a proxy over the query builders, for
+ * the reason `format-db.test.ts` gives where this helper comes from: the hook
+ * fires from the prepared query, so it sees statements issued inside a
+ * transaction too. Here it answers a question the outcome cannot — *which half
+ * refused*, the read in front of the index or the index itself.
+ */
+function logging(log: string[]): Database {
+  return drizzlePglite(harness.client, {
+    schema,
+    logger: { logQuery: (query) => log.push(query) },
+  });
+}
+
+/** How many statements in `log` are inserts into `event_templates`. */
+function templateInserts(log: readonly string[]): number {
+  return log.filter((query) => /insert\s+into\s+"event_templates"/i.test(query)).length;
+}
+
+async function templateNames(): Promise<string[]> {
+  const rows = await db
+    .select({ name: eventTemplates.name })
+    .from(eventTemplates)
+    .orderBy(asc(eventTemplates.name));
+  return rows.map((row) => row.name);
+}
+
+describe("createTemplate under concurrency", () => {
+  beforeEach(async () => {
+    await db.delete(eventTemplates);
+  });
+
+  it("gives one name to exactly one of two simultaneous creates", async () => {
+    const log: string[] = [];
+    const handle = logging(log);
+
+    const results = await Promise.all([
+      createTemplate({ name: "Rivals cup" }, handle),
+      createTemplate({ name: "Rivals cup" }, handle),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(await templateNames()).toEqual(["Rivals cup"]);
+
+    /*
+     * The refusal is 4a's sentence and not a database error — the second
+     * criterion, and the whole reason `insertTemplate` catches by index name
+     * rather than letting drizzle's "Failed query" out.
+     */
+    const refused = results.find((result) => !result.ok);
+    expect(refused && !refused.ok && refused.error).toMatch(
+      /A template is already called "Rivals cup"\. Pick another name\./
+    );
+
+    /*
+     * And the proof that this is the *index* refusing rather than the read.
+     *
+     * Both calls got as far as issuing an insert, which is only possible if
+     * both of their `nameTaken` reads found the name free — the interleave was
+     * real. A second call that had been refused by its read would have returned
+     * before any insert, and this count would be 1. Drop the unique index and
+     * this test still sees two inserts, but `templateNames()` above comes back
+     * with two rows and the suite fails there; keep the index and remove the
+     * catch, and the refusal is a Postgres error and the assertion above
+     * fails. The two assertions together have no green state in which the rule
+     * is missing.
+     */
+    expect(templateInserts(log)).toBe(2);
+  });
+
+  it("is the database refusing, asked without any application code at all", async () => {
+    // The other half of the proof: no read, no fold in TypeScript, nothing but
+    // a row and an index. Also the only place the fold's *reach* is pinned —
+    // case, collapsed runs, tabs and padding are all one name (UC-28 4a).
+    await db.insert(eventTemplates).values({ name: "Rivals cup" });
+
+    for (const name of ["Rivals cup", "RIVALS CUP", "Rivals  cup", "Rivals\tcup", "  Rivals cup  "]) {
+      await expectRejection(
+        () => db.insert(eventTemplates).values({ name }),
+        /event_templates_name_uniq/
+      );
+    }
+
+    expect(await templateNames()).toEqual(["Rivals cup"]);
+  });
+
+  it("refuses a rename onto a name that was free when it was read", async () => {
+    // A rename is a typed name too, so the index has to answer it with the same
+    // sentence. Both templates read the other's name as not-yet-"Final", both
+    // decide they may take it, and one of them writes second.
+    const [left, right] = await Promise.all([
+      createTemplate({ name: "Left" }, db),
+      createTemplate({ name: "Right" }, db),
+    ]);
+    if (!left.ok || !right.ok) throw new Error("setup failed");
+
+    const { updateTemplate } = await import("@/lib/admin-templates");
+    const results = await Promise.all([
+      updateTemplate(left.data.id, { name: "Final" }, db),
+      updateTemplate(right.data.id, { name: "Final" }, db),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    const refused = results.find((result) => !result.ok);
+    expect(refused && !refused.ok && refused.error).toMatch(/already called "Final"/);
+    // And the loser kept its old name rather than being half-renamed.
+    expect(await templateNames()).toEqual(expect.arrayContaining(["Final"]));
+    expect((await templateNames()).filter((name) => name === "Final")).toHaveLength(1);
+  });
+
+  it("folds a stored name the same way the index does, so the read still refuses first", async () => {
+    /*
+     * The fifth criterion: `cleanTemplateName`'s space-collapsing and the index
+     * have to agree on what "the same name" means. The index folds whitespace,
+     * so `takenNames` must too — and the row that can tell them apart is one
+     * written *without* going through `cleanTemplateName`, which is what the
+     * raw insert below is. A seed, an older migration, or any write from before
+     * the collapsing existed leaves exactly this shape.
+     *
+     * Asserted on the statements rather than on the sentence, because the
+     * sentence is identical either way — that is the whole trap. If
+     * `takenNames` folded case alone it would find "Rivals cup" free, issue an
+     * insert, and the index would refuse it; `insertTemplate` would catch that
+     * and return the same words. Only the insert count says which half
+     * refused, and UC-28 4a wants the read to, so an admin is told before the
+     * database has to object.
+     */
+    await db.insert(eventTemplates).values({ name: "Rivals  cup" });
+
+    const log: string[] = [];
+    const result = await createTemplate({ name: "Rivals cup" }, logging(log));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toMatch(/already called "Rivals cup"/);
+    expect(templateInserts(log)).toBe(0);
+    // The legacy row is untouched — nothing here rewrites a name nobody asked
+    // to change.
+    expect(await templateNames()).toEqual(["Rivals  cup"]);
+  });
+
+  it("suffixes rather than fails when the name was the system's own choice", async () => {
+    /*
+     * The third criterion. `duplicateTemplate`'s "… copy" is nobody's typed
+     * name, so a lost race is not something to tell an admin about — it is
+     * something to round again on. Both calls read every name, both find
+     * "Source copy" free, both offer it; the loser's catch sends it back
+     * through `freeName`, which now sees the winner's row and picks "Source
+     * copy 2".
+     */
+    const source = await createTemplate({ name: "Source" }, db);
+    if (!source.ok) throw new Error("setup failed");
+
+    const results = await Promise.all([
+      duplicateTemplate(source.data.id, undefined, db),
+      duplicateTemplate(source.data.id, undefined, db),
+    ]);
+
+    // Both succeeded — that is the criterion. Neither admin is told their
+    // click failed because the other one happened at the same moment.
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(await templateNames()).toEqual(["Source", "Source copy", "Source copy 2"]);
   });
 });

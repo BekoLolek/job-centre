@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Alert, Badge, Button, Field, Icon, Section, cx } from "@/components/ui";
+import { Alert, Badge, Button, Checkbox, Field, Icon, Section, cx } from "@/components/ui";
 import {
   saveGuildGateAction,
   saveIntegrationsAction,
@@ -94,23 +94,30 @@ function GuildGate({ gate }: { gate: ServerSettingsProps["gate"] }) {
       <div className="space-y-5">
         {error && <Alert>{error}</Alert>}
 
-        <label className="flex cursor-pointer items-start gap-3">
-          <input
-            type="checkbox"
-            checked={enabled}
-            onChange={(input) => setEnabled(input.target.checked)}
-            className="mt-1 h-4 w-4 shrink-0 accent-union"
-          />
-          <span className="min-w-0">
-            <span className="block text-14 text-chalk">
-              Only members of the server below may sign in
+        {/* The primitive, for the 44px floor it carries (Task 38b). This one
+            was tall enough by accident — a two-line label happens to clear 44
+            — and nothing said so, so a copy edit down to one line would have
+            quietly taken it under. `min-h-11` is the floor that does say so.
+            The box rides centred against the two lines rather than at the top:
+            `items-center` is the primitive's, and a call site cannot argue
+            with it, because `items-start` and `items-center` are the same
+            property and the stylesheet decides which wins, not the order they
+            were written in. */}
+        <Checkbox
+          checked={enabled}
+          onChange={setEnabled}
+          label={
+            <span className="block">
+              <span className="block text-14 text-chalk">
+                Only members of the server below may sign in
+              </span>
+              <span className="mt-0.5 block text-13 leading-relaxed text-muted">
+                Checked, this fails closed: if Discord will not say whether somebody is a
+                member, they are refused.
+              </span>
             </span>
-            <span className="mt-0.5 block text-13 leading-relaxed text-muted">
-              Checked, this fails closed: if Discord will not say whether somebody is a
-              member, they are refused.
-            </span>
-          </span>
-        </label>
+          }
+        />
 
         {!enabled && (
           <Alert tone="flare">

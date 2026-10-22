@@ -10,6 +10,7 @@ import {
   draftConfigs,
   draftLots,
   draftPoolEntries,
+  entryWaivers,
   eventDays,
   eventQuestions,
   events,
@@ -24,6 +25,7 @@ import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__
 import {
   awardLot,
   clearBid,
+  clearBids,
   discardLot,
   getTeams,
   moveToReserve,
@@ -43,7 +45,9 @@ import {
 import {
   applyToEvent,
   createEvent,
+  editApplicationAnswers,
   publishEvent,
+  revokeEntryWaiver,
   setApplicationNote,
   setApplicationStatus,
   setAvailability,
@@ -51,6 +55,7 @@ import {
   setEventDays,
   setEventQuestions,
   updateEvent,
+  waiveEntryRule,
   withdrawApplication,
 } from "@/lib/events";
 import {
@@ -58,11 +63,15 @@ import {
   clearMatch,
   formatFor,
   generateMatches,
+  rebuildStage,
   recordGames,
   reflipMatch,
+  releaseTeamsFromMatches,
   setMatchSchedule,
   setStages,
   setWinnerOverride,
+  stageClearings,
+  syncStages,
 } from "@/lib/format";
 
 /**
@@ -79,10 +88,18 @@ import {
  *    `ok: false` after already deleting the rows would pass the first alone;
  *  - on the same event reopened (UC-09 6a), where it must go through.
  *
- * One write gets past the lock after reopening only to meet a rule of its own:
- * a reopened event is live, and a live event takes no new applications. That
- * one is asserted separately, with the rule it meets, so the table never needs
- * an `if`.
+ * Some writes get past the lock after reopening only to meet a rule of their
+ * own: a reopened event is live, a live event takes no new applications and its
+ * sign-ups are closed, and a draft that has started fills its own rosters.
+ * Those are asserted separately, each with the rule it meets, so the table
+ * never needs an `if`. In every one of them the *sentence* is the evidence —
+ * the second rule's refusal is not the archive's, so a lock that had stopped
+ * being asked first would answer the wrong one.
+ *
+ * `syncStages` is left out of the table for a different reason: it answers `ok`
+ * and refuses per stage rather than returning `{ok: false}`, because its caller
+ * is a team write that has already succeeded. It has its own pair of tests
+ * below, in the same two halves.
  *
  * ## And a second list, for *when* the status is read
  *
@@ -182,6 +199,20 @@ async function playedEvent(midLot = false): Promise<Fixture> {
   }
   const outsider = await makeUser(db, { displayName: `Outsider ${counter}` });
 
+  /*
+   * One standing waiver (R-59 / UC-14 3b), granted while the event is still
+   * open, and the whole reason it is here: `revokeEntryWaiver`'s row in the
+   * table below deletes by `(event, member, rule)`, so with no waiver on the
+   * event its delete matches nothing and the census is satisfied whether the
+   * lock refused or not. With this row present, a refusal that deleted on the
+   * way out is a census that has changed.
+   *
+   * On the outsider rather than an applicant, so it is inert everywhere else:
+   * it waives the rank gate for entering, this fixture has no rank gate, and
+   * the outsider is the one person who has not applied.
+   */
+  unwrap(await waiveEntryRule(event.id, outsider, "enter", {}, db));
+
   const teamIds = unwrap(
     await setTeams(event.id, [{ name: "Red" }, { name: "Blue" }], db)
   ).teams.map((team) => team.id);
@@ -267,6 +298,7 @@ async function openLotWithBid(eventId: string, userId: string, teamId: string): 
 const BELONGINGS = [
   eventDays,
   eventQuestions,
+  entryWaivers,
   applications,
   availability,
   confirmations,
@@ -337,6 +369,15 @@ const WRITES: Write[] = [
   ["setApplicationNote", false, (f) => setApplicationNote(f.applicationId, "No show", db)],
   ["setAvailability", false, (f) => setAvailability(f.applicationId, { [f.dayId]: "no" }, db)],
   ["setConfirmation", false, (f) => setConfirmation(f.applicationId, "out", {}, db)],
+  /* --- entry waivers (R-59 / UC-14 3b, 4a) -------------------------- */
+  // On the spare applicant, who has no waiver, so the grant really inserts
+  // one: `entry_waivers` is in `BELONGINGS` and a grant that got through would
+  // show up in the census as the row it added.
+  ["waiveEntryRule", false, (f) => waiveEntryRule(f.eventId, f.members[4], "enter", {}, db)],
+  // And on the outsider, who has one from the fixture, so the withdrawal
+  // really deletes. Granted and revoked on different members on purpose: both
+  // halves of each row then do something, and neither is the other's leftover.
+  ["revokeEntryWaiver", false, (f) => revokeEntryWaiver(f.eventId, f.outsider, "enter", db)],
   /* --- teams and the draft ------------------------------------------ */
   [
     "setTeams",
@@ -381,6 +422,10 @@ const WRITES: Write[] = [
   ["openLot", false, (f) => openLot(f.eventId, { userId: f.members[3] }, db)],
   ["placeBid", true, (f) => placeBid(f.openLotId ?? "", f.teamIds[0], 50, {}, db)],
   ["clearBid", true, (f) => clearBid(f.openLotId ?? "", f.teamIds[1], db)],
+  // The other half of R-147 / UC-16 E5, and `clearBid`'s twin: the mid-lot
+  // fixture leaves one bid standing on the open lot, so the refusal has a row
+  // to preserve and the reopen has one to clear.
+  ["clearBids", true, (f) => clearBids(f.openLotId ?? "", db)],
   ["awardLot", true, (f) => awardLot(f.openLotId ?? "", f.teamIds[1], {}, db)],
   ["discardLot", true, (f) => discardLot(f.openLotId ?? "", {}, db)],
   ["moveToReserve", true, (f) => moveToReserve(f.openLotId ?? "", {}, db)],
@@ -412,6 +457,45 @@ const WRITES: Write[] = [
   ["generateMatches", false, (f) => generateMatches(f.unplayedStageId, db)],
   ["reflipMatch", false, (f) => reflipMatch(f.unplayedMatchId, null, db)],
   ["applySchedule", false, (f) => applySchedule(f.eventId, ["2100-01-02T16:00:00Z"], db)],
+  [
+    /*
+     * The most destructive write on the site (UC-18 9a), aimed at the *played*
+     * stage, which is what makes the second assertion bite: getting through
+     * would delete the match, its games and the result recorded into them, and
+     * all three are in the census.
+     *
+     * The confirm token is read fresh immediately before the attempt, so the
+     * digest cannot be the thing refusing. `stageClearings` is a read — it
+     * takes no transaction and writes nothing — so taking it inside the
+     * attempt, after the census has been taken, moves no rows.
+     */
+    "rebuildStage",
+    false,
+    async (f) => {
+      const clearings = await stageClearings(f.eventId, db);
+      const confirm = clearings.find((entry) => entry.stageId === f.stageId)?.confirm;
+      expect(confirm, "no clearing report for the played stage, so no token to confirm with")
+        .toBeTypeOf("string");
+      return rebuildStage(f.stageId, confirm ?? "", db);
+    },
+  ],
+  [
+    /*
+     * R-161 / UC-15 E1 — the write that lets a team be deleted by nulling the
+     * matches naming it.
+     *
+     * The census is deliberately *not* the assertion that holds this one. Both
+     * of this fixture's stages are brackets, and `insertGenerated` stores no
+     * `team_a_id` on a bracket slot (it resolves `seed:n` on read), so nothing
+     * here names a team and the write has nothing to null either way. What
+     * kills a missing guard is the sentence: without it this answers
+     * `{ok: true, released: 0}`, which is not `REFUSAL`. Mutation-proved that
+     * way round, not assumed.
+     */
+    "releaseTeamsFromMatches",
+    false,
+    (f) => releaseTeamsFromMatches(f.eventId, [f.teamIds[1]], db),
+  ],
 ];
 
 async function reopen(fixture: Fixture): Promise<void> {
@@ -438,6 +522,21 @@ describe("a finished event refuses every change (UC-09 6b)", () => {
       "removeFromRoster",
       false,
       (f) => removeFromRoster(f.eventId, f.members[2], f.teamIds[0], db),
+    ],
+    /*
+     * And the third of that kind (UC-13 3b). A reopened event is live, and a
+     * live event's sign-ups have closed, so `answersEditable` refuses this
+     * with UC-13 4a's sentence however the lock answered — which is exactly
+     * why the row is here and not in `WRITES`.
+     *
+     * The census cannot hold this one either: the rule it meets refuses before
+     * anything is written too. The sentence is what holds it, and the two
+     * sentences are different, so a missing lock answers the wrong one.
+     */
+    [
+      "editApplicationAnswers",
+      false,
+      (f) => editApplicationAnswers(f.eventId, f.members[4], {}, db),
     ],
   ])("%s is refused and writes nothing", async (_, midLot, attempt) => {
     const fixture = await finishedEvent(midLot);
@@ -524,6 +623,26 @@ describe("a reopened event takes the same changes again (UC-09 6a)", () => {
 
     expect(result).toEqual({ ok: false, error: "This event has already started." });
   });
+
+  it("editApplicationAnswers gets past the lock to its own rule", async () => {
+    /*
+     * The same shape, one rule along: a reopened event is live, `applicationsOpen`
+     * calls a live event started, and `answersEditable` is false for anything but
+     * open-or-full — so UC-13 4a's sentence, not the archive's. That the sentence
+     * *changes* is the whole evidence that the lock was what moved.
+     */
+    const fixture = await finishedEvent();
+    await reopen(fixture);
+
+    const result = await editApplicationAnswers(fixture.eventId, fixture.members[4], {}, db);
+
+    expect(result).toEqual({
+      ok: false,
+      error:
+        "Sign-ups for this event have closed, so your answers stand. " +
+        "You can still withdraw if you cannot make it.",
+    });
+  });
 });
 
 describe("a team's starting balance", () => {
@@ -575,6 +694,83 @@ describe("a team's starting balance", () => {
     expect(moved.ok).toBe(false);
     expect((moved as { error: string }).error).toContain("starting balance cannot change");
     expect((await getTeams(event.id, db)).map((team) => team.balance)).toEqual(before);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The one guarded write that answers `ok` and refuses anyway         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * `syncStages` (R-73 / UC-18 9) cannot be a row in `WRITES`, and the shape of
+ * its answer is why.
+ *
+ * Every other write on the table returns `{ok: false, error}` when the lock
+ * refuses. This one is called from the same server action as the team write
+ * that has already succeeded, so failing is not open to it — "it never fails
+ * because of a stage", its docblock says — and it reports the refusal *per
+ * stage* instead, as `state: "refused"` carrying the same sentence. A row in
+ * the table would assert `{ok: false}` of a function that is right to answer
+ * `ok`, so it gets the two halves here instead, written the same way round:
+ * refused with nothing written, then through once the event is reopened.
+ *
+ * ## Why the teams are moved first
+ *
+ * Because a sync with nothing to do writes nothing, and a census that cannot
+ * tell that apart from a sync that was refused proves nothing. Two extra teams
+ * leave both stages out of step with the team list, so a sync that got through
+ * would rebuild the untouched one and mark the played one — which is what the
+ * reopened half asserts it does, and the refused half asserts it did not.
+ */
+describe("syncStages on a finished event (R-39 / UC-09 6b, R-73 / UC-18 9)", () => {
+  /** A played event whose stages are both out of step with the team list. */
+  async function outOfStep(): Promise<Fixture> {
+    const fixture = await playedEvent();
+    unwrap(await setTeamCount(fixture.eventId, 4, db));
+    return fixture;
+  }
+
+  /** The sync's report for one stage, by id rather than by position. */
+  function forStage(result: { stages: readonly { stageId: string }[] }, stageId: string) {
+    const found = result.stages.find((entry) => entry.stageId === stageId);
+    expect(found, `the sync said nothing at all about stage ${stageId}`).toBeDefined();
+    return found as (typeof result.stages)[number] & { state: string; reason: string | null };
+  }
+
+  it("refuses every stage with the same sentence, and rewrites nothing", async () => {
+    const fixture = await outOfStep();
+    await db.update(events).set({ status: "complete" }).where(eq(events.id, fixture.eventId));
+    const before = await census();
+
+    const result = await syncStages(fixture.eventId, db);
+
+    const report = unwrap(result);
+    expect(forStage(report, fixture.stageId).state).toBe("refused");
+    expect(forStage(report, fixture.stageId).reason).toBe(REFUSAL);
+    expect(forStage(report, fixture.unplayedStageId).state).toBe("refused");
+    expect(forStage(report, fixture.unplayedStageId).reason).toBe(REFUSAL);
+    // Not merely "no stage was rebuilt": the out-of-date *mark* is a write of
+    // its own, and a sync that refused the rebuild but still stamped the stage
+    // would have changed a finished event's record.
+    expect(report.rebuilt).toBe(0);
+    expect(report.outOfDate).toBe(0);
+    expect(await census()).toEqual(before);
+  });
+
+  it("does the work it was refused once the event is reopened", async () => {
+    const fixture = await outOfStep();
+    await db.update(events).set({ status: "complete" }).where(eq(events.id, fixture.eventId));
+    await reopen(fixture);
+
+    const report = unwrap(await syncStages(fixture.eventId, db));
+
+    // The untouched stage is rebuilt for four teams; the played one is carrying
+    // a result, so it is marked rather than wiped (UC-18 9a). Both are writes,
+    // and both are what the test above proved a finished event refuses.
+    expect(forStage(report, fixture.unplayedStageId).state).toBe("rebuilt");
+    expect(forStage(report, fixture.stageId).state).toBe("out_of_date");
+    expect(report.rebuilt).toBe(1);
+    expect(report.outOfDate).toBe(1);
   });
 });
 

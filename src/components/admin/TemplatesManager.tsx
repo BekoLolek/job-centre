@@ -252,7 +252,7 @@ function FromEventPanel({
           <div className="flex flex-wrap items-end gap-3">
             <Select
               label="Event"
-              hint="Its type, game, format settings and whole question set come across."
+              hint="Its type, game, format settings, seat cap, rank rules, day names and whole question set come across."
               value={eventId}
               wrapperClassName="flex-1 min-w-[18rem]"
               onChange={(event) => setEventId(event.target.value)}
@@ -301,10 +301,9 @@ function FromEventPanel({
           </div>
 
           <p className="mt-4 text-12 leading-relaxed text-muted">
-            Not carried over: {TEMPLATE_OMITS.join(", ")}. Days and dates are always
-            different next month, capacity and the rank thresholds are decisions about one
-            event rather than about a format, and a bracket is generated from the teams that
-            actually turn up rather than copied.
+            Not carried over: {TEMPLATE_OMITS.join(", ")}. The day list comes across with
+            its names and no times — when it runs is always different next month — and a
+            bracket is generated from the teams that actually turn up rather than copied.
           </p>
         </>
       )}
@@ -401,11 +400,28 @@ function TemplateCard({
 
   const gameName = games.find((game) => game.id === gameId)?.name ?? null;
 
-  // The live preview, from the same pure function the list header uses and the
-  // server would use. Recomputed as the config is edited, which is the point.
+  /*
+   * The live preview, from the same pure function the list header uses and the
+   * server would use. Recomputed as the config is edited, which is the point.
+   *
+   * The four setup fields come off the stored row rather than from local state,
+   * because this card has no boxes for them yet — so stored *is* what the next
+   * event would arrive with, and leaving them out would understate the template
+   * rather than keep the preview honest.
+   */
   const preview = useMemo(
-    () => describeTemplate({ type, config, questions, gameName }),
-    [type, config, questions, gameName]
+    () =>
+      describeTemplate({
+        type,
+        config,
+        questions,
+        gameName,
+        days: template.days,
+        capacity: template.capacity,
+        minRankToEnter: template.minRankToEnter,
+        minRankToCaptain: template.minRankToCaptain,
+      }),
+    [type, config, questions, gameName, template]
   );
 
   const dirty =
@@ -456,6 +472,10 @@ function TemplateCard({
                 config: template.config,
                 questions: template.questions,
                 gameName: template.gameName,
+                days: template.days,
+                capacity: template.capacity,
+                minRankToEnter: template.minRankToEnter,
+                minRankToCaptain: template.minRankToCaptain,
               }).join(" · ")}
             </span>
           </span>

@@ -7,6 +7,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, createPgliteDatabase, driverFor, games } from "@/db";
 import { applyMigrations } from "@/db/migrate";
 import { DEFAULT_POINTS_TABLE } from "@/lib/championship-policy";
+import { createTemplate } from "@/lib/admin-templates";
+import { createEvent } from "@/lib/events";
 import { canManageEvent } from "@/lib/hosting";
 import { type TestDatabase, expectRejection, freshDatabase, tableNames } from "./helpers";
 
@@ -1037,6 +1039,313 @@ describe("dropping the dead date columns (drizzle/0026)", () => {
     // twice and nothing throws.
     await runDrop(client);
     expect(await auditTotal(client)).toBe("3");
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});
+
+/**
+ * Apply the migration files from `from` up to but not including `upTo`.
+ *
+ * The same loop the two describes above each wrote for themselves, hoisted
+ * because three files now need it. Tags rather than filenames, read out of the
+ * folder and sorted, so adding a migration needs nothing here.
+ */
+const replayUpTo = async (client: PGlite, upTo: string, from = "0000") => {
+  const { MIGRATIONS_FOLDER } = await import("@/db/migrate");
+  const { readFileSync, readdirSync } = await import("node:fs");
+  const nodePath = await import("node:path");
+  const tags = readdirSync(MIGRATIONS_FOLDER)
+    .filter((name) => name.endsWith(".sql"))
+    .map((name) => name.replace(/\.sql$/, ""))
+    .sort()
+    .filter((tag) => tag >= from && tag < upTo);
+  for (const tag of tags) {
+    const sql = readFileSync(nodePath.join(MIGRATIONS_FOLDER, `${tag}.sql`), "utf8");
+    for (const statement of sql.split("--> statement-breakpoint")) {
+      if (statement.trim()) await client.exec(statement);
+    }
+  }
+};
+
+/** How many audit lines this throwaway database holds, as text. */
+const auditCount = async (client: PGlite) =>
+  (await client.query<{ total: string }>(`select count(*)::text as total from audit_log`))
+    .rows[0].total;
+
+/** One named migration file, statement by statement. */
+const runFile = async (client: PGlite, tag: string) => {
+  const { MIGRATIONS_FOLDER } = await import("@/db/migrate");
+  const { readFileSync } = await import("node:fs");
+  const nodePath = await import("node:path");
+  const sql = readFileSync(nodePath.join(MIGRATIONS_FOLDER, `${tag}.sql`), "utf8");
+  for (const statement of sql.split("--> statement-breakpoint")) {
+    if (statement.trim()) await client.exec(statement);
+  }
+};
+
+describe("a template carries the whole setup (drizzle/0027)", () => {
+  /**
+   * The claim 0027's comment makes, asked of real rows instead of left as prose.
+   *
+   * The file has **no data statement at all**, which is unlike 0015, 0018, 0020
+   * and 0025, so what has to be proved is the reason: that the four defaults are
+   * already what the old behaviour was, and a template written before the
+   * columns existed goes on producing exactly the event it produced yesterday.
+   *
+   * A fresh database proves nothing here — it has no templates — so the row
+   * goes in against the schema as it stood at 0026 and the columns arrive
+   * underneath it.
+   */
+  it("leaves a template that predates the columns producing the same event", async () => {
+    const client = new PGlite();
+    await replayUpTo(client, "0027");
+
+    await client.exec(
+      `insert into event_templates (name, type, config, questions)
+       values ('Legacy Jackbox', 'social', '{"waitlist": false}'::jsonb, '[]'::jsonb)`
+    );
+
+    // The columns are not there yet, which is what makes the row legacy.
+    const setupColumns = async () =>
+      (
+        await client.query<{ column_name: string }>(
+          `select column_name from information_schema.columns
+           where table_name = 'event_templates'
+             and column_name in ('capacity', 'min_rank_to_enter', 'min_rank_to_captain', 'days')
+           order by column_name`
+        )
+      ).rows.map((row) => row.column_name);
+    expect(await setupColumns()).toEqual([]);
+
+    await runFile(client, "0027_template_setup");
+
+    expect(await setupColumns()).toEqual([
+      "capacity",
+      "days",
+      "min_rank_to_captain",
+      "min_rank_to_enter",
+    ]);
+
+    /*
+     * Inert on the existing row, which is the whole of what the file claims:
+     * null is "no cap" and "no threshold" on `events` as well, and `'[]'` is
+     * the day list `createEvent` was already writing for a template that named
+     * no days.
+     */
+    const [legacy] = (
+      await client.query<{
+        capacity: number | null;
+        min_rank_to_enter: string | null;
+        min_rank_to_captain: string | null;
+        days: unknown;
+        config: Record<string, unknown>;
+      }>(`select capacity, min_rank_to_enter, min_rank_to_captain, days, config
+          from event_templates where name = 'Legacy Jackbox'`)
+    ).rows;
+    expect(legacy.capacity).toBeNull();
+    expect(legacy.min_rank_to_enter).toBeNull();
+    expect(legacy.min_rank_to_captain).toBeNull();
+    expect(legacy.days).toEqual([]);
+    // And nothing was moved out of `config` into them, so the settings the old
+    // template did carry are untouched.
+    expect(legacy.config).toEqual({ waitlist: false });
+
+    /*
+     * Asked of the real function, over this throwaway database, exactly as the
+     * 0025 test asks `canManageEvent`: "produces the same event as yesterday"
+     * is a claim about `createEvent`, and reading the four columns back only
+     * proves they are null.
+     */
+    const db = createPgliteDatabase(client);
+    const [{ id: templateId }] = (
+      await client.query<{ id: string }>(
+        `select id from event_templates where name = 'Legacy Jackbox'`
+      )
+    ).rows;
+
+    const created = await createEvent({ title: "From a legacy template", templateId }, db);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.data.capacity).toBeNull();
+    expect(created.data.minRankToEnter).toBeNull();
+    expect(created.data.minRankToCaptain).toBeNull();
+    expect(created.data.startsAt).toBeNull();
+    expect(
+      (
+        await client.query(
+          `select 1 from event_days where event_id = '${created.data.id}'::uuid`
+        )
+      ).rows
+    ).toEqual([]);
+    // The one thing it always did carry is still carried.
+    expect(created.data.config.waitlist).toBe(false);
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});
+
+describe("one template per name (drizzle/0028)", () => {
+  /**
+   * The constraint, and what it does to the rows it finds.
+   *
+   * `CREATE UNIQUE INDEX` does not skip the rows that offend it — it fails, and
+   * takes the deploy and every later migration with it. `DATABASE_URL` is blank
+   * in this working copy by design, so nobody can look at production first and
+   * find out whether two templates already fold onto one name. That is what
+   * makes the fixtures the point of the test rather than a formality.
+   *
+   * Replayed by hand against the schema as it stood at 0027, for the same
+   * reason the backfills above are: a fresh database has no templates, so
+   * applying 0028 to one proves only that the SQL parses.
+   */
+  it("keeps the earliest name, suffixes the rest around a name already taken, and then holds the rule", async () => {
+    const client = new PGlite();
+    await replayUpTo(client, "0028");
+
+    /*
+     * Four rows in one conflict group's neighbourhood, chosen so the suffix
+     * loop has to actually search rather than land on " 2" first time:
+     *
+     *  - `Rivals cup` (earliest) — differs from the next two by case and by a
+     *    collapsed run, which is exactly the pair the plan said had to be
+     *    resolved and exactly what `lower(name)` alone would have missed.
+     *  - `RIVALS CUP` and `Rivals  cup` fold onto it.
+     *  - `Rivals cup 2` is a *separate, legitimate* template that already holds
+     *    the first suffix — a realistic shape, because `duplicateTemplate`
+     *    produces precisely those names. It must come out untouched.
+     *  - `Jackbox night` conflicts with nothing and must not move.
+     */
+    await client.exec(`insert into event_templates (name, created_at) values
+      ('Rivals cup',    '2026-01-05T10:00:00Z'),
+      ('RIVALS CUP',    '2026-02-05T10:00:00Z'),
+      ('Rivals  cup',   '2026-03-05T10:00:00Z'),
+      ('Rivals cup 2',  '2026-01-06T10:00:00Z'),
+      ('Jackbox night', '2026-01-07T10:00:00Z')`);
+
+    const names = async () =>
+      (
+        await client.query<{ name: string }>(
+          `select name from event_templates order by created_at, id`
+        )
+      ).rows.map((row) => row.name);
+
+    // Before: the shape that fails the CREATE.
+    expect(await names()).toEqual([
+      "Rivals cup",
+      "Rivals cup 2",
+      "Jackbox night",
+      "RIVALS CUP",
+      "Rivals  cup",
+    ]);
+
+    await runFile(client, "0028_template_name_unique");
+
+    /*
+     * After: the **earliest** row keeps the name, and the two that folded onto
+     * it are renamed rather than deleted or deactivated. The same direction as
+     * drizzle/0025 and the opposite of drizzle/0018, for 0025's reason — a
+     * template name is a label in use (the create-event picker, the audit log,
+     * what an admin types) rather than an intention a newer row supersedes.
+     *
+     * The suffixes are the search working: " 2" was taken by a legitimate
+     * template, so the February row took " 3"; the March row then found both
+     * " 2" and " 3" taken and took " 4". Nothing was overwritten to get there.
+     */
+    expect(await names()).toEqual([
+      "Rivals cup",
+      "Rivals cup 2",
+      "Jackbox night",
+      "RIVALS CUP 3",
+      "Rivals cup 4",
+    ]);
+
+    /*
+     * And the admins are told, which is the channel this site has for what
+     * happened to admin-only data (R-110 / UC-27 3). No notification: a
+     * template has no owner to notify, nothing was taken away but a label, and
+     * a `notification_kind` is a permanent per-member switch (R-104) that a
+     * one-off migration has no business minting. The file says so too.
+     */
+    const logged = await client.query<{
+      action: string;
+      subject: string;
+      summary: string;
+      detail: { wasCalled: string; nowCalled: string; keptName: string; keptId: string };
+    }>(`select action, subject, summary, detail from audit_log
+        order by detail->>'wasCalled'`);
+    expect(logged.rows.map((row) => row.action)).toEqual([
+      "template.name_superseded",
+      "template.name_superseded",
+    ]);
+    expect(
+      logged.rows.map((row) => [row.detail.wasCalled, row.detail.nowCalled])
+    ).toEqual([
+      ["RIVALS CUP", "RIVALS CUP 3"],
+      ["Rivals  cup", "Rivals cup 4"],
+    ]);
+    // Every line names the row that kept the name, so the log explains itself.
+    for (const row of logged.rows) {
+      expect(row.detail.keptName).toBe("Rivals cup");
+      expect(row.summary).toMatch(/one template per name \(R-125\)/);
+    }
+    // The audit line is filed against the template it renamed, which is what
+    // `subject` is for — an id, not a name that has since changed.
+    const ids = new Map(
+      (
+        await client.query<{ name: string; id: string }>(`select name, id from event_templates`)
+      ).rows.map((row) => [row.name, row.id])
+    );
+    expect(logged.rows.map((row) => row.subject).sort()).toEqual(
+      [ids.get("RIVALS CUP 3"), ids.get("Rivals cup 4")].sort()
+    );
+
+    /*
+     * Applied twice by hand — the only way this file can be applied twice,
+     * since a deploy runs every pending migration inside one transaction and
+     * rolls the whole thing back. The rename removed the conflict, so the
+     * second pass finds no group with more than one row: nothing is renamed
+     * again and no second audit line is written. There is no gap of the kind
+     * drizzle/0025 documents, because the audit insert and the rename are one
+     * statement rather than two.
+     */
+    await runFile(client, "0028_template_name_unique");
+    expect(await names()).toEqual([
+      "Rivals cup",
+      "Rivals cup 2",
+      "Jackbox night",
+      "RIVALS CUP 3",
+      "Rivals cup 4",
+    ]);
+    expect(await auditCount(client)).toBe("2");
+
+    /*
+     * And from here the rule is the database's, not a read's — asked with no
+     * application code in the way, on every shape the fold is supposed to
+     * reach. This is the assertion that the index exists *and* that it folds
+     * the way `cleanTemplateName` does: a plain `lower(name)` index would let
+     * the last three through.
+     */
+    for (const name of ["Rivals cup", "RIVALS CUP", "rivals cup", "Rivals  cup", "Rivals\tcup"]) {
+      await expectRejection(
+        () => client.query(`insert into event_templates (name) values ($1)`, [name]),
+        /event_templates_name_uniq/
+      );
+    }
+    // A name that is genuinely different is still free.
+    await client.exec(`insert into event_templates (name) values ('Rivals plate')`);
+
+    /*
+     * Asked of the real function last, as the 0025 test asks `canManageEvent`:
+     * a constraint that broke `createTemplate` for everybody would satisfy
+     * every assertion above.
+     */
+    const db = createPgliteDatabase(client);
+    const made = await createTemplate({ name: "Rivals saucer" }, db);
+    expect(made.ok).toBe(true);
+    const clash = await createTemplate({ name: "rivals   PLATE" }, db);
+    expect(clash.ok).toBe(false);
+    if (!clash.ok) expect(clash.error).toMatch(/already called/i);
 
     await client.close();
   }, PGLITE_BOOT_BUDGET_MS);

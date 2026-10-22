@@ -947,7 +947,15 @@ describe("a template saved from an event (UC-08 10a)", () => {
           capacity: 16,
           minRankToEnter: RIVALS_RANK_LADDER[2],
           minRankToCaptain: RIVALS_RANK_LADDER[4],
-          days: [{ startsAt: new Date("2026-03-07T18:00:00Z"), label: "Group stage" }],
+          // Three days rather than one, so "the day list comes across" is a
+          // claim about an *order* as well as a count: a capture that read
+          // `event_days` without ordering by `day_index` could hand the next
+          // event a Finals on the Saturday.
+          days: [
+            { startsAt: new Date("2026-03-07T18:00:00Z"), label: "Group stage" },
+            { startsAt: new Date("2026-03-08T18:00:00Z"), label: "Playoffs" },
+            { startsAt: new Date("2026-03-09T18:00:00Z"), label: "Finals" },
+          ],
           config: {
             // R-27 and R-170: how people get in, which is the part of the setup
             // most worth not retyping.
@@ -1031,32 +1039,251 @@ describe("a template saved from an event (UC-08 10a)", () => {
     expect(JSON.stringify(template.config)).not.toContain("applicant");
   });
 
-  it("leaves the days, the cap and the rank thresholds behind, as TEMPLATE_OMITS says", async () => {
+  /*
+   * The test Task 13 left behind, rewritten by Task 52 — it named itself as the
+   * line that would have to change when the columns landed, and drizzle/0027 is
+   * those columns.
+   *
+   * What it asserted was `null`, `null`, `null`, `[]`: the cap, both rank
+   * thresholds and the day list left behind, because `createEvent` read them
+   * from its own input and a template had nowhere to keep them. All four now
+   * come across, and the only thing still left behind is the *dates* — which is
+   * why `TEMPLATE_OMITS` went from four entries to two.
+   */
+  it("reproduces the days, the cap and the rank thresholds, as TEMPLATE_OMITS now says", async () => {
     const source = await anEventThatRan();
     const template = expectOk(
-      await createTemplateFromEvent(source.id, { name: "Rivals, no dates" }, db)
+      await createTemplateFromEvent(source.id, { name: "Rivals, the shape of it" }, db)
+    );
+
+    // Captured on the template itself, not merely reproduced downstream: a
+    // template is a row somebody can read and edit, so the setup has to be *on*
+    // it rather than reconstructed on the way out.
+    expect(template.capacity).toBe(16);
+    expect(template.minRankToEnter).toBe(RIVALS_RANK_LADDER[2]);
+    expect(template.minRankToCaptain).toBe(RIVALS_RANK_LADDER[4]);
+    expect(template.days).toEqual([
+      { label: "Group stage" },
+      { label: "Playoffs" },
+      { label: "Finals" },
+    ]);
+
+    const next = expectOk(
+      await createEvent({ title: "Rivals, next one", templateId: template.id }, db)
+    );
+
+    expect(next.capacity).toBe(16);
+    expect(next.minRankToEnter).toBe(RIVALS_RANK_LADDER[2]);
+    expect(next.minRankToCaptain).toBe(RIVALS_RANK_LADDER[4]);
+
+    /*
+     * The day list reproduced, and the dates not. One day, still called "Group
+     * stage", with no time on it — which is the times-to-be-agreed state
+     * `event_days.starts_at` is nullable for (R-24), and the thing a manager
+     * then sets. Reproducing the *instant* would have dated next month's event
+     * in last month, which is the one part of a setup that is never reusable.
+     */
+    const days = await db
+      .select()
+      .from(eventDays)
+      .where(eq(eventDays.eventId, next.id))
+      .orderBy(asc(eventDays.dayIndex));
+    expect(days.map((day) => [day.dayIndex, day.label, day.startsAt])).toEqual([
+      [0, "Group stage", null],
+      [1, "Playoffs", null],
+      [2, "Finals", null],
+    ]);
+    // And therefore the new event has no dates at all, while the source had.
+    expect(next.startsAt).toBeNull();
+    expect(source.startsAt).toEqual(new Date("2026-03-07T18:00:00Z"));
+    expect(source.endsAt).toEqual(new Date("2026-03-09T18:00:00Z"));
+
+    // The list both screens print, now that it is two things rather than four.
+    expect(TEMPLATE_OMITS).toEqual(["the dates", "the generated bracket"]);
+  });
+
+  it("stores the cap once — in the column, never in the config", async () => {
+    // The third criterion, and the reason `event_templates` got real columns
+    // instead of a `config.setup` block: `createEvent` copies `config`
+    // wholesale, so a cap routed through there would arrive on every event as a
+    // dead second copy of its own `events.capacity`.
+    const source = await anEventThatRan();
+    const template = expectOk(
+      await createTemplateFromEvent(source.id, { name: "Rivals, once only" }, db)
+    );
+    const next = expectOk(
+      await createEvent({ title: "Rivals, counted once", templateId: template.id }, db)
+    );
+
+    expect(next.capacity).toBe(16);
+    expect(JSON.stringify(template.config)).not.toContain("16");
+    expect(JSON.stringify(next.config)).not.toContain("16");
+    for (const key of ["capacity", "setup", "minRankToEnter", "days"]) {
+      expect(Object.keys(next.config)).not.toContain(key);
+      expect(Object.keys(template.config)).not.toContain(key);
+    }
+  });
+
+  it("lets the caller overrule every part of the template's setup", async () => {
+    /*
+     * `undefined` is silence and the template answers; anything else is the
+     * caller's. The two that would be easy to get wrong with `??` are in here
+     * on purpose: an explicit `null` cap means "uncapped, I mean it" and an
+     * explicit `[]` means "no days", and both have to beat a template that
+     * carries the opposite — or an admin could never make a dateless, uncapped
+     * event from a template that carries three days and sixteen seats.
+     */
+    const source = await anEventThatRan();
+    const template = expectOk(
+      await createTemplateFromEvent(source.id, { name: "Rivals, overruled" }, db)
     );
 
     const next = expectOk(
-      await createEvent({ title: "Rivals, undated", templateId: template.id }, db)
+      await createEvent(
+        {
+          title: "Rivals, my way",
+          templateId: template.id,
+          capacity: null,
+          minRankToEnter: null,
+          minRankToCaptain: RIVALS_RANK_LADDER[5],
+          days: [],
+        },
+        db
+      )
     );
 
-    /*
-     * Pinned deliberately, not accepted as whatever falls out. docs/plan.md
-     * Task 13 asks for the days, the cap and the rank thresholds to come
-     * across as well; they cannot without either new columns on
-     * `event_templates` or `createEvent` learning to apply them out of the
-     * template, and this is the line that has to change when one of those
-     * lands. Until then `TEMPLATE_OMITS` is what the two screens promise, and
-     * this is that promise kept.
-     */
-    expect(TEMPLATE_OMITS).toContain("capacity");
     expect(next.capacity).toBeNull();
     expect(next.minRankToEnter).toBeNull();
-    expect(next.minRankToCaptain).toBeNull();
+    expect(next.minRankToCaptain).toBe(RIVALS_RANK_LADDER[5]);
     expect(await db.select().from(eventDays).where(eq(eventDays.eventId, next.id))).toEqual(
       []
     );
+  });
+
+  it("refuses a template's bad setup before the event row exists (UC-08 10c)", async () => {
+    /*
+     * A template's cap goes through `capacityProblem` exactly as a typed one
+     * does, and the refusal lands *before* the insert — "nothing saved" is what
+     * 10c says, and an event left behind by a refused create is the defect Task
+     * 57 is about. A one-seat cap can only reach a template through a write
+     * that bypassed `createTemplate` (a seed, a migration), which is precisely
+     * why `createEvent` re-checks rather than trusting the row.
+     */
+    await db.insert(eventTemplates).values({ name: "One seat", capacity: 1 });
+    const [template] = await db
+      .select()
+      .from(eventTemplates)
+      .where(eq(eventTemplates.name, "One seat"));
+
+    expect(await expectFail(createEvent({ title: "Doomed", templateId: template.id }, db)))
+      .toMatch(/at least 2 seats/i);
+
+    // Nothing saved: no event row, so the caller was told the truth.
+    expect(await db.select().from(events).where(eq(events.title, "Doomed"))).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The setup columns (drizzle/0027), on the writing side              */
+/* ------------------------------------------------------------------ */
+
+describe("a template's own setup", () => {
+  it("takes a cap, two thresholds and a day list, and refuses a cap below the minimum", async () => {
+    const template = expectOk(
+      await createTemplate(
+        {
+          name: "Rivals, eight",
+          gameId: rivalsId,
+          capacity: 8,
+          minRankToEnter: RIVALS_RANK_LADDER[1],
+          days: [{ label: "Groups" }, { label: "  " }, { label: "Finals" }],
+        },
+        db
+      )
+    );
+    expect(template.capacity).toBe(8);
+    expect(template.minRankToEnter).toBe(RIVALS_RANK_LADDER[1]);
+    // A day with a whitespace label is kept as an unnamed day rather than
+    // dropped — "three days, one of them unnamed" is a real shape, and `dayName`
+    // calls the middle one "Day 2".
+    expect(template.days).toEqual([{ label: "Groups" }, { label: null }, { label: "Finals" }]);
+
+    // `capacityProblem`'s sentence, not a second copy of the rule (R-26).
+    expect(
+      await expectFail(createTemplate({ name: "Rivals, one", capacity: 1 }, db))
+    ).toMatch(/at least 2 seats/i);
+  });
+
+  it("refuses more days than an event can run over", async () => {
+    expect(
+      await expectFail(
+        createTemplate(
+          { name: "Five days", days: [{}, {}, {}, {}, {}] },
+          db
+        )
+      )
+    ).toMatch(/at most 4 days/i);
+  });
+
+  it("refuses a threshold the game's ladder has never heard of", async () => {
+    // The refusal belongs at this end. A template holding "Radiant" against
+    // Marvel Rivals would be a template every `createEvent` from it refused —
+    // the right sentence arriving against the wrong person, on a setup they
+    // did not just type.
+    expect(
+      await expectFail(
+        createTemplate({ name: "Ghost rank", gameId: rivalsId, minRankToEnter: "Radiant" }, db)
+      )
+    ).toMatch(/not one of Marvel Rivals's ranks/);
+
+    // And a threshold with no game at all cannot mean anything either.
+    expect(
+      await expectFail(createTemplate({ name: "Gameless", minRankToEnter: "Gold" }, db))
+    ).toMatch(/pick the game/i);
+  });
+
+  it("re-checks a threshold it is keeping when the game moves under it", async () => {
+    /*
+     * The one an each-key-on-its-own patch would miss: the rename does not
+     * mention the threshold, so a patch loop that only validated the keys it
+     * was given would move the template onto a game whose ladder has no
+     * "Diamond" and leave the gate behind, unusable.
+     */
+    const template = expectOk(
+      await createTemplate(
+        { name: "Rivals gate", gameId: rivalsId, minRankToEnter: RIVALS_RANK_LADDER[3] },
+        db
+      )
+    );
+
+    expect(await expectFail(updateTemplate(template.id, { gameId: jackboxId }, db))).toMatch(
+      /Jackbox has no rank ladder/
+    );
+
+    // Nothing half-written: the template still belongs to Rivals.
+    expect((await getTemplate(template.id, db))?.gameId).toBe(rivalsId);
+  });
+
+  it("carries the whole setup into a duplicate", async () => {
+    const source = expectOk(
+      await createTemplate(
+        {
+          name: "Rivals, source",
+          gameId: rivalsId,
+          capacity: 12,
+          minRankToEnter: RIVALS_RANK_LADDER[2],
+          minRankToCaptain: RIVALS_RANK_LADDER[4],
+          days: [{ label: "Day one" }, { label: "Day two" }],
+        },
+        db
+      )
+    );
+
+    const copy = expectOk(await duplicateTemplate(source.id, undefined, db));
+    expect(copy.capacity).toBe(12);
+    expect(copy.minRankToEnter).toBe(RIVALS_RANK_LADDER[2]);
+    expect(copy.minRankToCaptain).toBe(RIVALS_RANK_LADDER[4]);
+    expect(copy.days).toEqual(source.days);
   });
 });
 

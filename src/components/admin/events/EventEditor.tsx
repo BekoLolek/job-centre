@@ -547,7 +547,7 @@ export function SaveAsTemplate({
             <p className="text-12 text-muted">
               {dirty
                 ? "Save or discard your changes first — a template is made from the event as stored."
-                : "Starts the next event of this shape from this one's setup."}
+                : "Starts the next event of this shape from this one's setup, dates aside."}
             </p>
           )}
         </div>
@@ -580,10 +580,10 @@ export function SaveAsTemplate({
           </div>
 
           <p className="mt-3 text-12 leading-relaxed text-muted">
-            Carried over: the kind, the game, the whole question set and the format and
-            sign-up settings. Not carried over: {TEMPLATE_OMITS.join(", ")} — nor the
-            applicants, the teams or the results, which belong to this event and not to a
-            shape you reuse.
+            Carried over: the kind, the game, the whole question set, the format and
+            sign-up settings, the seat cap, both rank rules and the day names. Not carried
+            over: {TEMPLATE_OMITS.join(", ")} — nor the applicants, the teams or the
+            results, which belong to this event and not to a shape you reuse.
           </p>
 
           {error && <Alert className="mt-3">{error}</Alert>}

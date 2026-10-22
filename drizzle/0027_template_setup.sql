@@ -1,0 +1,66 @@
+-- A template carries the whole setup (R-22 / UC-08 2, 10a; UC-28 3a).
+--
+-- Task 13 taught a template to capture the type, the game, `config` and the
+-- questions. It could not capture the seat cap or the two rank thresholds,
+-- because those are columns on `events` rather than keys in its `config`, and
+-- `createEvent` read them from its own input and never from the template. The
+-- days were the same problem one table over. These four columns are the half
+-- that was missing, and `src/lib/events.ts` now applies each of them wherever
+-- the caller was silent.
+--
+-- ## Why columns and not `event_templates.config.setup`
+--
+-- The migration-free route is a trap. `createEvent` copies a template's
+-- `config` **wholesale** into `events.config`, so a capacity stashed in there
+-- would arrive on every event made from the template as a dead second copy of
+-- its own `events.capacity` — a stored duplicate of a derived fact, which this
+-- project does not do (docs/domain-model.md). A column costs this file and
+-- stores each fact exactly once.
+--
+-- ## What happens to the templates that predate the columns
+--
+-- **Nothing, and that is the whole answer.** There is no backfill here, no
+-- UPDATE, and no data statement of any kind — which makes this file unlike
+-- drizzle/0015, 0018, 0020 and 0025, so the reason is worth writing down
+-- rather than inferring from the absence.
+--
+-- The three nullable columns default to NULL and the fourth to `'[]'`, and in
+-- every case **the default is already what the old behaviour was**:
+--
+--  * `capacity` NULL. A template that was silent about the cap produced an
+--    event with `events.capacity` NULL, because that is `createEvent`'s own
+--    default for an absent input. NULL here reproduces exactly that, so an old
+--    template keeps making the events it was making yesterday.
+--  * `min_rank_to_enter` / `min_rank_to_captain` NULL — same argument. NULL is
+--    "no threshold" on `events` too (§8.3), so the old template goes on
+--    producing an event with no rank gate.
+--  * `days` `'[]'`. An old template named no days, and `createEvent` with no
+--    days in its input wrote no `event_days` rows. An empty list writes none
+--    either.
+--
+-- So the columns are *inert on every existing row* by construction. There is
+-- nothing to decide per row, which is why there is nothing to inspect in
+-- production first and nothing for this comment to defend beyond the claim
+-- that the defaults match the old behaviour. The migration test replays 0026's
+-- rows and then this file and asserts that claim directly, rather than leaving
+-- it as prose.
+--
+-- There is also deliberately **no attempt to reconstruct a template's setup
+-- from the events it produced**. `events.created_from_template_id` would make
+-- it possible to go and look at what the four most recent events from a
+-- template were capped at and write that back — and it would be a guess about
+-- intent dressed up as a stored fact. A template that did not carry a cap did
+-- not carry one; the admin can type it in, and `/admin/templates` now has the
+-- boxes.
+--
+-- ## Re-running it changes nothing
+--
+-- Four `ADD COLUMN`s and no data, so a second pass fails on the first one
+-- rather than corrupting anything, and a deploy cannot reach a second pass at
+-- all: `PgDialect.migrate` runs every pending migration inside one
+-- transaction (the note in drizzle/0025 has the detail), so a half-applied
+-- file rolls back.
+ALTER TABLE "event_templates" ADD COLUMN "capacity" integer;--> statement-breakpoint
+ALTER TABLE "event_templates" ADD COLUMN "min_rank_to_enter" text;--> statement-breakpoint
+ALTER TABLE "event_templates" ADD COLUMN "min_rank_to_captain" text;--> statement-breakpoint
+ALTER TABLE "event_templates" ADD COLUMN "days" jsonb DEFAULT '[]'::jsonb NOT NULL;

@@ -54,12 +54,13 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/app/admin/events/format-actions.ts`, `src/app/admin/events/actions.ts` (`decideApplicationAction`), `src/lib/session-guards.ts`, new `src/app/admin/events/__tests__/host-scope.test.ts`
 - **Do:** after `requireManagerOfChild` resolves a child's event, use that resolved id for every later read (`formatFor`, `matchIdsFor`) and every `recordAudit`; delete the browser-supplied `eventId` argument from those actions. Remove `loadFormatAction` (dead, callable endpoint).
 - **Acceptance criteria:**
-  - [ ] A host of event A calling each of the five format actions with a match of A and `eventId` of B gets A's data only and writes audit rows tagged A
-  - [ ] A host of A acting on a match of B is refused, nothing written
-  - [ ] Application decision audit rows carry the verified event id
-  - [ ] Tests call the actions (with a mocked session), not only the permission helper
+  - [x] A host of event A calling each of the five format actions with a match of A and `eventId` of B gets A's data only and writes audit rows tagged A
+  - [x] A host of A acting on a match of B is refused, nothing written
+  - [x] Application decision audit rows carry the verified event id
+  - [x] Tests call the actions (with a mocked session), not only the permission helper
 - **Explicitly not in this task:** host access to the draft room (Task 2)
 - **Depends on:** none
+- **Left over:** `setApplicantAvailabilityAction` (`src/app/admin/events/actions.ts`) still takes a third `eventId: string` parameter that is **never read** - the body uses `scope` throughout (`refresh(scope)`, `eventId: scope`) - and `src/components/admin/events/ApplicantsTab.tsx:799` still passes it. The Do line said to delete the browser-supplied `eventId` argument from these actions, and this one survived. Harmless today, and the docblock says it is not trusted, but it is a live argument that looks authoritative and is not. Worth removing in Task 32's sweep.
 
 ### Task 2: Hosts can see and run their own event everywhere a manager can
 
@@ -67,9 +68,9 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/app/events/[slug]/page.tsx`, `src/app/events/[slug]/draft/page.tsx`, `src/lib/draft.ts` (`viewerFor`), `src/lib/room.ts`, `src/components/draft/DraftRoom.tsx`
 - **Do:** replace `isAdmin` checks on these surfaces with `canManageEvent`; manager role in the draft room for hosts of that event.
 - **Acceptance criteria:**
-  - [ ] Host sees their unpublished event page and draft room; another member gets not found
-  - [ ] Host gets the draft console and can open, award, discard, reserve, void
-  - [ ] Host of A gets the watcher view on B's draft
+  - [x] Host sees their unpublished event page and draft room; another member gets not found
+  - [x] Host gets the draft console and can open, award, discard, reserve, void
+  - [x] Host of A gets the watcher view on B's draft
 - **Depends on:** Task 1
 
 ### Task 3: Event lifecycle exactly as drawn
@@ -78,10 +79,10 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/lib/events-policy.ts`, `src/lib/events.ts`, `src/components/admin/events/readiness.ts`, `src/components/admin/events/EventStatusControls.tsx`, `src/components/admin/events/BasicsTab.tsx`, `src/components/admin/events/PublishTab.tsx`, `src/app/admin/events/actions.ts`, tests `events-policy.test.ts`, `events.test.ts`
 - **Do:** transition map = `diagrams/event-state.md` only (drop published→complete, live→published, cancelled→draft/published). Publish refused without name, at least one day with a start time, and a sign-up window - on every path, including the status control. Reopen goes complete→running and writes an `event.reopened` audit entry. One status control (`EventStatusControls`, gaining "Mark running" and "Cancel"); remove the BasicsTab chips and stale copy.
 - **Acceptance criteria:**
-  - [ ] Each allowed transition works; each other pair is refused (table-driven test over all 25 pairs)
-  - [ ] Publish with a missing requirement lists what is missing and stays unpublished
-  - [ ] Reopen button works and the audit names who reopened
-  - [ ] Cancelled is terminal
+  - [x] Each allowed transition works; each other pair is refused (table-driven test over all 25 pairs)
+  - [x] Publish with a missing requirement lists what is missing and stays unpublished
+  - [x] Reopen button works and the audit names who reopened
+  - [x] Cancelled is terminal
 - **Depends on:** none
 
 ### Task 4: A finished event refuses every change
@@ -90,8 +91,8 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/lib/archive-policy.ts`, `src/lib/events.ts` (`updateEvent`, `setEventDays`, `decideApplication`, `withdrawApplication`, `setAvailability`, `setConfirmation`), `archive-lock.test.ts`
 - **Do:** one `lockRefusal` check at the top of every write that belongs to an event; message "This event is finished - reopen it to change it". Rewrite the tests that assert partial locking.
 - **Acceptance criteria:**
-  - [ ] Every event-owned write on a complete event is refused and writes nothing (one test per write)
-  - [ ] After reopen, the same writes succeed
+  - [x] Every event-owned write on a complete event is refused and writes nothing (one test per write)
+  - [x] After reopen, the same writes succeed
 - **Depends on:** Task 3
 
 ### Task 5: A Discord DM is sent once per notification
@@ -100,9 +101,9 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/lib/notifications.ts`, `src/db/schema.ts` (+ migration `notification_dm_claims`), `notifications.test.ts`, `migrations.test.ts`
 - **Do:** before sending, insert `(user, dedupeKey)` into `notification_dm_claims` with `onConflictDoNothing ... returning`; DM only the rows returned. Works for members with the in-site bell off. Fix the comment that claims otherwise.
 - **Acceptance criteria:**
-  - [ ] With a stubbed sender and token, calling `notify` twice with the same key sends one DM per opted-in member
-  - [ ] Two reminder runs inside the 36 h window send one DM
-  - [ ] A member with in-site off and DM on gets one DM, no in-site row
+  - [x] With a stubbed sender and token, calling `notify` twice with the same key sends one DM per opted-in member
+  - [x] Two reminder runs inside the 36 h window send one DM
+  - [x] A member with in-site off and DM on gets one DM, no in-site row
 - **Explicitly not in this task:** retries of failed DMs (UC-25 2d: none)
 - **Depends on:** none. **Until this ships, do not set `DISCORD_BOT_TOKEN`.**
 
@@ -112,10 +113,10 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/lib/discord.ts`, `src/lib/announce.ts`, `src/app/admin/settings/page.tsx`, `src/components/admin/AnnouncementSettings.tsx`, `src/app/admin/settings/actions.ts`, `src/lib/admin-dashboard.ts`, `announce.test.ts`
 - **Do:** settings status reads the resolved webhook (settings, then env); decision announcements read the row before checking the matching switch; announce declined too; failures carry the event id and appear on the admin home; settings save validates every field before writing any; a way to clear the site address.
 - **Acceptance criteria:**
-  - [ ] Webhook saved in settings shows as configured
-  - [ ] Accepted switched off, waitlisted on: a waitlist decision posts
-  - [ ] A failed post appears on the admin home and under that event in the audit log
-  - [ ] Valid webhook + invalid address saves nothing
+  - [x] Webhook saved in settings shows as configured
+  - [x] Accepted switched off, waitlisted on: a waitlist decision posts
+  - [x] A failed post appears on the admin home and under that event in the audit log
+  - [x] Valid webhook + invalid address saves nothing
 - **Depends on:** none
 
 ### Task 36: Close the remaining lock races (found in Task 4 review)
@@ -153,10 +154,11 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/components/ui/Checkbox.tsx`, its call sites
 - **Do:** the checkbox input renders 16x16, well under the 44px touch guideline. It is what the hand-rolled controls already rendered, so Task 31a neither caused nor worsened it, but `/me/notifications` is a member-facing page people open on a phone. Give the control a real hit area - a `<label>` wrapping the cell, or padding on the input - without changing the rendered box.
 - **Acceptance criteria:**
-  - [ ] Every checkbox's hit area is at least 44x44 at 375px, measured
-  - [ ] The drawn box is unchanged
-  - [ ] Keyboard behaviour and the focus ring are unchanged
+  - [x] Every checkbox's hit area is at least 44x44 at 375px, measured
+  - [x] The drawn box is unchanged
+  - [x] Keyboard behaviour and the focus ring are unchanged
 - **Depends on:** Task 31a
+- **Left over:** nothing, but the gap was not the measurement. Two raw native checkboxes were still outside `components/ui` - `ResultsTab.tsx` (eyebrow-sized, so genuinely under the floor) and `ServerSettings.tsx` (clearing 44px only by accident, with no `min-h-11` guaranteeing it) - and the sweep written to catch exactly that could not see them, because `callSites()` matched only `<Checkbox` elements. A sweep keyed to the fixed form cannot report the unfixed form. Both are converted and the matcher now also finds raw `type="checkbox"` outside `components/ui`. The keyboard criterion also had nothing holding it: swapping the native input for `<div role="checkbox">` with identical classes passed every assertion while the space bar stopped working, so the markup is now asserted to be a real checkbox input.
 
 ### Task 37: Make the file-backed migration test reliable (found in Task 7 review)
 
@@ -164,8 +166,8 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/db/__tests__/migrations.test.ts`
 - **Do:** "the file-backed local database - creates its directory, migrates, and survives a reopen" failed once under a full parallel run and passed alone and on every rerun. It boots two file-backed WASM Postgres instances in an `mkdtemp` directory, replays every migration into each and deletes the tree, inside a 30s budget, while a dozen vitest workers do similar work; on Windows that is where a timeout or a data-dir file-handle contention appears. Give it a budget that matches what it does, or isolate it from the parallel pool.
 - **Acceptance criteria:**
-  - [ ] The test passes in ten consecutive full-suite runs
-  - [ ] It still asserts a real reopen (a row written before the close is read after it)
+  - [x] The test passes in ten consecutive full-suite runs
+  - [x] It still asserts a real reopen (a row written before the close is read after it)
 - **Depends on:** none. Do it before the suite is used as a release gate at Gate 3.
 
 ### Task 44: Cite the one-championship-per-event rule correctly (found in Task 42 review)
@@ -174,8 +176,8 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/lib/championships.ts:358`, `src/lib/championships.ts:772`, `src/db/schema.ts:2016`, `src/components/admin/events/ChampionshipTab.tsx:48`, `src/db/__tests__/championship-constraints.test.ts:10`, `src/lib/__tests__/championship-events.test.ts:281`, `docs/use-cases.md:1140`
 - **Do:** seven places cite **R-196** for "an event belongs to at most one championship" (the unique index `championship_events_event_uniq`). R-196 is the scoring-rules requirement and has nothing to do with it. The rule genuinely has no numbered requirement - it lives in `docs/requirements.md:319` under Constraints, and the behaviour is `UC-32 1a`. Replace the citation in all seven with `UC-32 1a` and a pointer to the constraint. Comment and doc text only; no behaviour changes.
 - **Acceptance criteria:**
-  - [ ] `grep -rn "R-196" src/ docs/` returns only the scoring-rules uses
-  - [ ] The test suite is untouched and still green (nothing but comments moved)
+  - [x] `grep -rn "R-196" src/ docs/` returns only the scoring-rules uses
+  - [x] The test suite is untouched and still green (nothing but comments moved)
 - **Depends on:** none.
 
 ### Task 49: Two admins can still hand one event to two hosts (found in Task 23)
@@ -184,9 +186,9 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/db/schema.ts` (+ migration on `event_hosts`), `src/lib/hosting.ts`, tests
 - **Do:** Task 23 made `approveHostApplication` re-read the event inside its transaction and refuse one somebody else already hosts, which closes the ordinary case. It is still a read-then-insert: two admins approving two different applications onto the same event in the same instant can both pass the read. The database should refuse the second - a unique constraint on `event_hosts.event_id`. That needs its own duplicate-row decision against production rows nobody has inspected (an event with two host rows today must be resolved before the constraint can be created, the same way Task 23's 0018 had to withdraw duplicate pending applications), which is why it was not folded into that task.
 - **Acceptance criteria:**
-  - [ ] Two simultaneous approvals onto one event: exactly one wins, proven with the sequencing helpers
-  - [ ] The migration states what it does with an event that already has two hosts, and why
-  - [ ] `requireEventManager` still admits the one host it kept
+  - [x] Two simultaneous approvals onto one event: exactly one wins, proven with the sequencing helpers
+  - [x] The migration states what it does with an event that already has two hosts, and why
+  - [x] `requireEventManager` still admits the one host it kept
 - **Depends on:** Task 23.
 - **Left over:** nothing, and it needs recording because this task's work is in the tree too — `drizzle/0025_event_host_one_per_event.sql` creates `event_hosts_one_host_per_event`, `src/lib/hosting.ts` turns its rejection back into `ALREADY_HOSTED` — the same sentence the in-transaction read produces, so the two approvals differ in timing and in nothing else, and the duplicate-row decision the task was held back for is taken in the migration: **the earlier grant survives** (`granted_at` ascending, `user_id` breaking the tie), because a host grant is a permission somebody has been *using* rather than an intention — the opposite of drizzle/0018's choice, for the reason 0025 states. The loser is told, in a `host_decision` notification that cannot be muted, and the admins are told in an audit line against the event (R-110 / UC-27 3). `src/db/__tests__/helpers.ts`'s `makeHost` had to narrow its `onConflictDoNothing` to the primary key, because a bare one now forgives the new index as well — a fixture that hides the rule it is set up under is worse than one that fails.
   What came out of it is **Task 55**: proving the gap by deleting the `uniqueIndex(...)` line from `schema.ts` alone left the whole suite green. That probe also left a stray `0026` file, its snapshot and a journal entry, which had to be removed by hand — hence Task 55's criterion that the guard clean up after itself.
@@ -197,8 +199,8 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/lib/events.ts`, `src/app/admin/audit/page.tsx`
 - **Do:** `/admin/audit` calls `listEvents()` to fill its `<select>` and to resolve the filter, but `listEvents` groups a count over the whole `applications` table to build seat summaries the dropdown discards. The page is `force-dynamic`, so that runs on every render, including the unknown-filter branch that reads no rows at all. Add a narrow `listEventOptions()` returning `{id, title}` and call that instead.
 - **Acceptance criteria:**
-  - [ ] `/admin/audit` no longer reads `applications`
-  - [ ] The filter still lists every event, and an unknown id still says so
+  - [x] `/admin/audit` no longer reads `applications`
+  - [x] The filter still lists every event, and an unknown id still says so
 - **Depends on:** nothing, but it edits `src/lib/events.ts`, so it must not run beside a task that owns that file.
 
 ### Task 47: The question dialog still says answers will be cleared (found in Task 14)
@@ -207,8 +209,8 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/components/admin/QuestionDialog.tsx`, `src/components/admin/QuestionList.tsx`
 - **Do:** Task 14 made retiring a question keep every answer, and made editing one stop stranding them - but those two files were outside its scope, so `QuestionDialog`'s confirmation still warns that answers "will be cleared". It now means the opposite of what happens. Rewrite the copy, and move the retire control onto the question row where it belongs, instead of the separate panel Task 14 had to put it in.
 - **Acceptance criteria:**
-  - [ ] No copy in the admin games screens claims an answer is destroyed by retiring or editing a question
-  - [ ] Retire and restore are reachable from the question row
+  - [x] No copy in the admin games screens claims an answer is destroyed by retiring or editing a question
+  - [x] Retire and restore are reachable from the question row
 - **Depends on:** Task 14.
 
 ### Task 45: A decided series stops listing games nobody will play (found in the browser sweep)
@@ -217,10 +219,10 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/components/format/MatchCard.tsx` (the "Side and map" list, ~lines 138-157), its tests
 - **Do:** the card prints one side-and-map row per game of the series, "including games that have not been played, which are precisely the ones the answer is still needed for". That holds while a series is live and is false once it is decided: a Bo3 won 2-0 still prints `G3 - Voss Vanguard picks the side · Bergstrom Brigade picks the map` in the future tense, styled exactly like the played games, on an event that finished a month ago. Next to it a genuinely live semi prints the same shape, so a reader cannot tell a finished series from an unfinished one. Once the match has a winner, drop the unplayed rows (or mark them "not needed" - pick one and say why in the docblock). A drawn decider waiting on `winner_override_id` is *not* decided and must keep its rows.
 - **Acceptance criteria:**
-  - [ ] A Bo3 won 2-0 lists G1 and G2 only
-  - [ ] A live Bo3 at 1-0 still lists G2 and G3 in the future tense
-  - [ ] A series frozen on a drawn decider keeps every row
-  - [ ] Proven by mutation: restoring the old behaviour fails a test
+  - [x] A Bo3 won 2-0 lists G1 and G2 only
+  - [x] A live Bo3 at 1-0 still lists G2 and G3 in the future tense
+  - [x] A series frozen on a drawn decider keeps every row
+  - [x] Proven by mutation: restoring the old behaviour fails a test
 - **Depends on:** none.
 
 ### Task 46: Avatar initials are read aloud before every name (found in the browser sweep)
@@ -229,9 +231,10 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/components/ui/Avatar.tsx`, its tests
 - **Do:** when there is no image the avatar renders the member's initials as text, and nothing hides them from assistive tech - so a screen reader announces every name twice over, as "FD Faro Delgado", in the standings, the draft room, the rosters and the profiles. The name is always printed beside the avatar, so the initials are decoration: mark them `aria-hidden`. Check whether an avatar *with* an image has an `alt` that repeats the adjacent name for the same reason.
 - **Acceptance criteria:**
-  - [ ] An imageless avatar contributes nothing to the accessible name of its row
-  - [ ] An avatar with an image does not repeat the adjacent name
+  - [x] An imageless avatar contributes nothing to the accessible name of its row
+  - [x] An avatar with an image does not repeat the adjacent name
 - **Depends on:** none.
+- **Left over:** nothing outstanding, but the fix reached a file this task never claimed. `aria-hidden` cannot be made responsive, so `src/components/NavMenu.tsx` needed its own treatment: `role="img"`/`aria-label` on the unread dot (:138-139) and `sr-only ... sm:not-sr-only` on the name (:151). Tested at `src/components/__tests__/avatar.test.ts:224-264`. Recorded because the Files line above does not mention it.
 
 ### Task 50: Drop the two dead date columns, and the index that only reads them (found in Task 12 review)
 
@@ -239,9 +242,9 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Files:** `src/db/schema.ts` (`events.startsAt`, `events.endsAt`, `events_status_starts_at_idx`), new migration, `src/db/__tests__/migrations.test.ts`
 - **Do:** Task 12 stopped reading `events.starts_at`/`ends_at` and drizzle/0020 backfilled a day row from them, so nothing reads or writes either column. Drop both. **Drop `events_status_starts_at_idx` with them:** it indexes `(status, starts_at)`, and now that an event's dates are its days' there is nothing left that filters or orders by that column — the hub's "what is on, soonest first" sorts in TypeScript over `readDatesFor`, so the index is two columns of write cost for a query nobody makes. What the listings actually ask for is status alone, so replace it with an index on `status` if the plans show one is wanted; measure before adding it rather than keeping this one by default. The drop also needs the live rows looked at first (Risks: "Dropping a column that holds live data"): count the events whose `starts_at` disagrees with their first dated day, and decide per row — 0020 deliberately left a partially dated event's day list alone, and an `ends_at` that was never a day's start was never backfilled at all.
 - **Acceptance criteria:**
-  - [ ] `grep -rn "starts_at\|ends_at" src/ drizzle/` shows no reference to the `events` columns outside the migrations that made and dropped them
-  - [ ] The migration test replays the backfill and the drop in order and still proves the backfilled day survives
-  - [ ] `EventRow` no longer carries a `startsAt`/`endsAt` that is not derived, so `withDates` and `withKnownDates` can go
+  - [x] `grep -rn "starts_at\|ends_at" src/ drizzle/` shows no reference to the `events` columns outside the migrations that made and dropped them
+  - [x] The migration test replays the backfill and the drop in order and still proves the backfilled day survives
+  - [x] `EventRow` no longer carries a `startsAt`/`endsAt` that is not derived, so `withDates` and `withKnownDates` can go
   - [ ] Whatever index replaces it is justified by a query in the code, named in the docblock
 - **Depends on:** Task 12.
 - **Left over:** the measurement. **No index replaces `events_status_starts_at_idx`**, which is the fourth criterion answered by declining to add one: `DATABASE_URL` is blank in this working copy by design, so nothing here can `EXPLAIN` the one selective read (`listEvents({ status: "live" })`), and this task asked for a replacement to be measured rather than inherited. `src/db/schema.ts` records the query to run when the table is large enough for the answer to differ; that is the one thing still owed, and it needs production.
@@ -255,11 +258,12 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Do:** Task 13 captures the type, the game, `config` (so format, entry mode and the waitlist switch) and the questions, and proves they reproduce. It does **not** capture the days, the capacity or the two rank thresholds, and could not: those are columns on `events`, not keys in `config`, so `createEvent` reads them from its own input and never from the template. The only migration-free route - stashing them in `event_templates.config.setup` - is a trap, because `createEvent` copies `config` wholesale, so every event made from such a template would carry a dead second copy of its own capacity alongside the column. That is a stored duplicate of a derived fact, which this project does not do.
   So: give `event_templates` real columns for them, teach `createEvent` to apply a template's setup where its input is silent, and shorten `TEMPLATE_OMITS` to what is genuinely left behind. Task 13 pinned the current promise in a test (`leaves the days, the cap and the rank thresholds behind, as TEMPLATE_OMITS says`) - that test is the one to rewrite, and it names itself as such.
 - **Acceptance criteria:**
-  - [ ] A template made from an event reproduces its days, capacity and both rank thresholds on a new event
-  - [ ] `TEMPLATE_OMITS` lists only what is still left behind, and the editor and `/admin/templates` print the same list
-  - [ ] Nothing is stored twice: a new event's capacity lives in its column and nowhere else
-  - [ ] The migration states what it does with templates that predate the columns
+  - [x] A template made from an event reproduces its days, capacity and both rank thresholds on a new event
+  - [x] `TEMPLATE_OMITS` lists only what is still left behind, and the editor and `/admin/templates` print the same list
+  - [x] Nothing is stored twice: a new event's capacity lives in its column and nowhere else
+  - [x] The migration states what it does with templates that predate the columns
 - **Depends on:** Task 13. Needs a migration and `src/lib/events.ts`, so it must not run beside a task holding either.
+- **Left over:** nothing. Four columns on `event_templates` (drizzle/0027), inert on every existing row by construction - the three nullables default to NULL and `days` to `'[]'`, and in each case that *is* the old behaviour, so an old template keeps producing the events it produced yesterday. No backfill, and deliberately no attempt to reconstruct a template's setup from the events it made: `events.created_from_template_id` would make that possible and it would be a guess about intent stored as a fact. The rank-threshold check moved to `rankGateProblem` in `src/lib/events-policy.ts` so a *template* cannot store "Diamond" against a game whose ladder stops at Gold - otherwise the refusal arrives at the wrong end, against the wrong person, on a setup they did not just type. `createEvent`'s three checks now read `days`, `capacity` and `next` **after** the template is folded in, so nothing from a template skips a rule and no rule moved to after the insert to let one through.
 
 ### Task 51: One rule for what a day is called (found in Task 12 review)
 
@@ -268,10 +272,11 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Do:** `dayName` in `src/lib/events-policy.ts` is the rule — the manager's label, or "Day N" — and the day-sequence refusals name days with it, so a refusal and the page agree. Task 12's new overview panel calls it. These three still have their own copy, and it is a *different* rule: `label ?? \`Day N\`` renders a whitespace-only label as a blank where `dayName` renders "Day 1", because `??` only catches null. Call `dayName` from all three. Note they number from `day.dayIndex` rather than the array index, which is the better input — `dayName` takes an index, so pass `day.dayIndex` and keep that behaviour.
 - **Acceptance criteria:**
   - [ ] `grep -rn "Day \${" src/components src/app` finds no fallback outside `dayName`
-  - [ ] A day labelled `"   "` is called "Day 1" on all four surfaces
-  - [ ] A labelled day is unchanged on all four
+  - [x] A day labelled `"   "` is called "Day 1" on all four surfaces
+  - [x] A labelled day is unchanged on all four
 - **Depends on:** Task 12.
 - **Left over:** nothing. The overview panel's input was the array position and is now `day.dayIndex`, like every other surface (`src/app/events/[slug]/page.tsx`), and a **fifth** surface turned up with both of the original defects — the applicant drawer's day rows in `src/components/admin/events/ApplicantsTab.tsx`, which carried the weak `??` *and* the array position. Both are ported, and the drawer is now one more block in `src/components/__tests__/day-names.test.ts`. Note why the fifth one was missed: the first criterion above greps for `Day ${`, and that surface wrote the number as JSX (`Day {index + 1}`), so the criterion was weaker than the rule it stood for. The assertion per surface is the criterion that holds; the grep is a convenience.
+- **Left over (second pass):** the fourth surface the Do line names - the public event overview - had no blank-label test; reverting it to `label ?? \`Day N\`` left the suite green. Now covered. The first criterion stays **unticked on purpose**: the grep returns four hits, none of them a `label ??` fallback, so the rule holds while the literal grep does not read clean - and a fifth surface was originally missed because it wrote the number as JSX, which the grep cannot see either. The per-surface assertion is the criterion that holds. `DaysTab.tsx` was left alone deliberately: it is the editor where the label is *typed*, so a positional heading is correct there, and it is outside this task's Files line.
 
 ### Task 53: Two admins can still make two templates with one name (found in Task 10/35 review)
 
@@ -280,12 +285,13 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
 - **Do:** UC-28 4a refuses a typed name another template already has, and `createTemplate` and `updateTemplate` both enforce it — by reading every name, lowercasing, and comparing. There is no unique index behind that read, so it is advisory: two admins creating "Rivals cup" in the same instant both pass `nameTaken` and both insert, and `freeName`'s "copy", "copy 2" suffixing has the same race. The database should refuse the second — a unique index on `lower(name)`, which is also the comparison the code makes (`takenNames` folds case, so a plain index on `name` would not match the rule it is enforcing).
   Not done in Task 10's review batch because it needs a migration and a duplicate-row decision against production rows nobody can inspect from here: two templates whose names differ only by case, or by collapsed whitespace, must be resolved before the index can be created, exactly as Task 23's 0018 had to withdraw duplicate pending applications first. Deciding that against a live table is the task.
 - **Acceptance criteria:**
-  - [ ] Two simultaneous creates of one name: exactly one wins, proven with the sequencing helpers in `src/lib/__tests__/events-concurrency.test.ts`
-  - [ ] The refusal the loser gets is `nameClash`'s sentence, not a database error
-  - [ ] `freeName`'s suffixing retries on a lost race rather than failing the duplicate
-  - [ ] The migration states what it does with templates that already share a name, and why
+  - [x] Two simultaneous creates of one name: exactly one wins, proven with the sequencing helpers in `src/lib/__tests__/events-concurrency.test.ts`
+  - [x] The refusal the loser gets is `nameClash`'s sentence, not a database error
+  - [x] `freeName`'s suffixing retries on a lost race rather than failing the duplicate
+  - [x] The migration states what it does with templates that already share a name, and why
   - [ ] `cleanTemplateName`'s space-collapsing and the index agree on what "the same name" means
 - **Depends on:** Task 13, Task 35. Needs a migration, so it must not run beside another that holds one.
+- **Left over:** one documented divergence, which is why the last criterion is unticked. The index expression is **not** `lower(name)` as this entry originally said: `cleanTemplateName` collapses whitespace and `takenNames` collapses again, so `lower(name)` alone would admit "Rivals  cup" beside "Rivals cup" - the index would be *weaker* than the rule it exists to enforce. It folds the same way the code does, with `[[:space:]]` rather than `\s` (equivalent here, but `\s` silently folds the **letter s** if `standard_conforming_strings` is ever `off`, which would build a working index on a different meaning of "the same name" in a file that can never be changed again). What remains: Postgres folds ASCII whitespace only, JavaScript's `\s` includes U+00A0, so a name separated by a non-breaking space is a duplicate to the code and distinct to the database. The **code is the stricter side**, which is the safe direction - it refuses before the index is consulted, so the gap costs a race window on an input nobody types and can never surface a raw database error in place of UC-28 4a's sentence. Closing it would mean restating JavaScript's whitespace set by hand in an index expression that cannot be changed without reindexing production. The loser of a pre-existing clash is **renamed**, not deleted (0025) or deactivated: a template is a starting point with a label on it, the conflict is entirely in the label, and `events.created_from_template_id` is `on delete set null` so a delete would blank the provenance of every event made from it.
 
 ### Task 54: A stale draft pool can still seat somebody who is not accepted (found in Task 18/33 review)
 
@@ -295,11 +301,11 @@ behaviour is simpler than the use case I wrote and still satisfies the requireme
   Re-read acceptance **inside the award transaction**, with the event row already locked, exactly as `placeOnRoster`'s `rosterGuard` does today (which is why hand placement is clean and this is not). Awarding to somebody no longer accepted is a refusal naming them, not a silent skip — the room is watching, and a lot that quietly does nothing is worse than one that says why. Decide at the same time what `openLot` should do about an entry that has gone stale: refusing to open it is the honest answer, and the pool read the room sees should not be offering them either.
   Left for its own task rather than folded into Task 18: Task 18 owns forming teams by hand, this is the draft room's award path (Task 19's area), and the fix needs a decision about the stale pool entries themselves — whether a status change prunes the pool eagerly or the award path alone holds the line. Eager pruning is tempting and is the trap: it would mean a decline silently rewriting a pool the manager built, which is the kind of quiet change this project refuses elsewhere.
 - **Acceptance criteria:**
-  - [ ] Accept → pool → decline, then award: refused, naming the person, with no `team_members` row and no balance moved
-  - [ ] The same for waitlisted and for withdrawn, since all three are "not accepted" and only one of them is the member's own doing
-  - [ ] Opening a lot on a pooled player who is no longer accepted is refused too, so the room is never shown a lot that cannot be awarded
-  - [ ] A member who was accepted all along is unaffected: the existing award tests still pass untouched
-  - [ ] Nothing is stored to make this work — acceptance is re-read, never copied onto the pool entry
+  - [x] Accept → pool → decline, then award: refused, naming the person, with no `team_members` row and no balance moved
+  - [x] The same for waitlisted and for withdrawn, since all three are "not accepted" and only one of them is the member's own doing
+  - [x] Opening a lot on a pooled player who is no longer accepted is refused too, so the room is never shown a lot that cannot be awarded
+  - [x] A member who was accepted all along is unaffected: the existing award tests still pass untouched
+  - [x] Nothing is stored to make this work — acceptance is re-read, never copied onto the pool entry
 - **Depends on:** Task 19. Touches `src/lib/draft.ts`, so it must not run beside Task 18 or Task 19.
 - **Left over:** nothing. The decision the task asked for went the way it predicted: **a status change prunes nothing**, the pool entry stays exactly as the manager built it, and the award path holds the line — `openLot` refuses a named player who is no longer accepted and leaves them off the wheel otherwise, `awardLot` refuses on the row it is about to write with the event already locked, and `getDraftSnapshot`'s pool read filters by the same question so the room is never shown a lot that cannot settle.
   Three things tidied in review. The citation was wrong on all three of those paths: they cited **R-61, R-62**, which are hand-set rosters and captains; the requirement about this path is **R-66** ("award a player to the winning bid, discard them or send them to the reserve pool, so that every lot is settled"), with UC-16 pre1 — "pool is the accepted non-captains" — being the invariant the re-read restores. R-61 and R-62 are kept where the shared rule is the point, which is that a bought seat and a hand-placed seat are the same roster row. The acceptance read also existed in **four byte-equivalent copies** in one file: the new `acceptedAmong` and `seatStatus` helpers, plus inline queries in `setCaptains` and `placeOnRoster` that were literally those two functions written out; both call sites now call the helper. And `noSeatPhrase` fell through to "has no application for this event" for any unlisted status — true of a missing row and of nothing else, so a sixth member on `application_status` would have produced a confidently wrong sentence. It is an exhaustive switch with a `never` arm, and `accepted` is excluded from its parameter type rather than given a sentence it has no honest one for.
@@ -324,7 +330,7 @@ bracket corrections safe (R-79).
   - [ ] Shared position gives both the same points and leaves the next position empty
   - [ ] Weight and per-event table override apply; participation points scale with weight
   - [ ] best-N keeps each member's best results only
-  - [ ] Tie rule ordered exactly as specified, and level players shown level
+  - [x] Tie rule ordered exactly as specified, and level players shown level
   - [ ] Correcting a placement changes the standings with nothing stale left behind
 - **Depends on:** none
 
@@ -378,7 +384,7 @@ bracket corrections safe (R-79).
 - **Acceptance criteria:**
   - [ ] UC-12 7b: approval event stores pending, member sees "Awaiting review"
   - [ ] Pending → accepted/waitlisted/declined; pending → withdrawn by applicant
-  - [ ] Existing events behave exactly as before (first come, waitlist)
+  - [x] Existing events behave exactly as before (first come, waitlist)
 - **Depends on:** Task 4
 
 ### Task 8: Freed seats always go to the next in line
@@ -387,10 +393,11 @@ bracket corrections safe (R-79).
 - **Files:** `src/lib/events.ts`, `src/app/apply/actions.ts`, `src/app/me/events/actions.ts`, `src/app/admin/events/actions.ts`, `src/components/admin/events/ApplicantsTab.tsx`, `src/components/me/MyEventCard.tsx`, `events.test.ts`
 - **Do:** one `freeSeat` rule used by withdraw, decline, waitlist-from-accepted and "not coming": promote the earliest waitlisted in the same transaction and notify both. Applying notifies and audits. Accepting over the cap asks for confirmation first.
 - **Acceptance criteria:**
-  - [ ] Each of the four ways a seat frees promotes the earliest waitlisted, notified (rewrite `events.test.ts:1102`)
-  - [ ] "Not coming" frees the seat
-  - [ ] Over-cap accept needs a confirmed second call; cap unchanged
+  - [x] Each of the four ways a seat frees promotes the earliest waitlisted, notified (rewrite `events.test.ts:1102`)
+  - [x] "Not coming" frees the seat
+  - [x] Over-cap accept needs a confirmed second call; cap unchanged
 - **Depends on:** Task 7
+- **Left over:** nothing. The promotion half was strongly held all along (full-queue `toEqual` on all four paths), but the **notification** half was unheld on the two member-driven ones: deleting either `tellThePromoted(...)` call in `src/app/me/events/actions.ts` left the suite green while a withdrawal or an "I can't make it" promoted the next person and never told them. Every file importing that module mocked it away. Now covered by `src/app/me/events/__tests__/promotion-notice.test.ts`; the mutation kills four tests across both call sites.
 
 ### Task 9: Entry-rule waivers
 
@@ -421,7 +428,7 @@ bracket corrections safe (R-79).
 - **Files:** `src/lib/events.ts`, `src/app/admin/events/actions.ts`, `src/components/admin/events/BasicsTab.tsx`, `events.test.ts`
 - **Do:** sign-ups close no later than the first day's start; days ordered and non-overlapping; cap at least 2 (constraint migration after checking live rows); every setup save audited; change/question notifications only when published and something changed.
 - **Acceptance criteria:**
-  - [ ] Each 10c rule refused with its named message; nothing saved
+  - [x] Each 10c rule refused with its named message; nothing saved
   - [ ] Unpublished saves notify nobody
 - **Depends on:** Task 3
 
@@ -432,7 +439,7 @@ bracket corrections safe (R-79).
 - **Do:** start = first day's start; end = last day's; overview lists every day. Backfill a day from `starts_at` for any event that has none, then stop reading and drop the columns. Reminders to accepted seats only.
 - **Acceptance criteria:**
   - [ ] Listings, hub, reminders order and filter by derived dates (existing tests pass unchanged in meaning)
-  - [ ] Migration backfill test: an event with only `starts_at` gains a day
+  - [x] Migration backfill test: an event with only `starts_at` gains a day
 - **Depends on:** Task 11
 
 ### Task 13: Unsaved changes and templates from an event
@@ -441,9 +448,10 @@ bracket corrections safe (R-79).
 - **Files:** `src/components/admin/events/UnsavedChanges.tsx`, `src/components/admin/events/EventEditor.tsx`, `src/lib/admin-templates.ts`, `src/components/admin/TemplatesManager.tsx`
 - **Do:** lock also covers back/forward (popstate) and programmatic navigation; "Save as template" in the editor (admin only) capturing days, cap, rules, questions, format. The templates page keeps all its features (UC-28, pinned in Task 35).
 - **Acceptance criteria:**
-  - [ ] Browser back with unsaved edits shows the bar and stays
-  - [ ] Template from an event reproduces its setup on a new event
+  - [x] Browser back with unsaved edits shows the bar and stays
+  - [x] Template from an event reproduces its setup on a new event
 - **Depends on:** Task 12
+- **Left over:** the template captures the type, the game, `config` (so format, entry mode and the waitlist switch) and the questions, but **not** the days, the capacity or the two rank thresholds - those are columns on `events` rather than keys in `config`, so `createEvent` reads them from its own input and never from the template. `src/lib/__tests__/admin-templates.test.ts:1034-1060` pins that absence deliberately (`expect(next.capacity).toBeNull()` and both rank thresholds), so the gap is recorded in a test rather than forgotten - but it was recorded nowhere a reader of this plan would find it, and was traceable only through Task 52's header. **Closed by Task 52**, which gave `event_templates` real columns for all four; that test now asserts they reproduce instead of asserting they are left behind.
 
 ### Task 14: Game catalogue keeps members' answers
 
@@ -589,6 +597,7 @@ bracket corrections safe (R-79).
 - **Do:** replace raw selects, checkboxes, `btn` classes, hand-made cards, chips, empty states and `className="eyebrow"` with the primitives; add Checkbox (five uses).
 - **Acceptance criteria:** no raw `<select`, `type="checkbox"`, `className="btn`, `className="eyebrow"` outside `components/ui`
 - **Depends on:** Task 30
+- **Left over:** two raw checkboxes were missed, and the sweep written to catch that cannot see them. `src/components/admin/events/ResultsTab.tsx:903` and `src/components/admin/ServerSettings.tsx:99` both still carry a raw `type="checkbox"`, and both files are named in the Files line above; `ResultsTab.tsx:902` still carries `className="eyebrow"`. So the acceptance criterion above is **not met**, and nothing noticed, because `callSites()` in `src/components/ui/__tests__/checkbox-hit-area.test.ts` matches only `<Checkbox` elements - it counts the converted call sites and is blind to an unconverted one. There are 4 `<Checkbox` uses against the five this task planned. Note the shape of the miss: a sweep keyed to the *fixed* form cannot report the *unfixed* form. **Closed by Task 38b**: both are converted and `callSites()` now also matches raw `type="checkbox"` outside `components/ui`, so an unconverted control can no longer hide from it. The criterion above also bans `className="eyebrow"` outside `components/ui` and **that half is still open** — `ResultsTab.tsx` carries three more (`:315`, `:574`, `:831`), none of them the checkbox label that Task 38b fixed. Left for Task 32's sweep.
 
 ## G. Deletions
 
@@ -703,3 +712,24 @@ this environment). Before any production push: the Phase 8 launch checklist (Gat
   - [ ] Each writes-then-refuses case is fixed and has a test proving nothing is committed on the refusal
   - [ ] The rule is stated once, somewhere a writer will see it before their first `tx.` call, and it distinguishes a returned refusal from a throw
 - **Depends on:** nothing, but it touches many files, so run it when no other task holds them.
+
+### Task 58: Six copies of one sequencing helper (found in Task 36 review)
+
+- **Serves:** no requirement — test infrastructure
+- **Files:** `src/lib/__tests__/format-db.test.ts`, `draft.test.ts`, `events.test.ts`, `format-sync.test.ts`, `admin-users.test.ts`, `championship-results.test.ts`, new `src/db/__tests__/helpers.ts`
+- **Do:** `committingAfter` is **byte-identical** in six test files. That is three strikes twice over, and one `db` parameter extracts it cleanly.
+  Task 36's review asked for a wider extraction than this and was wrong to: there are **twelve** sequencing helpers across eleven files, and they are not variations of one idea. `committingAfter` does **not** flatten the transaction — it runs `between`, then opens a real `target.transaction(run)`, firing at `BEGIN`. `insertingAfter` (three hand-written copies, in `hosting.test.ts`, `championship-events.test.ts` and `waivers.test.ts`) flattens and hardcodes one builder chain, and the three differ by chain shape (`.values().onConflictDoNothing()`, `.select().returning()`, `.values().onConflictDoNothing().returning()`). `completing` flattens, proxies all four builders recursively, is aimed by a regex over `toSQL()`, and hardcodes its action. Parameterising "where the interruption fires" across those three means a configurable proxy framework harder to read than any of them — so **extract only the six identical `committingAfter`s** and leave the rest.
+- **Acceptance criteria:**
+  - [ ] One `committingAfter`, imported by all six files, each behaving as before
+  - [ ] The other six helpers are left alone, and a comment says why
+  - [ ] No test changes what it asserts
+- **Depends on:** nothing, but it edits six test files, so run it when no other task holds them. Deferred from Task 36's review as a cosmetic win not worth risking a 132-file baseline mid-task.
+
+## Plan hygiene
+
+A reconciliation of every acceptance criterion against the tree (2026-10-22, at commit `8ef5347`) found the checkboxes had drifted badly: **94 of 100 were unticked**, and 47 of those were met — several by mutation-resistant tests. They are now ticked. Two lessons worth keeping:
+
+- **A criterion written as a grep is weaker than the rule it stands for.** Task 51's `grep -rn "Day \${"` reads clean of `label ??` fallbacks while four hits remain, and a fifth surface was missed entirely because it wrote the number as JSX (`Day {index + 1}`). The per-surface assertion is the criterion that holds; the grep is a convenience. Task 44's criterion has the same shape and nothing holds it — a future edit could reintroduce `R-196` and no test would fail.
+- **Tasks 39-43 and Task 31 state their acceptance criteria as prose rather than checkboxes, so no sweep can see them.** Task 31's is **not met** (see its Left over note) and went unnoticed for exactly that reason. Future tasks use checkboxes.
+
+Still open and **not** closable from this repo: Task 50's last criterion asks whether an index on `events.status` is wanted, which needs `EXPLAIN` against production rows. `DATABASE_URL` is blank here by design. The query to run is recorded at `src/db/schema.ts:1091-1116`.

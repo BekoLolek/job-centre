@@ -66,34 +66,62 @@ const { default: EventPage } = await import("../page");
 
 let handle: TestDatabase;
 let slug: string;
+let labelSlug: string;
 
-beforeAll(async () => {
-  handle = await freshDatabase();
-  state.db = handle.db;
+/** A day whose label is spaces: the case `??` gets wrong and `dayName` does not. */
+const BLANK_LABEL = "   ";
 
+/** A published event with these days, written straight in. Hands back its slug. */
+async function eventWithDays(
+  title: string,
+  days: { dayIndex: number; label?: string | null; startsAt: Date }[]
+): Promise<string> {
   const created = await createEvent(
     {
-      title: "Day gap",
+      title,
       signupOpensAt: new Date("2026-04-01T17:00:00Z"),
       signupClosesAt: new Date("2026-05-19T17:00:00Z"),
     },
     handle.db
   );
   if (!created.ok) throw new Error(created.error);
-  slug = created.data.slug;
 
   /*
-   * Two days, stored on indexes 1 and 3 — the gap a part-applied re-order
-   * leaves behind. Written straight in rather than through `setEventDays`,
-   * which renumbers every day from its position and so could not produce one.
+   * Written straight in rather than through `setEventDays`, which renumbers
+   * every day from its position in the list it is given — so it could not
+   * produce the index gap the first fixture needs, and it trims the labels the
+   * second one is about.
    */
-  await handle.db.insert(eventDays).values([
-    { eventId: created.data.id, dayIndex: 1, startsAt: new Date("2026-05-21T17:00:00Z") },
-    { eventId: created.data.id, dayIndex: 3, startsAt: new Date("2026-05-23T17:00:00Z") },
-  ]);
+  await handle.db
+    .insert(eventDays)
+    .values(days.map((day) => ({ ...day, eventId: created.data.id })));
 
   const published = await publishEvent(created.data.id, handle.db);
   if (!published.ok) throw new Error(published.error);
+  return created.data.slug;
+}
+
+beforeAll(async () => {
+  handle = await freshDatabase();
+  state.db = handle.db;
+
+  // Two days, stored on indexes 1 and 3 — the gap a part-applied re-order
+  // leaves behind.
+  slug = await eventWithDays("Day gap", [
+    { dayIndex: 1, startsAt: new Date("2026-05-21T17:00:00Z") },
+    { dayIndex: 3, startsAt: new Date("2026-05-23T17:00:00Z") },
+  ]);
+
+  /*
+   * And one labelled with spaces beside one labelled properly — the half of
+   * UC-08 E3 this file could not see. The blank one sits on index 4, the top of
+   * `event_days_index_range`, so the name it must come out with is "Day 5" and
+   * not a number the other fixture or a position count would also produce.
+   */
+  labelSlug = await eventWithDays("Blank label", [
+    { dayIndex: 4, label: BLANK_LABEL, startsAt: new Date("2026-05-25T17:00:00Z") },
+    { dayIndex: 2, label: "Finals night", startsAt: new Date("2026-05-26T17:00:00Z") },
+  ]);
 });
 
 afterAll(async () => {
@@ -108,9 +136,9 @@ afterAll(async () => {
  * that suspends. `onAllReady` — awaiting the stream to its end — is the
  * finished page.
  */
-async function text(): Promise<string> {
+async function text(which: string = slug): Promise<string> {
   const page = await EventPage({
-    params: Promise.resolve({ slug }),
+    params: Promise.resolve({ slug: which }),
     searchParams: Promise.resolve({}),
   });
   const stream = await renderToReadableStream(page);
@@ -123,6 +151,29 @@ async function text(): Promise<string> {
     .trim();
 }
 
+/**
+ * Just the "When it runs" panel out of the whole page.
+ *
+ * Because `toContain` over an entire rendered page is a weak assertion: the
+ * words "Day 6" anywhere in the summary, the schedule or the prose would
+ * satisfy it, and the thing under test is what *this panel* calls a day. The
+ * panel's own closing sentence is the end marker.
+ *
+ * The two `expect`s are the point of the helper, not decoration. A slice helper
+ * that quietly returned `""` when it could not find its markers would make
+ * every assertion built on it pass for the wrong reason, which is a trap this
+ * project has already been caught by once.
+ */
+function whenItRuns(rendered: string): string {
+  const start = rendered.indexOf("When it runs");
+  expect(start, 'the page no longer has a "When it runs" panel').toBeGreaterThan(-1);
+  const end = rendered.indexOf("dates are its days", start);
+  expect(end, 'the "When it runs" panel no longer closes with its own sentence').toBeGreaterThan(
+    start
+  );
+  return rendered.slice(start, end);
+}
+
 describe("the public event page's day list", () => {
   it("names each day from its stored index, gap and all", async () => {
     const rendered = await text();
@@ -132,5 +183,28 @@ describe("the public event page's day list", () => {
     // What numbering by position would have called them.
     expect(rendered).not.toContain("Day 1");
     expect(rendered).not.toContain("Day 3");
+  });
+
+  /*
+   * The other half of UC-08 E3, and the half Task 51 named this surface for.
+   *
+   * `dayName` is a *trimmed* label or "Day N"; the `label ?? \`Day N\`` copy it
+   * replaced only caught `null`, so a day labelled with spaces came out as a
+   * blank — not obviously broken, it just stops answering "which day is this?".
+   * Reverting this panel to the `??` form left the whole suite green, because
+   * the only test of it passed no label at all and `null` is the one case both
+   * rules agree on.
+   */
+  it("calls a day labelled with spaces Day N", async () => {
+    const panel = whenItRuns(await text(labelSlug));
+
+    expect(panel).toContain("Day 5");
+  });
+
+  it("leaves a real label alone, and prints no number in its place", async () => {
+    const panel = whenItRuns(await text(labelSlug));
+
+    expect(panel).toContain("Finals night");
+    expect(panel).not.toContain("Day 3");
   });
 });

@@ -51,6 +51,14 @@ function template(over: Partial<AdminTemplateView> = {}): AdminTemplateView {
     gameName: null,
     config: { teams: 4 },
     questions: [],
+    // The setup columns drizzle/0027 added. Empty here: this file is about the
+    // order arrows and the delete confirm, and a cap on the fixture would print
+    // in the card's summary line and have to be accounted for in every
+    // assertion that reads it.
+    capacity: null,
+    minRankToEnter: null,
+    minRankToCaptain: null,
+    days: [],
     sort: 0,
     isActive: true,
     createdAt: new Date("2026-03-01T18:00:00Z"),

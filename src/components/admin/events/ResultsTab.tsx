@@ -6,6 +6,7 @@ import {
   Alert,
   Badge,
   Button,
+  Checkbox,
   EmptyState,
   Eyebrow,
   Field,
@@ -898,14 +899,17 @@ export function MatchEditor({
             <Eyebrow as="span">
               G{index + 1} · {modeLabel(game.mode)}
             </Eyebrow>
-            <label className="eyebrow flex cursor-pointer items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={game.played}
-                onChange={(input) => patchGame(index, { played: input.target.checked })}
-              />
-              Played
-            </label>
+            {/* The primitive, for the 44px hit area it carries (Task 38b): this
+                sat in an eyebrow-sized label, so the box was 16px in a row
+                about 20px tall and well under the touch floor. `Eyebrow`
+                rather than the raw `.eyebrow` class, which the primitives
+                replaced everywhere outside `components/ui`, and it keeps the
+                words matched to the `G1 · mode` label opposite. */}
+            <Checkbox
+              checked={game.played}
+              onChange={(played) => patchGame(index, { played })}
+              label={<Eyebrow as="span">Played</Eyebrow>}
+            />
           </div>
 
           {match.choices[index] && (

@@ -49,10 +49,13 @@
 import { asc, count, eq, inArray, ne, sql } from "drizzle-orm";
 import {
   type Database,
+  type EventConfig,
   type EventQuestionSpec,
   type EventTemplate,
+  type EventTemplateDay,
   type Game,
   db as defaultDb,
+  eventDays,
   eventQuestions,
   eventTemplates,
   events,
@@ -64,12 +67,16 @@ import {
   MAX_TEMPLATE_QUESTIONS,
   TEMPLATE_NAME_MAX,
   cleanTemplateName,
+  cleanTemplateRank,
   cleanTemplateType,
+  normaliseTemplateCapacity,
   normaliseTemplateConfig,
+  normaliseTemplateDays,
   normaliseTemplateQuestions,
   templateData as withData,
   templateFail as fail,
 } from "./admin-templates-policy";
+import { rankGateProblem } from "./events-policy";
 import { readDatesFor } from "./events";
 import { reorderById } from "./profile-fields";
 
@@ -89,7 +96,9 @@ export {
   TEMPLATE_OMITS,
   cleanTemplateType,
   describeTemplate,
+  normaliseTemplateCapacity,
   normaliseTemplateConfig,
+  normaliseTemplateDays,
   normaliseTemplateQuestions,
 } from "./admin-templates-policy";
 
@@ -291,7 +300,21 @@ async function nextSort(database: Database): Promise<number> {
   return (row?.highest ?? -1) + 1;
 }
 
-/** Every other template's name, folded for comparison. */
+/**
+ * Every other template's name, folded for comparison.
+ *
+ * `cleanTemplateName` rather than `.toLowerCase()` on its own, which is the
+ * change `event_templates_name_uniq` required. Every name written through this
+ * module is already collapsed, so for those rows the two agree either way —
+ * but a name written by a seed, by a migration, or before the collapsing
+ * existed need not be, and the index folds whitespace. Folding one side and not
+ * the other is how the database ends up refusing a name this read had just
+ * allowed, which is a Postgres error where UC-28 4a asks for a sentence.
+ *
+ * `cleanTemplateName` is the fold, so there is exactly one definition of what
+ * "the same name" means on this side, and the index's comment in
+ * `src/db/schema.ts` says where the two still disagree.
+ */
 async function takenNames(
   database: Database,
   exceptId?: string
@@ -300,15 +323,21 @@ async function takenNames(
     .select({ name: eventTemplates.name })
     .from(eventTemplates)
     .where(exceptId ? ne(eventTemplates.id, exceptId) : undefined);
-  return new Set(rows.map((row) => row.name.toLowerCase()));
+  return new Set(rows.map((row) => cleanTemplateName(row.name).toLowerCase()));
 }
 
 /**
  * Whether another template already carries this name (UC-28 4a).
  *
- * The check for a name somebody **typed**. `cleanTemplateName` has already
- * collapsed the spaces, so this only has to fold case: "Rivals cup" and
- * "rivals  cup" are the same template to everybody except `=`.
+ * The check for a name somebody **typed**, and the one that produces the
+ * sentence in every ordinary case: "Rivals cup" and "rivals  cup" are the same
+ * template to everybody except `=`. `cleanTemplateName` has already folded
+ * `desired`, and {@link takenNames} folds the stored side the same way.
+ *
+ * It is not the rule, though — it is the read in front of it. Two admins who
+ * both pass this in the same instant are separated by
+ * `event_templates_name_uniq`, and {@link insertTemplate} turns that rejection
+ * back into this function's answer.
  */
 async function nameTaken(
   database: Database,
@@ -342,6 +371,105 @@ function nameClash(name: string): { ok: false; error: string } {
   return fail(`A template is already called "${name}". Pick another name.`);
 }
 
+/**
+ * Was Postgres refusing this write because of the one-name index?
+ *
+ * drizzle re-throws with a generic "Failed query" and hangs the real error off
+ * `cause`, so the index name is looked for down the whole chain rather than on
+ * the error it was handed. The same walk `rejectedBy` does in
+ * `src/lib/hosting.ts`, for the same two reasons — see
+ * `event_templates_name_uniq` in `src/db/schema.ts`.
+ */
+function rejectedByNameIndex(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; current && depth < 10; depth += 1) {
+    const step = current as { message?: string; constraint?: string; cause?: unknown };
+    if (`${step.message ?? ""} ${step.constraint ?? ""}`.includes(NAME_INDEX)) return true;
+    current = step.cause;
+  }
+  return false;
+}
+
+/** The unique index `drizzle/0028` creates. Named once, used by the catch below. */
+const NAME_INDEX = "event_templates_name_uniq";
+
+/** Everything a template row holds except its name and its place in the order. */
+type TemplateBody = {
+  type: string;
+  gameId: string | null;
+  config: EventConfig;
+  questions: EventQuestionSpec[];
+  capacity: number | null;
+  minRankToEnter: string | null;
+  minRankToCaptain: string | null;
+  days: EventTemplateDay[];
+};
+
+/**
+ * Which rule applies to this row's name if the database refuses it.
+ *
+ * The Gate 2 amendment to UC-15 6a, as two shapes rather than a boolean: a name
+ * somebody **typed** is refused (UC-28 4a), because silently renaming what
+ * they typed is worse than telling them; a name the **system** chose — a
+ * duplicate's "… copy", or the event title `createTemplateFromEvent` falls back
+ * to — is suffixed, because nobody typed it and there is nothing to contradict.
+ */
+type Naming = { typed: string } | { wanted: string };
+
+/**
+ * How many times a system-chosen name will round again on a lost race.
+ *
+ * Three, not one: each round re-reads the taken names, so a round is only lost
+ * if another admin took the *same* new suffix in the window between this read
+ * and this insert. Two admins pressing Duplicate on one template in the same
+ * instant is the realistic case and one retry settles it; three is headroom,
+ * and a fourth collision in a row is a sign of something other than a race.
+ */
+const NAME_ATTEMPTS = 3;
+
+/**
+ * Write the row, with the database having the last word on its name.
+ *
+ * The one insert all three creating paths go through, so the name rule is
+ * applied once. `nameTaken` has already run in each of them and is what
+ * produces the sentence in the ordinary case; this is the half a read cannot
+ * do — two admins creating "Rivals cup" in the same instant both pass that
+ * read, and only `event_templates_name_uniq` can refuse the second.
+ *
+ * What the loser gets depends on who chose the name:
+ *
+ *  * typed — {@link nameClash}'s sentence, the same one the read produces, so
+ *    the two creates differ in timing and in nothing else (UC-28 4a).
+ *  * system-chosen — another go at {@link freeName}, which re-reads and picks
+ *    the next free suffix. `freeName`'s suffixing is a *race* otherwise: it
+ *    reads every name, finds "Rivals cup copy" taken, offers "Rivals cup copy
+ *    2", and so does the admin who clicked at the same moment.
+ */
+async function insertTemplate(
+  database: Database,
+  body: TemplateBody,
+  naming: Naming
+): Promise<TemplateResult<EventTemplate>> {
+  for (let attempt = 0; attempt < NAME_ATTEMPTS; attempt += 1) {
+    const name = "typed" in naming ? naming.typed : await freeName(database, naming.wanted);
+    try {
+      const [created] = await database
+        .insert(eventTemplates)
+        .values({ ...body, name, sort: await nextSort(database), isActive: true })
+        .returning();
+      return withData(created);
+    } catch (error) {
+      if (!rejectedByNameIndex(error)) throw error;
+      // A typed name has nothing to round again for: the next attempt would
+      // offer the database the identical string and be refused identically.
+      if ("typed" in naming) return nameClash(naming.typed);
+    }
+  }
+  // Every suffix this path tried was taken by somebody else between the read
+  // and the insert, three times over. Honest refusal rather than a fourth go.
+  return fail("Could not find a free name for that template. Try again.");
+}
+
 /* ------------------------------------------------------------------ */
 /* Creating and editing                                               */
 /* ------------------------------------------------------------------ */
@@ -352,7 +480,54 @@ export type TemplateInput = {
   gameId?: string | null;
   config?: unknown;
   questions?: unknown;
+  /** The setup drizzle/0027 gave the table columns for. All optional. */
+  capacity?: number | null;
+  minRankToEnter?: string | null;
+  minRankToCaptain?: string | null;
+  days?: unknown;
 };
+
+/**
+ * The setup columns, vetted together, because the rank check needs the game.
+ *
+ * Its own function so {@link createTemplate} and {@link updateTemplate} cannot
+ * drift: a patch that moves a template onto a different game has to re-check
+ * the thresholds it is keeping against the new game's ladder, which is the one
+ * thing an each-key-on-its-own patch would miss.
+ */
+function checkSetup(
+  input: Pick<TemplateInput, "capacity" | "minRankToEnter" | "minRankToCaptain" | "days">,
+  game: Game | null
+): TemplateResult<{
+  capacity: number | null;
+  minRankToEnter: string | null;
+  minRankToCaptain: string | null;
+  days: EventTemplateDay[];
+}> {
+  const capacity = normaliseTemplateCapacity(input.capacity);
+  if (!capacity.ok) return capacity;
+
+  const days = normaliseTemplateDays(input.days);
+  if (!days.ok) return days;
+
+  const minRankToEnter = cleanTemplateRank(input.minRankToEnter);
+  const minRankToCaptain = cleanTemplateRank(input.minRankToCaptain);
+  const gate = rankGateProblem(
+    [
+      [minRankToEnter, "minimum rank to enter"],
+      [minRankToCaptain, "minimum rank to captain"],
+    ],
+    game
+  );
+  if (gate) return fail(gate);
+
+  return withData({
+    capacity: capacity.data,
+    minRankToEnter,
+    minRankToCaptain,
+    days: days.data,
+  });
+}
 
 /**
  * Make a template from nothing (R-125 / UC-28 3).
@@ -378,20 +553,20 @@ export async function createTemplate(
   const questions = normaliseTemplateQuestions(input.questions);
   if (!questions.ok) return questions;
 
-  const [created] = await database
-    .insert(eventTemplates)
-    .values({
-      name,
+  const setup = checkSetup(input, game.data);
+  if (!setup.ok) return setup;
+
+  return insertTemplate(
+    database,
+    {
       type: cleanTemplateType(input.type),
       gameId: game.data?.id ?? null,
       config: config.data,
       questions: questions.data,
-      sort: await nextSort(database),
-      isActive: true,
-    })
-    .returning();
-
-  return withData(created);
+      ...setup.data,
+    },
+    { typed: name }
+  );
 }
 
 export type TemplatePatch = {
@@ -400,6 +575,10 @@ export type TemplatePatch = {
   gameId?: string | null;
   config?: unknown;
   questions?: unknown;
+  capacity?: number | null;
+  minRankToEnter?: string | null;
+  minRankToCaptain?: string | null;
+  days?: unknown;
 };
 
 /**
@@ -431,11 +610,17 @@ export async function updateTemplate(
 
   if (patch.type !== undefined) values.type = cleanTemplateType(patch.type);
 
-  if (patch.gameId !== undefined) {
-    const game = await resolveGame(database, patch.gameId);
-    if (!game.ok) return game;
-    values.gameId = game.data?.id ?? null;
-  }
+  /*
+   * The game is resolved whether or not the patch names one, because the rank
+   * thresholds are checked against its ladder and "the game it already has" is
+   * the right ladder for a patch that only moves a threshold. `resolveGame`
+   * refuses an id that has gone, so a patch naming a deleted game is still
+   * refused rather than silently keeping the old one.
+   */
+  const gameId = patch.gameId !== undefined ? patch.gameId : current.gameId;
+  const game = await resolveGame(database, gameId);
+  if (!game.ok) return game;
+  if (patch.gameId !== undefined) values.gameId = game.data?.id ?? null;
 
   if (patch.config !== undefined) {
     const config = normaliseTemplateConfig(patch.config);
@@ -449,15 +634,52 @@ export async function updateTemplate(
     values.questions = questions.data;
   }
 
+  /*
+   * The setup is checked as a whole even when the patch mentions none of it,
+   * because moving a template onto a different game can invalidate a threshold
+   * it is *keeping*. The stored values stand in for the absent keys, so the
+   * check is always asked about the row as it will be afterwards — and only the
+   * keys the patch actually named are written.
+   */
+  const setup = checkSetup(
+    {
+      capacity: patch.capacity !== undefined ? patch.capacity : current.capacity,
+      minRankToEnter:
+        patch.minRankToEnter !== undefined ? patch.minRankToEnter : current.minRankToEnter,
+      minRankToCaptain:
+        patch.minRankToCaptain !== undefined
+          ? patch.minRankToCaptain
+          : current.minRankToCaptain,
+      days: patch.days !== undefined ? patch.days : current.days,
+    },
+    game.data
+  );
+  if (!setup.ok) return setup;
+
+  if (patch.capacity !== undefined) values.capacity = setup.data.capacity;
+  if (patch.minRankToEnter !== undefined) values.minRankToEnter = setup.data.minRankToEnter;
+  if (patch.minRankToCaptain !== undefined) {
+    values.minRankToCaptain = setup.data.minRankToCaptain;
+  }
+  if (patch.days !== undefined) values.days = setup.data.days;
+
   if (Object.keys(values).length === 0) return withData(current);
 
-  const [updated] = await database
-    .update(eventTemplates)
-    .set(values)
-    .where(eq(eventTemplates.id, templateId))
-    .returning();
+  try {
+    const [updated] = await database
+      .update(eventTemplates)
+      .set(values)
+      .where(eq(eventTemplates.id, templateId))
+      .returning();
 
-  return updated ? withData(updated) : fail("That template no longer exists.");
+    return updated ? withData(updated) : fail("That template no longer exists.");
+  } catch (error) {
+    // A rename is a typed name, so a lost race gets 4a's sentence rather than a
+    // database error — the same answer `nameTaken` gave the admin who was a
+    // moment earlier. `values.name` is set only when the patch renamed.
+    if (rejectedByNameIndex(error) && values.name) return nameClash(values.name);
+    throw error;
+  }
 }
 
 /**
@@ -483,22 +705,22 @@ export async function duplicateTemplate(
   const typed = cleanTemplateName(name);
   if (typed && (await nameTaken(database, typed))) return nameClash(typed);
 
-  const wanted = typed || cleanTemplateName(`${source.name} copy`);
-
-  const [created] = await database
-    .insert(eventTemplates)
-    .values({
-      name: typed || (await freeName(database, wanted)),
+  return insertTemplate(
+    database,
+    {
       type: source.type,
       gameId: source.gameId,
       config: source.config,
       questions: source.questions,
-      sort: await nextSort(database),
-      isActive: true,
-    })
-    .returning();
-
-  return withData(created);
+      // The whole setup, exactly as the source holds it. A copy that differed
+      // from its source in the seat cap would not be a copy.
+      capacity: source.capacity,
+      minRankToEnter: source.minRankToEnter,
+      minRankToCaptain: source.minRankToCaptain,
+      days: source.days,
+    },
+    typed ? { typed } : { wanted: cleanTemplateName(`${source.name} copy`) }
+  );
 }
 
 /**
@@ -669,19 +891,23 @@ export type FromEventInput = {
  * `entryMode`, `waitlist`, and the `format` block's own settings), never a
  * record of what a team did, so copying it whole copies a setup.
  *
+ * Since drizzle/0027 that also includes the seat cap, both rank thresholds and
+ * the **shape of the day list** — how many days and what they are called —
+ * which are columns on `event_templates` rather than keys in `config` for the
+ * reason the table's docblock gives: `createEvent` copies `config` wholesale,
+ * so a capacity routed through there would arrive on the new event as a dead
+ * second copy of its own column.
+ *
  * ## What is left behind, and why that is a decision rather than an oversight
  *
- * Days, dates, capacity, the two rank thresholds, and the generated stages.
- * Days and dates are the two things that are always different next month, and
- * stages are rows in `stages` so a bracket is regenerated rather than copied.
- * Capacity and the thresholds are a different case: docs/plan.md Task 13 asks
- * for them, and they are columns on `events` rather than keys in `config`, so
- * reproducing them needs either a column on `event_templates` to hold them or
- * `createEvent` to learn to apply them out of a template. Routing them through
- * `config` instead would leave every event made from such a template carrying a
- * dead second copy of its own capacity, which is the one thing this codebase
- * will not store. `TEMPLATE_OMITS` is the list both screens print, and it is
- * accurate.
+ * The **dates** and the generated stages. The instants the days started at are
+ * the one part of a setup that is always different next month, so the day list
+ * comes across undated and the manager times it — the documented
+ * times-to-be-agreed state, which `event_days.starts_at` is nullable for
+ * (R-24). Stages are rows in `stages`, built from the teams that actually turn
+ * up, so a bracket is regenerated rather than copied.
+ *
+ * `TEMPLATE_OMITS` is the list both screens print, and it is those two.
  */
 export async function createTemplateFromEvent(
   eventId: string,
@@ -712,20 +938,55 @@ export async function createTemplateFromEvent(
   const name = typed || cleanTemplateName(event.title);
   if (!name) return fail("Give the template a name.");
 
-  const [created] = await database
-    .insert(eventTemplates)
-    .values({
-      name: typed || (await freeName(database, name)),
+  /*
+   * The day list's shape, from the event's own `event_days` rows, in order and
+   * with the times left behind. `normaliseTemplateDays` is run over it rather
+   * than trusted: the labels are already stored within bounds, but it is the
+   * function that decides what a template's day list may be, and a capture path
+   * that wrote a list the editor would refuse would be a template nobody could
+   * save afterwards.
+   */
+  const days = normaliseTemplateDays(await dayShapeForEvent(database, eventId));
+  if (!days.ok) return days;
+
+  return insertTemplate(
+    database,
+    {
       type: cleanTemplateType(event.type),
       gameId: event.gameId,
       config: config.data,
       questions: questions.data,
-      sort: await nextSort(database),
-      isActive: true,
-    })
-    .returning();
+      capacity: event.capacity,
+      minRankToEnter: event.minRankToEnter,
+      minRankToCaptain: event.minRankToCaptain,
+      days: days.data,
+    },
+    typed ? { typed } : { wanted: name }
+  );
+}
 
-  return withData(created);
+/**
+ * One event's day list as a template carries it: labels in order, no times.
+ *
+ * Reads `event_days` directly rather than through `events.ts`, exactly as
+ * {@link questionSpecsForEvent} reads `event_questions` directly — same
+ * direction of dependency, and this module already owns the "turn an event into
+ * template data" half.
+ *
+ * Ordered by `day_index`, which is the event's own order (`readDays` uses the
+ * same), so "Group stage, Playoffs, Finals" comes back in that order and not in
+ * whatever order Postgres felt like.
+ */
+async function dayShapeForEvent(
+  database: Database,
+  eventId: string
+): Promise<EventTemplateDay[]> {
+  const rows = await database
+    .select({ label: eventDays.label })
+    .from(eventDays)
+    .where(eq(eventDays.eventId, eventId))
+    .orderBy(asc(eventDays.dayIndex));
+  return rows.map((row) => ({ label: row.label }));
 }
 
 /**

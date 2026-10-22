@@ -995,11 +995,50 @@ export type EventQuestionSpec = {
 };
 
 /**
+ * One day of an event, as a template carries it (R-22 / UC-08 2).
+ *
+ * A label and nothing else, and that is the whole decision. "Group stage,
+ * Playoffs, Finals" is setup worth not retyping; the *instants* those days
+ * started at are the one thing that is always different next month, so a
+ * template holds the shape of the week and no dates at all. `createEvent`
+ * writes these as undated `event_days` rows, which is the documented
+ * times-to-be-agreed state (`event_days.starts_at` is nullable for exactly
+ * this, R-24).
+ *
+ * Deliberately not a time of day either. "Always 19:00" would be real setup,
+ * but there is no time-without-a-date anywhere in this schema and every rule
+ * that reads a day (`daySequenceProblem`, `signupWindowProblem`, `eventDates`)
+ * reads a full instant — so inventing one here would mean a second kind of
+ * day-time that four policy functions would have to learn. Left out on
+ * purpose, and `TEMPLATE_OMITS` says "dates" rather than "days and dates"
+ * because of it.
+ */
+export type EventTemplateDay = {
+  /** What the manager called it, or null for "Day N" (`dayName`). */
+  label?: string | null;
+};
+
+/**
  * A reusable starting point for an event: "Rivals tournament" with its config
  * and its usual questions already filled in (§7, §8.1).
  *
  * Templates are copied, never referenced: editing a template must not rewrite
  * the questions of an event that is already taking applications.
+ *
+ * ## Why the setup below is four columns rather than four keys in `config`
+ *
+ * `capacity` and the two rank thresholds are columns on `events`, not keys in
+ * its `config`, and `createEvent` copies a template's `config` **wholesale**.
+ * So routing them through `config` would hand every event made from such a
+ * template a dead second copy of its own capacity sitting beside the column
+ * that holds it — a stored duplicate of a derived fact, which is the one thing
+ * this project does not do (docs/domain-model.md). Real columns here cost a
+ * migration (drizzle/0027) and store each fact once.
+ *
+ * `days` is json rather than a table for the reason `questions` is: a template
+ * has no event, so there is nothing for an `event_days` row to hang off, and
+ * the per-event table (`event_days`) is the one `createEvent` writes into on
+ * the way out. Same shape as `questions`, same reason.
  */
 export const eventTemplates = pgTable(
   "event_templates",
@@ -1015,11 +1054,71 @@ export const eventTemplates = pgTable(
     questions: json<EventQuestionSpec[]>("questions")
       .notNull()
       .default(sql`'[]'::jsonb`),
+    /**
+     * The seat cap an event from this template starts with (R-26, §14).
+     *
+     * Null is "this template sets no cap", and that is also what an uncapped
+     * event stores — the two readings coincide in effect, because
+     * `createEvent`'s own default for a silent input is null as well. So there
+     * is no third state to represent and none is invented.
+     */
+    capacity: integer("capacity"),
+    /** §8.3's two thresholds, as ladder entry names, exactly as `events` holds them. */
+    minRankToEnter: text("min_rank_to_enter"),
+    minRankToCaptain: text("min_rank_to_captain"),
+    /** The day list's shape — labels, no dates. See {@link EventTemplateDay}. */
+    days: json<EventTemplateDay[]>("days")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     sort: integer("sort").notNull().default(0),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: instant("created_at").notNull().defaultNow(),
   },
-  (table) => [index("event_templates_active_sort_idx").on(table.isActive, table.sort)]
+  (table) => [
+    index("event_templates_active_sort_idx").on(table.isActive, table.sort),
+    /*
+     * One template per name (R-125 / UC-28 4a), in the database.
+     *
+     * `createTemplate` and `updateTemplate` both read every name, fold it and
+     * compare — which answers the admin who types "Rivals cup" a minute after
+     * somebody else did, and cannot answer the two who type it in the same
+     * instant. Both reads find the name free, both inserts land, and the
+     * create-event picker now offers two identical rows that do different
+     * things. This index is the half a read cannot enforce;
+     * `src/lib/admin-templates.ts` turns its rejection back into the same
+     * sentence the read produces, so the two creates differ in timing and in
+     * nothing else.
+     *
+     * ## The expression, and why it is not just `lower(name)`
+     *
+     * It has to mean exactly what `nameTaken` means, or the index refuses a
+     * name the code allowed and an admin gets a Postgres error instead of a
+     * sentence. `cleanTemplateName` **collapses whitespace** before storing and
+     * `takenNames` collapses it again on the way back, so "Rivals cup" and
+     * "Rivals  cup" are one name to the code — and a plain `lower(name)` index
+     * would have let the second one in.
+     *
+     * `[[:space:]]` rather than `\s`, which are equivalent here — both were
+     * measured folding a space, a tab and a collapsed run the same way — so
+     * the choice buys independence rather than correctness: `\s` reaches the
+     * regex engine only while `standard_conforming_strings` is `on`. With it
+     * `off`, `'\s+'` parses as `s+` and the index would silently be built on
+     * "the same name with every *letter s* collapsed". The POSIX class has no
+     * backslash to lose. drizzle/0028 has the measurements.
+     *
+     * One gap remains and it is documented rather than closed: Postgres folds
+     * **ASCII** whitespace here and `\s` would not have helped (neither
+     * expression folds U+00A0), while JavaScript's `\s` does. So
+     * "Rivals cup" folds to "rivals cup" in `cleanTemplateName` and to
+     * itself here. The code is the *stricter* side of that disagreement, which
+     * is the safe direction: it refuses the name before the index is
+     * consulted, so the gap costs a race window on an input nobody types
+     * rather than ever producing a raw database error.
+     */
+    uniqueIndex("event_templates_name_uniq").on(
+      sql`lower(btrim(regexp_replace(${table.name}, '[[:space:]]+', ' ', 'g')))`
+    ),
+  ]
 );
 
 export const events = pgTable(

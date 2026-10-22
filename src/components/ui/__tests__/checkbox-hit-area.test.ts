@@ -1,8 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import resolveConfig from "tailwindcss/resolveConfig";
 import { describe, expect, it } from "vitest";
 import tailwindConfig from "../../../../tailwind.config";
+import Checkbox, { type CheckboxProps } from "../Checkbox";
 
 /**
  * The checkbox is 44x44 to the finger and 16x16 to the eye, and this is the
@@ -24,7 +27,8 @@ import tailwindConfig from "../../../../tailwind.config";
  */
 
 const ROOT = path.resolve(__dirname, "../../../..");
-const CHECKBOX = path.join(ROOT, "src/components/ui/Checkbox.tsx");
+const UI_DIR = path.join(ROOT, "src/components/ui");
+const CHECKBOX = path.join(UI_DIR, "Checkbox.tsx");
 const GLOBALS = path.join(ROOT, "src/app/globals.css");
 
 /** The floor, in CSS pixels: WCAG 2.5.5 / the iOS and Android touch guidance. */
@@ -169,6 +173,75 @@ describe("the checkbox hit area", () => {
 });
 
 /* --------------------------------------------------------------------- */
+/* The control that is actually rendered                                 */
+/* --------------------------------------------------------------------- */
+
+function markup(over: Partial<CheckboxProps> = {}): string {
+  const props: CheckboxProps = { checked: false, onChange: () => {}, ...over };
+  return renderToStaticMarkup(createElement(Checkbox, props));
+}
+
+/** Both branches of the component: the bare box, and the box-and-words pair. */
+const BOTH = [
+  ["bare", {}],
+  ["labelled", { label: "Email me" }],
+] as const;
+
+/**
+ * The keyboard half of Task 38b's third criterion — "keyboard behaviour and
+ * the focus ring are unchanged" — and the honest limit of what this file can
+ * say about it.
+ *
+ * **It cannot press a key, and does not pretend to.** These are
+ * `renderToStaticMarkup` renders in vitest's `node` environment: there is no
+ * DOM, no jsdom and no testing-library, so there is nothing to dispatch a
+ * `keydown` at and nothing that would handle one. An assertion here that
+ * claimed to check the space bar would be an assertion about a string.
+ *
+ * What it *can* check is the thing the space bar depends on, and the thing no
+ * assertion in this file held: that the rendered control is a **native
+ * `<input type="checkbox">`**. Space-to-toggle is the browser's own activation
+ * behaviour for that element — `Checkbox`'s docblock leans on it out loud
+ * ("the browser already gives it the tick, the space-bar, the label
+ * association") and then nothing checked it was still there. Replacing the
+ * input with a `<div role="checkbox">` carrying the same class lists left
+ * every other assertion in this file passing, because they all read the
+ * *source* for class names and the div would still carry them, while the
+ * control stopped working from the keyboard entirely.
+ *
+ * Genuine key handling belongs to a browser, and there is none in this suite.
+ * This is the strongest statement available without one, so it is the one made.
+ */
+describe("the rendered control", () => {
+  it.each(BOTH)("is a native checkbox input in the %s branch", (_, over) => {
+    const rendered = markup(over);
+
+    expect(rendered).toMatch(/<input\b[^>]*\btype="checkbox"/);
+    // And nothing dressed up as one. A `role` on this control would mean the
+    // native behaviour had been re-implemented rather than used, which is the
+    // one way to lose the space bar with every class list above unchanged.
+    expect(rendered).not.toMatch(/\brole=/);
+  });
+
+  it.each(BOTH)("keeps that input in the tab order in the %s branch", (_, over) => {
+    // The other way to the same loss: `tabindex="-1"` takes the control out of
+    // the tab order, so the space bar never gets a chance to reach it, and no
+    // class list in this file would have moved.
+    expect(markup(over)).not.toMatch(/tabindex/i);
+  });
+
+  it.each(BOTH)("nests the input inside the 44px label in the %s branch", (_, over) => {
+    /*
+     * A hit area is only a hit area if a click anywhere in it reaches the
+     * control. For a wrapping `<label>` that is the *nesting* — there is no
+     * `for`/`id` pair here to do it instead — so a refactor that lifted the
+     * input out as a sibling would leave a 44px box that toggles nothing.
+     */
+    expect(markup(over)).toMatch(/^<label\b[^>]*>[\s\S]*<input\b[\s\S]*<\/label>$/);
+  });
+});
+
+/* --------------------------------------------------------------------- */
 /* The call sites                                                        */
 /* --------------------------------------------------------------------- */
 
@@ -184,16 +257,36 @@ function sourceFiles(): string[] {
   return out;
 }
 
-/** Every `<Checkbox … />` in the site, with the file it is in. */
-function callSites(): { where: string; attrs: string }[] {
-  const out: { where: string; attrs: string }[] = [];
+/**
+ * **Every checkbox on the site**: each `<Checkbox … />` call site, and any raw
+ * native `<input type="checkbox">` still left outside `components/ui`.
+ *
+ * Both, and not the first alone, because this is the sweep that is supposed to
+ * notice an *unconverted* control — and while it matched `<Checkbox` it could
+ * only see the ones already converted, which is a sweep that cannot fail for
+ * the reason it exists. Two raw boxes sat outside `components/ui` through the
+ * whole of Task 31 and this counted neither: the eyebrow-sized "Played" box in
+ * `ResultsTab`, around 20px tall and well under the floor, and the one in
+ * `ServerSettings`, which cleared 44px only because the label beside it
+ * happened to run to two lines and had no `min-h-11` saying so.
+ *
+ * The whole of `components/ui` is skipped rather than `Checkbox.tsx` alone,
+ * because "outside `components/ui`" is what Task 31's criterion says and the
+ * kit's own text inputs are not this test's business.
+ */
+function callSites(): { where: string; attrs: string; raw: boolean }[] {
+  const out: { where: string; attrs: string; raw: boolean }[] = [];
   for (const file of sourceFiles()) {
-    if (file === CHECKBOX) continue;
+    if (file.startsWith(UI_DIR + path.sep)) continue;
     const source = fs.readFileSync(file, "utf8");
     const rel = path.relative(ROOT, file).split(path.sep).join("/");
-    for (const match of source.matchAll(/<Checkbox\b([\s\S]*?)\/>/g)) {
+    for (const match of source.matchAll(/<(Checkbox|input)\b([\s\S]*?)\/>/g)) {
+      const raw = match[1] === "input";
+      // Every other `<input>` on the site is a text field, a date or a number,
+      // and `Field` owns those; only the checkboxes belong to this file.
+      if (raw && !/type=\{?"checkbox"\}?/.test(match[2])) continue;
       const line = source.slice(0, match.index).split("\n").length;
-      out.push({ where: `${rel}:${line}`, attrs: match[1] });
+      out.push({ where: `${rel}:${line}`, attrs: match[2], raw });
     }
   }
   return out;
@@ -201,7 +294,25 @@ function callSites(): { where: string; attrs: string }[] {
 
 describe("every checkbox on the site", () => {
   it("finds the call sites, so an empty sweep cannot pass", () => {
-    expect(callSites().length).toBeGreaterThanOrEqual(3);
+    // Five is what Task 31 planned ("add Checkbox (five uses)") and six is
+    // what the site has once `ResultsTab` and `ServerSettings` are converted.
+    // A floor rather than an equality, so adding one is not a failure.
+    expect(callSites().length).toBeGreaterThanOrEqual(5);
+  });
+
+  it("has no raw native checkbox left outside components/ui", () => {
+    /*
+     * Task 31's acceptance criterion as an assertion rather than as a grep
+     * somebody has to remember to run, and the one thing the sweep below could
+     * not say while it matched `<Checkbox` alone. A raw box is a box with no
+     * 44px hit area, no focus ring in the site's blue, and nothing above it
+     * that would notice either.
+     */
+    expect(
+      callSites()
+        .filter((site) => site.raw)
+        .map((site) => site.where)
+    ).toEqual([]);
   });
 
   /*
