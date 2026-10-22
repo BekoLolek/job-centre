@@ -77,10 +77,19 @@ async function anEvent(): Promise<string> {
  * This file's database, except that the transaction it opens is not one, and
  * the first insert inside it runs `between` to completion before the statement
  * is issued — `insertingAfter` in `championship-events.test.ts` and
- * `waivers.test.ts`, `writingAfter` and `committingAfter` in `events.test.ts`.
+ * `waivers.test.ts`, `writingAfter` in `events.test.ts`, and the shared
+ * `committingAfter` in `src/db/__tests__/helpers.ts`.
  *
  * Sequenced rather than raced: the window it pins is one statement wide, and a
  * test that had to *win* a race to see it would be a test that passes by luck.
+ *
+ * It is a hand-written copy on purpose. Task 58 merged the six identical
+ * `committingAfter`s into `helpers.ts` and deliberately left the three
+ * `insertingAfter`s alone, because the three differ in the one place that
+ * matters — the builder chain each is aimed at. This one intercepts
+ * `.values().onConflictDoNothing()`; `championship-events.test.ts` intercepts
+ * `.select().returning()` and `waivers.test.ts` a third shape again. See
+ * `helpers.ts` for the full reasoning.
  *
  * ## Why the transaction is flattened
  *

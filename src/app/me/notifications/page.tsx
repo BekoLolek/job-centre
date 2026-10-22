@@ -18,7 +18,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import NotificationList from "@/components/me/NotificationList";
-import { Eyebrow, Page, Section } from "@/components/ui";
+import { Page, PageHeader, Section } from "@/components/ui";
 import { directMessagesConfigured } from "@/lib/discord-dm";
 import {
   encodeNotificationCursor,
@@ -61,16 +61,16 @@ export default async function NotificationsPage({
     <div className="min-h-screen">
       <AppHeader />
 
-      <Page>
-        <header className="mb-2">
-          <Eyebrow className="mb-2">Job Centre · You</Eyebrow>
-          <h1 className="text-36">Notifications</h1>
-          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
-            New events, changes to things you applied to, and the day before something you
-            have a seat at. Every one of them can be switched off below — except the answer
-            to your own application, which is the reply rather than the news.
-          </p>
-        </header>
+      {/*
+        `reading`: one column of notifications, and a switch table whose two
+        4.5rem columns beside a label need nothing like a page to sit in.
+      */}
+      <Page width="reading" className="space-y-6">
+        <PageHeader
+          eyebrow="Job Centre · You"
+          title="Notifications"
+          intro="New events, changes to things you applied to, and the day before something you have a seat at. Every one of them can be switched off below — except the answer to your own application, which is the reply rather than the news."
+        />
 
         <Section
           first

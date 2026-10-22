@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Database, SETTING_KEYS } from "@/db";
+import { type Database, SETTING_KEYS, announcementTemplates } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import type { AnnouncementSettings, DiscordMessage } from "@/lib/announce";
 
@@ -45,12 +45,22 @@ vi.mock("next/server", () => ({
 const {
   announceApplicationDecision,
   announceEventPublished,
+  getAnnouncementSettings,
+  getAnnouncementTemplate,
+  getAnnouncementTemplates,
   setAnnouncementSettings,
+  setAnnouncementTemplate,
   setIntegrationSetting,
+  unedited,
 } = await import("@/lib/discord");
-const { applicationDecidedMessage, defaultAnnouncementSettings, stamp } = await import(
-  "@/lib/announce"
-);
+const {
+  NO_MENTION,
+  applicationDecidedMessage,
+  defaultAnnouncementSettings,
+  publishingOpensSignups,
+  signupsOpenMessage,
+  stamp,
+} = await import("@/lib/announce");
 const { listAudit, recordAudit } = await import("@/lib/audit");
 const { loadDashboard } = await import("@/lib/admin-dashboard");
 const { applyToEvent, createEvent, publishEvent, setApplicationStatus, setEventDays } =
@@ -171,6 +181,93 @@ describe("an event published", () => {
       inline: true,
     });
   });
+
+  /*
+   * R-205 / UC-38 2a — "only the published announcement posts. The two are one
+   * moment, not two."
+   *
+   * `PUBLISHABLE`'s window opened in 2000, so every event in this file is the
+   * 2a case: already taking applications the instant it goes up. The assertion
+   * is the **list of footers**, not a call count, because a count of one is
+   * also what a channel sees when the wrong one of the two fires, and a count
+   * of zero is what it sees when neither does — and "neither fired" is how this
+   * criterion passes vacuously.
+   */
+  it("posts one announcement, the published one, when signups were already open (UC-38 2a)", async () => {
+    await switches({ event_published: true, signups_open: true });
+    counter += 1;
+    const event = unwrap(
+      await createEvent({ ...PUBLISHABLE, title: `Already open ${counter}` }, db)
+    );
+    unwrap(await publishEvent(event.id, db));
+
+    announceEventPublished(event.id);
+    await Promise.all(state.jobs);
+
+    expect(posted().map((message) => message.embeds[0].footer?.text)).toEqual(["New event"]);
+    // And not because the eighth kind is switched off or missing: it is on,
+    // and it is a real builder that would have posted a distinguishable
+    // message had anything called it.
+    expect((await getAnnouncementSettings()).signups_open).toBe(true);
+    expect(signupsOpenMessage({ title: "x", slug: "x" }).embeds[0].footer).toEqual({
+      text: "Applications open",
+    });
+    // The rule that decided it, asked of the row that was actually published.
+    expect(publishingOpensSignups({ signupOpensAt: PUBLISHABLE.signupOpensAt }, new Date())).toBe(
+      true
+    );
+  });
+});
+
+/*
+ * Task 59's gift, asserted on the real database: the store is keyed over
+ * `ANNOUNCEMENTS`, so the eighth kind is editable with **no migration** and no
+ * change to this module. If `announcement_templates.kind` had been an enum
+ * rather than text, the save below would fail on a value the type does not
+ * have — which is exactly what the column comment says it was made text to
+ * avoid.
+ */
+describe("the eighth kind needs no migration (R-205)", () => {
+  // `noOverrides` is declared further down and hoisted; it is the same reset
+  // the wording tests use, so neither test here depends on the other's order.
+  beforeEach(noOverrides);
+
+  it("is in the template store with no row, like every other kind", async () => {
+    const templates = await getAnnouncementTemplates(db);
+    expect(templates.signups_open).toEqual(unedited());
+  });
+
+  it("stores and reads back a wording written against a text column", async () => {
+    const saved = await setAnnouncementTemplate(
+      "signups_open",
+      { body: "Applications for {title} are open — {places} places.", mention: NO_MENTION },
+      { expectedVersion: 0 },
+      db
+    );
+    expect(saved).toEqual({
+      ok: true,
+      data: expect.objectContaining({
+        body: "Applications for {title} are open — {places} places.",
+        version: 1,
+      }),
+    });
+    expect((await getAnnouncementTemplate("signups_open", db)).body).toBe(
+      "Applications for {title} are open — {places} places."
+    );
+
+    // And the refusal reaches the new kind too, by its own vocabulary.
+    expect(
+      await setAnnouncementTemplate(
+        "signups_open",
+        { body: "{member} may apply.", mention: NO_MENTION },
+        { expectedVersion: 1 },
+        db
+      )
+    ).toEqual({
+      ok: false,
+      error: "This announcement has no {member}. It offers {title}, {places}, {starts}, {closes}.",
+    });
+  });
 });
 
 describe("an application decision", () => {
@@ -265,6 +362,376 @@ describe("no channel configured", () => {
 
     expect(fetchStub).not.toHaveBeenCalled();
     expect((await listAudit({ eventId })).filter((row) => row.action === "announcement.failed")).toEqual([]);
+  });
+});
+
+/* ================================================================== */
+/* Tasks 59 and 60 — the stored wording, against a real database      */
+/* ================================================================== */
+
+const PICKED = "123456789012345678";
+const SMUGGLED = "987654321098765432";
+
+/** Clear every stored override, so each test below starts from "unedited". */
+async function noOverrides() {
+  await db.delete(announcementTemplates);
+}
+
+describe("storing a wording", () => {
+  beforeEach(noOverrides);
+
+  it("starts every kind unedited, with no row and no mention", async () => {
+    // The state drizzle/0029 leaves every existing deployment in, read back
+    // through the function the announcers actually use.
+    const all = await getAnnouncementTemplates(db);
+    const kinds = Object.keys(defaultAnnouncementSettings());
+    // Every kind, so a kind added later arrives covered rather than unasserted.
+    expect(kinds.length).toBeGreaterThan(0);
+    for (const kind of kinds) {
+      expect(all[kind as keyof typeof all], kind).toEqual(unedited());
+    }
+    expect(await getAnnouncementTemplate("application_accepted", db)).toEqual({
+      body: null,
+      mention: NO_MENTION,
+      version: 0,
+      updatedAt: null,
+      updatedBy: null,
+    });
+  });
+
+  it("stores the admin's wording and hands back version 1", async () => {
+    const actor = { id: await makeUser(db, { displayName: "Admin Ada" }), displayName: "Admin Ada" };
+    const saved = await setAnnouncementTemplate(
+      "application_accepted",
+      { body: "{member} is in for {event}.", mention: NO_MENTION },
+      { expectedVersion: 0, actor },
+      db
+    );
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    expect(saved.data.version).toBe(1);
+    expect(saved.data.body).toBe("{member} is in for {event}.");
+    expect(saved.data.updatedBy).toBe(actor.id);
+
+    // And read back the same, through the reader the announcers use.
+    expect((await getAnnouncementTemplate("application_accepted", db)).body).toBe(
+      "{member} is in for {event}."
+    );
+  });
+
+  it("stores nothing at all when the wording is refused (UC-37 3a, 3b, 3c)", async () => {
+    /*
+     * The acceptance criterion is "and nothing is stored", which is the half a
+     * test asserting only the error message would miss entirely.
+     */
+    const refusals: Array<[string | null, { everyone: boolean; roleIds: string[] }]> = [
+      ["Sold to {captain}.", { everyone: false, roleIds: [] }],
+      ["", { everyone: false, roleIds: [] }],
+      ["x".repeat(5000), { everyone: false, roleIds: [] }],
+      [null, { everyone: false, roleIds: ["@Regulars"] }],
+    ];
+
+    for (const [body, mention] of refusals) {
+      const result = await setAnnouncementTemplate(
+        "draft_lot_sold",
+        { body, mention },
+        { expectedVersion: 0 },
+        db
+      );
+      expect(result.ok).toBe(false);
+      // Nothing written, and so still the compiled copy.
+      expect(await getAnnouncementTemplate("draft_lot_sold", db)).toEqual(unedited());
+      expect(await db.select().from(announcementTemplates)).toEqual([]);
+    }
+  });
+
+  it("names the placeholders the kind does offer when it refuses one (UC-37 3a)", async () => {
+    const result = await setAnnouncementTemplate(
+      "draft_lot_sold",
+      { body: "Sold to {captain}.", mention: NO_MENTION },
+      { expectedVersion: 0 },
+      db
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("{player}, {team}, {price}, {event}");
+  });
+
+  it("lets an admin choose a mention without touching the wording", async () => {
+    /*
+     * The null-body state, which is why `body` is nullable in drizzle/0029.
+     * Choosing a mention must not freeze one variant of the compiled copy into
+     * a row — so the row exists, the mention is stored, and the body stays null.
+     */
+    const saved = await setAnnouncementTemplate(
+      "application_waitlisted",
+      { body: null, mention: { everyone: false, roleIds: [PICKED] } },
+      { expectedVersion: 0 },
+      db
+    );
+    expect(saved.ok).toBe(true);
+    const stored = await getAnnouncementTemplate("application_waitlisted", db);
+    expect(stored.body).toBeNull();
+    expect(stored.mention).toEqual({ everyone: false, roleIds: [PICKED] });
+  });
+
+  it("keeps a role id whole, rather than rounding it to a number", async () => {
+    // The `json` helper's reason for existing: a snowflake through a
+    // double-parse comes back as 123456789012345680.
+    await setAnnouncementTemplate(
+      "application_accepted",
+      { body: null, mention: { everyone: false, roleIds: [PICKED, SMUGGLED] } },
+      { expectedVersion: 0 },
+      db
+    );
+    expect((await getAnnouncementTemplate("application_accepted", db)).mention.roleIds).toEqual([
+      PICKED,
+      SMUGGLED,
+    ]);
+  });
+
+  it("tells the loser of two saves at once, and shows them the current wording (UC-37 7a)", async () => {
+    /*
+     * Two admins open the same announcement at version 1 and both save. The
+     * update is conditional on that version in the statement itself, so the
+     * second one matches no rows — there is no read-then-write gap for both to
+     * pass through.
+     */
+    await setAnnouncementTemplate(
+      "application_accepted",
+      { body: "First draft.", mention: NO_MENTION },
+      { expectedVersion: 0 },
+      db
+    );
+
+    const first = await setAnnouncementTemplate(
+      "application_accepted",
+      { body: "Ada's words.", mention: NO_MENTION },
+      { expectedVersion: 1 },
+      db
+    );
+    const second = await setAnnouncementTemplate(
+      "application_accepted",
+      { body: "Bo's words.", mention: NO_MENTION },
+      { expectedVersion: 1 },
+      db
+    );
+
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.error).toMatch(/changed this announcement while you were editing/);
+    // Shown the current one, which is the winner's — not their own.
+    expect(second.current?.body).toBe("Ada's words.");
+    expect(second.current?.version).toBe(2);
+    // And the loser's words are nowhere.
+    expect((await getAnnouncementTemplate("application_accepted", db)).body).toBe("Ada's words.");
+  });
+
+  it("tells the loser when both admins were creating the first row", async () => {
+    // The same race one version earlier, where the statement is an INSERT
+    // rather than an UPDATE and the primary key is what decides.
+    const first = await setAnnouncementTemplate(
+      "match_result",
+      { body: "Ada's words.", mention: NO_MENTION },
+      { expectedVersion: 0 },
+      db
+    );
+    const second = await setAnnouncementTemplate(
+      "match_result",
+      { body: "Bo's words.", mention: NO_MENTION },
+      { expectedVersion: 0 },
+      db
+    );
+    expect(first.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.current?.body).toBe("Ada's words.");
+  });
+
+  it("records who edited it, and a line of its own for pinging everyone (UC-37 4c)", async () => {
+    const actor = { id: await makeUser(db, { displayName: "Admin Ada" }), displayName: "Admin Ada" };
+
+    await setAnnouncementTemplate(
+      "event_published",
+      { body: "{title} is live.", mention: NO_MENTION },
+      { expectedVersion: 0, actor },
+      db
+    );
+    /*
+     * Filtered to this kind: the log is one table and the tests above it in
+     * this file have been editing other kinds into it, which is realistic and
+     * is exactly how an audit log is read — by subject.
+     */
+    const forKind = async (action?: string) =>
+      (await listAudit({})).filter(
+        (row) =>
+          row.subject === "event_published" &&
+          (action ? row.action === action : row.action.startsWith("announcement."))
+      );
+
+    let lines = await forKind();
+    expect(lines.map((row) => row.action)).toEqual(["announcement.wording_changed"]);
+
+    // Now it is set to ping the whole server, which gets its own row — a
+    // question somebody asks of the log by scanning it.
+    await setAnnouncementTemplate(
+      "event_published",
+      { body: "{title} is live.", mention: { everyone: true, roleIds: [] } },
+      { expectedVersion: 1, actor },
+      db
+    );
+    lines = await forKind("announcement.pings_everyone");
+    expect(lines).toHaveLength(1);
+    expect(lines[0].summary).toContain("pings the whole server");
+    expect(lines[0].actor.name).toBe("Admin Ada");
+
+    // Editing the wording again while it is already pinging does not re-raise
+    // it: the row is for the transition, not for every save afterwards.
+    await setAnnouncementTemplate(
+      "event_published",
+      { body: "{title} is live now.", mention: { everyone: true, roleIds: [] } },
+      { expectedVersion: 2, actor },
+      db
+    );
+    expect(await forKind("announcement.pings_everyone")).toHaveLength(1);
+  });
+});
+
+describe("the wording an announcement actually posts", () => {
+  beforeEach(noOverrides);
+
+  it("is the compiled copy while nobody has edited the kind", async () => {
+    await switches({ application_waitlisted: true });
+    const { applicationId } = await decided("waitlisted");
+    await announced(applicationId);
+
+    const [message] = posted();
+    expect(message.embeds[0].description).toMatch(/is on the waitlist/);
+    expect(message.allowed_mentions).toEqual({ parse: [] });
+    expect(message).not.toHaveProperty("content");
+  });
+
+  it("is the admin's, with the mention line in content and the ids allow-listed", async () => {
+    await switches({ application_waitlisted: true });
+    await setAnnouncementTemplate(
+      "application_waitlisted",
+      {
+        body: "{member} is queued for {event} — number {position}.",
+        mention: { everyone: false, roleIds: [PICKED, SMUGGLED] },
+      },
+      { expectedVersion: 0 },
+      db
+    );
+    const { applicationId } = await decided("waitlisted");
+    await announced(applicationId);
+
+    const [message] = posted();
+    expect(message.embeds[0].description).toMatch(/is queued for .* — number 1\.$/);
+    expect(message.content).toBe(`<@&${PICKED}> <@&${SMUGGLED}>`);
+    expect(message.allowed_mentions).toEqual({ parse: [], roles: [PICKED, SMUGGLED] });
+  });
+
+  it("does not let a display name of @everyone ping the server, on the real payload", async () => {
+    /*
+     * The acceptance criterion, end to end: a real member row whose display
+     * name is `@everyone`, a real application, the real announcer, and the
+     * actual JSON that would have gone to Discord — with an edited wording
+     * that interpolates the name and a template that mentions a role, which is
+     * the state a careless implementation turns parsing on in.
+     */
+    await switches({ application_waitlisted: true });
+    await setAnnouncementTemplate(
+      "application_waitlisted",
+      { body: "{member} joins the queue.", mention: { everyone: false, roleIds: [PICKED] } },
+      { expectedVersion: 0 },
+      db
+    );
+
+    counter += 1;
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Hostile ${counter}` }, db));
+    unwrap(await publishEvent(event.id, db));
+    const member = await makeUser(db, { displayName: "@everyone" });
+    const application = unwrap(await applyToEvent(event.id, member, {}, db));
+    unwrap(await setApplicationStatus(application.id, "waitlisted", {}, db));
+
+    await announced(application.id);
+
+    const [message] = posted();
+    // The name is in the message — in the embed, where it is only ever text.
+    expect(message.embeds[0].description).toContain("@everyone");
+    // And Discord is told not to honour it.
+    expect(message.allowed_mentions.parse).toEqual([]);
+    expect(message.content).toBe(`<@&${PICKED}>`);
+  });
+
+  it("does not let a display name containing a role ping it, even beside a different role", async () => {
+    // The case `parse: ["roles"]` would fail, on a real payload.
+    await switches({ application_waitlisted: true });
+    await setAnnouncementTemplate(
+      "application_waitlisted",
+      { body: "{member} joins the queue.", mention: { everyone: false, roleIds: [PICKED] } },
+      { expectedVersion: 0 },
+      db
+    );
+
+    counter += 1;
+    const event = unwrap(await createEvent({ ...PUBLISHABLE, title: `Smuggle ${counter}` }, db));
+    unwrap(await publishEvent(event.id, db));
+    const member = await makeUser(db, { displayName: `<@&${SMUGGLED}>` });
+    const application = unwrap(await applyToEvent(event.id, member, {}, db));
+    unwrap(await setApplicationStatus(application.id, "waitlisted", {}, db));
+
+    await announced(application.id);
+
+    const [message] = posted();
+    expect(message.embeds[0].description).toContain(SMUGGLED);
+    expect(message.allowed_mentions.roles).toEqual([PICKED]);
+    expect(message.allowed_mentions.roles).not.toContain(SMUGGLED);
+    expect(message.content).not.toContain(SMUGGLED);
+  });
+
+  it("posts the compiled copy when the wording cannot be read at all", async () => {
+    /*
+     * A database that cannot answer must not change what the channel says, and
+     * in particular must not mention anybody. Same rule as
+     * `getAnnouncementSettings`, and the one direction a failed read is allowed
+     * to fall.
+     */
+    const broken = {
+      select: () => {
+        throw new Error("the database is down");
+      },
+    } as unknown as Database;
+    expect(await getAnnouncementTemplate("application_accepted", broken)).toEqual(unedited());
+    const all = await getAnnouncementTemplates(broken);
+    expect(all.application_accepted).toEqual(unedited());
+    expect(all.event_published.mention).toEqual(NO_MENTION);
+  });
+
+  it("drops a role id written straight into the row that is not a snowflake", async () => {
+    /*
+     * Past the save, which is where a hand-run UPDATE or an older screen lands.
+     * The read goes through `announcementTemplateFrom`, so the junk is gone
+     * before anything can try to mention it — and `mentionLine` would drop it
+     * again on the way out, which is the second of the two checks.
+     */
+    await db.insert(announcementTemplates).values({
+      kind: "application_declined",
+      mentionRoleIds: ["@everyone", "9", PICKED],
+      mentionEveryone: false,
+    });
+    const stored = await getAnnouncementTemplate("application_declined", db);
+    expect(stored.mention.roleIds).toEqual([PICKED]);
+  });
+
+  it("ignores a stored row naming a kind that no longer exists", async () => {
+    // Which is what lets a new kind ship without a migration, and an old one
+    // disappear without one either.
+    await db.insert(announcementTemplates).values({ kind: "retired_kind", body: "Hello." });
+    const all = await getAnnouncementTemplates(db);
+    expect(all).not.toHaveProperty("retired_kind");
+    expect(Object.keys(all).sort()).toEqual(Object.keys(defaultAnnouncementSettings()).sort());
   });
 });
 

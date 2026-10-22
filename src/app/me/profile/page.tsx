@@ -28,9 +28,8 @@ import {
   Alert,
   Avatar,
   Badge,
-  Eyebrow,
   Page,
-  Panel,
+  PageHeader,
   Section,
   StatTile,
 } from "@/components/ui";
@@ -69,11 +68,16 @@ export default async function ProfilePage() {
     <div className="min-h-screen">
       <AppHeader />
 
-      <Page className="space-y-6">
+      {/*
+        `reading`: one column of questions to answer. The availability grid
+        under them is `min-w-[44rem]`, which still fits inside 880 less its
+        gutters, so nothing here needs a scroller.
+      */}
+      <Page width="reading" className="space-y-6">
         {/* --- Identity, read-only ---------------------------------- */}
-        <Panel as="header" className="rise">
-          <div className="flex flex-wrap items-center gap-5">
-            {user.avatarUrl ? (
+        <PageHeader
+          lead={
+            user.avatarUrl ? (
               // A plain <img>: next/image would want the Discord CDN in a
               // remotePatterns allowlist for a 128px avatar that is already
               // exactly the size it is displayed at.
@@ -87,12 +91,13 @@ export default async function ProfilePage() {
               />
             ) : (
               <Avatar name={name} size="lg" className="h-16 w-16 text-16" />
-            )}
-
-            <div className="min-w-0">
-              <Eyebrow className="mb-1">Your Discord identity</Eyebrow>
-              <h1 className="font-display text-36 leading-none">{name}</h1>
-              <p className="mt-2 text-12 text-muted">
+            )
+          }
+          eyebrow="Your Discord identity"
+          title={name}
+          intro={
+            <>
+              <span className="block text-12 text-muted">
                 Member since {memberSince}
                 {user.isAdmin && (
                   <>
@@ -100,26 +105,26 @@ export default async function ProfilePage() {
                     <Badge tone="union">Admin</Badge>
                   </>
                 )}
-              </p>
-            </div>
-
-            {required > 0 && (
+              </span>
+              <span className="mt-3 block">
+                Your name and avatar come from Discord and refresh every time you sign in,
+                so there is nothing to edit here. Everything below is yours, saved as you
+                tap it, and it pre-fills the application form for every event — you should
+                never have to type your rank into a Google Form again.
+              </span>
+            </>
+          }
+          aside={
+            required > 0 ? (
               <StatTile
-                className="ml-auto text-right"
+                className="text-right"
                 label="Answered"
                 value={`${answered}/${required}`}
                 valueClassName={answered === required ? "text-success" : "text-union"}
               />
-            )}
-          </div>
-
-          <p className="mt-5 border-t border-hair pt-4 text-12 leading-relaxed text-muted">
-            Your name and avatar come from Discord and refresh every time you sign in, so
-            there is nothing to edit here. Everything below is yours, saved as you tap it,
-            and it pre-fills the application form for every event — you should never have
-            to type your rank into a Google Form again.
-          </p>
-        </Panel>
+            ) : undefined
+          }
+        />
 
         {/* --- When you are free ------------------------------------ */}
         <Section

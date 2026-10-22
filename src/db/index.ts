@@ -36,6 +36,26 @@
  * them for real: deciding accepted-vs-waitlisted from a count and then inserting
  * has to be atomic, or two people take the last seat. That is a race that would
  * only ever show up in production, on the one night it matters.
+ *
+ * ## Before your first `tx.` call, read docs/decisions/004
+ *
+ * **A refusal returned from a transaction callback commits what came before it.**
+ * Nothing in this repo calls `tx.rollback()`, and drizzle issues `COMMIT` for a
+ * callback that *returns* rather than throws — so
+ *
+ *     return db.transaction(async (tx) => {
+ *       await tx.delete(…);                       // written
+ *       if (wrong) return fail("Nothing saved.");  // …and committed
+ *     });
+ *
+ * stores the delete and tells the caller it did not. Decide everything before
+ * you write anything; where you cannot, `throw` the refusal, because only a
+ * throw rolls back. A *crash* after a write is therefore not this bug — the
+ * rollback is the mechanism working.
+ *
+ * docs/decisions/004-refusals-inside-transactions.md has the three safe shapes,
+ * the throw-and-catch pattern, and why a write with no transaction at all is the
+ * same defect. It has been a real bug four times.
  */
 
 import { mkdirSync } from "node:fs";

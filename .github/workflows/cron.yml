@@ -1,0 +1,95 @@
+# The scheduler that Vercel Hobby cannot be.
+#
+# `vercel.json` runs `/api/cron/reminders` at `0 12 * * *` and stays as a
+# backstop: Vercel Hobby refuses to *deploy* a project whose cron runs more than
+# once a day, so that is the most it can do. A reminder two hours before an
+# event cannot come out of a daily run at all (R-207), so the frequent pinger
+# lives here instead, where the cadence is free.
+#
+# It pings the *existing* endpoint. Nothing about the schedule is secret, and
+# the URL is public either way — what makes a public URL safe to ping is that
+# the route fails closed without `CRON_SECRET` and refuses any request whose
+# `Authorization` header does not match it. See the route's docblock.
+#
+# ## Before this can work
+#
+# Two things have to be set under Settings → Secrets and variables → Actions:
+#
+#   * `CRON_SECRET`, a **secret**, matching the deployment's own `CRON_SECRET`.
+#   * `CRON_URL`, a **variable** — the site's origin, e.g.
+#     `https://example.vercel.app`, with no trailing slash. A deployment URL is
+#     not a credential, so it is a variable rather than a secret; the thing that
+#     authorises is the header.
+#
+# Until both are set every run **fails loudly** (see `Check the configuration`
+# below) rather than quietly posting nothing — a scheduled job that goes green
+# while doing nothing is how eighteen days of broken deploys went unnoticed once
+# already.
+#
+# ## Being late is expected, not an error
+#
+# GitHub's scheduler is best-effort and delays scheduled workflows under load,
+# commonly by 5 to 15 minutes. Nothing here compensates for that, because
+# nothing has to: `dueScheduledAnnouncements` and `sendDueReminders` both use a
+# window far wider than the worst gap between two runs, plus a claim so that the
+# extra runs inside one window change nothing. `SCHEDULE_TOLERATES_LATENESS` in
+# `src/lib/announce-schedule.ts` is that arithmetic.
+
+name: Scheduled reminders
+
+on:
+  schedule:
+    # Every quarter hour. The two-hour window in `announce-schedule.ts` is four
+    # times the worst-case gap between two runs that actually happened.
+    - cron: "*/15 * * * *"
+  # So a run can be triggered by hand when something has obviously been missed,
+  # without waiting a quarter of an hour to find out whether a fix worked.
+  workflow_dispatch:
+
+# Two runs at once would do no harm — the claims make the second a no-op — but
+# they would do no good either, and a backlog of queued runs after an outage is
+# just a queue of no-ops. Newest wins.
+concurrency:
+  group: scheduled-reminders
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Fail *here*, with a sentence, rather than letting curl send
+      # `Authorization: Bearer ` and reporting the 401 the route rightly
+      # answers. The two failures look identical in a run log and have
+      # completely different fixes.
+      - name: Check the configuration
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_URL: ${{ vars.CRON_URL }}
+        run: |
+          missing=""
+          [ -n "$CRON_SECRET" ] || missing="$missing CRON_SECRET (secret)"
+          [ -n "$CRON_URL" ] || missing="$missing CRON_URL (variable)"
+          if [ -n "$missing" ]; then
+            echo "::error::Not configured yet — missing:$missing. Add it under Settings → Secrets and variables → Actions. Nothing is reminded or announced on a schedule until both are set."
+            exit 1
+          fi
+
+      - name: Ping the reminders endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          CRON_URL: ${{ vars.CRON_URL }}
+        run: |
+          # --fail-with-body: a non-2xx is a failed run, and the body is still
+          # printed, because the route says *why* it refused in the body.
+          # The secret goes in a header, never in the URL, and `-H @-` reads it
+          # from stdin so it is not in the process table for anything else on
+          # the runner to read.
+          printf 'Authorization: Bearer %s' "$CRON_SECRET" \
+            | curl --silent --show-error --fail-with-body \
+                --max-time 60 \
+                --retry 2 --retry-delay 5 --retry-connrefused \
+                -H @- \
+                "$CRON_URL/api/cron/reminders"

@@ -190,6 +190,26 @@ function withData<T>(data: T): EventResult<T> {
   return { ok: true, data };
 }
 
+/**
+ * A refusal raised by {@link createEvent} after it has inserted the event row.
+ *
+ * Thrown rather than returned, because a refusal returned from a transaction
+ * callback **commits** what came before it — the rule in
+ * docs/decisions/004-refusals-inside-transactions.md, and `format.ts`'s
+ * `HalfCleared` is the same device for the same reason. Private to this module
+ * and caught by the one function that throws it, so it never reaches a caller
+ * as an exception.
+ */
+class NothingSaved extends Error {
+  constructor(
+    readonly refusal: string,
+    readonly errors?: Record<string, string>
+  ) {
+    super(refusal);
+    this.name = "NothingSaved";
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Shapes the pages render                                            */
 /* ------------------------------------------------------------------ */
@@ -1437,12 +1457,13 @@ export async function createEvent(
   };
 
   /*
-   * Every refusal before the insert, including the day list's — UC-08 10c says
-   * *nothing saved*, and the days are written by `setEventDays` after the event
-   * row exists, so a day problem found down there would leave an event behind
-   * that the caller was told had not been created. The same rules run again in
-   * `setEventDays`, which is the one that has to be right for an edit; this is
-   * the create path refusing early rather than trusting it.
+   * Every refusal this function can make for itself comes before the insert —
+   * UC-08 10c says *nothing saved*, and the days are written by `setEventDays`
+   * after the event row exists, so a day problem found down there would leave
+   * an event behind that the caller was told had not been created. The same
+   * rules run again in `setEventDays`, which is the one that has to be right
+   * for an edit; this is the create path refusing early rather than trusting
+   * it.
    *
    * The three checks read `days`, `capacity` and `next` *after* the template
    * has been folded in, which is the point: a template's cap and thresholds are
@@ -1457,43 +1478,77 @@ export async function createEvent(
     validateFields({ ...next, startsAt: dayStart(days) }, game);
   if (problem) return fail(problem);
 
-  const slug = await freeSlug(database, slugify(input.slug ?? title), slugify(title));
+  /*
+   * ## The two refusals it cannot make for itself, and why they are thrown
+   *
+   * `setEventQuestions` and `setEventDays` hold rules of their own, and the
+   * create path cannot restate them without owning two copies of a validation
+   * that has to be right for edits. So they are called, and they can refuse —
+   * after the event row is inserted, because neither can be called before it
+   * exists.
+   *
+   * That is the defect docs/decisions/004-refusals-inside-transactions.md is
+   * about, and it was live: a template whose `profileFieldKey` resolves to a
+   * field whose *type* has since changed makes `setEventQuestions` refuse, and
+   * with the insert on the bare handle there was nothing to roll back — the
+   * caller was told the event had not been created, over a committed event row,
+   * while this function's own docblock claimed "nothing saved".
+   *
+   * Staging is not available here (the refusals belong to the callees, and
+   * neither can be asked before the row exists), so this is `clearMatch`'s
+   * case rather than `recordGames`': the refusal is **thrown** as a
+   * module-private {@link NothingSaved}, which rolls the whole transaction
+   * back, and turned back into the same sentence at the function boundary.
+   * UC-08 10c then means what it says.
+   *
+   * `setEventQuestions` and `setEventDays` each open a transaction of their
+   * own; handed this one's `tx` they run as savepoints inside it, and the throw
+   * out here rolls those back along with the insert.
+   */
+  try {
+    return await database.transaction(async (tx) => {
+      const slug = await freeSlug(tx, slugify(input.slug ?? title), slugify(title));
 
-  const [created] = await database
-    .insert(events)
-    .values({
-      slug,
-      title,
-      type: cleanText(input.type ?? template?.type ?? "", 40) || "custom",
-      status: "draft",
-      description: cleanNullable(input.description, DESCRIPTION_MAX),
-      bannerUrl: cleanNullable(input.bannerUrl, 500),
-      gameId,
-      config: { ...(template?.config ?? {}), ...(input.config ?? {}) },
-      // Provenance only — nothing reads it to decide anything. The template is
-      // still copied and then forgotten; this is what lets `/admin/templates`
-      // say how many events a template has produced.
-      createdFromTemplateId: template?.id ?? null,
-      createdBy: input.createdBy ?? null,
-      ...next,
-    })
-    .returning();
+      const [created] = await tx
+        .insert(events)
+        .values({
+          slug,
+          title,
+          type: cleanText(input.type ?? template?.type ?? "", 40) || "custom",
+          status: "draft",
+          description: cleanNullable(input.description, DESCRIPTION_MAX),
+          bannerUrl: cleanNullable(input.bannerUrl, 500),
+          gameId,
+          config: { ...(template?.config ?? {}), ...(input.config ?? {}) },
+          // Provenance only — nothing reads it to decide anything. The template
+          // is still copied and then forgotten; this is what lets
+          // `/admin/templates` say how many events a template has produced.
+          createdFromTemplateId: template?.id ?? null,
+          createdBy: input.createdBy ?? null,
+          ...next,
+        })
+        .returning();
 
-  if (template && template.questions.length > 0) {
-    const resolved = await resolveTemplateQuestions(database, template.questions, gameId);
-    const written = await setEventQuestions(created.id, resolved, database);
-    if (!written.ok) return fail(written.error, written.errors);
+      if (template && template.questions.length > 0) {
+        const resolved = await resolveTemplateQuestions(tx, template.questions, gameId);
+        const written = await setEventQuestions(created.id, resolved, tx);
+        if (!written.ok) throw new NothingSaved(written.error, written.errors);
+      }
+
+      if (days.length > 0) {
+        const written = await setEventDays(created.id, days, tx);
+        if (!written.ok) throw new NothingSaved(written.error, written.errors);
+        return withData(dated(created, eventDates(written.data.days)));
+      }
+
+      // No days asked for, so no dates: an event can be created and scheduled
+      // later, and `event_days.starts_at` is nullable for exactly that (R-24).
+      return withData(dated(created, NO_DATES));
+    });
+  } catch (error) {
+    if (error instanceof NothingSaved) return fail(error.refusal, error.errors);
+    throw error;
   }
-
-  if (days.length > 0) {
-    const written = await setEventDays(created.id, days, database);
-    if (!written.ok) return fail(written.error, written.errors);
-    return withData(dated(created, eventDates(written.data.days)));
-  }
-
-  // No days asked for, so no dates: an event can be created and scheduled
-  // later, and `event_days.starts_at` is nullable for exactly that (R-24).
-  return withData(dated(created, NO_DATES));
 }
 
 /** Turn a template's `profileFieldKey` references into real field ids. */
@@ -1905,9 +1960,16 @@ export async function previewEventDays(
  * made before the first write (the delete below), so there is no refusal path
  * that can expose the scratch index. So the whole job is one transaction, and
  * the status it refuses on is read with the event's row lock held, exactly as
- * `applyToEvent` does. It is called from `createEvent` with that function's own
- * handle, which is not a transaction — PGlite serialises one connection, so a
- * transaction opened inside an open one would wait for itself.
+ * `applyToEvent` does.
+ *
+ * It is also called from `createEvent`, now with that function's own `tx`.
+ * drizzle runs a `transaction` opened *on a transaction* as a **savepoint** on
+ * the same session, so the call nests rather than deadlocking, and
+ * `createEvent`'s throw rolls this work back along with its insert. (What does
+ * deadlock on PGlite's single connection is a *second* `db.transaction` opened
+ * on the handle while one is already open — which is why
+ * `archive-lock.test.ts`'s `completing` flattens instead. This docblock used to
+ * say the nested case deadlocked too; it does not.)
  */
 export async function setEventDays(
   eventId: string,
@@ -2471,6 +2533,20 @@ export async function findMemberByHandle(
  * A finished event refuses this like every other write (UC-09 6b): a waiver
  * changes who could have played in it, and the record of a finished event is
  * closed until somebody reopens it.
+ *
+ * ## One transaction, and the lock before the status (R-39 / UC-09 6b)
+ *
+ * This used to read the event with a plain `readEvent` on the handle it was
+ * given, make the refusal from it, and then insert — three statements with no
+ * transaction around them at all. So a completion committing after that read
+ * let the grant through and committed it: a waiver written into a finished
+ * event's record, which is the one thing R-39 says cannot happen. It is the
+ * shape Task 36 closed on nine other writes, and this one was not on its list.
+ *
+ * The status is now read with the event's row lock held, inside the same
+ * transaction as the insert, exactly as `applyToEvent` does — so a completion
+ * either committed before this transaction began and is in front of us, or
+ * waits until after it.
  */
 export async function waiveEntryRule(
   eventId: string,
@@ -2479,45 +2555,62 @@ export async function waiveEntryRule(
   options: { by?: string | null; now?: Date } = {},
   database: Database = defaultDb
 ): Promise<EventResult<EntryWaiverView & { created: boolean }>> {
-  const event = await readEvent(database, eventId);
-  if (!event) return fail("That event no longer exists.");
-  const locked = lockRefusal(event);
-  if (locked) return fail(locked);
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
-  const [member] = await database
-    .select({ id: users.id })
-    .from(users)
-    .where(eq(users.id, userId))
-    .limit(1);
-  if (!member) return fail("We do not have an account for that member.");
+    const [member] = await tx
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    if (!member) return fail("We do not have an account for that member.");
 
-  const inserted = await database
-    .insert(entryWaivers)
-    .values({ eventId, userId, rule, waivedBy: options.by ?? null, waivedAt: options.now })
-    .onConflictDoNothing({
-      target: [entryWaivers.eventId, entryWaivers.userId, entryWaivers.rule],
-    })
-    .returning({ id: entryWaivers.id });
-  const created = inserted.length > 0;
+    const inserted = await tx
+      .insert(entryWaivers)
+      .values({ eventId, userId, rule, waivedBy: options.by ?? null, waivedAt: options.now })
+      .onConflictDoNothing({
+        target: [entryWaivers.eventId, entryWaivers.userId, entryWaivers.rule],
+      })
+      .returning({ id: entryWaivers.id });
+    const created = inserted.length > 0;
 
-  // Re-read rather than returning what was inserted: on the repeat the insert
-  // comes back empty, and the row that is *there* — the first manager's — is
-  // the answer. `created` above is the one thing the read cannot tell us.
-  const [row] = await database
-    .select()
-    .from(entryWaivers)
-    .where(
-      and(
-        eq(entryWaivers.eventId, eventId),
-        eq(entryWaivers.userId, userId),
-        eq(entryWaivers.rule, rule)
+    // Re-read rather than returning what was inserted: on the repeat the insert
+    // comes back empty, and the row that is *there* — the first manager's — is
+    // the answer. `created` above is the one thing the read cannot tell us.
+    const [row] = await tx
+      .select()
+      .from(entryWaivers)
+      .where(
+        and(
+          eq(entryWaivers.eventId, eventId),
+          eq(entryWaivers.userId, userId),
+          eq(entryWaivers.rule, rule)
+        )
       )
-    )
-    .limit(1);
-  if (!row) return fail("That waiver could not be recorded. Nothing was changed.");
+      .limit(1);
+    /*
+     * Thrown, not returned, and the distinction is the rule in
+     * docs/decisions/004-refusals-inside-transactions.md: this is the one check
+     * in the function that sits *after* the insert, and a refusal returned here
+     * would commit the very row it claims was not written. It is also not a
+     * refusal — inside one transaction, an `insert … on conflict do nothing`
+     * followed by a select of the same unique key cannot come back empty, so
+     * reaching this is a broken invariant rather than something a manager did.
+     * A throw says so and rolls the insert back; the old `fail("… Nothing was
+     * changed.")` said so and committed it.
+     */
+    if (!row) {
+      throw new Error(
+        `Wrote an entry waiver for (${eventId}, ${userId}, ${rule}) and could not read it back.`
+      );
+    }
 
-  const [view] = await decorateWaivers(database, [row]);
-  return withData({ ...view, created });
+    const [view] = await decorateWaivers(tx, [row]);
+    return withData({ ...view, created });
+  });
 }
 
 /**
@@ -2532,6 +2625,14 @@ export async function waiveEntryRule(
  * `removed` is false when there was nothing to withdraw, which is not an error
  * — two managers clicking the same button is not a failure anybody should read
  * a message about.
+ *
+ * ## One transaction, and the lock before the status (R-39 / UC-09 6b)
+ *
+ * {@link waiveEntryRule}'s reasoning exactly, and this is the half that
+ * *deletes*: a plain read followed by a bare delete let a completion commit in
+ * between and took a recorded decision out of a finished event's record. The
+ * status is now read with the event's row lock held, in the same transaction as
+ * the delete.
  */
 export async function revokeEntryWaiver(
   eventId: string,
@@ -2539,23 +2640,25 @@ export async function revokeEntryWaiver(
   rule: EntryRule,
   database: Database = defaultDb
 ): Promise<EventResult<{ removed: boolean }>> {
-  const event = await readEvent(database, eventId);
-  if (!event) return fail("That event no longer exists.");
-  const locked = lockRefusal(event);
-  if (locked) return fail(locked);
+  return database.transaction(async (tx) => {
+    const event = await lockEvent(tx, eventId);
+    if (!event) return fail("That event no longer exists.");
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
 
-  const gone = await database
-    .delete(entryWaivers)
-    .where(
-      and(
-        eq(entryWaivers.eventId, eventId),
-        eq(entryWaivers.userId, userId),
-        eq(entryWaivers.rule, rule)
+    const gone = await tx
+      .delete(entryWaivers)
+      .where(
+        and(
+          eq(entryWaivers.eventId, eventId),
+          eq(entryWaivers.userId, userId),
+          eq(entryWaivers.rule, rule)
+        )
       )
-    )
-    .returning({ id: entryWaivers.id });
+      .returning({ id: entryWaivers.id });
 
-  return withData({ removed: gone.length > 0 });
+    return withData({ removed: gone.length > 0 });
+  });
 }
 
 /* ------------------------------------------------------------------ */

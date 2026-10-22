@@ -23,8 +23,8 @@ import {
   Badge,
   Button,
   EmptyState,
-  Eyebrow,
   Page,
+  PageHeader,
   Section,
   Select,
   StatTile,
@@ -87,33 +87,36 @@ export default async function AdminAuditPage({
         <AdminNav />
       </AppHeader>
 
+      {/*
+        `standard`, not `wide`, and this is the page that decides where the
+        ceiling goes. Every line is one sentence of summary stretched across the
+        whole column; at 1400 those run past 150 characters and the eye has to
+        travel the width of the screen to find the start of the next one. A log
+        is the densest *text* on the site, which is the opposite of the densest
+        *table*.
+      */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Audit</Eyebrow>
-            <h1 className="font-display text-36 leading-none">Audit log</h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              Every status change, application decision, captain and team change, draft
-              award and void, result edit and settings change — with the name of whoever
-              made it. Nothing here is ever edited or deleted.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile label="Showing" value={rows.length} />
-            <StatTile
-              label="Scope"
-              value={
-                filter.kind === "event"
-                  ? "One event"
-                  : filter.kind === "unknown"
-                    ? "No such event"
-                    : "Everything"
-              }
-              valueClassName={filter.kind === "unknown" ? "text-flare" : "text-muted"}
-            />
-          </div>
-        </header>
+        <PageHeader
+          eyebrow="Admin · Audit"
+          title="Audit log"
+          intro="Every status change, application decision, captain and team change, draft award and void, result edit and settings change — with the name of whoever made it. Nothing here is ever edited or deleted."
+          aside={
+            <>
+              <StatTile label="Showing" value={rows.length} />
+              <StatTile
+                label="Scope"
+                value={
+                  filter.kind === "event"
+                    ? "One event"
+                    : filter.kind === "unknown"
+                      ? "No such event"
+                      : "Everything"
+                }
+                valueClassName={filter.kind === "unknown" ? "text-flare" : "text-muted"}
+              />
+            </>
+          }
+        />
 
         <Section
           first

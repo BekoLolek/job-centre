@@ -314,6 +314,26 @@ night before is an answer the running order cannot be built on. These two close 
 | R-199 | As an applicant, I want to say I am not sure I can come, so that the organisers know a seat is uncertain rather than guessing from my silence. | Should | A third answer alongside R-56's two. It never frees the seat; only R-54 and "I can't make it" do |
 | R-200 | As an admin, I want the "still coming?" answer to close two days before the event starts, so that the running order is built on answers that will not change. | Should | Withdrawing (R-54) stays open after it — somebody taken ill the day before still gives up their seat. An event with no start date has no deadline |
 
+### Discord announcements, editable (added 2026-10-22)
+
+Seven kinds of announcement already post to the channel, each with its wording compiled into
+`src/lib/announce.ts` and every payload carrying `allowed_mentions: { parse: [] }` so that the
+site pings nobody. Both of those are now limits rather than features: the wording cannot be
+changed without a deployment, and an event nobody is watching the channel for goes unnoticed
+because no announcement may mention the people it concerns. These eight open both, and add the
+three moments in an event's signup life that nothing announces today.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-201 | As an admin, I want to edit what each Discord announcement says, so that the channel reads in our own voice without waiting for a deployment. | Should | **All seven kinds that exist today**, and the three Tasks 62/63 add, for ten in all — an earlier draft of this note said eleven, which was wrong. Today's wording becomes the default, so an announcement nobody has edited posts exactly what it posts now |
+| R-202 | As an admin, I want to mention a role or everyone in an announcement, so that the people who need to act actually see it. | Should | Per announcement, admin's choice. A mention is only ever the admin's own words - see Constraints |
+| R-203 | As an admin, I want to pick a role from a list of our server's roles, so that I never have to find and paste an id. | Could | `@RoleName` is inert on Discord; a role ping is `<@&id>`. Needs `DISCORD_BOT_TOKEN` and a guild id, and is one outbound REST read - still no hosted bot (Out of scope) |
+| R-204 | As an admin, I want to see exactly what an announcement will look like before I save it, so that a mistake is not found by four hundred people. | Should | Renders the real payload and sends nothing |
+| R-205 | As a member, I want the channel told when signups open, so that I can apply as soon as I am able. | Should | New kind. An event already open when it is published posts only the published announcement, not both |
+| R-206 | As a member, I want a reminder a day before signups close, so that I do not miss an event I meant to enter. | Should | Once per event. An event with no closing time has nothing to count back from |
+| R-207 | As a participant, I want a reminder two hours before the event starts, so that I turn up to the thing I signed up for. | Should | The first dated day's start (dates are derived, R-24). An event with no dated day gets none |
+| R-208 | As an admin, I want an announcement that failed to appear where I will see it, so that a quiet channel is not mistaken for a quiet week. | Should | Extends R-110's audit log; `announcement.failed` already exists and is already surfaced on the admin home |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -328,13 +348,14 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - **Secrets** (`AUTH_SECRET`, `DISCORD_CLIENT_SECRET`, `DATABASE_URL`, bot token, cron secret) never reach the browser, the settings screen or the audit log. The webhook URL is shown masked only.
 - **Nothing on the record is hard-deleted** - events, applications, results and draft lots. (Polls and suggestions may be deleted by an admin; R-95.)
 - **Championship points are worked out from recorded finishing places, never stored as a total.** Correcting a place re-scores the season, the same rule that already makes bracket corrections safe (R-79).
+- **A mention is only ever the admin's own words.** Interpolated data - a display name, an event title - is rendered into the embed, where Discord does not parse mentions at all. The mention line is built solely from the stored template, and `allowed_mentions` names the exact role ids that template used, permitting `everyone` only when the template itself asks for it. A member who renames themselves `@everyone` therefore cannot make the site ping the server, which is the hole `allowed_mentions: { parse: [] }` was closing before any announcement could mention anyone.
 - **An event belongs to at most one championship**, so a result cannot count twice.
 
 ## Out of scope
 
 - Any sign-in other than Discord; passwords; email accounts.
 - Email or SMS notifications.
-- A hosted Discord bot process (slash commands, reading channels). Direct messages are sent, not received.
+- A hosted Discord bot process (slash commands, reading channels). Direct messages are sent, not received, and reading the server's role list (R-203) is a single outbound REST call with the same bot token - no process, no gateway connection, nothing listening.
 - Map veto / ban-pick flow (replaced by the side-and-map swap rule, R-80).
 - Pulling results or ranks automatically from game APIs; verifying claimed ranks.
 - Payments, prizes, entry fees.

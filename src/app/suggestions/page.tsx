@@ -12,7 +12,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import SuggestionBox from "@/components/suggestions/SuggestionBox";
-import { Eyebrow, Page, Section } from "@/components/ui";
+import { Page, PageHeader, Section } from "@/components/ui";
 import { getCurrentUser } from "@/lib/session-guards";
 import { listSuggestions } from "@/lib/suggestions";
 
@@ -32,16 +32,13 @@ export default async function SuggestionsPage() {
     <div className="min-h-screen">
       <AppHeader />
 
-      <Page>
-        <header className="mb-2">
-          <Eyebrow className="mb-2">Job Centre · Suggestions</Eyebrow>
-          <h1 className="text-36">What should we run?</h1>
-          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
-            Anything the community fancies playing. Vote on the ones you would turn up to —
-            the count is what an organiser looks at when they are deciding what to put on
-            next, so an idea with nobody behind it is genuinely useful information too.
-          </p>
-        </header>
+      {/* `reading`: one column of suggestions, each a line of text and a vote. */}
+      <Page width="reading" className="space-y-6">
+        <PageHeader
+          eyebrow="Job Centre · Suggestions"
+          title="What should we run?"
+          intro="Anything the community fancies playing. Vote on the ones you would turn up to — the count is what an organiser looks at when they are deciding what to put on next, so an idea with nobody behind it is genuinely useful information too."
+        />
 
         <Section
           first

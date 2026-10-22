@@ -95,6 +95,8 @@ export const AUDIT_ACTIONS = {
   "host.declined": "Host application declined",
   "settings.integrations": "Integrations changed",
   "announcement.failed": "Announcement failed",
+  "announcement.wording_changed": "Announcement wording changed",
+  "announcement.pings_everyone": "Announcement set to ping everyone",
   "user.admin.granted": "Admin granted",
   "user.admin.revoked": "Admin revoked",
   "user.sessions.ended": "Sessions ended",
@@ -156,6 +158,15 @@ const NOTABLE: ReadonlySet<string> = new Set(["user.admin.granted"]);
 export function actionTone(action: string): "union" | "flare" | "muted" {
   if (DESTRUCTIVE.has(action)) return "flare";
   if (action === "announcement.failed") return "flare";
+  /*
+   * Not destructive — nothing is lost — but it is the one audit line that says
+   * the site has been pointed at four hundred people at once, and R-202 made
+   * that an admin's choice rather than a ban. It reads in the same tone as a
+   * failed announcement for the same reason: both are lines you want to find
+   * without filtering for them. Only the transition is recorded, so this is
+   * not a row per post (UC-37 4c).
+   */
+  if (action === "announcement.pings_everyone") return "flare";
   if (NOTABLE.has(action)) return "union";
   return action.startsWith("draft.") || action.startsWith("result.") ? "union" : "muted";
 }

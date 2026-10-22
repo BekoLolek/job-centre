@@ -9,7 +9,7 @@ import {
   stages,
   teams,
 } from "@/db";
-import { type TestDatabase, freshDatabase } from "@/db/__tests__/helpers";
+import { type TestDatabase, committingAfter, freshDatabase } from "@/db/__tests__/helpers";
 import {
   formatFor,
   generateMatches,
@@ -149,33 +149,6 @@ async function playedGames(stageId: string): Promise<number> {
     .innerJoin(matches, eq(matchGames.matchId, matches.id))
     .where(and(eq(matches.stageId, stageId), eq(matchGames.played, true)));
   return rows.length;
-}
-
-/**
- * This file's database, except that the first transaction it opens runs
- * `between` to completion first — the same helper `draft.test.ts` and
- * `events.test.ts` use, for the same reason.
- *
- * Sequenced rather than raced. A result landing in the exact window between
- * "which stages are stale" and "delete every match in this one" is not
- * something a timer can be trusted to reproduce, and a test that had to *win* a
- * race to see the bug would pass by luck on the days it did not. This pins the
- * interleave: everything the outer call could have read before it opened its
- * transaction is stale, because the inner one has already committed.
- */
-function committingAfter(between: () => Promise<unknown>): Database {
-  let pending: (() => Promise<unknown>) | null = between;
-  return new Proxy(db, {
-    get(target, property, receiver) {
-      if (property !== "transaction") return Reflect.get(target, property, receiver);
-      return async (run: Parameters<Database["transaction"]>[0]) => {
-        const first = pending;
-        pending = null;
-        if (first) await first();
-        return target.transaction(run);
-      };
-    },
-  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -539,7 +512,7 @@ describe("a rebuild racing a result", () => {
     const sync = unwrap(
       await syncStages(
         eventId,
-        committingAfter(() => win(stageId, "rr-1-2", "a"))
+        committingAfter(db, () => win(stageId, "rr-1-2", "a"))
       )
     );
 
@@ -573,7 +546,7 @@ describe("a rebuild racing a result", () => {
     const result = await rebuildStage(
       stageId,
       clearing.confirm,
-      committingAfter(() => win(stageId, "rr-1-3", "a"))
+      committingAfter(db, () => win(stageId, "rr-1-3", "a"))
     );
 
     expect(result.ok).toBe(false);

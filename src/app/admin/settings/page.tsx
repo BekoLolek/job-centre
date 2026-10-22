@@ -18,7 +18,7 @@ import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import AnnouncementSettings from "@/components/admin/AnnouncementSettings";
 import ServerSettings from "@/components/admin/ServerSettings";
-import { Eyebrow, Page, Section, StatTile } from "@/components/ui";
+import { Page, PageHeader, Section, StatTile } from "@/components/ui";
 import { ANNOUNCEMENTS } from "@/lib/announce";
 import { maskWebhook } from "@/lib/announce";
 import { getGateConfig } from "@/lib/auth";
@@ -46,30 +46,31 @@ export default async function AdminSettingsPage() {
         <AdminNav />
       </AppHeader>
 
+      {/*
+        `standard`: switches and prose, but the integration fields below run two
+        `min-w-[18rem]` columns wide and the announcement list is a table of
+        channels, so a reading column would put both into a scroller.
+      */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Settings</Eyebrow>
-            <h1 className="font-display text-36 leading-none">Settings</h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              Switches that apply to the whole server rather than to one event. Every
-              change is written to the audit log.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile
-              label="Announcing"
-              value={`${on}/${ANNOUNCEMENTS.length}`}
-              valueClassName={configured && on > 0 ? "text-success" : "text-muted"}
-            />
-            <StatTile
-              label="Webhook"
-              value={configured ? "Set" : "None"}
-              valueClassName={configured ? "text-success" : "text-muted"}
-            />
-          </div>
-        </header>
+        <PageHeader
+          eyebrow="Admin · Settings"
+          title="Settings"
+          intro="Switches that apply to the whole server rather than to one event. Every change is written to the audit log."
+          aside={
+            <>
+              <StatTile
+                label="Announcing"
+                value={`${on}/${ANNOUNCEMENTS.length}`}
+                valueClassName={configured && on > 0 ? "text-success" : "text-muted"}
+              />
+              <StatTile
+                label="Webhook"
+                value={configured ? "Set" : "None"}
+                valueClassName={configured ? "text-success" : "text-muted"}
+              />
+            </>
+          }
+        />
 
         <div>
           <AnnouncementSettings

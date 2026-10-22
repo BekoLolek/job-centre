@@ -23,8 +23,8 @@ import {
   Badge,
   Button,
   EmptyState,
-  Eyebrow,
   Page,
+  PageHeader,
   Section,
   StatTile,
   cx,
@@ -52,39 +52,33 @@ export default async function AdminDashboardPage() {
         <AdminNav />
       </AppHeader>
 
+      {/* `standard`: a to-do list and a few event cards. */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Tonight</Eyebrow>
-            <h1 className="font-display text-36 leading-none">
-              What needs you
-            </h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              Everything below is worked out from the database as this page loaded, so a
-              line disappears the moment you deal with it. Nothing here is a reminder
-              somebody set.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile
-              label="Needs you"
-              value={view.items.length}
-              valueClassName={view.items.length > 0 ? "text-union" : "text-body"}
-            />
-            <StatTile
-              label="Blocking"
-              value={blocked}
-              valueClassName={blocked > 0 ? "text-flare" : "text-muted"}
-            />
-            <StatTile
-              label="Live"
-              value={view.live.length}
-              valueClassName={view.live.length > 0 ? "text-flare" : "text-muted"}
-            />
-            <StatTile label="Active events" value={view.totals.events} />
-          </div>
-        </header>
+        <PageHeader
+          eyebrow="Admin · Tonight"
+          title="What needs you"
+          intro="Everything below is worked out from the database as this page loaded, so a line disappears the moment you deal with it. Nothing here is a reminder somebody set."
+          aside={
+            <>
+              <StatTile
+                label="Needs you"
+                value={view.items.length}
+                valueClassName={view.items.length > 0 ? "text-union" : "text-body"}
+              />
+              <StatTile
+                label="Blocking"
+                value={blocked}
+                valueClassName={blocked > 0 ? "text-flare" : "text-muted"}
+              />
+              <StatTile
+                label="Live"
+                value={view.live.length}
+                valueClassName={view.live.length > 0 ? "text-flare" : "text-muted"}
+              />
+              <StatTile label="Active events" value={view.totals.events} />
+            </>
+          }
+        />
 
         <div>
           {/* --- The list -------------------------------------------- */}

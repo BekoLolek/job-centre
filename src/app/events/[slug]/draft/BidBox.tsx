@@ -113,7 +113,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
         <Eyebrow className="mb-3">Your bid is locked</Eyebrow>
         <div className="stamp leading-none">
           {me.bid !== null ? (
-            <Money value={me.bid} tone="success" size="xl" className="text-48" />
+            <Money value={me.bid} tone="success" size="2xl" />
           ) : (
             <span className="font-display text-48 text-success">In</span>
           )}

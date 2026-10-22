@@ -38,6 +38,7 @@ import {
   Button,
   Eyebrow,
   Page,
+  PageHeader,
   Panel,
   Section,
   StatTile,
@@ -89,7 +90,25 @@ export default async function HubPage() {
     <div className="min-h-screen">
       <AppHeader />
 
-      <Page className="space-y-10">
+      {/* `standard`: the hero, then two-up event cards. */}
+      <Page className="space-y-6">
+        {/*
+          The hub's own header.
+
+          It had none, so its `<h1>` was whichever event happened to be next —
+          under two `<section>`s, which is the wrong outline for anybody reading
+          with a screen reader, and a heading that changes when the calendar
+          does. The order below is still §6.1's, untouched: live, then next up,
+          then the rest. This only puts a name on the page they sit on.
+        */}
+        <PageHeader
+          eyebrow="Job Centre"
+          /* The literal character, not `&rsquo;`: these are attribute strings,
+             and the `·` already in every eyebrow on the site is literal too. */
+          title="What’s on"
+          intro="What’s running now, what’s next, and how to get in. Nothing here needs an account until you apply."
+        />
+
         {/* --- 1. Live now, and only when it is ---------------------- */}
         {live.length > 0 && (
           <section className="space-y-3">
@@ -128,11 +147,15 @@ export default async function HubPage() {
                     ))}
                   </div>
 
-                  <h1 className="font-display text-48 leading-[0.9]">
+                  {/*
+                    An `<h2>`: the page's `<h1>` is its own name now, and this
+                    is the heading of the "Next up" section under it.
+                  */}
+                  <h2 className="text-30">
                     <Link href={`/events/${hero.slug}`} className="hover:text-union">
                       {hero.title}
                     </Link>
-                  </h1>
+                  </h2>
 
                   {hero.description && (
                     <p className="max-w-2xl text-14 leading-relaxed text-muted">
@@ -183,9 +206,7 @@ export default async function HubPage() {
         ) : (
           <Panel as="section" className="rise">
             <Eyebrow className="mb-3">Nothing on right now</Eyebrow>
-            <h1 className="font-display text-36 leading-none">
-              Nothing scheduled
-            </h1>
+            <h2 className="text-30">Nothing scheduled</h2>
             <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
               There is no upcoming event taking applications at the moment. Everything the
               community has run is kept in the archive, and the next one will appear here the

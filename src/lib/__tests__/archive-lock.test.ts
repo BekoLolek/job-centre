@@ -112,18 +112,35 @@ import {
  * Every row of `LOCK_FIRST` is a row of `WRITES`, and it is the shorter list
  * because it is the one Task 36 went through: the writes whose status read it
  * moved under the lock, plus `setTeams` and `setCaptains`, which Task 18 had
- * already moved and which are here so they stay moved. `recordGames`,
- * `setWinnerOverride` and `setMatchSchedule` carry the same assertion in
- * `format-db.test.ts`, next to the engine they belong to — `recordGames` under
- * "reads the event with its row lock, and reads it first", the other two under
- * "takes every deciding read after the event lock" and "takes the deciding read
- * after the event lock". This sentence was untrue for `recordGames` until it
- * was: no such test existed anywhere, and `lockEvent` → `readEvent` in
- * `recordGames` left all 3409 tests green. The rest of `WRITES`
+ * already moved and which are here so they stay moved, plus `waiveEntryRule`
+ * and `revokeEntryWaiver`, which Task 56 moved.
+ *
+ * Task 56 closed the three writes Task 36 found and did not touch, and all
+ * three are covered now:
+ *
+ *  - `waiveEntryRule` and `revokeEntryWaiver` are rows of this table. They had
+ *    no transaction at all — a plain `readEvent`, the refusal, then an insert
+ *    or a delete on the bare handle — so a completion committing after that
+ *    read let the write through and committed it;
+ *  - `reflipMatch`'s is in `format-db.test.ts`, under "takes the deciding read
+ *    after the event lock", beside the engine it belongs to. Its archive
+ *    refusal and its played check were always under the lock; what was not was
+ *    the row's **existence**, decided off a whole-row read taken before
+ *    `lockEvent` and never re-read (UC-18 9's regeneration is what moves it).
+ *
+ * `recordGames`, `setWinnerOverride` and `setMatchSchedule` carry the same
+ * assertion in `format-db.test.ts` too, next to the engine they belong to —
+ * `recordGames` under "reads the event with its row lock, and reads it first",
+ * the other two under "takes every deciding read after the event lock" and
+ * "takes the deciding read after the event lock". This sentence was untrue for
+ * `recordGames` until it was: no such test existed anywhere, and `lockEvent` →
+ * `readEvent` in `recordGames` left all 3409 tests green. The rest of `WRITES`
  * is not covered by it — most already lock first, `updateEvent` and
  * `publishEvent` guard their status move with a compare-and-set on
  * `events.status` instead, and neither claim is asserted here. Keep both lists
- * honest: a row added to `WRITES` is not automatically a row here.
+ * honest: a row added to `WRITES` is not automatically a row here, and a claim
+ * made in this docblock is worth nothing unless it names the test that holds
+ * it.
  */
 
 const REFUSAL = "This event is finished - reopen it to change it";
@@ -817,6 +834,15 @@ const LOCK_FIRST: LockFirst[] = [
     (f, on) => setEventDays(f.eventId, [{ id: f.dayId, label: "Night" }], on),
   ],
   ["setEventQuestions", false, (f, on) => setEventQuestions(f.eventId, [], on)],
+  /*
+   * Task 56's two. Both had the shape Task 36 described — a plain `readEvent`,
+   * no transaction at all, then an insert or a delete — and neither was on its
+   * list. On the spare applicant and the outsider respectively, for the reason
+   * their `WRITES` rows give: the grant really inserts and the withdrawal
+   * really deletes, so the census below has a row to miss either way.
+   */
+  ["waiveEntryRule", false, (f, on) => waiveEntryRule(f.eventId, f.members[4], "enter", {}, on)],
+  ["revokeEntryWaiver", false, (f, on) => revokeEntryWaiver(f.eventId, f.outsider, "enter", on)],
   [
     // Closed by Task 18 rather than by Task 36, and here so it stays closed.
     "setTeams",
@@ -876,11 +902,18 @@ function firstEventRead(log: string[]): string {
  *
  * Sequenced rather than raced: the window it pins is one statement wide, and a
  * test that had to *win* a race to see it would be a test that passes by luck
- * on the days it did. `insertingAfter` in `hosting.test.ts` and
- * `committingAfter` in `format-db.test.ts` are the same device aimed at
- * different statements; this one is aimed by a pattern, because the statement
- * that matters here is `select ... for update` and the whole point is that a
- * version of the code without it never issues one at all.
+ * on the days it did. `insertingAfter` in `hosting.test.ts` and the shared
+ * `committingAfter` in `src/db/__tests__/helpers.ts` are the same device aimed
+ * at different statements; this one is aimed by a pattern, because the
+ * statement that matters here is `select ... for update` and the whole point is
+ * that a version of the code without it never issues one at all.
+ *
+ * That aim is why this helper was **not** merged into the shared one when the
+ * six identical `committingAfter`s were (Task 58). A regex over `toSQL()`, a
+ * recursive proxy over all four builders, a flattened transaction and a
+ * hardcoded action are four things the shared helper does not have and cannot
+ * be given without becoming a configurable framework; `helpers.ts` carries the
+ * full reasoning beside the helper it kept.
  *
  * ## Why the transaction is flattened
  *

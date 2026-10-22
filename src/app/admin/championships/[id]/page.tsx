@@ -14,7 +14,7 @@ import { notFound } from "next/navigation";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import ChampionshipEditor from "@/components/admin/ChampionshipEditor";
-import { Button, Eyebrow, Page } from "@/components/ui";
+import { Button, Page, PageHeader } from "@/components/ui";
 import { getChampionship, listCountingEvents } from "@/lib/championships";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -45,16 +45,17 @@ export default async function AdminChampionshipPage({
         <AdminNav />
       </AppHeader>
 
+      {/* `standard`: the points-table editor, two `min-w-[10rem]` fields wide. */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div className="min-w-0">
-            <Eyebrow className="mb-2">Admin · Championships</Eyebrow>
-            <h1 className="font-display text-36 leading-none">{season.name}</h1>
-          </div>
-          <Button size="sm" href="/admin/championships" className="ml-auto">
-            All seasons
-          </Button>
-        </header>
+        <PageHeader
+          eyebrow="Admin · Seasons"
+          title={season.name}
+          aside={
+            <Button size="sm" href="/admin/championships">
+              All seasons
+            </Button>
+          }
+        />
 
         <ChampionshipEditor
           counting={counting}

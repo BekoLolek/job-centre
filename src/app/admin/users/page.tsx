@@ -30,7 +30,7 @@ import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import AdminAllowlist from "@/components/admin/AdminAllowlist";
 import UsersManager from "@/components/admin/UsersManager";
-import { Eyebrow, Page, Section, StatTile } from "@/components/ui";
+import { Page, PageHeader, Section, StatTile } from "@/components/ui";
 import { getAllowlist } from "@/lib/admin-allowlist";
 import { loadAdminUsers } from "@/lib/admin-users";
 import { parseAdminIds } from "@/lib/auth-policy";
@@ -61,28 +61,28 @@ export default async function AdminUsersPage() {
         <AdminNav />
       </AppHeader>
 
+      {/*
+        `standard`, not `wide`: this reads like a table but is not one —
+        `UsersManager` draws each member as a wrapping flex row, so extra width
+        buys nothing a column cannot already hold.
+      */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Members</Eyebrow>
-            <h1 className="font-display text-36 leading-none">Members</h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              Everyone who has ever signed in. Grant and revoke the admin flag here rather
-              than by editing an environment variable and redeploying, and keep private
-              notes about a member that nothing public ever shows.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile label="Members" value={view.total} />
-            <StatTile
-              label="Admins"
-              value={view.admins}
-              valueClassName={view.admins > 1 ? "text-union" : "text-flare"}
-            />
-            <StatTile label="Signed in" value={`${seen}/${view.total}`} />
-          </div>
-        </header>
+        <PageHeader
+          eyebrow="Admin · Members"
+          title="Members"
+          intro="Everyone who has ever signed in. Grant and revoke the admin flag here rather than by editing an environment variable and redeploying, and keep private notes about a member that nothing public ever shows."
+          aside={
+            <>
+              <StatTile label="Members" value={view.total} />
+              <StatTile
+                label="Admins"
+                value={view.admins}
+                valueClassName={view.admins > 1 ? "text-union" : "text-flare"}
+              />
+              <StatTile label="Signed in" value={`${seen}/${view.total}`} />
+            </>
+          }
+        />
 
         <Section
           first

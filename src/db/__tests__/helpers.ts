@@ -21,6 +21,76 @@ export async function freshDatabase(): Promise<TestDatabase> {
 }
 
 /**
+ * `db`, except that the **first transaction it opens** runs `between` to
+ * completion first.
+ *
+ * Sequenced rather than raced. Two managers acting inside the same second is
+ * not something a timer can be trusted to reproduce, and a test that had to
+ * *win* a race to see the bug would pass by luck on the days it did not. This
+ * pins the interleave exactly: everything the write under test could have read
+ * before it opened its transaction is stale, because `between` has already
+ * committed.
+ *
+ * Only the first. The nested call `between` makes re-enters the real handle, so
+ * it opens its own transaction normally, and every transaction after it goes
+ * straight through.
+ *
+ * It does **not** flatten the transaction. `between` runs before
+ * `target.transaction(run)` is called at all, so the connection is still free
+ * when it needs it, and the write under test then gets a real transaction with
+ * a real `BEGIN` — which is what makes these tests say something about a
+ * decision taken *inside* it. The flattening helpers in `archive-lock.test.ts`
+ * and `waivers.test.ts` fire mid-transaction and have to give that up; see the
+ * note below.
+ *
+ * ## Why the other sequencing helpers are not here
+ *
+ * Six more live beside the tests that use them, and the question a reader of
+ * this file will ask is why they were not merged in too. Task 58 in
+ * `docs/plan.md` has the long answer; the short one is that they are not
+ * variations of one idea, and the thing that differs is the thing that matters:
+ * **where the interruption fires.**
+ *
+ * - `insertingAfter` — three hand-written copies (`hosting.test.ts`,
+ *   `championship-events.test.ts`, `waivers.test.ts`). Each flattens the
+ *   transaction and hardcodes one builder chain, and the three chains differ:
+ *   `.values().onConflictDoNothing()`, `.select().returning()`, and
+ *   `.values().onConflictDoNothing().returning()` behind a second nested proxy.
+ * - `writingAfter` (`events.test.ts`) — the same device on `update`, aimed at
+ *   `.set().where().returning()`.
+ * - `completing` / `completingBeforeTheLock` (`archive-lock.test.ts`) —
+ *   flattens, proxies all four builders recursively, is aimed by a **regex over
+ *   `toSQL()`**, hardcodes its action, and reports whether it `fired()`.
+ *
+ * Parameterising "where it fires" across those produces a configurable proxy
+ * framework harder to read than any of the six, so they are deliberately left
+ * as they are. Only the `committingAfter`s were merged, and only because all
+ * six were **byte-identical**: there was nothing to parameterise but the handle.
+ *
+ * `waivers.test.ts` is the evidence rather than the exception. Task 56 moved
+ * `waiveEntryRule` into a transaction, the insert its `insertingAfter` aimed at
+ * moved onto the `tx`, and the proxy began intercepting the *audit* insert
+ * instead — a different chain, which threw inside `recordAudit`'s own catch and
+ * failed the test on an empty audit log rather than on anything about two
+ * managers. The aim is the part that drifts, which is precisely the part a
+ * shared helper could not hold.
+ */
+export function committingAfter(db: Database, between: () => Promise<unknown>): Database {
+  let pending: (() => Promise<unknown>) | null = between;
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property !== "transaction") return Reflect.get(target, property, receiver);
+      return async (run: Parameters<Database["transaction"]>[0]) => {
+        const first = pending;
+        pending = null;
+        if (first) await first();
+        return target.transaction(run);
+      };
+    },
+  });
+}
+
+/**
  * What UC-09 2 requires before an event may be published — a day with a start
  * time and a sign-up window — spread into `createEvent` by any test that
  * publishes. Wide enough, 2000 to 2100, never to get in the way of the test.

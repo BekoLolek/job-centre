@@ -205,14 +205,94 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* ------------------------------------------------------------------ */
+/* Where the component classes live, and why                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Every class rule below `@tailwind utilities` on line 3 is a plain class at
+ * 0-1-0. So is every utility. The tie breaks on source order, and a rule
+ * written here is written later — so it beats a `text-*`, `p*-`, `w-*`, `bg-*`
+ * or `border-*` an author wrote on the element itself, silently.
+ *
+ * Task 38c found that on `.field` and fixed it with `@layer components`, which
+ * Tailwind hoists to the `@tailwind components` position on line 2. Task 65
+ * measured the rest of the file rather than assuming `.field` was special, and
+ * it was not: of the **22** top-level class rules this file had, **20 declared a
+ * property that a really-emitted utility also writes** — 17 distinct classes.
+ * Only `.hatch` and `.btn:focus-visible` did not. The plan had estimated nine.
+ *
+ * `field-ordering.test.ts` computes that set from the compiled stylesheet — it
+ * is not a list anybody maintains by hand — and requires every member to be
+ * layered or named below with a reason. Two are named; everything else moved.
+ *
+ * Layered, and why each had to be:
+ *
+ *   .num       font-size: 0.94em, contradicted at 47 call sites. See its own
+ *              comment — this one is not a simple loss, it is a *relative*
+ *              correction, and the reason layering is still right is there.
+ *   .btn       font-size/font-weight/padding/border/colour, contradicted at 6.
+ *              Including `Button`'s own `size="sm"`, whose `px-3 py-1.5` lost
+ *              to `.btn`'s `padding` — so the size prop did nothing at all.
+ *   .wordmark  font-size: 13px, contradicted once (`DraftRoom`'s `text-16`).
+ *   .btn-union
+ *   .btn-flare colour and font-weight. Both stay *after* `.btn` inside the
+ *              layer, so they still beat it exactly as they did unlayered.
+ *   .eyebrow
+ *   .font-display
+ *   .panel
+ *   .stage
+ *   .seam
+ *   .seam-bloom
+ *   .hatch
+ *   .rise
+ *   .live-dot
+ *   .unsaved-bar
+ *   .stamp
+ *              nothing contradicts these today. They are layered anyway: the
+ *              defect is the ordering, not the number of call sites that have
+ *              hit it yet, and `.field` and `.btn` are what "nothing has hit it
+ *              yet" turns into. The five animation classes are the clearest
+ *              case — Tailwind's `animate-*` utilities write the same
+ *              `animation` shorthand, and `animate-pulse` is already written
+ *              once in `src/**`, so the collision was one `className` away.
+ *
+ * Not layered, deliberately:
+ *
+ *   .wordmark-accent  **must keep winning.** `color: transparent` is not a
+ *              default, it is the mechanism: the gradient is clipped through it
+ *              by `background-clip: text`, so a `text-*` utility that beat it
+ *              would replace the lit mark with flat colour. Its own comment
+ *              below already relies on this ("a `hover:text-hot` on the element
+ *              changes nothing at all"), and `a.wordmark-accent:hover` is how
+ *              the hover is done *because* of it. Layering it would break that.
+ *   .roundel   **nothing wears it.** No element in `src/**` carries the class,
+ *              so there is no cascade to get wrong: a rule that never matches
+ *              cannot eat a utility. It is dead CSS and should probably go, but
+ *              deleting a gradient somebody may be about to use is a decision
+ *              for whoever wants the insignia, not a side effect of an
+ *              ordering fix.
+ *
+ * So every class rule in this file is layered except those two. The
+ * `prefers-reduced-motion` block at the foot is deliberately left unlayered:
+ * it has to beat the animation classes above, and unlayered is how it does.
+ *
+ * Adding a rule here: put it in a `@layer components` block unless you can
+ * write a reason like the two above. The test fails on a new top-level class
+ * rule that clashes and is not accounted for, which is the point — this is the
+ * third time the same defect has been found in this file.
+ */
+
 /*
  * The ground is flat. It used to carry a radial blue wash and a grain overlay;
  * both references are a single flat colour, and a gradient behind real content
  * is the thing you notice when you cannot say why a page looks amateur.
  */
-.stage {
-  position: relative;
-  isolation: isolate;
+@layer components {
+  .stage {
+    position: relative;
+    isolation: isolate;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -243,9 +323,11 @@ h1 {
  * family as everything else now; what it carries is the weight and the
  * tightness, so those components did not have to be touched.
  */
-.font-display {
-  font-weight: 600;
-  letter-spacing: -0.019em;
+@layer components {
+  .font-display {
+    font-weight: 600;
+    letter-spacing: -0.019em;
+  }
 }
 
 /*
@@ -254,26 +336,77 @@ h1 {
  * are simply small quiet text: sentence case, no tracking. The references have
  * no uppercase on the page at all.
  *
- * Deliberately no `color`. This class sits after `@tailwind utilities` in the
- * source, so a colour here silently beat every `text-*` next to it — which is
- * why status pills had been rendering grey instead of blue, red or white since
- * the class was written. The colour belongs to the component.
+ * Deliberately no `color`, and that decision outlived its original reason.
+ *
+ * It was taken because this class sat after `@tailwind utilities`, so a colour
+ * here silently beat every `text-*` next to it — which is why status pills had
+ * been rendering grey instead of blue, red or white since the class was
+ * written. Declining to declare the property was the fix, and it is a real one:
+ * Task 65 quotes it as the other valid answer to the ordering defect, the one
+ * `.field` could not use because a field with no utility on it still has to be
+ * full-width and 14px.
+ *
+ * The block is now layered as well, so a colour here *would* be beatable. The
+ * `color` still does not come back: a label has no colour of its own, the
+ * component it labels does, and 26 call sites already say so. What changed is
+ * that `font-size` and `font-weight` are no longer unbeatable either — nothing
+ * contradicts them today, which is exactly the state `.btn` was in.
  */
-.eyebrow {
-  font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0;
-  text-transform: none;
-  line-height: 1.4;
+@layer components {
+  .eyebrow {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+    line-height: 1.4;
+  }
 }
 
-/* Figures: money, scores, timers, seeds. */
-.num {
-  font-family: var(--font-mono), monospace;
-  font-variant-numeric: tabular-nums;
-  font-size: 0.94em;
-  letter-spacing: -0.01em;
+/*
+ * Figures: money, scores, timers, seeds.
+ *
+ * `font-size: 0.94em` is an optical correction, not a size. Mono digits run
+ * large at the same nominal size as the text around them, so this sits them 6%
+ * down against whatever they are next to. That is a deliberate typographic
+ * decision and it is kept — which is why layering this class needed an argument
+ * rather than the one `.field` and `.btn` get.
+ *
+ * **The argument is that `em` already broke it at every call site that wrote a
+ * size.** `0.94em` resolves against the *parent's* computed size, so
+ * `<span class="num text-12">` inside a 14px row did not render 12px, and did
+ * not render `0.94 × 12` either — it rendered `0.94 × 14` = 13.16px. The
+ * author's `text-12` was not merely overridden; it was replaced by a number
+ * that had nothing to do with it, and the figure's size tracked whatever
+ * ancestor happened to be above it. Measured in a browser: `ResultsTab`'s
+ * scoreline (`num shrink-0 text-20`) rendered **14.1px**, the same size as the
+ * team names beside it, so the score did not read as the score; `BidBox`'s
+ * locked-bid figure (`size="xl" className="text-48"`) rendered **14.1px** where
+ * 48px was written. 47 class lists were in that state.
+ *
+ * Layering is what splits the two intents apart, and the split is one the call
+ * sites had already made:
+ *
+ *   - writes no size (34 of them) — the correction *is* the decision, there is
+ *     nothing to beat it, and `0.94em` still applies. These render exactly what
+ *     they rendered before, to the pixel.
+ *   - writes a size (47) — that is a statement about pixels, and it now takes
+ *     effect. Every one of them is a flex item, a fixed-width cell (`w-5`,
+ *     `w-6`, `w-[15rem]` — widths chosen to fit digits at a size), a standalone
+ *     display figure, or a size *prop* on a component whose whole purpose is
+ *     choosing one. None is a figure inline in a sentence; those wrote nothing.
+ *
+ * So no call site loses the correction that wanted it, and none keeps a size
+ * that was never the one on screen. `field-ordering.test.ts` records the
+ * decision for all 81 of them and fails if a new one is added without one.
+ */
+@layer components {
+  .num {
+    font-family: var(--font-mono), monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 0.94em;
+    letter-spacing: -0.01em;
+  }
 }
 
 /*
@@ -285,11 +418,13 @@ h1 {
  * where interface text is read as words. Both references do exactly this — an
  * all-caps or drawn mark in the corner, and nothing else on the page shouting.
  */
-.wordmark {
-  font-family: var(--font-wordmark), system-ui, sans-serif;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 13px;
+@layer components {
+  .wordmark {
+    font-family: var(--font-wordmark), system-ui, sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 13px;
+  }
 }
 
 ::selection {
@@ -306,13 +441,25 @@ h1 {
  * empty state. It has an edge, because a thing that floats should. Regions of
  * a page are not panels; they are separated by space.
  */
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--hair);
-  border-radius: var(--r-lg);
+@layer components {
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--hair);
+    border-radius: var(--r-lg);
+  }
 }
 
-/* The RAF roundel, for the one place that wants an insignia. */
+/*
+ * The RAF roundel, for the one place that wants an insignia — and there is no
+ * such place: no element in `src/**` carries this class. It is left unlayered
+ * for that reason and no other. A rule that never matches an element cannot
+ * lose a utility to anything, so the ordering defect this file was audited for
+ * does not reach it.
+ *
+ * It is dead, and `field-ordering.test.ts` will say so the moment it stops
+ * being: the day something wears `roundel`, the reason above becomes false and
+ * the test demands this block be layered like everything else.
+ */
 .roundel {
   background: radial-gradient(
     circle,
@@ -323,14 +470,16 @@ h1 {
   );
 }
 
-.hatch {
-  background-image: repeating-linear-gradient(
-    -45deg,
-    rgb(var(--hot-rgb) / 0.045) 0px,
-    rgb(var(--hot-rgb) / 0.045) 1px,
-    transparent 1px,
-    transparent 7px
-  );
+@layer components {
+  .hatch {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgb(var(--hot-rgb) / 0.045) 0px,
+      rgb(var(--hot-rgb) / 0.045) 1px,
+      transparent 1px,
+      transparent 7px
+    );
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -342,103 +491,160 @@ h1 {
  * references use a small square-ish radius for every control on the page and
  * reserve the pill for status badges, which is what a pill is actually for.
  */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.006em;
-  line-height: 1;
-  border: 1px solid var(--hair);
-  border-radius: var(--r);
-  background: var(--raised);
-  color: var(--body);
-  padding: 0.5rem 0.85rem;
-  transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
-}
+/*
+ * Layered, and the three variants stay in one block so their order survives.
+ *
+ * `.btn-union` and `.btn-flare` beat `.btn` by coming later at equal
+ * specificity, and so do `.btn-union:hover:not(:disabled)` and
+ * `.btn:hover:not(:disabled)`. Tailwind concatenates the `components` layer in
+ * source order, so wrapping the whole group once keeps every one of those
+ * tie-breaks exactly as it was; splitting them into separate blocks would too,
+ * but this says out loud that the order is load-bearing.
+ *
+ * What this fixes, measured in a browser before and after:
+ *
+ *   - `Button`'s `size="sm"` was dead. `SIZE.sm` is `px-3 py-1.5`, `.btn`
+ *     declares `padding: 0.5rem 0.85rem`, and `.btn` won — so every compact
+ *     button on the site rendered at the full size. 8px/13.6px before,
+ *     6px/12px after. The prop had never done anything.
+ *   - `Stepper`'s two arrows (`btn w-12 justify-center border-r-0 text-16`)
+ *     rendered 13px, not 16px, and kept the border `border-r-0` removed.
+ *   - `DevLoginBanner`'s link (`btn border-flare/50 px-3 py-1.5 text-flare`)
+ *     lost all three: it rendered body grey with a `--hair` border at the full
+ *     padding, so the one control that is supposed to look alarming did not.
+ *   - `/admin/audit`'s filter chips (`btn border px-2 py-1 text-12`) lost
+ *     padding and size; `/events/[slug]`'s tabs (`btn border-0`) kept a border.
+ */
+@layer components {
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.006em;
+    line-height: 1;
+    border: 1px solid var(--hair);
+    border-radius: var(--r);
+    background: var(--raised);
+    color: var(--body);
+    padding: 0.5rem 0.85rem;
+    transition: background 130ms ease, color 130ms ease, border-color 130ms ease;
+  }
 
-.btn:hover:not(:disabled) {
-  background: var(--raised-hi);
-  border-color: var(--edge);
-  color: var(--chalk);
-}
+  .btn:hover:not(:disabled) {
+    background: var(--raised-hi);
+    border-color: var(--edge);
+    color: var(--chalk);
+  }
 
-.btn:focus-visible {
-  outline: 2px solid var(--union);
-  outline-offset: 1px;
-}
+  .btn:focus-visible {
+    outline: 2px solid var(--union);
+    outline-offset: 1px;
+  }
 
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
 
-/* Primary. One per screen, ideally. */
-.btn-union {
-  background: var(--union-deep);
-  border-color: var(--union-deep);
-  color: var(--hot);
-  font-weight: 500;
-}
+  /* Primary. One per screen, ideally. */
+  .btn-union {
+    background: var(--union-deep);
+    border-color: var(--union-deep);
+    color: var(--hot);
+    font-weight: 500;
+  }
 
-.btn-union:hover:not(:disabled) {
-  background: var(--union-hi);
-  border-color: var(--union-hi);
-  color: var(--hot);
-}
+  .btn-union:hover:not(:disabled) {
+    background: var(--union-hi);
+    border-color: var(--union-hi);
+    color: var(--hot);
+  }
 
-/* Destructive. Quiet until you hover it, then unmistakable. */
-.btn-flare {
-  background: transparent;
-  border-color: var(--hair);
-  color: var(--flare-soft);
-}
+  /* Destructive. Quiet until you hover it, then unmistakable. */
+  .btn-flare {
+    background: transparent;
+    border-color: var(--hair);
+    color: var(--flare-soft);
+  }
 
-.btn-flare:hover:not(:disabled) {
-  background: rgb(var(--flare-rgb) / 0.09);
-  border-color: rgb(var(--flare-rgb) / 0.45);
-  color: var(--flare-soft-hi);
+  .btn-flare:hover:not(:disabled) {
+    background: rgb(var(--flare-rgb) / 0.09);
+    border-color: rgb(var(--flare-rgb) / 0.45);
+    color: var(--flare-soft-hi);
+  }
 }
 
 /*
  * Fields get a real border. This is the one place an outline is not decoration:
  * an input has to look like somewhere you can type before you click it, and a
  * borderless field is a guessing game.
+ *
+ * `@layer components` is load-bearing, and it is the whole of Task 38c.
+ *
+ * Every rule in this file is a plain class at 0-1-0, written *after*
+ * `@tailwind utilities` on line 3. A `w-*`, `p*-` or `text-*` utility is also
+ * 0-1-0, so the tie broke on source order and `.field` won it — silently.
+ * Measured in a browser: a `Select` carrying `w-[11rem]` rendered 1010px, and
+ * `TimeSelect`'s `w-auto py-1.5 text-13` lost all three at once (1010px, 14px,
+ * 8px). Twenty-six call sites had written a utility on a field and had it
+ * discarded, and the workaround was a wrapper per call site.
+ *
+ * `.eyebrow` above hit the same wall and answered it by deleting the
+ * declaration, which works for a colour nobody needed a default for. It does
+ * not work here: a field with no utility on it has to stay full-width, 14px and
+ * 0.5rem/0.7rem, and something has to say so.
+ *
+ * So the ordering is fixed rather than the declarations removed. This directive
+ * hoists the block into Tailwind's `components` layer — emitted at line 2,
+ * *before* the utilities — which is where a component class was always supposed
+ * to sit. Specificity is untouched, the defaults below are untouched, and the
+ * tie now breaks the normal way: a utility written on the element wins because
+ * it comes later, exactly as it does on every other element on the site. Write
+ * nothing and `.field` still supplies all of it.
+ *
+ * Note for anyone adding to this block: Tailwind drops an unreferenced
+ * `components` rule at build time, so a selector here must contain a class that
+ * really appears in `src/**`. `.field` does (`cx("field", …)` in Field, Select
+ * and Textarea, and four hand-rolled controls); `field-ordering.test.ts`
+ * compiles this file and fails if any of these five rules stops being emitted.
  */
-.field {
-  background: var(--sunken);
-  border: 1px solid var(--hair);
-  border-radius: var(--r);
-  color: var(--chalk);
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.4;
-  padding: 0.5rem 0.7rem;
-  width: 100%;
-  outline: none;
-  transition: border-color 130ms ease, box-shadow 130ms ease;
-}
+@layer components {
+  .field {
+    background: var(--sunken);
+    border: 1px solid var(--hair);
+    border-radius: var(--r);
+    color: var(--chalk);
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.4;
+    padding: 0.5rem 0.7rem;
+    width: 100%;
+    outline: none;
+    transition: border-color 130ms ease, box-shadow 130ms ease;
+  }
 
-.field:hover:not(:focus) {
-  border-color: var(--edge);
-}
+  .field:hover:not(:focus) {
+    border-color: var(--edge);
+  }
 
-.field:focus {
-  border-color: var(--union);
-  box-shadow: 0 0 0 3px rgb(var(--union-rgb) / 0.16);
-}
+  .field:focus {
+    border-color: var(--union);
+    box-shadow: 0 0 0 3px rgb(var(--union-rgb) / 0.16);
+  }
 
-.field::placeholder {
-  color: var(--dim);
-}
+  .field::placeholder {
+    color: var(--dim);
+  }
 
-/* Native dropdown options, which do not inherit from `.field`. */
-.field option {
-  background: var(--panel);
-  color: var(--body);
+  /* Native dropdown options, which do not inherit from `.field`. */
+  .field option {
+    background: var(--panel);
+    color: var(--body);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -497,51 +703,59 @@ h1 {
   }
 }
 
-.seam,
-.seam-bloom {
-  background-image: linear-gradient(
-    90deg,
-    var(--union-deep) 0%,
-    var(--union) 12%,
-    var(--chalk) 25%,
-    var(--flare) 38%,
-    var(--flare-deep) 50%,
-    var(--flare) 62%,
-    var(--chalk) 75%,
-    var(--union) 88%,
-    var(--union-deep) 100%
-  );
-  background-size: 200% 100%;
-  background-repeat: repeat-x;
-  animation: seam-drift 22s linear infinite;
-}
+/*
+ * Layered as one block, so `.seam`'s own `height`/`opacity`/`overflow` keep
+ * coming after the shared gradient exactly as they do here. Nothing in `src/**`
+ * writes a `h-*`, `opacity-*` or `overflow-*` on either class today; they are
+ * layered because the next person to write one should get it.
+ */
+@layer components {
+  .seam,
+  .seam-bloom {
+    background-image: linear-gradient(
+      90deg,
+      var(--union-deep) 0%,
+      var(--union) 12%,
+      var(--chalk) 25%,
+      var(--flare) 38%,
+      var(--flare-deep) 50%,
+      var(--flare) 62%,
+      var(--chalk) 75%,
+      var(--union) 88%,
+      var(--union-deep) 100%
+    );
+    background-size: 200% 100%;
+    background-repeat: repeat-x;
+    animation: seam-drift 22s linear infinite;
+  }
 
-.seam {
-  position: relative;
-  height: 1px;
-  opacity: 0.8;
-  /*
-   * The sweep travels to `translateX(560%)`, which on an 18%-wide highlight is
-   * a whole page width past the right edge. Without this it widened the
-   * document and put a horizontal scrollbar on every page on the site.
-   */
-  overflow: hidden;
-  /*
-   * The fade at both ends is a mask, not part of the gradient. Fading inside
-   * the gradient would send the transparent stops travelling along with
-   * everything else, so a gap would slide across the page once a cycle.
-   */
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
-}
+  .seam {
+    position: relative;
+    height: 1px;
+    opacity: 0.8;
+    /*
+     * The sweep travels to `translateX(560%)`, which on an 18%-wide highlight is
+     * a whole page width past the right edge. Without this it widened the
+     * document and put a horizontal scrollbar on every page on the site.
+     */
+    overflow: hidden;
+    /*
+     * The fade at both ends is a mask, not part of the gradient. Fading inside
+     * the gradient would send the transparent stops travelling along with
+     * everything else, so a gap would slide across the page once a cycle.
+     */
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  }
 
-.seam::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 18%;
-  background: linear-gradient(90deg, transparent, rgb(var(--hot-rgb) / 0.95), transparent);
-  animation: seam-sweep 9s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  .seam::after {
+    content: "";
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 18%;
+    background: linear-gradient(90deg, transparent, rgb(var(--hot-rgb) / 0.95), transparent);
+    animation: seam-sweep 9s cubic-bezier(0.45, 0, 0.2, 1) infinite;
+  }
 }
 
 /*
@@ -551,16 +765,18 @@ h1 {
  * in step; inheriting an animated background-position across elements is not
  * something to rely on.
  */
-.seam-bloom {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  height: 7px;
-  opacity: 0.3;
-  filter: blur(5px);
-  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
-  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+@layer components {
+  .seam-bloom {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    height: 7px;
+    opacity: 0.3;
+    filter: blur(5px);
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+  }
 }
 
 /*
@@ -576,6 +792,16 @@ h1 {
  * Every stop clears AA on the ground on its own: the darkest is union blue at
  * 5.3:1. A gradient that dips below contrast somewhere in the middle is a
  * word that becomes unreadable for two seconds a cycle.
+ *
+ * **Not layered, and it must not be** — the one rule in this file Task 65 left
+ * winning on purpose. `color: transparent` is not a default somebody might want
+ * to override; it is the hole the gradient is seen through, because
+ * `background-clip: text` paints the image only where the glyph colour is not
+ * opaque. A `text-*` utility that beat it would fill the letterforms with flat
+ * colour and the drift would vanish. The hover rule below is built on exactly
+ * that — see its comment — and `/signin` writes `text-hero` and `text-48`
+ * beside this class today, neither of which this rule declares, so there is
+ * nothing it is eating.
  */
 .wordmark-accent {
   background-image: linear-gradient(
@@ -638,8 +864,17 @@ a.wordmark-accent:hover {
   }
 }
 
-.rise {
-  animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+/*
+ * The animation classes are layered too, and `animate-pulse` on a `SaveIndicator`
+ * is why that is not pedantry: Tailwind's `animate-*` utilities write the same
+ * `animation` shorthand these do, so an unlayered rule here would eat one. The
+ * `prefers-reduced-motion` block at the foot of the file is left unlayered on
+ * purpose — it has to beat all of these, and it still does.
+ */
+@layer components {
+  .rise {
+    animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
 }
 
 @keyframes pulse-ring {
@@ -654,8 +889,10 @@ a.wordmark-accent:hover {
   }
 }
 
-.live-dot {
-  animation: pulse-ring 1.8s ease-out infinite;
+@layer components {
+  .live-dot {
+    animation: pulse-ring 1.8s ease-out infinite;
+  }
 }
 
 /*
@@ -692,10 +929,12 @@ a.wordmark-accent:hover {
   }
 }
 
-.unsaved-bar {
-  animation:
-    bar-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both,
-    bar-refuse 340ms 260ms ease-in-out;
+@layer components {
+  .unsaved-bar {
+    animation:
+      bar-in 260ms cubic-bezier(0.22, 1, 0.36, 1) both,
+      bar-refuse 340ms 260ms ease-in-out;
+  }
 }
 
 @keyframes stamp {
@@ -713,8 +952,10 @@ a.wordmark-accent:hover {
   }
 }
 
-.stamp {
-  animation: stamp 380ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+@layer components {
+  .stamp {
+    animation: stamp 380ms cubic-bezier(0.34, 1.4, 0.64, 1) both;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

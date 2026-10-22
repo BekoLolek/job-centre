@@ -6,8 +6,9 @@
  */
 
 import AppHeader from "@/components/AppHeader";
+import AdminNav from "@/components/admin/AdminNav";
 import HostQueue from "@/components/admin/HostQueue";
-import { Eyebrow, Page, Section } from "@/components/ui";
+import { Page, PageHeader, Section } from "@/components/ui";
 import { linkableEvents, listHostApplications } from "@/lib/hosting";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -29,18 +30,17 @@ export default async function AdminHostPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader admin />
+      <AppHeader admin>
+        <AdminNav />
+      </AppHeader>
 
-      <Page>
-        <header className="mb-2">
-          <Eyebrow className="mb-2">Admin · Hosting</Eyebrow>
-          <h1 className="text-36">Who wants to run something</h1>
-          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
-            Build the event from the application, fix what needs fixing, then approve onto it.
-            From that point they can do everything to that one event that you can, and nothing
-            at all to any other. They cannot reach the rest of the admin area.
-          </p>
-        </header>
+      {/* `reading`: one column of application cards, each read top to bottom. */}
+      <Page width="reading" className="space-y-6">
+        <PageHeader
+          eyebrow="Admin · Hosts"
+          title="Who wants to run something"
+          intro="Build the event from the application, fix what needs fixing, then approve onto it. From that point they can do everything to that one event that you can, and nothing at all to any other. They cannot reach the rest of the admin area."
+        />
 
         <Section
           first

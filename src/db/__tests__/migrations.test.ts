@@ -51,6 +51,10 @@ describe("migrations", () => {
     expect(await tableNames(ctx.client)).toEqual([
       "accounts",
       "admin_allowlist",
+      // R-201, R-202: an admin's own wording for one announcement kind, and
+      // who it mentions. drizzle/0029 — and it starts empty on every install,
+      // because the absence of a row *is* "unedited".
+      "announcement_templates",
       "applications",
       "audit_log",
       "availability",
@@ -272,7 +276,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(43);
+    expect(await tableNames(ctx.client)).toHaveLength(44);
   });
 
   it("ships the default points table a new championship starts with", async () => {
@@ -1180,6 +1184,210 @@ describe("a template carries the whole setup (drizzle/0027)", () => {
     ).toEqual([]);
     // The one thing it always did carry is still carried.
     expect(created.data.config.waitlist).toBe(false);
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});
+
+describe("an announcement's wording, and no backfill (drizzle/0029)", () => {
+  /**
+   * The claim 0029's comment makes, asked of the real builders instead of left
+   * as prose.
+   *
+   * The file has **no data statement at all** — like drizzle/0027 and unlike
+   * 0015, 0018, 0020 and 0025 — so what has to be proved is its reason: that
+   * the absence of a row *is* "unedited", and that every announcement on a
+   * deployment that had this migration applied under it goes on posting
+   * **byte for byte** what it posted before. A schema-shaped test would only
+   * prove the SQL parses.
+   *
+   * The byte comparison is against the output of the same builders called with
+   * no override at all, which is the code path every install was on before
+   * this commit — so this is not a golden string somebody typed, it is the two
+   * paths asserted equal.
+   */
+  it("leaves every kind posting exactly what it posted before the table existed", async () => {
+    const client = new PGlite();
+    await replayUpTo(client, "0029");
+
+    const hasTable = async () =>
+      (
+        await client.query(
+          `select 1 from information_schema.tables
+           where table_schema = 'public' and table_name = 'announcement_templates'`
+        )
+      ).rows.length > 0;
+
+    // Not there yet, which is what makes this a deployment rather than a
+    // fresh database.
+    expect(await hasTable()).toBe(false);
+
+    await runFile(client, "0029_announcement_templates");
+    expect(await hasTable()).toBe(true);
+
+    /*
+     * **Empty.** The whole of the no-backfill claim: the migration writes no
+     * rows, so there is no frozen copy of any kind's sentence anywhere.
+     */
+    const rows = await client.query<{ total: string }>(
+      `select count(*)::text as total from announcement_templates`
+    );
+    expect(rows.rows[0].total).toBe("0");
+
+    const db = createPgliteDatabase(client);
+    const { getAnnouncementTemplates } = await import("@/lib/discord");
+    const announce = await import("@/lib/announce");
+
+    // Read through the function the announcers actually use, over the database
+    // the migration just created.
+    const stored = await getAnnouncementTemplates(db);
+
+    const at = new Date("2026-05-01T18:00:00Z");
+    const top = {
+      lead: "changed",
+      rows: [{ position: 1, name: "Beko Lolek", points: 25, level: false }],
+    } as unknown as Parameters<typeof announce.standingsMessage>[0]["top"];
+
+    /*
+     * One pair per kind: the message built with what the database says, and the
+     * message built with no override at all. The first is what a deployment
+     * posts after this migration; the second is what it posted before there was
+     * a table to read. `JSON.stringify` because "byte for byte" is a claim
+     * about the body Discord receives, key order included.
+     */
+    const pairs: Array<[string, string, string]> = [
+      [
+        "event_published",
+        JSON.stringify(
+          announce.eventPublishedMessage(
+            { title: "Friday REPO night", slug: "friday-repo", capacity: 12, startsAt: at },
+            stored.event_published
+          )
+        ),
+        JSON.stringify(
+          announce.eventPublishedMessage({
+            title: "Friday REPO night",
+            slug: "friday-repo",
+            capacity: 12,
+            startsAt: at,
+          })
+        ),
+      ],
+      ...(["application_accepted", "application_waitlisted", "application_declined"] as const).map(
+        (kind): [string, string, string] => [
+          kind,
+          JSON.stringify(
+            announce.applicationDecidedMessage(
+              kind,
+              { member: "Beko Lolek", eventTitle: "Friday REPO night", slug: "f", waitlistPosition: 3 },
+              stored[kind]
+            )
+          ),
+          JSON.stringify(
+            announce.applicationDecidedMessage(kind, {
+              member: "Beko Lolek",
+              eventTitle: "Friday REPO night",
+              slug: "f",
+              waitlistPosition: 3,
+            })
+          ),
+        ]
+      ),
+      [
+        "draft_lot_sold",
+        JSON.stringify(
+          announce.lotSoldMessage(
+            { player: "Beko Lolek", team: "Rivals Red", price: 1200, eventTitle: "F", slug: "f" },
+            stored.draft_lot_sold
+          )
+        ),
+        JSON.stringify(
+          announce.lotSoldMessage({
+            player: "Beko Lolek",
+            team: "Rivals Red",
+            price: 1200,
+            eventTitle: "F",
+            slug: "f",
+          })
+        ),
+      ],
+      [
+        "match_result",
+        JSON.stringify(
+          announce.matchResultMessage(
+            {
+              label: "Final",
+              teamA: "Rivals Red",
+              teamB: "Rivals Blue",
+              gamesWonA: 2,
+              gamesWonB: 1,
+              winner: "Rivals Red",
+              eventTitle: "F",
+              slug: "f",
+            },
+            stored.match_result
+          )
+        ),
+        JSON.stringify(
+          announce.matchResultMessage({
+            label: "Final",
+            teamA: "Rivals Red",
+            teamB: "Rivals Blue",
+            gamesWonA: 2,
+            gamesWonB: 1,
+            winner: "Rivals Red",
+            eventTitle: "F",
+            slug: "f",
+          })
+        ),
+      ],
+      [
+        "standings_changed",
+        JSON.stringify(
+          announce.standingsMessage(
+            { seasonName: "Spring 2026", slug: "s", eventTitle: "F", top },
+            stored.standings_changed
+          )
+        ),
+        JSON.stringify(
+          announce.standingsMessage({ seasonName: "Spring 2026", slug: "s", eventTitle: "F", top })
+        ),
+      ],
+    ];
+
+    for (const [kind, afterMigration, beforeTable] of pairs) {
+      expect(afterMigration, `${kind} changed what it posts`).toBe(beforeTable);
+      // And the two things that would make it a ping: no mention line at all,
+      // and nothing Discord is allowed to honour.
+      expect(JSON.parse(afterMigration).content, kind).toBeUndefined();
+      expect(JSON.parse(afterMigration).allowed_mentions, kind).toEqual({ parse: [] });
+    }
+
+    /*
+     * The column that carries the other half of "unedited": `body` is
+     * nullable, so a row created only to choose a mention does not freeze one
+     * variant of the compiled copy. Asserted against the database rather than
+     * the schema file, because a `NOT NULL` added later would silently make
+     * that state unreachable.
+     */
+    const bodyColumn = await client.query<{ is_nullable: string; column_default: string | null }>(
+      `select is_nullable, column_default from information_schema.columns
+       where table_name = 'announcement_templates' and column_name = 'body'`
+    );
+    expect(bodyColumn.rows[0].is_nullable).toBe("YES");
+    expect(bodyColumn.rows[0].column_default).toBeNull();
+
+    // And the mention defaults are the inert ones: nobody is pinged by a row
+    // somebody creates and leaves alone.
+    await client.exec(`insert into announcement_templates (kind) values ('event_published')`);
+    const [fresh] = (
+      await client.query<{ mention_everyone: boolean; mention_role_ids: string[]; version: number }>(
+        `select mention_everyone, mention_role_ids, version from announcement_templates`
+      )
+    ).rows;
+    expect(fresh.mention_everyone).toBe(false);
+    expect(fresh.mention_role_ids).toEqual([]);
+    expect(fresh.version).toBe(1);
 
     await client.close();
   }, PGLITE_BOOT_BUDGET_MS);

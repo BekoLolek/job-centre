@@ -513,6 +513,21 @@ export type StageInput = {
  *
  * Deleting a stage takes its matches with it, so a stage with a played game is
  * refused — the same rule `generateMatches` applies, and for the same reason.
+ *
+ * ## Everything is checked before anything is written
+ *
+ * `recordGames`' two passes, for `recordGames`' reason and the rule in
+ * docs/decisions/004-refusals-inside-transactions.md: nothing here calls
+ * `tx.rollback()`, and drizzle **commits** a transaction whose callback returns
+ * rather than throws. The delete below used to run before the survivors were
+ * checked, and both of the checks underneath it can refuse — a stage id that
+ * names nothing, and a kind change on a stage that has results. So one save
+ * that removed an empty stage *and* reshaped a played one deleted the empty
+ * stage, committed it, and told the manager nothing had happened.
+ *
+ * The whole input list is therefore validated first, then the removals, then
+ * the delete, then the writes. Two loops instead of one, and the second one
+ * cannot refuse.
  */
 export async function setStages(
   eventId: string,
@@ -536,12 +551,41 @@ export async function setStages(
     const existing = await readStageRows(tx, eventId);
     const keep = new Set(input.map((s) => s.id).filter((id): id is string => Boolean(id)));
     const removed = existing.filter((row) => !keep.has(row.id));
+    const byId = new Map(existing.map((row) => [row.id, row]));
+
+    /*
+     * Pass one: decide. `planned` is what each row of the input would become,
+     * and not one of them has been written yet — nor has the delete below run,
+     * which is the point. Both refusals in here were under the delete.
+     */
+    const planned: Array<{ sort: number; name: string; kind: StageKind; config: StageConfig; current: Stage | undefined }> = [];
+    for (const [sort, stage] of input.entries()) {
+      const kind = stage.kind as StageKind;
+      const current = stage.id ? byId.get(stage.id) : undefined;
+
+      if (stage.id && !current) return fail("One of those stages no longer exists.");
+
+      // Changing the shape of a stage that has been played is not an edit.
+      if (current && kind !== current.kind && (await stageHasResults(tx, current.id))) {
+        return fail(`"${current.name ?? current.kind}" has results recorded, so its format cannot change.`);
+      }
+
+      planned.push({
+        sort,
+        name: cleanText(stage.name, NAME_MAX) || defaultStageName(kind),
+        kind,
+        config: normaliseStageConfig(kind, stage.config ?? null),
+        current,
+      });
+    }
 
     for (const row of removed) {
       if (await stageHasResults(tx, row.id)) {
         return fail(`"${row.name ?? row.kind}" has results recorded, so it cannot be removed.`);
       }
     }
+
+    // Pass two: write. Nothing below refuses.
     if (removed.length) {
       await tx.delete(stages).where(
         inArray(
@@ -551,22 +595,9 @@ export async function setStages(
       );
     }
 
-    const byId = new Map(existing.map((row) => [row.id, row]));
     const out: Stage[] = [];
-
-    for (const [sort, stage] of input.entries()) {
-      const kind = stage.kind as StageKind;
-      const config = normaliseStageConfig(kind, stage.config ?? null);
-      const name = cleanText(stage.name, NAME_MAX) || defaultStageName(kind);
-      const current = stage.id ? byId.get(stage.id) : undefined;
-
-      if (stage.id && !current) return fail("One of those stages no longer exists.");
-
+    for (const { sort, name, kind, config, current } of planned) {
       if (current) {
-        // Changing the shape of a stage that has been played is not an edit.
-        if (kind !== current.kind && (await stageHasResults(tx, current.id))) {
-          return fail(`"${current.name ?? current.kind}" has results recorded, so its format cannot change.`);
-        }
         const [row] = await tx
           .update(stages)
           .set({ name, kind, sort, config })
@@ -2109,6 +2140,22 @@ async function overrideIn(
  *    mistake — clear the series, then flip.
  *
  * There is no re-flow afterwards. A coin moves nobody's start time.
+ *
+ * ## Every deciding read is taken after the lock
+ *
+ * The same rule {@link setWinnerOverride} and {@link setMatchSchedule} follow,
+ * and this function needs it for the one decision it makes that is not about a
+ * game: **whether the row is there at all**. The first select asks one
+ * question — which event is this — because the lock has to be named before it
+ * can be taken; everything else comes from the reads underneath it.
+ *
+ * Taken before the wait, that existence check is a snapshot from before this
+ * transaction queued for the lock, and UC-18 9's regeneration is what makes it
+ * stale: rebuilding a stage deletes and re-inserts every match in it, so a
+ * regeneration committing in that gap left the `update` below matching no rows
+ * at all while this function still answered `ok` with a coin it had not
+ * written. The archive refusal and the played check were always made under the
+ * lock; this one was not.
  */
 export async function reflipMatch(
   matchId: string,
@@ -2120,14 +2167,28 @@ export async function reflipMatch(
   }
 
   return database.transaction(async (tx) => {
-    const [match] = await tx.select().from(matches).where(eq(matches.id, matchId)).limit(1);
-    if (!match) return fail("That match no longer exists.");
+    const [found] = await tx
+      .select({ id: matches.id, eventId: matches.eventId })
+      .from(matches)
+      .where(eq(matches.id, matchId))
+      .limit(1);
+    if (!found) return fail("That match no longer exists.");
 
-    const event = await lockEvent(tx, match.eventId);
+    const event = await lockEvent(tx, found.eventId);
     if (!event) return fail("That event no longer exists.");
 
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
+
+    // Re-read under the lock. The id is all this function decides on — it
+    // writes the coin rather than deriving it — so the id is all this asks
+    // for; what matters is *when* it is asked.
+    const [match] = await tx
+      .select({ id: matches.id })
+      .from(matches)
+      .where(eq(matches.id, matchId))
+      .limit(1);
+    if (!match) return fail("That match no longer exists.");
 
     const played = await tx
       .select({ id: matchGames.id })

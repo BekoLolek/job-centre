@@ -51,6 +51,7 @@ import {
   Button,
   Eyebrow,
   Page,
+  PageHeader,
   Panel,
   StatTile,
 } from "@/components/ui";
@@ -152,7 +153,8 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
     <div className="min-h-screen">
       <AppHeader />
 
-      <Page className="space-y-5">
+      {/* `reading`: the application form is one column of questions. */}
+      <Page width="reading" className="space-y-6">
         <nav className="text-12 text-muted">
           <Link href={`/events/${event.slug}`} className="hover:text-union">
             ← {event.title}
@@ -160,36 +162,39 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
         </nav>
 
         {/* --- Which event, and how much of it is left ---------------- */}
-        <Panel as="header" className="rise">
-          <div className="flex flex-wrap items-start gap-6">
-            <div className="min-w-0">
-              <div className="mb-3 flex flex-wrap items-center gap-2">
+        <PageHeader
+          eyebrow="Applying to"
+          title={event.title}
+          /*
+           * The pills moved from above the eyebrow to under the title. One
+           * header means one order — eyebrow, name, then what is true about it
+           * — and the state of the event is not what orients you on a page you
+           * arrived at from that event.
+           */
+          intro={
+            <>
+              <span className="flex flex-wrap items-center gap-2">
                 <EventStatusPill status={event.status} />
                 <ApplicationsPill state={form.state} />
                 <Badge>{eventTypeLabel(event.type)}</Badge>
                 {event.game && <Badge tone="union">{event.game.name}</Badge>}
-              </div>
-
-              <Eyebrow className="mb-2">Applying to</Eyebrow>
-              <h1 className="font-display text-36 leading-none">
-                {event.title}
-              </h1>
-
-              <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+              </span>
+              <span className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
                 <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
                 <EventSeats seats={event.seats} />
-              </div>
-            </div>
-
-            {form.state.open && form.state.closesAt && (
+              </span>
+            </>
+          }
+          aside={
+            form.state.open && form.state.closesAt ? (
               <StatTile
-                className="ml-auto text-right"
+                className="text-right"
                 label="Applications close in"
                 value={<Countdown to={form.state.closesAt} passed="Closed" />}
               />
-            )}
-          </div>
-        </Panel>
+            ) : undefined
+          }
+        />
 
         {/* --- Both entry rules, said before anything is filled in ---- */}
         {rules.length > 0 && (

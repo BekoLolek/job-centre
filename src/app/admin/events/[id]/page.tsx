@@ -216,7 +216,15 @@ export default async function AdminEventPage({
         <AdminNav />
       </AppHeader>
 
-      <Page className="space-y-6">
+      {/*
+        `wide`: the densest screen on the site. The applicants table is
+        `min-w-[820px]`, the schedule and bracket tabs draw a grid per day, and
+        the teams tab runs four `min-w-[11rem]` columns — all of them inside
+        their own horizontal scrollers, and every pixel here is a pixel they do
+        not have to scroll. The page header is `EventEditor`'s, because the
+        title, the state and the counts are all its own `event`.
+      */}
+      <Page width="wide" className="space-y-6">
         <EventEditor
           event={event}
           /*

@@ -16,7 +16,7 @@
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import GamesManager from "@/components/admin/GamesManager";
-import { Eyebrow, Page, StatTile } from "@/components/ui";
+import { Page, PageHeader, StatTile } from "@/components/ui";
 import { loadAdminGames } from "@/lib/admin-games";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -43,31 +43,36 @@ export default async function AdminGamesPage() {
         <AdminNav />
       </AppHeader>
 
+      {/* `standard`: a list of games, each with its questions under it. */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Profiles</Eyebrow>
-            <h1 className="font-display text-36 leading-none">
-              GAMES &amp; QUESTIONS
-            </h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
+        <PageHeader
+          eyebrow="Admin · Games"
+          /*
+           * Sentence case. It was the only uppercase `<h1>` on the site, and
+           * `globals.css` is explicit that the wordmark is the one drawn mark
+           * and nothing else on the page shouts.
+           */
+          title="Games and questions"
+          intro={
+            <>
               Every question a member is asked lives here. Add a game, give it the questions
               you want answered, and it appears on everyone&apos;s profile straight away —
               that answer then pre-fills every application, which is the bit Google Forms
               could never do.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile label="Games" value={`${active}/${view.games.length}`} />
-            <StatTile label="Questions" value={questions} />
-            <StatTile
-              label="Answers"
-              value={answers}
-              valueClassName={answers > 0 ? "text-body" : "text-muted"}
-            />
-          </div>
-        </header>
+            </>
+          }
+          aside={
+            <>
+              <StatTile label="Games" value={`${active}/${view.games.length}`} />
+              <StatTile label="Questions" value={questions} />
+              <StatTile
+                label="Answers"
+                value={answers}
+                valueClassName={answers > 0 ? "text-body" : "text-muted"}
+              />
+            </>
+          }
+        />
 
         <GamesManager view={view} />
 

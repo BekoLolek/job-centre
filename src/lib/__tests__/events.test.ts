@@ -13,7 +13,13 @@ import {
   profileFields,
   profileValues,
 } from "@/db";
-import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import {
+  PUBLISHABLE,
+  type TestDatabase,
+  committingAfter,
+  freshDatabase,
+  makeUser,
+} from "@/db/__tests__/helpers";
 import { RIVALS_RANK_LADDER } from "@/db/seed";
 import {
   type CreateEventInput,
@@ -201,6 +207,12 @@ async function lastSeatEvent(
  * `between` to completion before it is issued. Everything read before that
  * point is then stale, which pins the read-write gap a race needs without
  * relying on how two promises happen to interleave.
+ *
+ * Kept local rather than shared with the `committingAfter` this file imports
+ * from `@/db/__tests__/helpers`. They fire in different places: that one before
+ * a `BEGIN`, this one mid-statement, aimed at `.set().where().returning()` and
+ * hardcoding that chain. Task 58 merged only the six helpers that were
+ * byte-identical and explains beside the shared one why the rest were not.
  */
 function writingAfter(between: () => Promise<unknown>): Database {
   let pending: (() => Promise<unknown>) | null = between;
@@ -219,33 +231,6 @@ function writingAfter(between: () => Promise<unknown>): Database {
           }),
         }),
       });
-    },
-  });
-}
-
-/**
- * This file's database, except that the first transaction it opens runs
- * `between` to completion first -- `committingAfter` in
- * `championship-results.test.ts` and `admin-users.test.ts`, for the window
- * between a seat freeing and the promotion that fills it.
- *
- * Sequenced rather than raced. Two seats freeing at once is not a thing a timer
- * can be trusted to reproduce, and a test that had to *win* a race to see the
- * bug would pass by luck on the days it did not. This pins the interleave
- * exactly: everything the outer call could have read before it opened its
- * transaction is stale, because the inner one has already committed.
- */
-function committingAfter(between: () => Promise<unknown>): Database {
-  let pending: (() => Promise<unknown>) | null = between;
-  return new Proxy(db, {
-    get(target, property, receiver) {
-      if (property !== "transaction") return Reflect.get(target, property, receiver);
-      return async (run: Parameters<Database["transaction"]>[0]) => {
-        const first = pending;
-        pending = null;
-        if (first) await first();
-        return target.transaction(run);
-      };
     },
   });
 }
@@ -1439,7 +1424,7 @@ describe("the waitlist", () => {
       await withdrawApplication(
         event.id,
         a,
-        committingAfter(() => withdrawApplication(event.id, b, db))
+        committingAfter(db, () => withdrawApplication(event.id, b, db))
       )
     );
 
@@ -1476,7 +1461,7 @@ describe("the waitlist", () => {
         holder?.id ?? "",
         "declined",
         { now: NOW },
-        committingAfter(() => withdrawApplication(event.id, b, db))
+        committingAfter(db, () => withdrawApplication(event.id, b, db))
       )
     );
 

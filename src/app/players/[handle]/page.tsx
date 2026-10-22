@@ -37,6 +37,7 @@ import {
   EmptyState,
   Eyebrow,
   Page,
+  PageHeader,
   Panel,
   StatTile,
   cx,
@@ -115,26 +116,48 @@ export default async function PlayerPage({
     <div className="min-h-screen">
       <AppHeader />
 
+      {/* `standard`: a season list and an event history, both wrapping rows. */}
       <Page className="space-y-6">
         {/* --- Who --------------------------------------------------- */}
-        <Panel as="header" className="rise">
-          <div className="flex flex-wrap items-center gap-5">
-            <Avatar name={profile.displayName} src={profile.avatarUrl} size="lg" />
-            <div className="min-w-0">
-              <Eyebrow className="mb-1">/players/{profile.handle}</Eyebrow>
-              <h1 className="font-display text-36 leading-none">
-                {profile.displayName}
-              </h1>
-              {totals.won > 0 && (
-                <p className="mt-2">
-                  <Badge tone="union">
-                    {totals.won === 1 ? "Winner" : `${totals.won}× winner`}
-                  </Badge>
-                </p>
-              )}
-            </div>
-
-            <div className="ml-auto flex flex-wrap gap-8">
+        <PageHeader
+          lead={<Avatar name={profile.displayName} src={profile.avatarUrl} size="lg" />}
+          eyebrow={`/players/${profile.handle}`}
+          title={profile.displayName}
+          /* `undefined` rather than an empty node: a player with no draft
+             history has nothing to say here, and an empty intro would still
+             take its top margin. */
+          intro={
+            totals.won === 0 && totals.drafted === 0 ? undefined : (
+              <>
+                {totals.won > 0 && (
+                  <span className="block">
+                    <Badge tone="union">
+                      {totals.won === 1 ? "Winner" : `${totals.won}× winner`}
+                    </Badge>
+                  </span>
+                )}
+                {totals.drafted > 0 && (
+                  <span
+                    className={cx(
+                      "flex flex-wrap items-baseline gap-x-8 gap-y-2",
+                      totals.won > 0 && "mt-3"
+                    )}
+                  >
+                    <span className="flex items-baseline gap-2">
+                      <Eyebrow as="span">Total paid for them</Eyebrow>
+                      <Money value={totals.spent} />
+                    </span>
+                    <span className="flex items-baseline gap-2">
+                      <Eyebrow as="span">Top price</Eyebrow>
+                      <Money value={totals.top} />
+                    </span>
+                  </span>
+                )}
+              </>
+            )
+          }
+          aside={
+            <>
               <StatTile label="Events" value={totals.events} />
               <StatTile
                 label="Drafted"
@@ -151,22 +174,9 @@ export default async function PlayerPage({
                 value={totals.podiums}
                 valueClassName={totals.podiums > 0 ? "text-body" : "text-muted"}
               />
-            </div>
-          </div>
-
-          {totals.drafted > 0 && (
-            <div className="mt-5 flex flex-wrap items-baseline gap-x-8 gap-y-2 border-t border-hair pt-4">
-              <span className="flex items-baseline gap-2">
-                <Eyebrow as="span">Total paid for them</Eyebrow>
-                <Money value={totals.spent} />
-              </span>
-              <span className="flex items-baseline gap-2">
-                <Eyebrow as="span">Top price</Eyebrow>
-                <Money value={totals.top} />
-              </span>
-            </div>
-          )}
-        </Panel>
+            </>
+          }
+        />
 
         {/* --- Seasons ------------------------------------------------ */}
         {seasons.length > 0 && (

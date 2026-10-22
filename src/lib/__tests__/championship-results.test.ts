@@ -10,7 +10,12 @@ import {
   teamMembers,
   teams,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import {
+  type TestDatabase,
+  committingAfter,
+  freshDatabase,
+  makeUser,
+} from "@/db/__tests__/helpers";
 import {
   type ChampionshipStanding,
   type CountingEventInput,
@@ -158,29 +163,6 @@ function pointsFor(rows: ChampionshipStanding[], userId: string): number {
 /** Where one member sits in the season. */
 function positionOf(rows: ChampionshipStanding[], userId: string): number | null {
   return rows.find((row) => row.userId === userId)?.position ?? null;
-}
-
-/**
- * A handle whose `transaction` runs `between` first — `writingAfter` in
- * `events.test.ts`, for the window between this write's reads and its
- * statements.
- *
- * Sequenced rather than raced: the window it pins is one transaction wide, and
- * a test that had to *win* a race to see it would pass by luck.
- */
-function committingAfter(between: () => Promise<unknown>): Database {
-  let pending: (() => Promise<unknown>) | null = between;
-  return new Proxy(db, {
-    get(target, property, receiver) {
-      if (property !== "transaction") return Reflect.get(target, property, receiver);
-      return async (run: Parameters<Database["transaction"]>[0]) => {
-        const first = pending;
-        pending = null;
-        if (first) await first();
-        return target.transaction(run);
-      };
-    },
-  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -579,7 +561,7 @@ describe("when a result may be recorded", () => {
     const result = await setPlacements(
       eventId,
       [{ id: ana, position: 1 }],
-      committingAfter(close)
+      committingAfter(db, close)
     );
 
     expect(result).toEqual({ ok: false, error: CHAMPIONSHIP_LOCKED_REFUSAL });

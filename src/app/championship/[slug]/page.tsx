@@ -61,7 +61,8 @@ export default async function ChampionshipPage({
   return (
     <div className="min-h-screen">
       <AppHeader />
-      <Page className="space-y-8">
+      {/* `standard`, and the header is `Season`'s — see `/championship`. */}
+      <Page className="space-y-6">
         <Season
           page={page}
           past={finished.filter((other) => other.slug !== season.slug)}

@@ -122,6 +122,14 @@ async function standings(championshipId: string): Promise<ChampionshipStanding[]
  *
  * Sequenced rather than raced: the window it pins is one statement wide, and a
  * test that had to *win* a race to see it would be a test that passes by luck.
+ *
+ * Not shared, on purpose. Task 58 merged the six identical `committingAfter`s
+ * into `src/db/__tests__/helpers.ts` and left the three `insertingAfter`s
+ * where they are, because each is aimed at a different builder chain — this one
+ * at `.select().returning()`, `hosting.test.ts` at
+ * `.values().onConflictDoNothing()`, `waivers.test.ts` at a third shape. The
+ * aim is the part that drifts, and it is the part a shared helper could not
+ * hold; `helpers.ts` has the full reasoning.
  */
 function insertingAfter(between: () => Promise<unknown>): Database {
   let pending: (() => Promise<unknown>) | null = between;

@@ -51,6 +51,7 @@ import {
   EmptyState,
   Eyebrow,
   Page,
+  PageHeader,
   Panel,
   StatTile,
   cx,
@@ -204,37 +205,42 @@ export default async function EventPage({
         )}
 
         {/* --- Header ----------------------------------------------- */}
-        <Panel as="header" padding="none" className="overflow-hidden rise">
-          {event.bannerUrl && (
-            <div
-              aria-hidden
-              className="h-24 w-full border-b border-hair bg-raised bg-cover bg-center"
-              style={{ backgroundImage: `url(${JSON.stringify(event.bannerUrl)})` }}
-            />
-          )}
-
-          <div className="grid gap-6 p-6 lg:grid-cols-[1.6fr_1fr]">
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
+        <PageHeader
+          banner={
+            event.bannerUrl ? (
+              <div
+                aria-hidden
+                className="h-24 w-full rounded border border-hair bg-raised bg-cover bg-center"
+                style={{ backgroundImage: `url(${JSON.stringify(event.bannerUrl)})` }}
+              />
+            ) : undefined
+          }
+          /* The section, not the thing: `/events` says the same, and the
+             title under it is what distinguishes this page from that one. */
+          eyebrow="Job Centre · Events"
+          title={event.title}
+          intro={
+            <>
+              <span className="flex flex-wrap items-center gap-2">
                 <EventStatusPill status={event.status} />
                 <ApplicationsPill state={event.applicationsState} />
                 <Badge>{eventTypeLabel(event.type)}</Badge>
                 {event.game && <Badge tone="union">{event.game.name}</Badge>}
-              </div>
-
-              <h1 className="font-display text-48 leading-[0.9]">{event.title}</h1>
-
-              <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
-                <EventDateRange
-                  startsAt={event.startsAt}
-                  endsAt={event.endsAt}
-                  className="text-14"
-                />
+              </span>
+              <span className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2">
+                <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
                 <EventSeats seats={event.seats} size="md" />
-              </div>
-            </div>
-
-            <div className="space-y-5 border-t border-hair pt-5 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+              </span>
+            </>
+          }
+          /*
+           * The column that used to sit behind a `lg:border-l` inside the
+           * header panel. It is the same content in the same place; what it no
+           * longer does is inset the title from the page column, which is the
+           * one edge the shell exists to hold.
+           */
+          aside={
+            <div className="w-full space-y-5 sm:w-auto">
               {event.startsAt && (
                 <StatTile
                   label="Starts in"
@@ -265,8 +271,8 @@ export default async function EventPage({
 
               <EventAction action={action} />
             </div>
-          </div>
-        </Panel>
+          }
+        />
 
         {/* --- The podium, once somebody has won -------------------- */}
         {podium.length > 0 && (

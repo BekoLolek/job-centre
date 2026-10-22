@@ -19,8 +19,8 @@ import { viewerAction } from "@/components/events";
 import {
   Alert,
   Button,
-  Eyebrow,
   Page,
+  PageHeader,
   Section,
   StatTile,
   plural,
@@ -152,35 +152,35 @@ export default async function MyEventsPage({
     <div className="min-h-screen">
       <AppHeader />
 
+      {/* `standard`: a card per application, each with its own availability row. */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">
-              {user.displayName ?? user.name ?? "Member"} · Applications
-            </Eyebrow>
-            <h1 className="font-display text-36 leading-none">My events</h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
+        <PageHeader
+          eyebrow={`${user.displayName ?? user.name ?? "Member"} · Applications`}
+          title="My events"
+          intro={
+            <>
               Everything you have applied to. Availability and the &quot;still coming?&quot;
               answer save the moment you tap them — there is no submit button on this page.
-            </p>
-          </div>
-
-          {rows.length > 0 && (
-            <div className="ml-auto flex gap-8">
-              <StatTile
-                label="Seats"
-                value={accepted}
-                valueClassName={accepted > 0 ? "text-body" : "text-muted"}
-              />
-              <StatTile
-                label="Queueing"
-                value={queued}
-                valueClassName={queued > 0 ? "text-union" : "text-muted"}
-              />
-              <StatTile label="Applications" value={rows.length} />
-            </div>
-          )}
-        </header>
+            </>
+          }
+          aside={
+            rows.length > 0 ? (
+              <>
+                <StatTile
+                  label="Seats"
+                  value={accepted}
+                  valueClassName={accepted > 0 ? "text-body" : "text-muted"}
+                />
+                <StatTile
+                  label="Queueing"
+                  value={queued}
+                  valueClassName={queued > 0 ? "text-union" : "text-muted"}
+                />
+                <StatTile label="Applications" value={rows.length} />
+              </>
+            ) : undefined
+          }
+        />
 
         {/* --- Just withdrew: what it cost, if anything ---------------- */}
         {gone && (

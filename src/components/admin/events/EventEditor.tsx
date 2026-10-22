@@ -8,7 +8,7 @@ import {
   Eyebrow,
   Field,
   Icon,
-  Panel,
+  PageHeader,
   Tabs,
   cx,
   plural,
@@ -178,45 +178,57 @@ function EditorBody({
 
   return (
     <div className="space-y-6">
-      {/* --- Header ------------------------------------------------- */}
-      <Panel as="header" padding="none" className="rise">
-        <div className="flex flex-wrap items-start gap-4">
-          <div className="min-w-0 flex-1">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <EventStatusPill status={event.status} />
-              <Badge>{eventTypeLabel(event.type)}</Badge>
-              {event.game && <Badge tone="union">{event.game.name}</Badge>}
-              {event.rankLadder.length > 0 && (
-                <Badge>{plural(event.rankLadder.length, "rank")}</Badge>
+      {/*
+        --- Header -------------------------------------------------
+        `/admin/events/[id]` hands its page header here, the way the
+        championship routes hand theirs to `Season`: the title, the state and
+        the counts are all derived from the editor's own `event`, and a copy of
+        them in the route file would be a second place for them to disagree.
+        The eyebrow is `Admin · Events`, the same label `ADMIN_SECTIONS` gives
+        the link in the bar; the public address moved down into the intro, which
+        is where the rest of what-is-true-about-this-event already was.
+      */}
+      <div>
+        <PageHeader
+          eyebrow="Admin · Events"
+          title={event.title}
+          intro={
+            <>
+              <span className="flex flex-wrap items-center gap-2">
+                <EventStatusPill status={event.status} />
+                <Badge>{eventTypeLabel(event.type)}</Badge>
+                {event.game && <Badge tone="union">{event.game.name}</Badge>}
+                {event.rankLadder.length > 0 && (
+                  <Badge>{plural(event.rankLadder.length, "rank")}</Badge>
+                )}
+              </span>
+              <span className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                <span className="num text-12 text-muted">/events/{event.slug}</span>
+                <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
+                <EventSeats seats={event.seats} />
+                <span className="num text-12 text-muted">
+                  {plural(event.days.length, "day")} ·{" "}
+                  {plural(event.questions.length, "question")}
+                </span>
+              </span>
+            </>
+          }
+          aside={
+            <div className="flex flex-col items-end gap-2">
+              <Button href="/admin/events" size="sm">
+                ← All events
+              </Button>
+              {event.status !== "draft" && (
+                <Eyebrow as="span" className="text-dim">
+                  Visible to members
+                </Eyebrow>
               )}
             </div>
-
-            <h1 className="text-30">{event.title}</h1>
-            <Eyebrow className="mt-2">/events/{event.slug}</Eyebrow>
-
-            <div className="mt-3 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-              <EventDateRange startsAt={event.startsAt} endsAt={event.endsAt} />
-              <EventSeats seats={event.seats} />
-              <span className="num text-12 text-muted">
-                {plural(event.days.length, "day")} · {plural(event.questions.length, "question")}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex shrink-0 flex-col items-end gap-2">
-            <Button href="/admin/events" size="sm">
-              ← All events
-            </Button>
-            {event.status !== "draft" && (
-              <Eyebrow as="span" className="text-dim">
-                Visible to members
-              </Eyebrow>
-            )}
-          </div>
-        </div>
+          }
+        />
 
         <SaveAsTemplate eventId={event.id} title={event.title} isAdmin={isAdmin} />
-      </Panel>
+      </div>
 
       {/* --- The rail ----------------------------------------------- */}
       <div className="flex flex-wrap items-stretch gap-x-8 gap-y-1 overflow-x-auto overflow-y-hidden shadow-rail">

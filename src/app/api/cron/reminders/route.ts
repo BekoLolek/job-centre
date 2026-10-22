@@ -12,11 +12,22 @@ import { sendDueReminders } from "@/lib/notifications";
  * becomes "tomorrow"; the clock simply moves, and if nobody is running, nobody
  * is told.
  *
- * So it needs a scheduler. Vercel Cron calls this route on the schedule in
- * `vercel.json`. Without that, or on any other host, nothing here runs and the
- * reminders quietly never arrive — which is worth knowing, because it is the
- * one notification kind that cannot degrade into "you'll see it next time you
- * open the site".
+ * So it needs a scheduler. Two of them call this one route:
+ *
+ *  - **GitHub Actions**, every quarter hour (`.github/workflows/cron.yml`).
+ *    This is the one that does the work, and it exists because a two-hour
+ *    reminder (R-207) cannot come out of a once-a-day run at all. It needs
+ *    `CRON_SECRET` as a repository secret and `CRON_URL` as a variable, and it
+ *    fails loudly rather than silently until both are set.
+ *  - **Vercel Cron**, once a day, on the schedule in `vercel.json`. Kept as a
+ *    backstop: it is the one scheduler that cannot be switched off by somebody
+ *    disabling Actions on the repository, and a day-before reminder still lands
+ *    correctly from it. See "Once a day, and no more" below for why it is not
+ *    simply set to a quarter hour.
+ *
+ * Without either, nothing here runs and the reminders quietly never arrive —
+ * which is worth knowing, because it is the one notification kind that cannot
+ * degrade into "you'll see it next time you open the site".
  *
  * ## Safe to call as often as you like
  *
@@ -26,12 +37,16 @@ import { sendDueReminders } from "@/lib/notifications";
  * than a day (`REMINDER_WINDOW_MS`) rather than something clever that has to
  * fire exactly once.
  *
- * ## Once a day, and no more
+ * ## Once a day in `vercel.json`, and no more
  *
  * Vercel Hobby refuses to *deploy* a project whose cron runs more than once a
  * day — the whole deployment fails, not just the job. An hourly schedule here
  * held production back for eighteen days before anyone noticed, so
  * `src/app/api/cron/__tests__/schedule.test.ts` now fails first.
+ *
+ * That limit is on the *Vercel* schedule, not on this route, which is why the
+ * quarter-hour pinger is a GitHub workflow. The same test file pins both: the
+ * Vercel entry stays daily, and the workflow stays frequent.
  *
  * ## The secret
  *

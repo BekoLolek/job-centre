@@ -13,7 +13,7 @@ import { formatMoney } from "./money";
  */
 
 export type MoneyTone = "union" | "chalk" | "muted" | "flare" | "success";
-export type MoneySize = "sm" | "md" | "lg" | "xl";
+export type MoneySize = "sm" | "md" | "lg" | "xl" | "2xl";
 
 const TONE: Record<MoneyTone, string> = {
   union: "text-union",
@@ -23,11 +23,27 @@ const TONE: Record<MoneyTone, string> = {
   success: "text-success",
 };
 
+/*
+ * The step has to come from here and not from a `text-*` on the call site.
+ *
+ * `.num` is in `@layer components` since Task 65, so a `text-*` passed through
+ * `className` does beat it — but it does *not* beat the step this table already
+ * wrote. Both are utilities at 0-1-0 in the same layer, so the winner is
+ * whichever Tailwind emitted later, which is its `fontSize` key order and not
+ * the author's intent. `cx` putting `className` last changes nothing: class
+ * attribute order has never decided a cascade.
+ *
+ * `BidBox` wanted 48px and wrote `size="xl" className="text-48"`, i.e. 24px and
+ * 48px at once. It happened to render 48 because `text-48` is emitted after
+ * `text-24`; it would have silently flipped if the scale were reordered. `2xl`
+ * is that call site's size, named, so there is one font-size in the list.
+ */
 const SIZE: Record<MoneySize, string> = {
   sm: "text-12",
   md: "text-14",
   lg: "text-16",
   xl: "font-display text-24 leading-none",
+  "2xl": "font-display text-48 leading-none",
 };
 
 export type MoneyProps = {

@@ -17,7 +17,7 @@
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import TemplatesManager from "@/components/admin/TemplatesManager";
-import { Eyebrow, Page, StatTile } from "@/components/ui";
+import { Page, PageHeader, StatTile } from "@/components/ui";
 import { loadAdminTemplates } from "@/lib/admin-templates";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -40,29 +40,29 @@ export default async function AdminTemplatesPage() {
         <AdminNav />
       </AppHeader>
 
+      {/* `standard`: a list of templates, each expanding into its own form. */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Templates</Eyebrow>
-            <h1 className="font-display text-36 leading-none">
-              Event templates
-            </h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              A starting point for an event: its type, its game, its format settings and
-              its whole application form, filled in already. The quickest way to make one
-              is to point at an event that went well and say &ldquo;like that&rdquo;.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile label="Templates" value={`${active}/${view.templates.length}`} />
-            <StatTile
-              label="Events made"
-              value={produced}
-              valueClassName={produced > 0 ? "text-body" : "text-muted"}
-            />
-          </div>
-        </header>
+        <PageHeader
+          eyebrow="Admin · Templates"
+          title="Event templates"
+          intro={
+            <>
+              A starting point for an event: its type, its game, its format settings and its
+              whole application form, filled in already. The quickest way to make one is to
+              point at an event that went well and say &ldquo;like that&rdquo;.
+            </>
+          }
+          aside={
+            <>
+              <StatTile label="Templates" value={`${active}/${view.templates.length}`} />
+              <StatTile
+                label="Events made"
+                value={produced}
+                valueClassName={produced > 0 ? "text-body" : "text-muted"}
+              />
+            </>
+          }
+        />
 
         <TemplatesManager view={view} />
 

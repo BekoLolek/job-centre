@@ -21,7 +21,7 @@ import {
   stages,
   teams,
 } from "@/db";
-import { type TestDatabase, freshDatabase } from "@/db/__tests__/helpers";
+import { type TestDatabase, committingAfter, freshDatabase } from "@/db/__tests__/helpers";
 import {
   applySchedule,
   clearMatch,
@@ -142,33 +142,6 @@ async function cardFor(eventId: string, slot: string) {
 }
 
 /**
- * This file's database, except that the first transaction it opens runs
- * `between` to completion first — the helper `format-sync.test.ts`,
- * `draft.test.ts` and `events.test.ts` all use, for the same reason.
- *
- * Sequenced rather than raced. Two managers pressing Save on the same card
- * inside the same second is not something a timer can be trusted to reproduce,
- * and a test that had to *win* a race to see the bug would pass by luck on the
- * days it did not. This pins the interleave exactly: everything the outer call
- * could have read before it opened its transaction is stale, because the inner
- * one has already committed.
- */
-function committingAfter(between: () => Promise<unknown>): Database {
-  let pending: (() => Promise<unknown>) | null = between;
-  return new Proxy(db, {
-    get(target, property, receiver) {
-      if (property !== "transaction") return Reflect.get(target, property, receiver);
-      return async (run: Parameters<Database["transaction"]>[0]) => {
-        const first = pending;
-        pending = null;
-        if (first) await first();
-        return target.transaction(run);
-      };
-    },
-  });
-}
-
-/**
  * This file's database again, over the same PGlite client, with every statement
  * it runs pushed onto `log` in the order it was issued.
  *
@@ -281,6 +254,81 @@ describe("setStages", () => {
       db
     );
     expect(result).toMatchObject({ ok: false });
+  });
+
+  /*
+   * Task 57. `setStages` deleted the stages left out of the list and *then*
+   * checked the ones kept — and both of those checks can refuse. A refusal
+   * returned from a transaction callback commits what came before it
+   * (docs/decisions/004-refusals-inside-transactions.md), so one save that did
+   * both things at once deleted the dropped stage, committed it, cascaded its
+   * matches away, and told the manager nothing had happened.
+   *
+   * Two refusals live below the delete, so there are two tests: the stage id
+   * that names nothing, and the kind change on a played stage. In both the
+   * `ok: false` is *not* the assertion — the broken version answered
+   * `ok: false` too — the surviving stage count is.
+   */
+  describe("a refusal after the removals would have been a half-save", () => {
+    /** The two-stage board, a result recorded, plus a third empty stage. */
+    async function withASpareStage() {
+      const { eventId, stageIds } = await boardEvent();
+      await win(eventId, "rr-1-2", "a");
+      const grown = await setStages(
+        eventId,
+        [
+          { id: stageIds[0], kind: "round_robin" },
+          { id: stageIds[1], kind: "double_elim" },
+          { kind: "swiss", name: "Spare" },
+        ],
+        db
+      );
+      if (!grown.ok) throw new Error(grown.error);
+      return { eventId, stageIds, spareId: grown.data[2].id };
+    }
+
+    it("keeps the dropped stage when a kept one cannot change format", async () => {
+      const { eventId, stageIds, spareId } = await withASpareStage();
+
+      // Drops "Spare" (nothing played in it, so the delete would go through)
+      // and reshapes the round robin, which has a result.
+      const result = await setStages(
+        eventId,
+        [
+          { id: stageIds[0], kind: "single_elim" },
+          { id: stageIds[1], kind: "double_elim" },
+        ],
+        db
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain("its format cannot change");
+      const left = await db.select().from(stages).where(eq(stages.eventId, eventId));
+      expect(left.map((row) => row.id).sort()).toEqual(
+        [stageIds[0], stageIds[1], spareId].sort()
+      );
+    });
+
+    it("keeps the dropped stage when a kept id names nothing", async () => {
+      const { eventId, stageIds, spareId } = await withASpareStage();
+
+      const result = await setStages(
+        eventId,
+        [
+          { id: "00000000-0000-0000-0000-000000000000", kind: "round_robin" },
+          { id: stageIds[0], kind: "round_robin" },
+          { id: stageIds[1], kind: "double_elim" },
+        ],
+        db
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error).toContain("no longer exists");
+      const left = await db.select().from(stages).where(eq(stages.eventId, eventId));
+      expect(left.map((row) => row.id).sort()).toEqual(
+        [stageIds[0], stageIds[1], spareId].sort()
+      );
+    });
   });
 });
 
@@ -723,7 +771,16 @@ describe("setWinnerOverride", () => {
 
   it("takes every deciding read after the event lock", async () => {
     /*
-     * The lock-ordering rule `recordGames` and `reflipMatch` already follow.
+     * The lock-ordering rule four writes in this module now follow, each with
+     * its own test: `recordGames` above ("reads the event with its row lock,
+     * and reads it first"), this one, `setMatchSchedule` below, and
+     * `reflipMatch` at the bottom of the file. This sentence used to say
+     * `recordGames` and `reflipMatch` "already follow" it, and that was false
+     * for `reflipMatch`, which read its whole match row — and decided the row's
+     * existence off it — *before* `lockEvent` and never re-read. The same class
+     * of false prose in `archive-lock.test.ts` had already cost a lock its only
+     * test, so a claim here now names the test that holds it.
+     *
      * One read has to come first, because the lock has to be named before it
      * can be taken — but it asks for `event_id` and nothing else, so nothing
      * the function decides on predates the wait for the lock.
@@ -1193,6 +1250,55 @@ describe("the side choice before a series is played (UC-19 2a, 2b)", () => {
       data: { firstSideChoice: "a" },
     });
   });
+
+  it("takes the deciding read after the event lock", async () => {
+    /*
+     * The third sibling of `setWinnerOverride`'s and `setMatchSchedule`'s
+     * tests, for the same rule and by the same technique — and the one Task 56
+     * added, because `reflipMatch` was the write the prose above *claimed*
+     * already followed the rule and did not.
+     *
+     * What `reflipMatch` decides on, beyond the two refusals that were always
+     * made under the lock, is **whether the row is there at all**. It read the
+     * whole match row before `lockEvent` and never re-read, so a regeneration
+     * committing while this transaction queued for the lock (UC-18 9 deletes
+     * and re-inserts every match of the stage) left the `update` below matching
+     * no rows while this function answered `ok` with a coin it had not written
+     * — the exact bug `setWinnerOverride`'s docblock says it was closed
+     * against.
+     *
+     * `slot` stands for the whole row, the way it does in the two tests above:
+     * it is on every column list drizzle builds for a bare `select()` of
+     * `matches`, and the pre-lock read must not be one of those.
+     *
+     * Both halves are needed, and each catches a different mutation. Dropping
+     * the re-read and deciding off the first read again fails the second
+     * assertion *and* the third; narrowing the first read without adding the
+     * re-read fails the third alone.
+     */
+    const { eventId } = await boardEvent();
+    await finishTable(eventId);
+    const row = await rowFor(eventId, "ubsf1");
+
+    const log: string[] = [];
+    expect(await reflipMatch(row.id, "a", logging(log))).toMatchObject({ ok: true });
+
+    const lock = log.findIndex((query) => /for update/i.test(query));
+    expect(lock).toBeGreaterThanOrEqual(0);
+
+    const readsBefore = log.slice(0, lock).filter((query) => /from "matches"/.test(query));
+    expect(readsBefore).toHaveLength(1);
+    expect(readsBefore[0]).not.toMatch(/"slot"/);
+    expect(
+      log.slice(lock + 1).some((query) => /from "matches"/.test(query)),
+      "nothing re-read the match under the lock, so its existence was decided before the wait"
+    ).toBe(true);
+    // And the write really is after the lock, so the order above is the order
+    // that matters rather than three reads in a row.
+    expect(
+      log.findIndex((query) => /update "matches" set "first_side_choice"/.test(query))
+    ).toBeGreaterThan(lock);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -1317,7 +1423,7 @@ describe("a result landing while the board moves underneath it", () => {
       id,
       [{ index: 2, scoreA: 13, scoreB: 7, played: true }],
       {},
-      committingAfter(theOtherManager)
+      committingAfter(db, theOtherManager)
     );
     expect(late.ok).toBe(false);
     if (!late.ok) {
@@ -1354,7 +1460,7 @@ describe("a result landing while the board moves underneath it", () => {
       finalId,
       [{ index: 0, scoreA: 13, scoreB: 11, played: true }],
       {},
-      committingAfter(theOtherManager)
+      committingAfter(db, theOtherManager)
     );
     expect(late.ok).toBe(false);
     if (!late.ok) expect(late.error).toMatch(/still waiting on/);
@@ -1387,7 +1493,7 @@ describe("a result landing while the board moves underneath it", () => {
       id,
       [{ index: 0, scoreA: 13, scoreB: 11, played: true }],
       {},
-      committingAfter(theOtherManager)
+      committingAfter(db, theOtherManager)
     );
     expect(late.ok).toBe(false);
     if (!late.ok) expect(late.error).toBe("That match no longer exists.");

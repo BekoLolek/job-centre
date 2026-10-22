@@ -1,4 +1,12 @@
-import { Alert, Eyebrow, Section, SectionList, StatTile, StatusPill, plural } from "@/components/ui";
+import {
+  Alert,
+  PageHeader,
+  Section,
+  SectionList,
+  StatTile,
+  StatusPill,
+  plural,
+} from "@/components/ui";
 import { seasonMonths } from "@/lib/championship-policy";
 import type { FinishedSeason, SeasonPage } from "@/lib/championship-season";
 import PastSeasons from "./PastSeasons";
@@ -58,34 +66,42 @@ export default function Season({
         </Alert>
       )}
 
-      <header className="flex flex-wrap items-end gap-x-10 gap-y-6">
-        <div className="min-w-0">
-          <Eyebrow className="mb-2">Championship{months ? ` · ${months}` : ""}</Eyebrow>
-          <h1 className="font-display text-36 leading-none sm:text-48">{season.name}</h1>
-          <div className="mt-4">
-            <StatusPill status={pill.tone} label={pill.label} />
-          </div>
-          {season.description && (
-            <p className="mt-4 max-w-[62ch] whitespace-pre-line text-14 leading-relaxed text-body">
-              {season.description}
-            </p>
-          )}
-        </div>
-
-        <div className="flex flex-wrap gap-x-8 gap-y-4 sm:ml-auto">
-          <StatTile label="Events counted" value={counted.length} />
-          <StatTile
-            label="Still to come"
-            value={toCome.length}
-            valueClassName={toCome.length > 0 ? undefined : "text-muted"}
-          />
-          <StatTile
-            label="Players scoring"
-            value={standings.length}
-            valueClassName={standings.length > 0 ? undefined : "text-muted"}
-          />
-        </div>
-      </header>
+      {/*
+        Both championship routes hand their page header to this component, the
+        same way they hand it their `<Page>`: the season is read differently by
+        each of them and drawn identically by neither of them twice.
+      */}
+      <PageHeader
+        eyebrow={`Championship${months ? ` · ${months}` : ""}`}
+        title={season.name}
+        intro={
+          <>
+            <span className="block">
+              <StatusPill status={pill.tone} label={pill.label} />
+            </span>
+            {season.description && (
+              <span className="mt-4 block whitespace-pre-line text-body">
+                {season.description}
+              </span>
+            )}
+          </>
+        }
+        aside={
+          <>
+            <StatTile label="Events counted" value={counted.length} />
+            <StatTile
+              label="Still to come"
+              value={toCome.length}
+              valueClassName={toCome.length > 0 ? undefined : "text-muted"}
+            />
+            <StatTile
+              label="Players scoring"
+              value={standings.length}
+              valueClassName={standings.length > 0 ? undefined : "text-muted"}
+            />
+          </>
+        }
+      />
 
       <SectionList>
         <Section

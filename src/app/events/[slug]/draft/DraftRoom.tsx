@@ -38,10 +38,11 @@ import {
   Button,
   EmptyState,
   Eyebrow,
-  PAGE_SHELL,
   Page,
+  PageHeader,
   Panel,
   cx,
+  pageShell,
 } from "@/components/ui";
 import { completionSentence, playerName } from "@/components/draft";
 import { tieNotice } from "@/lib/draft-policy";
@@ -224,7 +225,13 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-30 border-b border-hair bg-ink/85 backdrop-blur">
-        <div className={cx(PAGE_SHELL, "flex h-16 items-center gap-4")}>
+        {/*
+          `wide`, the same token the `<Page>` below asks for. This bar is the
+          one piece of furniture directly above the room's own column, so it is
+          the one place a width disagreement would be visible as a misaligned
+          edge rather than as a step between two screens.
+        */}
+        <div className={cx(pageShell("wide"), "flex h-16 items-center gap-4")}>
           {/* The same mark as `AppHeader`, at the room's own size. What this
               screen is, the title and the live pill under it already say. */}
           <Link href="/" className="wordmark wordmark-accent text-16">
@@ -256,17 +263,24 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
         </div>
       </header>
 
-      <div className={cx(PAGE_SHELL, "space-y-2 pt-4")}>
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="font-display text-24 leading-none">
-            {event.title}
-          </h1>
-          <Eyebrow as="span">
-            {view.config.biddingMode === "open" ? "Open bidding" : "Sealed bids"}
-            {" · "}
-            {view.config.rosterTarget} per roster
-          </Eyebrow>
-        </div>
+      {/*
+        One `<main>`, where there used to be a bare `PAGE_SHELL` div for the
+        title and the alerts and then a separate `<Page>` per branch below it.
+        Three stacked columns of the same width is one column; saying so once
+        is what lets the room's header be the site's header.
+      */}
+      <Page width="wide" className="space-y-6">
+        <PageHeader
+          eyebrow="Job Centre · Draft room"
+          title={event.title}
+          aside={
+            <Eyebrow as="span">
+              {view.config.biddingMode === "open" ? "Open bidding" : "Sealed bids"}
+              {" · "}
+              {view.config.rosterTarget} per roster
+            </Eyebrow>
+          }
+        />
 
         {error && <Alert tone="flare">{error}</Alert>}
         {note && <Alert tone="success">{note}</Alert>}
@@ -278,11 +292,9 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
             event&rsquo;s Teams tab.
           </Alert>
         )}
-      </div>
 
-      {noTeams ? (
-        <Page>
-          <Panel>
+        {noTeams ? (
+          <Panel padding="none">
             <EmptyState>
               This event has no draft set up yet — no teams, so no wheel and nothing to bid
               on. {isAdmin ? "Add teams on the event's Teams tab and seed the pool." : "Check back once it starts."}
@@ -295,77 +307,83 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
               </div>
             )}
           </Panel>
-        </Page>
-      ) : (
-        /*
-          Two columns, never three.
+        ) : (
+          /*
+            Two columns, never three — still, and now by choice rather than by
+            arithmetic.
 
-          The pool rail used to take a third column at `xl`, which worked only
-          because this page was 1500px wide. Inside the shared 1100px shell the
-          arithmetic does not close: 320 for the teams rail + 340 for the pool
-          + two 24px gaps leaves the stage 344px, and the stage — the wheel and
-          the player on the block — is the room. It needs about 560px before
-          the wheel and the lot card stop reading, and 320 + 24 + 560 + 24 +
-          340 is 1268 against a content box that tops out at 1052. There is no
-          viewport where three columns fit, so there is no breakpoint to push
-          them to; the pool goes underneath instead, across the full width.
+            The pool rail used to take a third column at `xl`, which worked only
+            because this page was 1500px wide, and then did not fit at all once
+            every page shared one 1100px shell: 320 for the teams rail + 24 +
+            560 for the stage (about what the wheel and the lot card need before
+            they stop reading) + 24 + 340 for the pool is 1268, against a
+            content box that topped out at 1052. There was no viewport where
+            three columns fitted, so there was no breakpoint to push them to.
 
-          Two columns start at `lg`, where the stage is already 632px, and it
-          settles at 708px from 1100 up. Below `lg` all three stack.
-        */
-        <Page className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <TeamsRail view={view} />
+            At `wide` that sum does close — 1400 less the 48px gutters is 1352 —
+            but only on a viewport of 1400 or more, and this room is run on
+            whatever laptop the host has open. So the pool stays underneath,
+            across the full width, and a third column is a layout decision for
+            somebody who has watched a draft on a 1600px screen, not a
+            side-effect of a width token.
 
-          <section className="flex min-w-0 flex-col items-center gap-6">
-            <LotStage
-              view={view}
-              pool={previewPool}
-              poolKind={previewKind}
-              spinning={spinning}
-              onBlock={onBlock}
-              clockOffset={clockOffset.current}
-              now={now}
-              onSettled={refresh}
-            />
+            Two columns start at `lg`, where the stage is 632px, and settle at
+            1008px from 1400 up. Below `lg` all three stack.
+          */
+          <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
+            <TeamsRail view={view} />
 
-            <div className="w-full max-w-2xl">
-              {isAdmin ? (
-                <AdminConsole
-                  view={view}
-                  wheelKind={wheelKind}
-                  onWheelKind={setWheelKind}
-                  spinning={spinning}
-                  onBlock={onBlock}
-                  busy={busy}
-                  run={run}
-                />
-              ) : view.role === "captain" ? (
-                <BidBox
-                  view={view}
-                  standing={payload.standing}
-                  spinning={spinning}
-                  onBlock={onBlock}
-                  now={now}
-                  bid={bid}
-                />
-              ) : (
-                <WatchPanel
-                  view={view}
-                  spinning={spinning}
-                  onBlock={onBlock}
-                  signedIn={signedIn}
-                />
-              )}
-            </div>
-          </section>
+            <section className="flex min-w-0 flex-col items-center gap-6">
+              <LotStage
+                view={view}
+                pool={previewPool}
+                poolKind={previewKind}
+                spinning={spinning}
+                onBlock={onBlock}
+                clockOffset={clockOffset.current}
+                now={now}
+                onSettled={refresh}
+              />
 
-          {isAdmin && (
-            <div className="lg:col-span-2">
-              <PoolRail view={view} busy={busy} run={run} />
-            </div>
-          )}
-        </Page>
-      )}
+              <div className="w-full max-w-2xl">
+                {isAdmin ? (
+                  <AdminConsole
+                    view={view}
+                    wheelKind={wheelKind}
+                    onWheelKind={setWheelKind}
+                    spinning={spinning}
+                    onBlock={onBlock}
+                    busy={busy}
+                    run={run}
+                  />
+                ) : view.role === "captain" ? (
+                  <BidBox
+                    view={view}
+                    standing={payload.standing}
+                    spinning={spinning}
+                    onBlock={onBlock}
+                    now={now}
+                    bid={bid}
+                  />
+                ) : (
+                  <WatchPanel
+                    view={view}
+                    spinning={spinning}
+                    onBlock={onBlock}
+                    signedIn={signedIn}
+                  />
+                )}
+              </div>
+            </section>
+
+            {isAdmin && (
+              <div className="lg:col-span-2">
+                <PoolRail view={view} busy={busy} run={run} />
+              </div>
+            )}
+          </div>
+        )}
+      </Page>
     </div>
   );
 }

@@ -14,7 +14,7 @@
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
 import EventsManager, { type EventListRow } from "@/components/admin/events/EventsManager";
-import { Eyebrow, Page, StatTile } from "@/components/ui";
+import { Page, PageHeader, StatTile } from "@/components/ui";
 import {
   countApplicationsByStatus,
   emptyApplicationCounts,
@@ -59,37 +59,33 @@ export default async function AdminEventsPage() {
         <AdminNav />
       </AppHeader>
 
+      {/* `standard`: a list of events as wrapping rows, not a table. */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Events</Eyebrow>
-            <h1 className="font-display text-36 leading-none">Events</h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              Everything the community runs, drafts included. An event starts as a draft
-              nobody can see; give it days, an application form and a capacity, then publish
-              it when it is ready.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile label="Events" value={rows.length} />
-            <StatTile
-              label="Drafts"
-              value={drafts}
-              valueClassName={drafts > 0 ? "text-union" : "text-muted"}
-            />
-            <StatTile
-              label="Live"
-              value={live}
-              valueClassName={live > 0 ? "text-flare" : "text-muted"}
-            />
-            <StatTile
-              label="Applications"
-              value={applications}
-              valueClassName={applications > 0 ? "text-body" : "text-muted"}
-            />
-          </div>
-        </header>
+        <PageHeader
+          eyebrow="Admin · Events"
+          title="Events"
+          intro="Everything the community runs, drafts included. An event starts as a draft nobody can see; give it days, an application form and a capacity, then publish it when it is ready."
+          aside={
+            <>
+              <StatTile label="Events" value={rows.length} />
+              <StatTile
+                label="Drafts"
+                value={drafts}
+                valueClassName={drafts > 0 ? "text-union" : "text-muted"}
+              />
+              <StatTile
+                label="Live"
+                value={live}
+                valueClassName={live > 0 ? "text-flare" : "text-muted"}
+              />
+              <StatTile
+                label="Applications"
+                value={applications}
+                valueClassName={applications > 0 ? "text-body" : "text-muted"}
+              />
+            </>
+          }
+        />
 
         <EventsManager
           rows={rows}

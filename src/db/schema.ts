@@ -911,6 +911,85 @@ export const SETTING_KEYS = {
   siteOrigin: "site.origin",
 } as const;
 
+/**
+ * An admin's own wording for one announcement kind, and who it mentions
+ * (R-201, R-202 / UC-37).
+ *
+ * ## Why a table, when the switches next door are one `settings` row
+ *
+ * The switches are seven booleans written together by one screen and read
+ * together by every reader, so one row is one read and one write instead of
+ * seven of each. A wording is the opposite shape: it is up to 4096 characters
+ * of admin-entered text, it is edited one kind at a time, and **two admins
+ * editing two different kinds must not overwrite each other** — which a single
+ * jsonb blob cannot promise, because the loser's write carries their stale copy
+ * of the other six. A row per kind makes that collision impossible for
+ * different kinds and detectable for the same one (`version`, below).
+ *
+ * ## Why `kind` is text and not a Postgres enum
+ *
+ * Every other closed vocabulary in this file is a real enum, deliberately: a
+ * `notification_kind` or an `entry_rule` has to be a declared value rather than
+ * a string a caller invents. This one goes the other way for the reason
+ * `announcementSettingsFrom` exists and its comment spells out — a new
+ * announcement kind must be able to ship **without a migration**, and an enum
+ * would make every twelfth and thirteenth kind an `ALTER TYPE` plus a deploy.
+ * The kinds are declared in `src/lib/announce.ts` and a row naming a kind that
+ * no longer exists is simply never read, which is the same way a stale key in
+ * the switches object is already handled.
+ *
+ * ## The absence of a row, and the absence of a body
+ *
+ * **No row means nobody has touched this kind**: the compiled copy in
+ * `src/lib/announce.ts` posts byte for byte what it posts today, and no mention
+ * is allowed. That is what makes drizzle/0029 a migration with no backfill —
+ * there is nothing to write, because the absence *is* the default (UC-37 2a).
+ *
+ * `body` is nullable, and a null body on a real row means something narrower:
+ * an admin chose a **mention** and left the wording alone. Without that state,
+ * ticking "mention @everyone" would have to save a copy of the current
+ * sentence — and the compiled copy is a function, not a sentence (a waitlisting
+ * with and without a number, a lot that went for nothing, a drawn series), so
+ * saving one variant of it would freeze the other variants out.
+ */
+export const announcementTemplates = pgTable("announcement_templates", {
+  /** An `AnnouncementKind` from src/lib/announce.ts. Text on purpose; see above. */
+  kind: text("kind").primaryKey(),
+  /** The admin's wording. Null: they have not edited it, so the compiled copy posts. */
+  body: text("body"),
+  /**
+   * Pings the whole server. `false` by default and never inferred from the
+   * wording: `allowed_mentions` permits `everyone` only when this says so
+   * (R-202), and setting it writes an audit line (UC-37 4c).
+   */
+  mentionEveryone: boolean("mention_everyone").notNull().default(false),
+  /**
+   * Discord role **ids**, in the order the admin picked them.
+   *
+   * Ids and never names, because `@RoleName` is inert on Discord and a role
+   * ping is `<@&id>` (R-203). Stored as jsonb strings rather than a text[] so
+   * that the `json` helper above writes them with `JSON.stringify` — a
+   * snowflake is a 17-to-20-digit decimal that `Number` cannot hold, and the
+   * comment on that helper is about exactly this value going through a
+   * double-parse and coming back as 123456789012345680.
+   */
+  mentionRoleIds: json<string[]>("mention_role_ids").notNull().default([]),
+  /**
+   * Bumped by every save, and the whole of UC-37 7a.
+   *
+   * Two admins open the same announcement; both save. The update is conditional
+   * on the version the editor was opened at, so the second one changes no rows
+   * and is told the wording moved and shown the current one — rather than
+   * silently discarding the first admin's words. An integer rather than
+   * `updated_at`, because two saves inside one millisecond is a timestamp that
+   * cannot tell them apart and a counter that always can.
+   */
+  version: integer("version").notNull().default(1),
+  updatedAt: instant("updated_at").notNull().defaultNow(),
+  /** Who last edited it. Null when the member has since been removed. */
+  updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+});
+
 /* ------------------------------------------------------------------ */
 /* Events (§7, §8.1, §8.3)                                            */
 /* ------------------------------------------------------------------ */
@@ -2711,6 +2790,8 @@ export type ProfileField = typeof profileFields.$inferSelect;
 export type NewProfileField = typeof profileFields.$inferInsert;
 export type ProfileValueRow = typeof profileValues.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
+export type AnnouncementTemplateRow = typeof announcementTemplates.$inferSelect;
+export type NewAnnouncementTemplateRow = typeof announcementTemplates.$inferInsert;
 export type AdminAllowlistRow = typeof adminAllowlist.$inferSelect;
 export type NotificationRow = typeof notifications.$inferSelect;
 export type NotificationPrefRow = typeof notificationPrefs.$inferSelect;

@@ -30,9 +30,8 @@ import {
   Badge,
   Button,
   EmptyState,
-  Eyebrow,
   Page,
-  Panel,
+  PageHeader,
   Section,
   StatTile,
   StatusPill,
@@ -233,25 +232,25 @@ export default async function MePage() {
     <div className="min-h-screen">
       <AppHeader />
 
+      {/* `standard`: a dashboard of sections and event cards. */}
       <Page className="space-y-6">
         {/* --- Who --------------------------------------------------- */}
-        <Panel as="header" className="rise">
-          <div className="flex flex-wrap items-center gap-5">
-            <Avatar name={name} size="lg" />
-            <div className="min-w-0">
-              <Eyebrow className="mb-1">Signed in</Eyebrow>
-              <h1 className="font-display text-36 leading-none">{name}</h1>
-              <p className="mt-2 flex flex-wrap items-center gap-2">
-                {user.isAdmin && <Badge tone="union">Admin</Badge>}
-                {handle && (
-                  <Link href={`/players/${handle}`} className="text-12 text-muted hover:text-union">
-                    Your public profile → /players/{handle}
-                  </Link>
-                )}
-              </p>
-            </div>
-
-            <div className="ml-auto flex gap-8">
+        <PageHeader
+          lead={<Avatar name={name} size="lg" />}
+          eyebrow="Signed in"
+          title={name}
+          intro={
+            <span className="flex flex-wrap items-center gap-2">
+              {user.isAdmin && <Badge tone="union">Admin</Badge>}
+              {handle && (
+                <Link href={`/players/${handle}`} className="text-12 text-muted hover:text-union">
+                  Your public profile → /players/{handle}
+                </Link>
+              )}
+            </span>
+          }
+          aside={
+            <>
               <StatTile
                 label="Live applications"
                 value={live.length}
@@ -282,9 +281,9 @@ export default async function MePage() {
                   }
                 />
               )}
-            </div>
-          </div>
-        </Panel>
+            </>
+          }
+        />
 
         <div>
           {/* --- My next event --------------------------------------- */}

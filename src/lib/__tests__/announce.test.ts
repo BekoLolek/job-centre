@@ -1,8 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   ANNOUNCEMENTS,
+  ANNOUNCEMENT_PLACEHOLDERS,
+  type AnnouncementKind,
+  type AnnouncementTemplate,
+  DISCORD_LIMITS,
+  NO_MENTION,
+  allowedMentionsFor,
   announcementSettingsFrom,
   announcementSettingsValue,
+  announcementTemplateFrom,
+  announcementTemplateProblem,
   applicationDecidedMessage,
   defaultAnnouncementSettings,
   eventPublishedMessage,
@@ -10,12 +18,18 @@ import {
   lotSoldMessage,
   maskWebhook,
   matchResultMessage,
+  mentionLine,
   normaliseAnnouncementSettings,
+  placeholdersFor,
+  publishingOpensSignups,
   resolveSiteOrigin,
   resolveWebhookUrl,
+  signupsOpenMessage,
   siteOrigin,
   stamp,
+  standingsMessage,
 } from "@/lib/announce";
+import type { TopOfTable } from "@/lib/championship-policy";
 
 /**
  * The announcements, as pure functions.
@@ -46,11 +60,20 @@ describe("the toggle settings", () => {
      * second message about the same night, beside `match_result`.
      */
     expect(defaults.standings_changed).toBe(false);
+    /*
+     * And the eighth (R-205, UC-38 2), off for that same rule rather than the
+     * consolation one: it is a new kind arriving on installs that already have
+     * a webhook, so on-by-default would be a deploy that starts posting
+     * something nobody asked for. Nothing fires it yet either (Task 63 owns the
+     * clock), and a switch that is on for an announcement nothing sends is a
+     * settings screen telling an untruth.
+     */
+    expect(defaults.signups_open).toBe(false);
   });
 
   it("has a spec for every kind, and only for kinds", () => {
-    expect(ANNOUNCEMENTS).toHaveLength(7);
-    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(7);
+    expect(ANNOUNCEMENTS).toHaveLength(8);
+    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(8);
     for (const spec of ANNOUNCEMENTS) {
       expect(spec.label.length).toBeGreaterThan(0);
       expect(spec.detail.length).toBeGreaterThan(0);
@@ -403,5 +426,784 @@ describe("every message", () => {
       expect(message.embeds).toHaveLength(1);
       expect(typeof message.embeds[0].color).toBe("number");
     }
+  });
+});
+
+/* ================================================================== */
+/* Task 59 — the wording as data (R-201 / UC-37)                      */
+/* ================================================================== */
+
+/**
+ * One call per kind, with the arguments fixed, so every test below can ask the
+ * same seven questions of the same seven messages.
+ *
+ * The `TopOfTable` cast is the one piece of scaffolding: `topOfTheTable` is
+ * `championship-policy`'s to build and this file is about wording, so the
+ * shape is written out rather than computed.
+ */
+const STARTS = new Date("2026-05-01T18:00:00Z");
+const CLOSES = new Date("2026-04-25T18:00:00Z");
+const ORIGIN = "https://jc.test";
+
+const TOP = {
+  lead: "changed",
+  rows: [
+    { position: 1, name: "Beko Lolek", points: 25, level: false },
+    { position: 2, name: "Other", points: 18, level: false },
+  ],
+} as unknown as TopOfTable;
+
+function build(kind: AnnouncementKind, template: AnnouncementTemplate | null = null) {
+  switch (kind) {
+    case "event_published":
+      return eventPublishedMessage(
+        {
+          title: "Friday REPO night",
+          slug: "friday-repo",
+          capacity: 12,
+          startsAt: STARTS,
+          signupClosesAt: CLOSES,
+          origin: ORIGIN,
+        },
+        template
+      );
+    case "signups_open":
+      // The same event and the same arguments as `event_published` above, so
+      // every sweep below compares the two kinds on like for like.
+      return signupsOpenMessage(
+        {
+          title: "Friday REPO night",
+          slug: "friday-repo",
+          capacity: 12,
+          startsAt: STARTS,
+          signupClosesAt: CLOSES,
+          origin: ORIGIN,
+        },
+        template
+      );
+    case "application_accepted":
+    case "application_declined":
+      return applicationDecidedMessage(
+        kind,
+        {
+          member: "Beko Lolek",
+          eventTitle: "Friday REPO night",
+          slug: "friday-repo",
+          origin: ORIGIN,
+        },
+        template
+      );
+    case "application_waitlisted":
+      return applicationDecidedMessage(
+        kind,
+        {
+          member: "Beko Lolek",
+          eventTitle: "Friday REPO night",
+          slug: "friday-repo",
+          waitlistPosition: 3,
+          origin: ORIGIN,
+        },
+        template
+      );
+    case "draft_lot_sold":
+      return lotSoldMessage(
+        {
+          player: "Beko Lolek",
+          team: "Rivals Red",
+          price: 1200,
+          eventTitle: "Friday REPO night",
+          slug: "friday-repo",
+          origin: ORIGIN,
+        },
+        template
+      );
+    case "match_result":
+      return matchResultMessage(
+        {
+          label: "Upper semi-final",
+          teamA: "Rivals Red",
+          teamB: "Rivals Blue",
+          gamesWonA: 2,
+          gamesWonB: 1,
+          winner: "Rivals Red",
+          eventTitle: "Friday REPO night",
+          slug: "friday-repo",
+          origin: ORIGIN,
+        },
+        template
+      );
+    case "standings_changed":
+      return standingsMessage(
+        {
+          seasonName: "Spring 2026",
+          slug: "spring-2026",
+          eventTitle: "Friday REPO night",
+          top: TOP,
+          origin: ORIGIN,
+        },
+        template
+      );
+  }
+}
+
+const ALL_KINDS = ANNOUNCEMENTS.map((spec) => spec.kind);
+
+/**
+ * What each kind posted **before Task 59 existed**, serialised.
+ *
+ * These are not expectations written by hand from reading the code: they were
+ * captured by running the seven builders out of `git show f207112:` — the file
+ * as it stood before an override could be stored at all — and the two sets
+ * came out `diff`-clean. So this is the real previous wire format, down to the
+ * key order, and it is the assertion R-201's "a kind nobody has edited must
+ * post byte-for-byte what it posts today" actually makes.
+ *
+ * `JSON.stringify` rather than `toEqual` on purpose, three times over: it
+ * catches a key whose *order* moved (the body Discord receives is a string,
+ * and `content` inserted in the wrong place is a different string), it catches
+ * a key that arrived holding `undefined`, and it is the only form in which
+ * "byte for byte" means anything at all.
+ */
+const AS_IT_WAS: Record<AnnouncementKind, string> = {
+  event_published:
+    '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications are open — three taps if your profile is filled in.","url":"https://jc.test/events/friday-repo","color":14922300,"fields":[{"name":"Starts","value":"<t:1777658400:F>","inline":true},{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"New event"}}],"allowed_mentions":{"parse":[]}}',
+  application_accepted:
+    '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"**Beko Lolek** is in.","url":"https://jc.test/events/friday-repo","color":4054148,"footer":{"text":"Accepted"}}],"allowed_mentions":{"parse":[]}}',
+  application_waitlisted:
+    '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"**Beko Lolek** is on the waitlist, number 3 in the queue.","url":"https://jc.test/events/friday-repo","color":15855076,"footer":{"text":"Waitlisted"}}],"allowed_mentions":{"parse":[]}}',
+  application_declined:
+    '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"**Beko Lolek** was not accepted this time.","url":"https://jc.test/events/friday-repo","color":16731420,"footer":{"text":"Declined"}}],"allowed_mentions":{"parse":[]}}',
+  draft_lot_sold:
+    '{"username":"Job Centre Events","embeds":[{"title":"Beko Lolek → Rivals Red","description":"Sold for **1,200**.","url":"https://jc.test/events/friday-repo/draft","color":14922300,"fields":[{"name":"Event","value":"Friday REPO night","inline":true}],"footer":{"text":"Draft"}}],"allowed_mentions":{"parse":[]}}',
+  match_result:
+    '{"username":"Job Centre Events","embeds":[{"title":"Rivals Red 2–1 Rivals Blue","description":"**Rivals Red** take it.","url":"https://jc.test/events/friday-repo?tab=results","color":4054148,"fields":[{"name":"Match","value":"Upper semi-final","inline":true},{"name":"Event","value":"Friday REPO night","inline":true}],"footer":{"text":"Result"}}],"allowed_mentions":{"parse":[]}}',
+  standings_changed:
+    '{"username":"Job Centre Events","embeds":[{"title":"Spring 2026","description":"**Beko Lolek** takes the lead after **Friday REPO night**.","url":"https://jc.test/championship/spring-2026","color":14922300,"fields":[{"name":"1st","value":"Beko Lolek — 25","inline":true},{"name":"2nd","value":"Other — 18","inline":true}],"footer":{"text":"Standings"}}],"allowed_mentions":{"parse":[]}}',
+  /*
+   * `signups_open` is the one entry here that is **not** a pre-Task-59
+   * capture, because there was nothing to capture: the kind did not exist
+   * before Task 62. It is still captured rather than written by hand — the
+   * value below was taken from this file's own failure output on a first run
+   * with a deliberately wrong golden, which is the same discipline and the
+   * only way the key order means anything.
+   *
+   * What it holds this kind to is therefore the forward promise rather than
+   * the backward one: an unedited `signups_open` posts *this*, with no
+   * `content` key and `{"parse":[]}`, so the day somebody wires a trigger up
+   * they are wiring up a payload that has been read.
+   */
+  signups_open:
+    '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications have opened — three taps if your profile is filled in.","url":"https://jc.test/events/friday-repo","color":4054148,"fields":[{"name":"Starts","value":"<t:1777658400:F>","inline":true},{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"Applications open"}}],"allowed_mentions":{"parse":[]}}',
+};
+
+describe("a kind nobody has edited (UC-37 2a)", () => {
+  it("posts byte for byte what it posted before an override could exist", () => {
+    for (const kind of ALL_KINDS) {
+      expect(JSON.stringify(build(kind))).toBe(AS_IT_WAS[kind]);
+    }
+  });
+
+  it("posts the same whether the row is missing or present with no wording", () => {
+    /*
+     * The two states drizzle/0029 distinguishes, and the reason there is no
+     * backfill. No row at all is `null`; a row an admin made to choose a
+     * mention and then chose none is `{ body: null, mention: NO_MENTION }`.
+     * Both are "unedited", so both must be the same bytes — otherwise opening
+     * the screen and saving nothing would change what the channel says.
+     */
+    for (const kind of ALL_KINDS) {
+      const asRow = build(kind, { body: null, mention: NO_MENTION });
+      expect(JSON.stringify(asRow)).toBe(AS_IT_WAS[kind]);
+    }
+  });
+
+  it("has no content key at all, rather than an empty one", () => {
+    // `"content": ""` is a different payload from no `content`, and Discord
+    // rejects a message that is empty in both `content` and `embeds`.
+    for (const kind of ALL_KINDS) {
+      expect(build(kind)).not.toHaveProperty("content");
+      expect(Object.keys(build(kind))).toEqual(["username", "embeds", "allowed_mentions"]);
+    }
+  });
+});
+
+describe("the placeholder vocabulary", () => {
+  it("covers every kind, and only kinds", () => {
+    expect(Object.keys(ANNOUNCEMENT_PLACEHOLDERS).sort()).toEqual([...ALL_KINDS].sort());
+  });
+
+  it("offers a placeholder only to the kinds that have it", () => {
+    /*
+     * The rule Task 59 is about, as a table. `{position}` is a fact about a
+     * waitlisting; `{winner}` and `{score}` are facts about a series; `{price}`
+     * is a fact about a lot. A kind that offered one of these without having it
+     * is a wording that renders a hole in a channel nobody can unsend.
+     */
+    const named = (kind: AnnouncementKind) =>
+      placeholdersFor(kind).map((placeholder) => placeholder.name);
+
+    expect(named("event_published")).toEqual(["title", "places", "starts", "closes"]);
+    // The same four facts as the kind above, because it is the same event at
+    // the other moment — and deliberately no `{opens}`, whose only honest
+    // rendering is "now" and would be a formatted instant on the server.
+    expect(named("signups_open")).toEqual(["title", "places", "starts", "closes"]);
+    expect(named("signups_open")).not.toContain("opens");
+    expect(named("application_accepted")).toEqual(["member", "event"]);
+    expect(named("application_waitlisted")).toEqual(["member", "event", "position"]);
+    expect(named("application_declined")).toEqual(["member", "event"]);
+    expect(named("draft_lot_sold")).toEqual(["player", "team", "price", "event"]);
+    expect(named("match_result")).toEqual([
+      "teamA",
+      "teamB",
+      "score",
+      "winner",
+      "match",
+      "event",
+    ]);
+    expect(named("standings_changed")).toEqual(["season", "event", "leader"]);
+
+    // And the two that make the table mean something: the one kind with a
+    // queue place, and the three without it.
+    expect(named("application_waitlisted")).toContain("position");
+    for (const kind of ["application_accepted", "application_declined", "draft_lot_sold"] as const) {
+      expect(named(kind)).not.toContain("position");
+    }
+  });
+
+  it("never lets an absent value render as nothing", () => {
+    /*
+     * The whole reason `whenAbsent` exists. Every optional placeholder declares
+     * the words it posts when the value is missing, and an empty string is not
+     * one of them — a wording that silently renders as nothing is the mistake
+     * found in the channel, which is the same argument that makes an unoffered
+     * placeholder a refusal.
+     */
+    for (const kind of ALL_KINDS) {
+      for (const placeholder of placeholdersFor(kind)) {
+        expect(placeholder.example.trim()).not.toBe("");
+        if (placeholder.whenAbsent !== undefined) {
+          expect(placeholder.whenAbsent.trim()).not.toBe("");
+        }
+      }
+    }
+  });
+});
+
+describe("an edited kind", () => {
+  it("posts the admin's wording with every placeholder filled", () => {
+    const message = build("application_waitlisted", {
+      body: "{member} is queued for {event} at number {position}.",
+      mention: NO_MENTION,
+    });
+    expect(message.embeds[0].description).toBe(
+      "Beko Lolek is queued for Friday REPO night at number 3."
+    );
+  });
+
+  it("leaves everything but the sentence alone", () => {
+    // The title, the colour, the footer and the link are structure, not
+    // wording: an edited announcement is still a Job Centre announcement.
+    const before = build("draft_lot_sold").embeds[0];
+    const after = build("draft_lot_sold", {
+      body: "{player} to {team} for {price}.",
+      mention: NO_MENTION,
+    }).embeds[0];
+    expect(after.description).toBe("Beko Lolek to Rivals Red for 1,200.");
+    expect({ ...after, description: "" }).toEqual({ ...before, description: "" });
+  });
+
+  it("renders times as Discord stamps, so an edited wording keeps every reader's own zone", () => {
+    // The repo invariant (README, "Times"): no message ever contains a
+    // formatted date, and an admin cannot make one contain a formatted date.
+    const description = build("event_published", {
+      body: "Kicks off {starts}, closing {closes}. {places} places.",
+      mention: NO_MENTION,
+    }).embeds[0].description;
+    expect(description).toBe(
+      `Kicks off ${stamp(STARTS)}, closing ${stamp(CLOSES, "R")}. 12 places.`
+    );
+    expect(description).not.toMatch(/2026/);
+  });
+
+  it("posts the declared words when an optional value is missing, never a hole", () => {
+    const drawn = matchResultMessage(
+      {
+        label: "",
+        teamA: "Rivals Red",
+        teamB: "Rivals Blue",
+        gamesWonA: 1,
+        gamesWonB: 1,
+        winner: null,
+        eventTitle: "Friday REPO night",
+        slug: "friday-repo",
+      },
+      { body: "{winner} won {match}.", mention: NO_MENTION }
+    );
+    expect(drawn.embeds[0].description).toBe("nobody yet won this round.");
+    // The thing that must not happen: the sentence collapsing to " won ."
+    expect(drawn.embeds[0].description).not.toContain("  ");
+  });
+
+  it("leaves a placeholder its kind has since stopped offering visibly in place", () => {
+    /*
+     * Unreachable through a save, because the save refuses it — this is the row
+     * written by a version of the screen whose vocabulary has since changed. A
+     * visible `{captain}` gets noticed and fixed; replacing it with nothing is
+     * the silent hole the refusal exists to prevent, so render must fail the
+     * same way the save does rather than tidy it away.
+     */
+    const message = build("application_accepted", {
+      body: "{member} is in, says {captain}.",
+      mention: NO_MENTION,
+    });
+    expect(message.embeds[0].description).toBe("Beko Lolek is in, says {captain}.");
+  });
+
+  it("clamps a rendered wording Discord would drop the whole message for", () => {
+    // A refusal at save means this should never fire; `clamp`'s own comment is
+    // why it is here anyway — a message that vanishes is indistinguishable
+    // from a webhook that is down, and that is the one failure to avoid.
+    const message = build("application_accepted", {
+      body: `${"x".repeat(DISCORD_LIMITS.description)} {member}`,
+      mention: NO_MENTION,
+    });
+    expect(message.embeds[0].description?.length).toBe(DISCORD_LIMITS.description);
+    expect(message.embeds[0].description?.endsWith("…")).toBe(true);
+  });
+});
+
+describe("saving a wording", () => {
+  const ok = (kind: AnnouncementKind, body: string | null) =>
+    announcementTemplateProblem(kind, { body, mention: NO_MENTION });
+
+  it("refuses a placeholder the kind does not offer, naming the ones it does (UC-37 3a)", () => {
+    const problem = ok("draft_lot_sold", "Sold to {captain} for {price}.");
+    expect(problem).toBe(
+      "This announcement has no {captain}. It offers {player}, {team}, {price}, {event}."
+    );
+  });
+
+  it("refuses a placeholder that belongs to a different kind", () => {
+    // The case the per-kind table exists for: `{position}` is real, and real
+    // on exactly one kind.
+    expect(ok("application_waitlisted", "{member} is number {position}.")).toBeNull();
+    expect(ok("application_accepted", "{member} is number {position}.")).toBe(
+      "This announcement has no {position}. It offers {member}, {event}."
+    );
+  });
+
+  it("refuses empty wording, because that is the switch (UC-37 3b)", () => {
+    for (const empty of ["", " ", "\n", "\t  \n"]) {
+      const problem = ok("application_accepted", empty);
+      // `toBe` on the type first, so removing the guard reads as "expected
+      // null to be a string" rather than as a TypeError inside the matcher.
+      expect(typeof problem, `${JSON.stringify(empty)} was accepted`).toBe("string");
+      expect(problem).toMatch(/switch/);
+    }
+  });
+
+  it("allows a null body, which is not empty wording but “leave it alone”", () => {
+    for (const kind of ALL_KINDS) expect(ok(kind, null)).toBeNull();
+  });
+
+  it("refuses a wording over Discord's limit, saying the limit (UC-37 3c)", () => {
+    expect(ok("application_accepted", "x".repeat(DISCORD_LIMITS.description))).toBeNull();
+    const problem = ok("application_accepted", "x".repeat(DISCORD_LIMITS.description + 1));
+    expect(problem).toBe(
+      `Discord accepts ${DISCORD_LIMITS.description} characters in an announcement; that is ${DISCORD_LIMITS.description + 1}.`
+    );
+  });
+
+  it("refuses a role name pasted where an id goes", () => {
+    // `@RoleName` is inert on Discord (R-203). An admin who pastes one must be
+    // told, not left wondering why nobody was notified.
+    for (const bad of ["@Regulars", "Regulars", "123", "12345678901234567890123", "123456789012345678x"]) {
+      const problem = announcementTemplateProblem("application_accepted", {
+        body: null,
+        mention: { everyone: false, roleIds: [bad] },
+      });
+      expect(typeof problem, `“${bad}” was accepted as a role id`).toBe("string");
+      expect(problem).toMatch(/not a role id/);
+    }
+  });
+
+  it("accepts a real snowflake", () => {
+    expect(
+      announcementTemplateProblem("application_accepted", {
+        body: null,
+        mention: { everyone: true, roleIds: ["123456789012345678", "98765432109876543210"] },
+      })
+    ).toBeNull();
+  });
+});
+
+describe("reading a stored row", () => {
+  it("takes nothing on trust, the way the switches do not", () => {
+    expect(announcementTemplateFrom(undefined)).toEqual({ body: null, mention: NO_MENTION });
+    expect(announcementTemplateFrom("a string")).toEqual({ body: null, mention: NO_MENTION });
+    expect(announcementTemplateFrom([])).toEqual({ body: null, mention: NO_MENTION });
+    expect(announcementTemplateFrom({ body: 7, roleIds: "nope" })).toEqual({
+      body: null,
+      mention: NO_MENTION,
+    });
+  });
+
+  it("only ever reads a real true as “everyone”", () => {
+    /*
+     * The one field where a loose read would be a ping of four hundred people.
+     * `"true"`, `1` and `"yes"` are all the sort of thing a hand-run UPDATE or
+     * an older screen writes, and none of them is an admin asking for it.
+     */
+    for (const value of ["true", 1, "yes", {}, [], null, undefined]) {
+      expect(announcementTemplateFrom({ everyone: value }).mention.everyone).toBe(false);
+    }
+    expect(announcementTemplateFrom({ everyone: true }).mention.everyone).toBe(true);
+  });
+
+  it("drops a stored role id that is not a snowflake", () => {
+    expect(
+      announcementTemplateFrom({
+        roleIds: ["123456789012345678", "@Regulars", 42, null, "9"],
+      }).mention.roleIds
+    ).toEqual(["123456789012345678"]);
+  });
+
+  it("treats a blank stored body as no wording rather than as empty wording", () => {
+    expect(announcementTemplateFrom({ body: "   " }).body).toBeNull();
+  });
+});
+
+/* ================================================================== */
+/* Task 60 — a mention is only ever the admin's own words             */
+/* ================================================================== */
+
+/**
+ * The security-critical half, asked of real payloads.
+ *
+ * Two real-looking role ids: one the admin picks, one a member puts in their
+ * own display name. Keeping them distinct is the whole of the second
+ * acceptance criterion — a naive `parse: ["roles"]` passes every test that
+ * only ever uses one role.
+ */
+const PICKED = "123456789012345678";
+const SMUGGLED = "987654321098765432";
+
+describe("a display name cannot ping anybody (R-202, UC-37 4c)", () => {
+  /** Every kind, built with a member-controlled string in every slot. */
+  const hostile = (name: string, template: AnnouncementTemplate | null) => [
+    eventPublishedMessage({ title: name, slug: "t", description: name }, template),
+    applicationDecidedMessage(
+      "application_accepted",
+      { member: name, eventTitle: name, slug: "t" },
+      template
+    ),
+    applicationDecidedMessage(
+      "application_waitlisted",
+      { member: name, eventTitle: name, slug: "t", waitlistPosition: 2 },
+      template
+    ),
+    applicationDecidedMessage(
+      "application_declined",
+      { member: name, eventTitle: name, slug: "t" },
+      template
+    ),
+    lotSoldMessage({ player: name, team: name, price: 1, eventTitle: name, slug: "t" }, template),
+    matchResultMessage(
+      {
+        label: name,
+        teamA: name,
+        teamB: name,
+        gamesWonA: 1,
+        gamesWonB: 0,
+        winner: name,
+        eventTitle: name,
+        slug: "t",
+      },
+      template
+    ),
+    standingsMessage(
+      {
+        seasonName: name,
+        slug: "t",
+        eventTitle: name,
+        top: {
+          lead: "changed",
+          rows: [{ position: 1, name, points: 1, level: false }],
+        } as unknown as TopOfTable,
+      },
+      template
+    ),
+  ];
+
+  it("cannot make any announcement ping the server, on a real payload", () => {
+    /*
+     * The first and worst case. A member renames themselves `@everyone`, and
+     * every kind is built with that string in every field it has — including
+     * through an *edited* wording that interpolates it, and alongside a
+     * template that mentions a role, which is the state in which a careless
+     * implementation would have turned mention parsing on.
+     */
+    const templates: Array<AnnouncementTemplate | null> = [
+      null,
+      { body: null, mention: NO_MENTION },
+      { body: "{member}", mention: NO_MENTION },
+      { body: "{member}", mention: { everyone: false, roleIds: [PICKED] } },
+    ];
+
+    for (const template of templates) {
+      for (const message of hostile("@everyone", template)) {
+        // `everyone` is not in `parse`, so Discord will not honour it wherever
+        // it appears — this is the assertion, not an absence of the string.
+        expect(message.allowed_mentions.parse).toEqual([]);
+        // And it never reached `content`, which is the other half.
+        expect(message.content ?? "").not.toContain("@everyone");
+      }
+    }
+  });
+
+  it("cannot ping a role, even when the template mentions a different one", () => {
+    /*
+     * **The case a naive `parse: ["roles"]` fails.** The admin's template
+     * mentions one role, so role mentions are plainly wanted in this message;
+     * the member has `<@&SMUGGLED>` in their display name. With `parse`
+     * carrying "roles", Discord would honour both. With an allow-list of exact
+     * ids, the member's role is simply not on it.
+     */
+    const template: AnnouncementTemplate = {
+      body: "A result for {member}",
+      mention: { everyone: false, roleIds: [PICKED] },
+    };
+
+    for (const message of hostile(`<@&${SMUGGLED}>`, template)) {
+      expect(message.allowed_mentions.roles).toEqual([PICKED]);
+      expect(message.allowed_mentions.parse).toEqual([]);
+      // Named nowhere it could be honoured, whatever the embed contains.
+      expect(message.allowed_mentions.roles).not.toContain(SMUGGLED);
+      expect(message.content).toBe(`<@&${PICKED}>`);
+    }
+  });
+
+  it("puts every interpolated value in the embed and nothing else in content", () => {
+    /*
+     * Structural, not by eye (the acceptance criterion says so): `content` is
+     * matched against a pattern that admits *only* mention tokens, so any
+     * interpolation leaking into it fails whatever the string happens to be.
+     */
+    const ONLY_MENTIONS = /^(?:@everyone|<@&[0-9]{17,20}>)(?: (?:@everyone|<@&[0-9]{17,20}>))*$/;
+    const template: AnnouncementTemplate = {
+      body: "{member} — {event}",
+      mention: { everyone: true, roleIds: [PICKED] },
+    };
+
+    for (const message of hostile("@everyone <@&" + SMUGGLED + "> @here", template)) {
+      expect(message.content).toMatch(ONLY_MENTIONS);
+      // The member's string is in the payload — it just is not in `content`.
+      expect(JSON.stringify(message.embeds)).toContain(SMUGGLED);
+      expect(message.content).not.toContain(SMUGGLED);
+      expect(message.content).not.toContain("@here");
+    }
+  });
+});
+
+describe("the mention line", () => {
+  it("is built from the stored choice and nothing else", () => {
+    expect(mentionLine(NO_MENTION)).toBe("");
+    expect(mentionLine({ everyone: true, roleIds: [] })).toBe("@everyone");
+    expect(mentionLine({ everyone: false, roleIds: [PICKED, SMUGGLED] })).toBe(
+      `<@&${PICKED}> <@&${SMUGGLED}>`
+    );
+    expect(mentionLine({ everyone: true, roleIds: [PICKED] })).toBe(`@everyone <@&${PICKED}>`);
+  });
+
+  it("drops a stored id that is not a snowflake rather than writing it out", () => {
+    /*
+     * The second of the two snowflake checks, and the one that matters: this is
+     * the only thing between a stored value and the `content` field. A row
+     * written by hand must not be able to put text there.
+     */
+    expect(
+      mentionLine({ everyone: false, roleIds: ["@everyone", "' or 1=1", "123456789012345678"] })
+    ).toBe("<@&123456789012345678>");
+  });
+});
+
+describe("allowed_mentions", () => {
+  it("is exactly the two ids a template mentioning two roles used, with no parse entry", () => {
+    const mentions = allowedMentionsFor({ everyone: false, roleIds: [PICKED, SMUGGLED] });
+    expect(mentions).toEqual({ parse: [], roles: [PICKED, SMUGGLED] });
+    // An allow-list, never `parse: ["roles"]` — see the module comment.
+    expect(mentions.parse).not.toContain("roles");
+  });
+
+  it("permits everyone only when the template itself contains it", () => {
+    expect(allowedMentionsFor({ everyone: false, roleIds: [] }).parse).toEqual([]);
+    expect(allowedMentionsFor({ everyone: false, roleIds: [PICKED] }).parse).toEqual([]);
+    expect(allowedMentionsFor({ everyone: true, roleIds: [] }).parse).toEqual(["everyone"]);
+  });
+
+  it("omits roles entirely rather than sending an empty list", () => {
+    expect(allowedMentionsFor(NO_MENTION)).toEqual({ parse: [] });
+    expect(allowedMentionsFor()).toEqual({ parse: [] });
+    expect("roles" in allowedMentionsFor(NO_MENTION)).toBe(false);
+  });
+
+  it("never names one mention type in both parse and an id list", () => {
+    /*
+     * Discord's reference calls `parse` "mutually exclusive with the other
+     * fields" and then gives a valid example that combines them, so the
+     * boundary is genuinely unstated — and `{ parse: ["users"], users: [...] }`
+     * is documented as a validation error. The safe rule is never to test it:
+     * `parse` carries at most "everyone" and the id list carries only roles.
+     */
+    for (const everyone of [true, false]) {
+      for (const roleIds of [[], [PICKED], [PICKED, SMUGGLED]]) {
+        const mentions = allowedMentionsFor({ everyone, roleIds });
+        expect(mentions.parse.every((type) => type === "everyone")).toBe(true);
+        expect(mentions).not.toHaveProperty("users");
+        if (mentions.roles) expect(mentions.parse).not.toContain("roles");
+      }
+    }
+  });
+
+  it("drops a non-snowflake id so it is never sent as an allowed id either", () => {
+    expect(allowedMentionsFor({ everyone: false, roleIds: ["nope", PICKED] })).toEqual({
+      parse: [],
+      roles: [PICKED],
+    });
+  });
+});
+
+/* ================================================================== */
+/* Task 62 — signups opening is its own moment (R-205 / UC-38 2, 2a)  */
+/* ================================================================== */
+
+describe("whether publishing is itself the moment signups open (UC-38 2a)", () => {
+  /*
+   * The decision the eighth kind is arranged around. Every assertion names the
+   * case and the answer, because `true` here means "post one announcement" and
+   * `false` means "post one now and one later" — a boolean whose two values
+   * are two different channels, so a test that only counted calls could not
+   * tell them apart.
+   */
+  const PUBLISHED_AT = new Date("2026-04-01T12:00:00Z");
+
+  it("is one moment when the window opened before the event went up", () => {
+    const aWeekEarlier = new Date("2026-03-25T12:00:00Z");
+    expect(publishingOpensSignups({ signupOpensAt: aWeekEarlier }, PUBLISHED_AT)).toBe(true);
+  });
+
+  it("is two moments when the window opens after the event goes up", () => {
+    const aWeekLater = new Date("2026-04-08T12:00:00Z");
+    expect(publishingOpensSignups({ signupOpensAt: aWeekLater }, PUBLISHED_AT)).toBe(false);
+  });
+
+  it("is one moment on the boundary, matching applicationsOpen's inclusive window", () => {
+    /*
+     * `applicationsOpen` shuts only on `now < opensAt`, so an event published
+     * at exactly the instant its signups open *is* open. One second either
+     * side of that is the whole difference between one post and two, which is
+     * why the boundary is asserted rather than assumed.
+     */
+    expect(publishingOpensSignups({ signupOpensAt: PUBLISHED_AT }, PUBLISHED_AT)).toBe(true);
+    expect(
+      publishingOpensSignups({ signupOpensAt: new Date(PUBLISHED_AT.getTime() + 1) }, PUBLISHED_AT)
+    ).toBe(false);
+    expect(
+      publishingOpensSignups({ signupOpensAt: new Date(PUBLISHED_AT.getTime() - 1) }, PUBLISHED_AT)
+    ).toBe(true);
+  });
+
+  it("is one moment when there is no opening instant at all", () => {
+    // Nothing holds signups shut, so there is no second moment to announce.
+    // `missingToPublish` will not let this through the publish gate, but the
+    // answer has to be right rather than absent.
+    expect(publishingOpensSignups({ signupOpensAt: null }, PUBLISHED_AT)).toBe(true);
+  });
+
+  it("compares instants rather than Date identity", () => {
+    // Two `Date` objects for the same moment are the same answer — the bug
+    // `changedSetupFields` has a comment about.
+    const same = new Date(PUBLISHED_AT.getTime());
+    expect(same).not.toBe(PUBLISHED_AT);
+    expect(publishingOpensSignups({ signupOpensAt: same }, PUBLISHED_AT)).toBe(true);
+  });
+});
+
+describe("the signups-open announcement", () => {
+  it("says applications have opened, not that an event exists", () => {
+    /*
+     * The two kinds carry the same three facts, so the sentence and the footer
+     * are the whole difference a reader sees — asserted as the exact strings,
+     * because "the description is not empty" would pass with the two kinds
+     * posting identical messages, which is the mistake this kind exists to
+     * avoid.
+     */
+    const opened = build("signups_open").embeds[0];
+    const published = build("event_published").embeds[0];
+
+    expect(opened.description).toBe(
+      "Applications have opened — three taps if your profile is filled in."
+    );
+    expect(opened.footer).toEqual({ text: "Applications open" });
+    expect(published.footer).toEqual({ text: "New event" });
+    expect(opened.description).not.toBe(published.description);
+    expect(opened.color).not.toBe(published.color);
+    // And the facts a reader needs are still all there, not trimmed because
+    // the published message said them once already.
+    expect(opened.fields).toEqual(published.fields);
+    expect(opened.url).toBe("https://jc.test/events/friday-repo");
+  });
+
+  it("renders times as Discord stamps in an edited wording too", () => {
+    // The repo invariant (README, "Times"), and the reason there is no
+    // `{opens}`: no message this module builds contains a formatted date.
+    const description = build("signups_open", {
+      body: "Doors open. Kicks off {starts}, closing {closes}. {places} places for {title}.",
+      mention: NO_MENTION,
+    }).embeds[0].description;
+
+    expect(description).toBe(
+      `Doors open. Kicks off ${stamp(STARTS)}, closing ${stamp(CLOSES, "R")}. 12 places for Friday REPO night.`
+    );
+    expect(description).not.toMatch(/2026/);
+  });
+
+  it("posts the declared words when a date is missing, never a hole", () => {
+    const undated = signupsOpenMessage(
+      { title: "Friday REPO night", slug: "friday-repo", capacity: null },
+      { body: "Open now. Starts {starts}, closes {closes}. {places} places.", mention: NO_MENTION }
+    );
+    expect(undated.embeds[0].description).toBe(
+      "Open now. Starts a time still to be confirmed, closes no closing date. No limit places."
+    );
+    // The thing that must not happen: the sentence collapsing to "Starts ,".
+    expect(undated.embeds[0].description).not.toContain(" ,");
+    expect(undated.embeds[0].description).not.toContain("  ");
+  });
+
+  it("refuses a placeholder it does not offer, naming the four it does", () => {
+    expect(
+      announcementTemplateProblem("signups_open", {
+        body: "{member} may now apply.",
+        mention: NO_MENTION,
+      })
+    ).toBe("This announcement has no {member}. It offers {title}, {places}, {starts}, {closes}.");
+    // And the one whose only honest rendering would be the present instant.
+    expect(
+      announcementTemplateProblem("signups_open", {
+        body: "Applications opened {opens}.",
+        mention: NO_MENTION,
+      })
+    ).toBe("This announcement has no {opens}. It offers {title}, {places}, {starts}, {closes}.");
+  });
+
+  it("drops the fields it has no values for rather than posting empty ones", () => {
+    const undated = signupsOpenMessage({ title: "Friday REPO night", slug: "friday-repo" });
+    expect(undated.embeds[0].fields).toEqual([{ name: "Places", value: "No limit", inline: true }]);
+  });
+
+  it("drops the link when nothing says where the site is", () => {
+    const message = signupsOpenMessage({ title: "Friday REPO night", slug: "friday-repo" });
+    expect(message.embeds[0]).not.toHaveProperty("url");
   });
 });

@@ -603,16 +603,25 @@ export async function setTeams(
     const keeping = new Set(cleaned.map((team) => team.id).filter(Boolean));
     const doomed = existing.filter((team) => !keeping.has(team.id));
 
-    const refusal = await removeTeamsIn(tx, doomed);
-    if (refusal) return fail(refusal);
-
-    // A starting balance is not a label. Every remaining balance on the site is
-    // derived — `balanceFor` is `balanceStart` minus the awarded lots, which is
-    // exactly why there is no `balance_left` column — so moving a team's
-    // starting figure after they have bought somebody silently rewrites what
-    // every past lot appears to have cost them. That is the standing rule's
-    // "erase a draft's prices" by another route, and it is refused for the same
-    // reason removing the team is.
+    /*
+     * A starting balance is not a label. Every remaining balance on the site is
+     * derived — `balanceFor` is `balanceStart` minus the awarded lots, which is
+     * exactly why there is no `balance_left` column — so moving a team's
+     * starting figure after they have bought somebody silently rewrites what
+     * every past lot appears to have cost them. That is the standing rule's
+     * "erase a draft's prices" by another route, and it is refused for the same
+     * reason removing the team is.
+     *
+     * **Asked before `removeTeamsIn`, not after it**, and that ordering is the
+     * rule in docs/decisions/004-refusals-inside-transactions.md rather than a
+     * preference. `removeTeamsIn` deletes, and a refusal returned from a
+     * transaction callback commits what came before it — so one save that
+     * dropped a team *and* moved a surviving team's balance used to delete the
+     * team, cascade its roster away, commit the lot, and then answer with this
+     * sentence. The removal is refused by whether the *doomed* teams hold lots;
+     * this is refused by whether anybody does. Two different questions, so
+     * neither one covered the other.
+     */
     const started = await tx
       .select({ id: draftLots.id })
       .from(draftLots)
@@ -630,6 +639,9 @@ export async function setTeams(
         );
       }
     }
+
+    const refusal = await removeTeamsIn(tx, doomed);
+    if (refusal) return fail(refusal);
 
     // Names are unique per event, so swapping two of them in place trips the
     // constraint halfway through a perfectly legal rewrite. Parking every
@@ -2470,6 +2482,25 @@ export async function voidLot(
  * is in `lot.eventId`, so a caller that locked a different event would be
  * authorising on an id beside the row it writes — which is why the lot is
  * passed in rather than an id, and why neither caller re-resolves it.
+ *
+ * ## The compare-and-set comes first, because it is the one thing that refuses
+ *
+ * It used to come last: the roster row was deleted and the player put back in
+ * the pool, and *then* the lot was moved to `voided` with
+ * `where status <> 'voided'` and a refusal returned if that matched no rows.
+ * A refusal returned from a transaction callback commits what came before it
+ * (docs/decisions/004-refusals-inside-transactions.md), so that branch handed
+ * back "nothing happened" over a committed roster deletion and a committed
+ * pool entry — the player off the team, back on the wheel, and the lot still
+ * reading `awarded`. UC-16 7a's undo restores the balance *and* the roster; a
+ * half undo restores neither honestly.
+ *
+ * Doing the guarded write first makes the refusal a write that matched no rows,
+ * which is nothing to roll back, and leaves the two rows that follow it
+ * unconditional. Both callers already check the status under the event's row
+ * lock, so this is the belt to their braces rather than the only guard — but a
+ * guard whose failure path is wrong is worse than no guard, because it reads
+ * like one.
  */
 async function voidLotIn(
   tx: Database,
@@ -2478,6 +2509,13 @@ async function voidLotIn(
   voidedBy: string | null
 ): Promise<DraftResult<VoidLotResult>> {
   const refunded = lot.status === "awarded" ? (lot.price ?? 0) : null;
+
+  const [voided] = await tx
+    .update(draftLots)
+    .set({ status: "voided", voidedAt: now, voidedBy })
+    .where(and(eq(draftLots.id, lot.id), ne(draftLots.status, "voided")))
+    .returning();
+  if (!voided) return fail("That lot was voided while you were looking at it.");
 
   if (lot.status === "awarded") {
     await tx.delete(teamMembers).where(eq(teamMembers.lotId, lot.id));
@@ -2500,13 +2538,6 @@ async function voidLotIn(
         set: { kind: returnedTo, sort: nextSort(pool, returnedTo) },
       });
   }
-
-  const [voided] = await tx
-    .update(draftLots)
-    .set({ status: "voided", voidedAt: now, voidedBy })
-    .where(and(eq(draftLots.id, lot.id), ne(draftLots.status, "voided")))
-    .returning();
-  if (!voided) return fail("That lot was voided while you were looking at it.");
 
   return withData({ lot: voided, refunded, returnedTo });
 }

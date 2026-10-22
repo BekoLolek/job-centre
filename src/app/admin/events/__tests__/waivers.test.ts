@@ -136,10 +136,35 @@ async function auditRowsFor(subject: string) {
  * through, and the nested call `between` makes re-enters this same handle with
  * nothing pending. Sequenced rather than raced — the window is one statement
  * wide, and the interleave is pinned rather than hoped for.
+ *
+ * ## Why the transaction is flattened
+ *
+ * Task 56 moved `waiveEntryRule` into a transaction holding the event's row
+ * lock, and the insert this helper is aimed at went with it — issued on the
+ * `tx` rather than on this handle. Without the flattening below, the first
+ * insert this proxy saw became the *audit* insert, whose builder chain is
+ * `.values().returning()` and not the `.values().onConflictDoNothing()
+ * .returning()` spelled out here: the interception threw
+ * `returning is not a function`, the audit line was swallowed by
+ * `recordAudit`'s own catch, and the test failed on an empty log rather than on
+ * anything about two managers. (Task 58's note on these six helpers is exactly
+ * this: each hardcodes one builder chain, and the aim is the part that drifts.
+ * That is why this helper stayed here when the six identical `committingAfter`s
+ * were merged into `src/db/__tests__/helpers.ts`, which carries the reasoning:
+ * a drifting aim is the one thing a shared helper cannot hold.)
+ *
+ * Flattening also has to happen for `between` to run at all. `between` is a
+ * whole second grant, which opens a transaction of its own, and PGlite is a
+ * single connection — a second `db.transaction` opened while one is already
+ * open waits for a transaction that is waiting for it. So the write under test
+ * is handed a handle where it expects a `tx`, which leaves the connection free
+ * for the other manager to open, write and commit. `archive-lock.test.ts`'s
+ * `completing` flattens for the same reason and says so at greater length.
  */
 function insertingAfter(between: () => Promise<unknown>): Database {
   let pending: (() => Promise<unknown>) | null = between;
-  return new Proxy(db, {
+
+  const intercepting = new Proxy(db, {
     get(target, property, receiver) {
       if (property !== "insert" || pending === null) {
         return Reflect.get(target, property, receiver);
@@ -163,6 +188,15 @@ function insertingAfter(between: () => Promise<unknown>): Database {
           }),
         }),
       });
+    },
+  });
+
+  return new Proxy(db, {
+    get(target, property, receiver) {
+      if (property === "insert") return Reflect.get(intercepting, property);
+      if (property !== "transaction") return Reflect.get(target, property, receiver);
+      return async (run: Parameters<Database["transaction"]>[0]) =>
+        run(intercepting as never);
     },
   });
 }

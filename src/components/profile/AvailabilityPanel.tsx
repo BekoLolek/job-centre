@@ -320,26 +320,24 @@ export default function AvailabilityPanel({ initial }: { initial: AvailabilityAn
               <span className="w-[6.5rem] shrink-0 pt-2 text-14 text-chalk">{label}</span>
 
               {/*
-               * The sizing goes on a wrapper, not on the control. This Select
-               * has no label, hint or error, so FieldShell hands back the bare
-               * `<select>` and drops `wrapperClassName` on the floor — which is
-               * why this dropdown had been rendering full-width. Moving the
-               * classes to `className` does not fix it either: `.field` sets
-               * `width: 100%` and is defined after `@tailwind utilities` at the
-               * same specificity, so it beats any `w-*` utility on the element
-               * itself. A wrapper the field can fill is the one thing that works.
+               * The sizing goes on the control, which is where it was written in
+               * the first place. Task 31a had to put it on a wrapper because
+               * `.field` sat after `@tailwind utilities` at the same specificity
+               * and ate the `w-[11rem]`; Task 38c moved `.field` into
+               * `@layer components`, so the utility wins on source order like
+               * any other. `shrink-0` comes with it — the Select is the flex
+               * item now that the div is gone.
                */}
-              <div className="w-[11rem] shrink-0">
-                <Select
-                  aria-label={`${label} availability`}
-                  value={mode}
-                  onChange={(input) => setMode(weekday, input.target.value as DayMode)}
-                >
-                  <option value="none">Not free</option>
-                  <option value="all">Free all day</option>
-                  <option value="times">Free at these times</option>
-                </Select>
-              </div>
+              <Select
+                aria-label={`${label} availability`}
+                className="w-[11rem] shrink-0"
+                value={mode}
+                onChange={(input) => setMode(weekday, input.target.value as DayMode)}
+              >
+                <option value="none">Not free</option>
+                <option value="all">Free all day</option>
+                <option value="times">Free at these times</option>
+              </Select>
 
               {mode === "times" && (
                 <div className="min-w-0 flex-1 space-y-2">

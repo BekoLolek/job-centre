@@ -12,7 +12,15 @@
 import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
-import { EmptyState, Eyebrow, Page, Section, SectionList, StatTile, StatusPill } from "@/components/ui";
+import {
+  EmptyState,
+  Page,
+  PageHeader,
+  Section,
+  SectionList,
+  StatTile,
+  StatusPill,
+} from "@/components/ui";
 import { seasonMonths } from "@/lib/championship-policy";
 import { listChampionships } from "@/lib/championships";
 import { requireAdmin } from "@/lib/session-guards";
@@ -44,27 +52,24 @@ export default async function AdminChampionshipsPage() {
         <AdminNav />
       </AppHeader>
 
+      {/* `standard`: a create form and a list of seasons, one line each. */}
       <Page className="space-y-6">
-        <header className="flex flex-wrap items-end gap-6">
-          <div>
-            <Eyebrow className="mb-2">Admin · Championships</Eyebrow>
-            <h1 className="font-display text-36 leading-none">Championships</h1>
-            <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              A season of events across different games, with one running score. Set the
-              points table up in private, publish it when it is ready, and close it when the
-              last event has been scored — a finished season keeps its page for good.
-            </p>
-          </div>
-
-          <div className="ml-auto flex gap-8">
-            <StatTile label="Running" value={published} />
-            <StatTile
-              label="Finished"
-              value={finished}
-              valueClassName={finished > 0 ? "text-body" : "text-muted"}
-            />
-          </div>
-        </header>
+        <PageHeader
+          /* `Seasons` is what `ADMIN_SECTIONS` calls this link in the bar. */
+          eyebrow="Admin · Seasons"
+          title="Championships"
+          intro="A season of events across different games, with one running score. Set the points table up in private, publish it when it is ready, and close it when the last event has been scored — a finished season keeps its page for good."
+          aside={
+            <>
+              <StatTile label="Running" value={published} />
+              <StatTile
+                label="Finished"
+                value={finished}
+                valueClassName={finished > 0 ? "text-body" : "text-muted"}
+              />
+            </>
+          }
+        />
 
         <SectionList>
           <NewChampionship />

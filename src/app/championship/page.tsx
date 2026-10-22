@@ -44,7 +44,12 @@ export default async function CurrentChampionshipPage() {
   return (
     <div className="min-h-screen">
       <AppHeader />
-      <Page className="space-y-8">
+      {/*
+        `standard`: a podium, a standings table of four narrow columns, and a
+        list of the season's events. The page header is `Season`'s, because both
+        championship routes draw the same one from the same data.
+      */}
+      <Page className="space-y-6">
         <Season
           page={page}
           past={finished.filter((other) => other.slug !== season.slug)}

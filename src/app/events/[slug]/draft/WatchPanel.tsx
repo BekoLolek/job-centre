@@ -67,7 +67,7 @@ export default function WatchPanel({ view, spinning, onBlock, signedIn }: WatchP
               → {view.teams.find((team) => team.id === lastAward.winnerTeamId)?.name ?? "—"}
             </span>
           </div>
-          <Money value={lastAward.price ?? 0} size="xl" className="mt-2 block text-24" />
+          <Money value={lastAward.price ?? 0} size="xl" className="mt-2 block" />
         </div>
       ) : last ? (
         <p className="text-14 text-muted">

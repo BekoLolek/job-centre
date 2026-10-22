@@ -11,7 +11,12 @@ import {
   userNotes,
   users,
 } from "@/db";
-import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import {
+  type TestDatabase,
+  committingAfter,
+  freshDatabase,
+  makeUser,
+} from "@/db/__tests__/helpers";
 import { getAllowlistEntries } from "@/lib/admin-allowlist";
 import {
   type AdminUserResult,
@@ -548,30 +553,6 @@ async function naiveRevoke(userId: string, actorId: string): Promise<void> {
   await db.update(users).set({ isAdmin: false }).where(eq(users.id, userId));
 }
 
-/**
- * A handle whose `transaction` runs `between` to completion first — the same
- * shape as `committingAfter` in `championship-results.test.ts`.
- *
- * Sequenced rather than raced. The window it pins is the one that matters: a
- * revoke reads the member *before* it opens its transaction, so everything
- * that read knows is stale by the time the decision is made. A test that had
- * to win a race to see that would pass by luck.
- */
-function committingAfter(between: () => Promise<unknown>): Database {
-  let pending: (() => Promise<unknown>) | null = between;
-  return new Proxy(db, {
-    get(target, property, receiver) {
-      if (property !== "transaction") return Reflect.get(target, property, receiver);
-      return async (run: Parameters<Database["transaction"]>[0]) => {
-        const first = pending;
-        pending = null;
-        if (first) await first();
-        return target.transaction(run);
-      };
-    },
-  });
-}
-
 describe("two admins demoting each other", () => {
   it("control: a read-then-write outside a transaction leaves the site with none", async () => {
     const a = await makeAdmin("A");
@@ -592,7 +573,7 @@ describe("two admins demoting each other", () => {
     // Everything the first read knew is now wrong; the refusal has to come
     // from inside the transaction or not at all.
     const refusal = await expectFail(
-      revokeAdmin(b, a, committingAfter(() => revokeAdmin(a, b, db)))
+      revokeAdmin(b, a, committingAfter(db, () => revokeAdmin(a, b, db)))
     );
 
     expect(refusal).toMatch(/last admin/i);

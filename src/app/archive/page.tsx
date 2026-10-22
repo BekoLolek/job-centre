@@ -14,7 +14,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import { EventListing } from "@/components/events";
-import { Eyebrow, Page } from "@/components/ui";
+import { Page, PageHeader } from "@/components/ui";
 import { listEvents } from "@/lib/events";
 import { PUBLIC_STATUSES, firstParam } from "../events/scope";
 
@@ -43,15 +43,13 @@ export default async function ArchivePage({
     <div className="min-h-screen">
       <AppHeader />
 
+      {/* `standard`: the same two-up card listing as `/events`. */}
       <Page className="space-y-6">
-        <header>
-          <Eyebrow className="mb-2">Job Centre · Archive</Eyebrow>
-          <h1 className="text-36">What we have run</h1>
-          <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-            Every event that has already happened, most recent first. Nothing is ever
-            deleted — each one keeps its page, its bracket and its results.
-          </p>
-        </header>
+        <PageHeader
+          eyebrow="Job Centre · Archive"
+          title="What we have run"
+          intro="Every event that has already happened, most recent first. Nothing is ever deleted — each one keeps its page, its bracket and its results."
+        />
 
         <EventListing
           scope="past"

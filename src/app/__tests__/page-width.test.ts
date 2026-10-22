@@ -1,9 +1,19 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import Page, {
+  PAGE_GUTTERS,
+  PAGE_SHELL,
+  PAGE_WIDTHS,
+  type PageWidth,
+  pageShell,
+} from "@/components/ui/Page";
 
 /**
- * The site has one content width, and it lives in `src/components/ui/Page.tsx`.
+ * The site has **three** content widths, and all three live in
+ * `src/components/ui/Page.tsx`.
  *
  * This file exists for the same reason `design-tokens.test.ts` does. The width
  * had drifted to **nine** values — 860, 880, 900, 1000, 1100, 1200, 1400, 1500
@@ -11,6 +21,18 @@ import { describe, expect, it } from "vitest";
  * author happened to have open and nudged it. None of those is wrong on its
  * own; having nine of them is, and it is invisible until you click between two
  * pages and watch the left edge of the text jump.
+ *
+ * The first fix collapsed all nine to a single 1100. Task 30 replaced that one
+ * with three *named* ones — `reading` 880, `standard` 1200, `wide` 1400 — which
+ * is a different claim and needs a different guard. The rule is no longer "one
+ * number"; it is:
+ *
+ *  1. the set is closed: exactly those three tokens, at exactly those caps;
+ *  2. a page names a token and never a number;
+ *  3. all three share one set of gutters, and so does every bar that spans a
+ *     page, because the padding is what two *adjacent* elements are compared
+ *     on — a sticky bar and the column immediately under it;
+ *  4. nothing outside `Page.tsx` centres a width container at all.
  *
  * The first version of this file watched the `<main>` tag and nothing else,
  * which a review broke in one move: leave `<main>` bare and put
@@ -150,6 +172,18 @@ function classesIn(expr: string): string[] {
  * inside a centred flex row is a card. What must not exist outside `Page` is an
  * element that both sets a width and centres itself in its parent.
  */
+/**
+ * A plain class string's classes, variant prefixes intact.
+ *
+ * Not `classesIn`: that one flattens `:` along with the rest of the JSX
+ * punctuation, so `sm:px-6` comes back as `sm` and `px-6` — which is the right
+ * trade for finding a class inside `cx(a ? b : c)` and the wrong one for
+ * asserting that a breakpoint is where it should be.
+ */
+function tokens(classes: string): string[] {
+  return classes.split(/\s+/).filter(Boolean);
+}
+
 function centresAWidth(text: string): boolean {
   const classes = classesIn(text);
   return (
@@ -212,9 +246,119 @@ describe("one page width", () => {
   });
 
   it("has a Page component that owns the width", () => {
-    const source = fs.readFileSync(PAGE, "utf8");
-    expect(source).toMatch(/export const PAGE_SHELL = "[^"]*\bmax-w-\[\d+px\]/);
-    expect(source).toContain("<main");
+    expect(fs.readFileSync(PAGE, "utf8")).toContain("<main");
+  });
+
+  /*
+   * The set is closed, and this is the assertion that closes it.
+   *
+   * Read from the module rather than scraped out of its source, because what
+   * the rest of the site is handed is the exported object and not the file it
+   * was typed into. Each cap is `max-w-[Npx]` and *only* that: a value of
+   * `"mx-auto max-w-[880px]"` would smuggle the centring out of `PAGE_GUTTERS`
+   * and leave the three able to drift apart on padding, which is the one thing
+   * they must not do.
+   */
+  it("declares exactly three widths, named and capped", () => {
+    expect(Object.keys(PAGE_WIDTHS)).toEqual(["reading", "standard", "wide"]);
+
+    const caps = Object.entries(PAGE_WIDTHS).map(([name, value]) => {
+      const match = /^max-w-\[(\d+)px\]$/.exec(value);
+      expect(match, `PAGE_WIDTHS.${name} is "${value}", not a bare max-w-[Npx]`).not.toBeNull();
+      return Number(match![1]);
+    });
+
+    expect(caps).toEqual([880, 1200, 1400]);
+    // Ordered, so a swap that renamed two tokens could not pass the line above.
+    expect([...caps].sort((a, b) => a - b)).toEqual(caps);
+  });
+
+  /*
+   * Rule 3, at the source: the gutters are one string, they centre, and they
+   * carry no width of their own.
+   */
+  it("keeps the gutters out of the widths, and the widths out of the gutters", () => {
+    expect(tokens(PAGE_GUTTERS)).toContain("mx-auto");
+    expect(tokens(PAGE_GUTTERS).filter((c) => /^(?:[a-z]+:)?px-/.test(c))).toEqual([
+      "px-4",
+      "sm:px-6",
+    ]);
+    expect(tokens(PAGE_GUTTERS).filter((c) => /max-w-/.test(c))).toEqual([]);
+
+    for (const [name, value] of Object.entries(PAGE_WIDTHS)) {
+      expect(tokens(value).filter((c) => /^(?:[a-z]+:)?(?:mx-auto|px-)/.test(c)), name).toEqual([]);
+    }
+  });
+
+  /*
+   * And rule 3 at the other end: every shell is the same gutters plus one cap.
+   * `pageShell` is the only thing that puts the two together, so this is where
+   * "sharing the header's gutters" is actually true or not.
+   */
+  it("builds every shell from the one set of gutters and one cap", () => {
+    for (const width of Object.keys(PAGE_WIDTHS) as PageWidth[]) {
+      const shell = pageShell(width);
+      for (const gutter of tokens(PAGE_GUTTERS)) {
+        expect(tokens(shell), `pageShell("${width}") drops ${gutter}`).toContain(gutter);
+      }
+      expect(tokens(shell).filter((c) => /max-w-/.test(c))).toEqual([PAGE_WIDTHS[width]]);
+    }
+
+    // The bars' constant is the standard shell and not a fourth string.
+    expect(PAGE_SHELL).toBe(pageShell("standard"));
+  });
+
+  /*
+   * The acceptance criterion "no other `max-w-[...]` on `<main>`", as a
+   * measurement of the element that is actually rendered rather than of the
+   * file that describes it.
+   *
+   * There is no DOM in this suite — vitest runs in `node`, with no jsdom and no
+   * testing-library — so this cannot and does not claim to measure a layout.
+   * What it reads is the class list React emits on the `<main>`, which is where
+   * the width and the padding either are or are not.
+   */
+  it.each(Object.keys(PAGE_WIDTHS) as PageWidth[])(
+    "renders a <main> capped once, at %s",
+    (width) => {
+      const markup = renderToStaticMarkup(createElement(Page, { width }));
+      const tag = mainTags(markup)[0];
+      expect(tag, `no <main> rendered for width="${width}"`).toBeDefined();
+
+      const classes = tokens(/class="([^"]*)"/.exec(tag)![1]);
+      expect(classes.filter((c) => /max-w-/.test(c))).toEqual([PAGE_WIDTHS[width]]);
+      // One vertical rhythm too: `Page` owns `py-8` and nothing argues with it.
+      expect(classes.filter((c) => /^(?:[a-z]+:)?p[xy]-/.test(c))).toEqual([
+        "px-4",
+        "sm:px-6",
+        "py-8",
+      ]);
+    }
+  );
+
+  /*
+   * Rule 2: a page names a token.
+   *
+   * `width={SOMETHING}` is refused as well as `width="1200"`, because a token
+   * computed somewhere else is a token this file cannot see — and "which width
+   * is this page" stops being answerable by reading the page.
+   */
+  it("is handed a width only as one of the three names", () => {
+    const offenders: string[] = [];
+    for (const file of app) {
+      const source = fs.readFileSync(file, "utf8");
+      for (const [, attrs] of source.matchAll(/<Page\b([^>]*)>/gs)) {
+        const written = /\bwidth=(?:"([^"]*)"|\{([\s\S]*?)\})/.exec(attrs);
+        if (!written) continue; // No `width` at all is the `standard` default.
+        const token = written[1];
+        if (token === undefined) {
+          offenders.push(`${relative(file)}: width={${written[2]}} — name one of the three`);
+        } else if (!(token in PAGE_WIDTHS)) {
+          offenders.push(`${relative(file)}: width="${token}" is not a PAGE_WIDTHS token`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   /*
@@ -318,9 +462,18 @@ describe("one page width", () => {
 
   /*
    * The header has to line up with the page under it, and the only way to be
-   * sure of that is for both to be the same string. They were not: the bar was
-   * `max-w-[1400px] px-5 sm:px-8` over pages at `max-w-[1400px] px-4 sm:px-6`,
-   * so the wordmark sat 8px further in than the `<h1>` it introduced.
+   * sure of that is for both to be built from the same string. They were not:
+   * the bar was `max-w-[1400px] px-5 sm:px-8` over pages at
+   * `max-w-[1400px] px-4 sm:px-6`, so the wordmark sat 8px further in than the
+   * `<h1>` it introduced.
+   *
+   * **It is the `className` that is checked, not the file.** The obvious
+   * version of this — `source.toContain("PAGE_SHELL")` — was satisfied by the
+   * sentence you are reading: moving the draft room's bar onto `pageShell`
+   * left a *comment* in the file saying `PAGE_SHELL`, and the test stayed green
+   * over a bar that no longer referenced either. So two things have to be true,
+   * and neither can be made true by prose: the shell is imported, and it is
+   * named inside a `className`.
    */
   it("shares the shell with every bar that spans the page", () => {
     const bars = [
@@ -330,7 +483,20 @@ describe("one page width", () => {
     ];
     for (const bar of bars) {
       const source = fs.readFileSync(path.join(ROOT, bar), "utf8");
-      expect(source, bar).toContain("PAGE_SHELL");
+
+      const imported = [...source.matchAll(/import\s*\{([\s\S]*?)\}\s*from/g)].some(({ 1: names }) =>
+        /\b(?:PAGE_SHELL|pageShell)\b/.test(names)
+      );
+      expect(imported, `${bar} imports neither PAGE_SHELL nor pageShell`).toBe(true);
+
+      const wearing = classNames(source).filter((expr) =>
+        /\b(?:PAGE_SHELL\b|pageShell\s*\()/.test(expr)
+      );
+      expect(
+        wearing.length,
+        `${bar} names no shell in any className — a bar that does not wear it does not line up`
+      ).toBeGreaterThan(0);
+
       expect(source.match(/\bmax-w-\[\d+px\]/g), bar).toBeNull();
     }
   });

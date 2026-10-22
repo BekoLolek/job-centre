@@ -1296,3 +1296,67 @@ A season of two to four events a month across different games, with one running 
 **Alternate flows**
 - **2a.** Member switched this kind off - no notification; the standings still change.
 - **3a.** The announcement is off, or no webhook is configured - nothing is posted (UC-26 3a, 4b).
+
+## UC-37: Edit what an announcement says
+
+**Actor:** Admin
+**Requirements covered:** R-201, R-202, R-203, R-204
+**Trigger:** An admin wants the channel to read differently, or to notify a role.
+
+**Preconditions**
+1. The admin is signed in as an admin.
+
+**Main success path**
+1. Admin opens the announcements screen in settings.
+2. System lists every announcement kind there is, each with its current wording and whether it is switched on.
+3. Admin edits the wording of one, using the placeholders that kind offers.
+4. Admin chooses who it mentions: nobody, one or more roles, or everyone.
+5. System shows a preview of the exact message that would be posted, and sends nothing.
+6. Admin saves.
+7. System stores the wording and the mention choice, and records who changed it in the audit log.
+8. The next announcement of that kind posts the admin's wording, mentioning what they chose.
+
+**Outcome**
+- The channel reads in the community's own voice, and the people who should act are notified.
+
+**Alternate flows**
+- **2a.** An announcement has never been edited - the wording shown is the one compiled into the site today, and saving nothing changes nothing.
+- **3a.** The wording uses a placeholder that kind does not offer - refused, naming the placeholders that kind does offer. Nothing saved.
+- **3b.** The wording is empty - refused; an announcement with no words is the switch being off, which is a separate control.
+- **3c.** The wording is longer than Discord accepts - refused before saving, saying the limit, rather than being discovered as a failed post.
+- **4a.** No bot token or guild id is configured - the role list cannot be read, so the admin pastes a role id instead and the screen says why (R-203).
+- **4b.** A role the template mentions has since been deleted from the server - the announcement still posts, the mention renders as plain text, and the screen flags the dead role the next time it is opened.
+- **4c.** Admin chooses everyone - saved, and the audit row records that this announcement now pings the whole server.
+- **5a.** A placeholder has no value for the preview - the preview shows the placeholder's example value, clearly marked as an example.
+- **7a.** Two admins save the same announcement at once - one wins, the other is told the wording changed under them and shown the current one.
+
+## UC-38: Hear about an event at the right moment
+
+**Actor:** Member; Discord
+**Requirements covered:** R-205, R-206, R-207, R-208
+**Trigger:** An event is published, its signups open or are about to close, or it is about to start.
+
+**Preconditions**
+1. A webhook is configured (UC-26).
+2. The announcement kind is switched on.
+
+**Main success path**
+1. An event is published - system posts the published announcement (UC-26, already built).
+2. The event's signups open - system posts the signups-open announcement.
+3. One day before signups close - system posts the closing-soon announcement.
+4. Two hours before the first day starts - system posts the starting-soon announcement.
+5. Each posts the admin's wording for that kind, mentioning whoever that kind mentions.
+
+**Outcome**
+- Members hear about an event when they can still act on it, without watching the site.
+
+**Alternate flows**
+- **2a.** Signups were already open when the event was published - only the published announcement posts. The two are one moment, not two.
+- **3a.** The event has no signup closing time - nothing to count back from, so nothing is posted.
+- **4a.** The event has no dated day - nothing to count back from, so nothing is posted.
+- **4b.** The event was cancelled after the reminder was due but before it ran - nothing is posted; a reminder to turn up to a cancelled event is worse than silence.
+- **4c.** The event is already full - the closing-soon announcement still posts, because a waitlist place is still worth having, and says the event is full.
+- **5a.** The scheduler runs twice inside one window - each announcement is posted once per event, claimed the same way a reminder DM is (UC-25).
+- **5b.** The scheduler does not run for a day - a missed moment is not posted late. A reminder two hours before an event that started yesterday is noise, and the look-ahead window is what decides, not the fact a row exists.
+- **5c.** Discord refuses the post - it is recorded as `announcement.failed` against that event and appears on the admin home (R-208, UC-27).
+

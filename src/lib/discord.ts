@@ -39,10 +39,11 @@
  */
 
 import { after } from "next/server";
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   type Database,
   SETTING_KEYS,
+  announcementTemplates,
   applications,
   db as defaultDb,
   draftLots,
@@ -53,15 +54,21 @@ import {
   users,
 } from "@/db";
 import {
+  ANNOUNCEMENTS,
   type AnnouncementKind,
   type AnnouncementSettings,
+  type AnnouncementTemplate,
   type DiscordMessage,
+  NO_MENTION,
   announcementSettingsFrom,
   announcementSettingsValue,
+  announcementTemplateFrom,
+  announcementTemplateProblem,
   applicationDecidedMessage,
   eventPublishedMessage,
   lotSoldMessage,
   matchResultMessage,
+  mentionLine,
   standingsMessage,
   type AnnounceEnv,
   resolveSiteOrigin,
@@ -188,6 +195,244 @@ export async function setAnnouncementSettings(
       set: { value, updatedAt: new Date() },
     });
   return announcementSettingsFrom(value);
+}
+
+/* ------------------------------------------------------------------ */
+/* The wording (R-201, R-202 / UC-37)                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A stored override, with the bookkeeping a screen needs around it.
+ *
+ * `version` is what an editor is opened at and saved against (UC-37 7a), and
+ * `0` is the version of a kind with no row — "nobody has touched this", which
+ * is the state every kind starts in and the reason drizzle/0029 has no
+ * backfill.
+ */
+export type StoredAnnouncementTemplate = AnnouncementTemplate & {
+  version: number;
+  updatedAt: Date | null;
+  updatedBy: string | null;
+};
+
+/** The default a kind has until somebody edits it: the compiled copy, no mention. */
+export function unedited(): StoredAnnouncementTemplate {
+  return { body: null, mention: NO_MENTION, version: 0, updatedAt: null, updatedBy: null };
+}
+
+function storedFrom(row: {
+  body: string | null;
+  mentionEveryone: boolean;
+  mentionRoleIds: string[];
+  version: number;
+  updatedAt: Date;
+  updatedBy: string | null;
+}): StoredAnnouncementTemplate {
+  /*
+   * Through `announcementTemplateFrom` rather than straight off the row, so the
+   * one reader that decides what a stored shape means is the one in
+   * `./announce` — including the rule that a role id which is not a snowflake
+   * is not a role id, and that only a real `true` is "everyone". A row written
+   * by an older screen is a normal thing to meet (`announcementSettingsFrom`).
+   */
+  const clean = announcementTemplateFrom({
+    body: row.body,
+    everyone: row.mentionEveryone,
+    roleIds: row.mentionRoleIds,
+  });
+  return {
+    ...clean,
+    version: row.version,
+    updatedAt: row.updatedAt,
+    updatedBy: row.updatedBy,
+  };
+}
+
+const TEMPLATE_COLUMNS = {
+  kind: announcementTemplates.kind,
+  body: announcementTemplates.body,
+  mentionEveryone: announcementTemplates.mentionEveryone,
+  mentionRoleIds: announcementTemplates.mentionRoleIds,
+  version: announcementTemplates.version,
+  updatedAt: announcementTemplates.updatedAt,
+  updatedBy: announcementTemplates.updatedBy,
+} as const;
+
+/**
+ * Every kind's wording, edited or not — one row per kind in `ANNOUNCEMENTS`.
+ *
+ * Never throws, for the reason `getAnnouncementSettings` does not: a database
+ * that is down at the moment a lot is awarded must not take the award with it,
+ * and "we could not read the wording" is emphatically not a reason to post
+ * something other than the compiled copy. A failed read therefore answers
+ * "nobody has edited anything", which is the one answer that cannot surprise
+ * anybody — and in particular cannot mention anyone.
+ */
+export async function getAnnouncementTemplates(
+  database: Database = defaultDb
+): Promise<Record<AnnouncementKind, StoredAnnouncementTemplate>> {
+  const out = {} as Record<AnnouncementKind, StoredAnnouncementTemplate>;
+  for (const spec of ANNOUNCEMENTS) out[spec.kind] = unedited();
+
+  try {
+    const rows = await database.select(TEMPLATE_COLUMNS).from(announcementTemplates);
+    for (const row of rows) {
+      // A row naming a kind that no longer exists is simply not read — the same
+      // way a stale key in the switches object is already dropped.
+      if (row.kind in out) out[row.kind as AnnouncementKind] = storedFrom(row);
+    }
+  } catch (error) {
+    console.error("[discord] could not read the announcement wording", error);
+  }
+
+  return out;
+}
+
+/** One kind's wording. The compiled copy when there is no row, or no database. */
+export async function getAnnouncementTemplate(
+  kind: AnnouncementKind,
+  database: Database = defaultDb
+): Promise<StoredAnnouncementTemplate> {
+  try {
+    const [row] = await database
+      .select(TEMPLATE_COLUMNS)
+      .from(announcementTemplates)
+      .where(eq(announcementTemplates.kind, kind))
+      .limit(1);
+    return row ? storedFrom(row) : unedited();
+  } catch (error) {
+    console.error(`[discord] could not read the "${kind}" announcement wording`, error);
+    return unedited();
+  }
+}
+
+export type TemplateSaveResult =
+  | { ok: true; data: StoredAnnouncementTemplate }
+  | { ok: false; error: string; current?: StoredAnnouncementTemplate };
+
+/**
+ * Store one kind's wording and mention choice.
+ *
+ * ## Refused before anything is written
+ *
+ * Every refusal is `announcementTemplateProblem`'s, asked **first**, so a
+ * wording with a placeholder the kind does not offer, an empty one, one over
+ * Discord's limit, or a role "id" that is really a role name, leaves the
+ * database exactly as it was (UC-37 3a, 3b, 3c). None of them is a failed post
+ * discovered in a quiet channel.
+ *
+ * ## Two admins at once (UC-37 7a)
+ *
+ * `expectedVersion` is the version the editor was opened at. The write is
+ * conditional on it, in one statement, so the database decides the winner:
+ *
+ *  - **A kind with no row** is saved with an INSERT that does nothing on a
+ *    primary-key conflict. If somebody else created the row in between, no row
+ *    comes back and this save is the loser.
+ *  - **A kind with a row** is saved with an UPDATE matching on both the kind
+ *    *and* the version. The second of two saves matches nothing.
+ *
+ * The loser is told the wording moved and handed the current row, which is what
+ * the screen shows them — rather than having their words silently win or
+ * silently vanish. Read-then-write would have both saves read version 3 and
+ * both write version 4; the condition is in the statement precisely so there is
+ * no gap between the read and the write for the other admin to land in.
+ */
+export async function setAnnouncementTemplate(
+  kind: AnnouncementKind,
+  template: AnnouncementTemplate,
+  options: {
+    expectedVersion: number;
+    actor?: { id: string; displayName?: string | null; name?: string | null } | null;
+  },
+  database: Database = defaultDb
+): Promise<TemplateSaveResult> {
+  const problem = announcementTemplateProblem(kind, template);
+  if (problem) return { ok: false, error: problem };
+
+  const moved = async (): Promise<TemplateSaveResult> => ({
+    ok: false,
+    error: "Somebody else changed this announcement while you were editing it.",
+    current: await getAnnouncementTemplate(kind, database),
+  });
+
+  const body = template.body;
+  const values = {
+    kind,
+    body,
+    mentionEveryone: template.mention.everyone,
+    mentionRoleIds: [...template.mention.roleIds],
+    updatedAt: new Date(),
+    updatedBy: options.actor?.id ?? null,
+  };
+
+  const before =
+    options.expectedVersion > 0 ? await getAnnouncementTemplate(kind, database) : unedited();
+
+  let saved: StoredAnnouncementTemplate | null = null;
+
+  if (options.expectedVersion <= 0) {
+    const [row] = await database
+      .insert(announcementTemplates)
+      .values({ ...values, version: 1 })
+      .onConflictDoNothing({ target: announcementTemplates.kind })
+      .returning(TEMPLATE_COLUMNS);
+    saved = row ? storedFrom(row) : null;
+  } else {
+    const [row] = await database
+      .update(announcementTemplates)
+      .set({ ...values, version: options.expectedVersion + 1 })
+      .where(
+        and(
+          eq(announcementTemplates.kind, kind),
+          eq(announcementTemplates.version, options.expectedVersion)
+        )
+      )
+      .returning(TEMPLATE_COLUMNS);
+    saved = row ? storedFrom(row) : null;
+  }
+
+  if (!saved) return moved();
+
+  /*
+   * The log, after the write. `recordAudit` never throws (its own comment says
+   * why), so a full log cannot turn a saved wording into a failed save.
+   */
+  const line = mentionLine(saved.mention);
+  await recordAudit({
+    action: "announcement.wording_changed",
+    summary: `The “${kind}” announcement was edited${line ? ` and now mentions ${line}` : ""}.`,
+    actor: options.actor ?? null,
+    subject: kind,
+    detail: {
+      kind,
+      edited: saved.body !== null,
+      everyone: saved.mention.everyone,
+      roleIds: [...saved.mention.roleIds],
+      version: saved.version,
+    },
+  });
+
+  /*
+   * And a line of its own the first time a kind is set to ping the whole server
+   * (UC-37 4c). A second row rather than a flag buried in the one above,
+   * because "who made an announcement ping four hundred people" is a question
+   * somebody asks of the audit log by scanning it, and `everyone: true` inside
+   * a detail blob is not something a scan finds. Only on the transition, so
+   * editing the wording of an already-pinging announcement does not re-raise
+   * it every time.
+   */
+  if (saved.mention.everyone && !before.mention.everyone) {
+    await recordAudit({
+      action: "announcement.pings_everyone",
+      summary: `The “${kind}” announcement now pings the whole server.`,
+      actor: options.actor ?? null,
+      subject: kind,
+      detail: { kind, version: saved.version },
+    });
+  }
+
+  return { ok: true, data: saved };
 }
 
 /* ------------------------------------------------------------------ */
@@ -340,6 +585,26 @@ async function announceOrigin(): Promise<string | null> {
   return (await getIntegrationConfig()).origin;
 }
 
+/**
+ * The admin's wording for a kind, read at post time rather than at trigger time.
+ *
+ * Per message and inside `after()`, for the same reason `announceOrigin` is: one
+ * extra row read on a job nobody is waiting for is cheaper than an argument
+ * threaded through five builders. Reading it at post time is also the correct
+ * answer rather than the convenient one — an admin who fixes a typo in the
+ * seconds between a lot being awarded and the callback running should have the
+ * fixed sentence posted, not the one that was stored when the hammer fell.
+ */
+async function wordingFor(
+  kind: AnnouncementKind,
+  database: Database
+): Promise<AnnouncementTemplate> {
+  // The caller's database, not the default one: an announcer takes a `database`
+  // so a test can hand it one, and a read that ignored it would be reading a
+  // different database from the one the row it is announcing came out of.
+  return getAnnouncementTemplate(kind, database);
+}
+
 async function deliver(
   kind: AnnouncementKind,
   message: DiscordMessage,
@@ -466,16 +731,19 @@ export function announceEventPublished(eventId: string, database: Database = def
       return {
         kind: "event_published",
         eventId,
-        message: eventPublishedMessage({
-          title: event.title,
-          slug: event.slug,
-          type: event.type,
-          description: event.description,
-          capacity: event.capacity,
-          startsAt: dates.get(eventId)?.startsAt ?? null,
-          signupClosesAt: event.signupClosesAt,
-          origin: await announceOrigin(),
-        }),
+        message: eventPublishedMessage(
+          {
+            title: event.title,
+            slug: event.slug,
+            type: event.type,
+            description: event.description,
+            capacity: event.capacity,
+            startsAt: dates.get(eventId)?.startsAt ?? null,
+            signupClosesAt: event.signupClosesAt,
+            origin: await announceOrigin(),
+          },
+          await wordingFor("event_published", database)
+        ),
       };
     },
     { subject: { eventId }, eventOf: async () => eventId }
@@ -531,13 +799,19 @@ export function announceApplicationDecision(
       return {
         kind,
         eventId: row.eventId,
-        message: applicationDecidedMessage(kind, {
-          member: row.member ?? row.fallbackName ?? "A member",
-          eventTitle: row.eventTitle,
-          slug: row.slug,
-          waitlistPosition: row.waitlistPosition,
-          origin: await announceOrigin(),
-        }),
+        message: applicationDecidedMessage(
+          kind,
+          {
+            member: row.member ?? row.fallbackName ?? "A member",
+            eventTitle: row.eventTitle,
+            slug: row.slug,
+            waitlistPosition: row.waitlistPosition,
+            origin: await announceOrigin(),
+          },
+          // The kind the row turned out to be, so an admin who edited the
+          // waitlist wording does not also change what an acceptance says.
+          await wordingFor(kind, database)
+        ),
       };
     },
     {
@@ -577,14 +851,17 @@ export function announceLotSold(lotId: string, database: Database = defaultDb): 
       return {
         kind: "draft_lot_sold",
         eventId: row.eventId,
-        message: lotSoldMessage({
-          player: row.player ?? row.fallbackName ?? "A player",
-          team: row.team,
-          price: row.price ?? 0,
-          eventTitle: row.eventTitle,
-          slug: row.slug,
-          origin: await announceOrigin(),
-        }),
+        message: lotSoldMessage(
+          {
+            player: row.player ?? row.fallbackName ?? "A player",
+            team: row.team,
+            price: row.price ?? 0,
+            eventTitle: row.eventTitle,
+            slug: row.slug,
+            origin: await announceOrigin(),
+          },
+          await wordingFor("draft_lot_sold", database)
+        ),
       };
     },
     {
@@ -639,17 +916,20 @@ export function announceMatchResult(matchId: string, database: Database = defaul
       return {
         kind: "match_result",
         eventId: match.eventId,
-        message: matchResultMessage({
-          label: resolved.displayLabel,
-          teamA: resolved.nameA,
-          teamB: resolved.nameB,
-          gamesWonA: resolved.gamesWonA,
-          gamesWonB: resolved.gamesWonB,
-          winner: resolved.winner ? (named.get(resolved.winner) ?? null) : null,
-          eventTitle: event.title,
-          slug: event.slug,
-          origin: await announceOrigin(),
-        }),
+        message: matchResultMessage(
+          {
+            label: resolved.displayLabel,
+            teamA: resolved.nameA,
+            teamB: resolved.nameB,
+            gamesWonA: resolved.gamesWonA,
+            gamesWonB: resolved.gamesWonB,
+            winner: resolved.winner ? (named.get(resolved.winner) ?? null) : null,
+            eventTitle: event.title,
+            slug: event.slug,
+            origin: await announceOrigin(),
+          },
+          await wordingFor("match_result", database)
+        ),
       };
     },
     { subject: { matchId }, eventOf: () => eventIdOfMatch(matchId, database) }
@@ -711,13 +991,16 @@ export function announceStandings(eventId: string, database: Database = defaultD
       return {
         kind: "standings_changed",
         eventId,
-        message: standingsMessage({
-          seasonName: season.name,
-          slug: season.slug,
-          eventTitle: scored.title,
-          top: topOfTheTable(page.standings, { movement }),
-          origin: await announceOrigin(),
-        }),
+        message: standingsMessage(
+          {
+            seasonName: season.name,
+            slug: season.slug,
+            eventTitle: scored.title,
+            top: topOfTheTable(page.standings, { movement }),
+            origin: await announceOrigin(),
+          },
+          await wordingFor("standings_changed", database)
+        ),
       };
     },
     { subject: { eventId }, eventOf: async () => eventId }

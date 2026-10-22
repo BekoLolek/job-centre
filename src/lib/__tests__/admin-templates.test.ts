@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   type Database,
@@ -1180,6 +1180,114 @@ describe("a template saved from an event (UC-08 10a)", () => {
 
     // Nothing saved: no event row, so the caller was told the truth.
     expect(await db.select().from(events).where(eq(events.title, "Doomed"))).toEqual([]);
+  });
+
+  /*
+   * Task 57. The two refusals `createEvent` *cannot* make for itself, and the
+   * ones Task 52's capacity/day/rank move did not reach.
+   *
+   * `setEventQuestions` and `setEventDays` hold rules of their own, and neither
+   * can be asked before the event row exists — so both used to refuse *after*
+   * an insert that had already committed on the bare handle, with nothing to
+   * roll back and `createEvent`'s own docblock claiming "nothing saved". The
+   * whole job is now one transaction and those refusals are thrown
+   * (docs/decisions/004-refusals-inside-transactions.md), so UC-08 10c means
+   * what it says on all four paths rather than two of them.
+   *
+   * In both tests the refusal itself is the *weak* assertion — the broken
+   * version returned the identical sentence. The empty `events` table is the
+   * one that bites.
+   */
+  it("saves nothing when a template's question cannot prefill any more (UC-08 10c)", async () => {
+    /*
+     * The reachable one. A template stores `profileFieldKey`, not an id, and
+     * resolves it on every create — so a profile field whose **type** has
+     * changed since the template was saved still resolves, and then
+     * `setEventQuestions` refuses it as a mismatch. Nobody has done anything
+     * wrong and nothing warned them; the template is simply older than the
+     * field.
+     */
+    const template = expectOk(
+      await createTemplate(
+        {
+          name: "Rivals, with an IGN box",
+          gameId: rivalsId,
+          questions: [
+            { key: "ign", label: "In-game name", type: "text", profileFieldKey: "ign" },
+          ],
+        },
+        db
+      )
+    );
+    expect(template.questions).toHaveLength(1);
+
+    // The field the template names is still called `ign`, and is no longer text.
+    await db
+      .update(profileFields)
+      .set({ type: "bool" })
+      .where(and(eq(profileFields.key, "ign"), eq(profileFields.gameId, rivalsId)));
+
+    const result = await createEvent(
+      { title: "Rivals, stale template", templateId: template.id },
+      db
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toMatch(/questions need another look/i);
+      // The per-question detail survives the throw, which is the reason
+      // `NothingSaved` carries `errors` as well as the sentence.
+      expect(Object.values(result.errors ?? {}).join(" ")).toMatch(
+        /different type, so it cannot prefill/i
+      );
+    }
+
+    expect(
+      await db.select().from(events).where(eq(events.title, "Rivals, stale template"))
+    ).toEqual([]);
+  });
+
+  it("saves nothing when a day list names another event's day (UC-08 10c)", async () => {
+    /*
+     * The other half, through `setEventDays` rather than `setEventQuestions`,
+     * because the two are separate calls with separate refusals and a fix that
+     * only covered the first would leave this one committing an event row.
+     *
+     * `createEvent` pre-checks the day *list* — overlaps, the sign-up window,
+     * the count — so the refusal that is still only `setEventDays`' to make is
+     * the one about a day's **identity**: an id belonging to somebody else's
+     * event, which `CreateEventInput.days` can carry because `EventDayInput`
+     * can.
+     */
+    const neighbour = expectOk(
+      await createEvent({ ...PUBLISHABLE, title: "Somebody else's event" }, db)
+    );
+    const [theirDay] = await db
+      .select()
+      .from(eventDays)
+      .where(eq(eventDays.eventId, neighbour.id));
+    expect(theirDay).toBeDefined();
+
+    expect(
+      await expectFail(
+        createEvent(
+          {
+            ...PUBLISHABLE,
+            title: "Borrowed a day",
+            days: [{ id: theirDay.id, startsAt: new Date("2100-02-01T18:00:00Z") }],
+          },
+          db
+        )
+      )
+    ).toMatch(/belongs to a different event/i);
+
+    expect(await db.select().from(events).where(eq(events.title, "Borrowed a day"))).toEqual([]);
+    // And the neighbour's day is untouched, so the rollback took the right things.
+    const [stillTheirs] = await db
+      .select()
+      .from(eventDays)
+      .where(eq(eventDays.id, theirDay.id));
+    expect(stillTheirs).toMatchObject({ eventId: neighbour.id });
   });
 });
 

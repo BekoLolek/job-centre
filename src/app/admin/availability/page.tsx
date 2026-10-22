@@ -12,8 +12,9 @@
  */
 
 import AppHeader from "@/components/AppHeader";
+import AdminNav from "@/components/admin/AdminNav";
 import AvailabilityWeek from "@/components/admin/AvailabilityWeek";
-import { Eyebrow, Page, Section } from "@/components/ui";
+import { Page, PageHeader, Section } from "@/components/ui";
 import { availabilityWeek } from "@/lib/availability";
 import { requireAdmin } from "@/lib/session-guards";
 import { formatDate, parseDate, todayIn, weekStart } from "@/lib/zoned-time";
@@ -45,18 +46,22 @@ export default async function AdminAvailabilityPage({
 
   return (
     <div className="min-h-screen">
-      <AppHeader admin />
+      <AppHeader admin>
+        <AdminNav />
+      </AppHeader>
 
-      <Page>
-        <header className="mb-2">
-          <Eyebrow className="mb-2">Admin · Availability</Eyebrow>
-          <h1 className="text-36">When everyone is free</h1>
-          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
-            The weekly pattern every member set on their profile, stacked up. Darker means more
-            people. Point at a slot to see exactly who — and remember a maybe counts for half,
-            so a dark cell full of maybes is not the same as a dark cell full of yeses.
-          </p>
-        </header>
+      {/*
+        `wide`: the grid is `min-w-[44rem]` and stretches to whatever column it
+        is given — seven days across, a row every half hour. Every pixel here is
+        a wider cell to read and to point at, and the alternative is the
+        horizontal scroller inside it.
+      */}
+      <Page width="wide" className="space-y-6">
+        <PageHeader
+          eyebrow="Admin · Availability"
+          title="When everyone is free"
+          intro="The weekly pattern every member set on their profile, stacked up. Darker means more people. Point at a slot to see exactly who — and remember a maybe counts for half, so a dark cell full of maybes is not the same as a dark cell full of yeses."
+        />
 
         <Section
           first

@@ -9,7 +9,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import HostApplyForm from "@/components/host/HostApplyForm";
-import { Badge, Eyebrow, Page, Section } from "@/components/ui";
+import { Badge, Page, PageHeader, Section } from "@/components/ui";
 import { eventsHostedBy, hostableGames, myHostApplications } from "@/lib/hosting";
 import { requireUser } from "@/lib/session-guards";
 import Link from "next/link";
@@ -32,17 +32,13 @@ export default async function HostPage() {
     <div className="min-h-screen">
       <AppHeader />
 
-      <Page>
-        <header className="mb-2">
-          <Eyebrow className="mb-2">Job Centre · Hosting</Eyebrow>
-          <h1 className="text-36">Run an event</h1>
-          <p className="mt-3 max-w-2xl text-14 leading-relaxed text-muted">
-            Anybody can propose one. An admin reads it, sets up the game and the sign-up
-            questions, and then hands the event over — from that point it is yours: the
-            format, the schedule, the applicants, the results, publishing it. Everything an
-            admin could do to that one event, you can.
-          </p>
-        </header>
+      {/* `reading`: prose, then one column of form fields. */}
+      <Page width="reading" className="space-y-6">
+        <PageHeader
+          eyebrow="Job Centre · Hosting"
+          title="Run an event"
+          intro="Anybody can propose one. An admin reads it, sets up the game and the sign-up questions, and then hands the event over — from that point it is yours: the format, the schedule, the applicants, the results, publishing it. Everything an admin could do to that one event, you can."
+        />
 
         {hosting.length > 0 && (
           <Section

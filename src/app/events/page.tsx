@@ -17,7 +17,7 @@
 
 import AppHeader from "@/components/AppHeader";
 import { EventListing } from "@/components/events";
-import { Eyebrow, Page } from "@/components/ui";
+import { Page, PageHeader } from "@/components/ui";
 import { listEvents } from "@/lib/events";
 import { PUBLIC_STATUSES, firstParam } from "./scope";
 
@@ -46,15 +46,13 @@ export default async function EventsPage({
     <div className="min-h-screen">
       <AppHeader />
 
+      {/* `standard`: `EventListing` lays its cards out two to a row. */}
       <Page className="space-y-6">
-        <header>
-          <Eyebrow className="mb-2">Job Centre · Events</Eyebrow>
-          <h1 className="text-36">Coming up</h1>
-          <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-            Everything the community has planned. Anything already run keeps its page for
-            the record — that is what the archive is.
-          </p>
-        </header>
+        <PageHeader
+          eyebrow="Job Centre · Events"
+          title="Coming up"
+          intro="Everything the community has planned. Anything already run keeps its page for the record — that is what the archive is."
+        />
 
         <EventListing
           scope="upcoming"

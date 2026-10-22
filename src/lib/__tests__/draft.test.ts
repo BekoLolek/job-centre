@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
+import { drizzle as drizzlePglite } from "drizzle-orm/pglite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Database,
@@ -6,11 +7,18 @@ import {
   applications as applicationsTable,
   draftLots,
   draftPoolEntries,
+  schema,
   teamMembers,
   teams as teamsTable,
   users as usersTable,
 } from "@/db";
-import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
+import {
+  PUBLISHABLE,
+  type TestDatabase,
+  committingAfter,
+  freshDatabase,
+  makeUser,
+} from "@/db/__tests__/helpers";
 import {
   awardLot,
   clearBid,
@@ -99,33 +107,6 @@ function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string })
   return result.data;
 }
 
-/**
- * This file's database, except that the first transaction it opens runs
- * `between` to completion first — the same helper `events.test.ts` uses, for
- * the same reason.
- *
- * Sequenced rather than raced. A second manager awarding a lot in the exact
- * window between "which lot is last" and "void it" is not something a timer
- * can be trusted to reproduce, and a test that had to *win* a race to see the
- * bug would pass by luck on the days it did not. This pins the interleave:
- * everything the outer call could have read before it opened its transaction
- * is stale, because the inner one has already committed.
- */
-function committingAfter(between: () => Promise<unknown>): Database {
-  let pending: (() => Promise<unknown>) | null = between;
-  return new Proxy(db, {
-    get(target, property, receiver) {
-      if (property !== "transaction") return Reflect.get(target, property, receiver);
-      return async (run: Parameters<Database["transaction"]>[0]) => {
-        const first = pending;
-        pending = null;
-        if (first) await first();
-        return target.transaction(run);
-      };
-    },
-  });
-}
-
 /** Two named teams, captained by the first two applicants. */
 async function twoTeams(fixture: Fixture): Promise<{ a: string; b: string }> {
   const written = unwrap(
@@ -156,6 +137,23 @@ async function buy(
   unwrap(await placeBid(lot.id, teamId, amount, {}, db));
   unwrap(await awardLot(lot.id, teamId, {}, db));
   return lot.id;
+}
+
+/**
+ * This file's database again, over the same PGlite client, with every statement
+ * it runs pushed onto `log` in the order it was issued — the handle
+ * `format-db.test.ts` and `archive-lock.test.ts` both build, and its docblock
+ * carries the rest of the reasoning.
+ *
+ * drizzle's own `logger` hook rather than a proxy over the query builders: the
+ * hook fires from the prepared query, so it sees statements issued inside a
+ * transaction too.
+ */
+function logging(log: string[]): Database {
+  return drizzlePglite(harness.client, {
+    schema,
+    logger: { logQuery: (query) => log.push(query) },
+  });
 }
 
 async function balanceOf(eventId: string, teamId: string): Promise<number> {
@@ -294,6 +292,72 @@ describe("setTeams", () => {
       )
     );
     expect(written.teams.map((team) => team.balanceStart)).toEqual([1200, 1000]);
+  });
+
+  it("refuses a moved starting balance without having removed the dropped team", async () => {
+    /*
+     * Task 57. Two refusals in this function, in this order: `removeTeamsIn`
+     * **deletes** the teams that were left out, and the moved-balance check
+     * underneath it used to run afterwards. A refusal returned from a
+     * transaction callback commits what came before it
+     * (docs/decisions/004-refusals-inside-transactions.md), so one save that
+     * dropped a team *and* moved a surviving team's starting figure deleted the
+     * dropped team, cascaded its roster away, committed the lot, and answered
+     * with the sentence below.
+     *
+     * The two checks ask different questions, which is why neither covered the
+     * other: `removeTeamsIn` refuses on whether the *doomed* teams hold lots,
+     * and this one on whether *anybody* does. Charlie holds none, so the delete
+     * goes through; Alpha has bought somebody, so the balance is refused.
+     *
+     * `ok: false` alone is not the assertion — the broken version answered
+     * `ok: false` too. Charlie still being there is.
+     */
+    const fixture = await seededEvent(3);
+    const written = unwrap(
+      await setTeams(
+        fixture.eventId,
+        [{ name: "Alpha" }, { name: "Bravo" }, { name: "Charlie" }],
+        db
+      )
+    );
+    const [alpha, bravo, charlie] = written.teams;
+    unwrap(
+      await setCaptains(
+        fixture.eventId,
+        [
+          { teamId: alpha.id, userId: fixture.members[0] },
+          { teamId: bravo.id, userId: fixture.members[1] },
+        ],
+        db
+      )
+    );
+    // Per-team balances, or the figure in the input is ignored and the refusal
+    // below is unreachable. Set before the first lot, because UC-16 1a freezes
+    // the rules from then on.
+    unwrap(await setDraftConfig(fixture.eventId, { balanceMode: "per_team" }, db));
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    await buy(fixture.eventId, fixture.members[2], alpha.id, 100);
+
+    const result = await setTeams(
+      fixture.eventId,
+      [
+        { id: alpha.id, name: "Alpha", balanceStart: 900 },
+        { id: bravo.id, name: "Bravo", balanceStart: 1000 },
+      ],
+      db
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("starting balance cannot change now");
+    expect((await getTeams(fixture.eventId, db)).map((team) => team.name).sort()).toEqual([
+      "Alpha",
+      "Bravo",
+      "Charlie",
+    ]);
+    // And Charlie's row is the original, not one put back by a later save.
+    const [row] = await db.select().from(teamsTable).where(eq(teamsTable.id, charlie.id));
+    expect(row).toBeDefined();
   });
 });
 
@@ -772,7 +836,7 @@ describe("setTeamCount", () => {
       await setTeamCount(
         fixture.eventId,
         4,
-        committingAfter(() => setTeamCount(fixture.eventId, 4, db))
+        committingAfter(db, () => setTeamCount(fixture.eventId, 4, db))
       )
     );
 
@@ -1030,7 +1094,7 @@ describe("placing players on rosters by hand", () => {
         fixture.eventId,
         fixture.members[2],
         written[2].id,
-        committingAfter(() =>
+        committingAfter(db, () =>
           placeOnRoster(fixture.eventId, fixture.members[2], written[1].id, db)
         )
       )
@@ -1070,7 +1134,7 @@ describe("placing players on rosters by hand", () => {
       fixture.eventId,
       fixture.members[2],
       b,
-      committingAfter(() => awardLot(lot.id, a, {}, db))
+      committingAfter(db, () => awardLot(lot.id, a, {}, db))
     );
 
     expect(placed.ok).toBe(false);
@@ -2345,7 +2409,7 @@ describe("a seat the event has taken away", () => {
     const before = await poolRow(fixture.eventId, player);
 
     const inTheGap = () => setApplicationStatus(applicationId, "declined", {}, db);
-    const result = await awardLot(lot.id, a, {}, committingAfter(inTheGap));
+    const result = await awardLot(lot.id, a, {}, committingAfter(db, inTheGap));
 
     expect(result.ok).toBe(false);
     const error = result.ok === false ? result.error : "";
@@ -2706,6 +2770,59 @@ describe("voidLot — the undo", () => {
     expect(await getDraftHistory(fixture.eventId, db)).toHaveLength(1);
   });
 
+  it("settles the lot before it touches the roster or the pool", async () => {
+    /*
+     * Task 57, and the one case in the audit that has to be asserted on the
+     * statements rather than on the rows.
+     *
+     * `voidLotIn` ends with a compare-and-set — `update draft_lots set
+     * status = 'voided' where id = $1 and status <> 'voided'` — and refuses
+     * when it matches nothing. That refusal used to come **last**, behind the
+     * `team_members` delete and the `draft_pool_entries` insert, and a refusal
+     * returned from a transaction callback commits what came before it
+     * (docs/decisions/004-refusals-inside-transactions.md). So that branch
+     * answered "that lot was voided while you were looking at it" over a
+     * committed roster deletion and a committed pool entry: the player off the
+     * team, back on the wheel, and the lot still reading `awarded`. UC-16 7a's
+     * undo restores the balance *and* the roster; that restores neither
+     * honestly.
+     *
+     * **Why the order and not the behaviour.** Both callers re-read the lot's
+     * status under the event's row lock before calling in — `voidLot` refuses
+     * an already-voided lot at the door, `voidLastLot` never selects one — so
+     * there is no interleave reachable from outside this module that makes the
+     * compare-and-set lose, and `committingAfter` cannot build one: anything it
+     * commits before the transaction opens is seen by that re-read and refused
+     * earlier, with a different sentence. The guard is deliberate belt-and-
+     * braces, and a guard whose failure path is wrong is worse than none
+     * because it reads like one. What the fix *is*, then, is the ordering, and
+     * the statements are the only place the ordering is visible — the same
+     * reason `format-db.test.ts` asserts statement order for the lock rule.
+     */
+    const fixture = await seededEvent(3);
+    const { a } = await twoTeams(fixture);
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    const lotId = await buy(fixture.eventId, fixture.members[2], a, 420);
+
+    const log: string[] = [];
+    expect(await voidLot(lotId, {}, logging(log))).toMatchObject({ ok: true });
+
+    const settles = log.findIndex((query) =>
+      /update "draft_lots" set .*"status"/.test(query)
+    );
+    const dropsRoster = log.findIndex((query) => /delete from "team_members"/.test(query));
+    const refillsPool = log.findIndex((query) => /insert into "draft_pool_entries"/.test(query));
+
+    // Each of the three really happened, or an index of -1 would order itself
+    // ahead of everything and the assertions below would pass vacuously.
+    expect(settles, "the lot was never settled").toBeGreaterThanOrEqual(0);
+    expect(dropsRoster, "the roster row was never dropped").toBeGreaterThanOrEqual(0);
+    expect(refillsPool, "the player was never put back in the pool").toBeGreaterThanOrEqual(0);
+
+    expect(settles).toBeLessThan(dropsRoster);
+    expect(settles).toBeLessThan(refillsPool);
+  });
+
   it("keeps the balance right when earlier lots are voided out of order", async () => {
     const fixture = await seededEvent(5);
     const { a } = await twoTeams(fixture);
@@ -2909,7 +3026,7 @@ describe("voidLot — the undo", () => {
         await voidLastLot(
           fixture.eventId,
           {},
-          committingAfter(async () => {
+          committingAfter(db, async () => {
             const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.members[3] }, db));
             later = lot.id;
             unwrap(await placeBid(lot.id, b, 400, {}, db));
