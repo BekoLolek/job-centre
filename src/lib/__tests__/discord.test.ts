@@ -216,6 +216,51 @@ describe("an event published", () => {
     expect(publishingOpensSignups({ signupOpensAt: PUBLISHABLE.signupOpensAt }, new Date())).toBe(
       true
     );
+    // And the sentence matches the event: these signups really are open.
+    expect(posted()[0].embeds[0].description).toBe(
+      "Applications are open — three taps if your profile is filled in."
+    );
+  });
+
+  /*
+   * R-205 / UC-38 2 the other way round — the case `PUBLISHABLE` never makes.
+   *
+   * `announce.test.ts` covers the two sentences the builder has; this covers
+   * the only thing that can still be wrong once it does, which is the call
+   * site: `signup_opens_at` is a stored column and the publish instant is a
+   * clock read, and a message built without either one is the false sentence
+   * again. Asserted on the payload that reached `fetch`, so threading the
+   * column through cannot be dropped without a failure here.
+   */
+  it("says when applications open for an event published ahead of its window (UC-38 2)", async () => {
+    await switches({ event_published: true, signups_open: true });
+    counter += 1;
+    const opensAt = new Date("2099-06-01T12:00:00.000Z");
+    const event = unwrap(
+      await createEvent(
+        { ...PUBLISHABLE, signupOpensAt: opensAt, title: `Published early ${counter}` },
+        db
+      )
+    );
+    unwrap(await publishEvent(event.id, db));
+
+    announceEventPublished(event.id);
+    await Promise.all(state.jobs);
+
+    const [embed] = posted()[0].embeds;
+    expect(embed.description).toBe(
+      `Applications open ${stamp(opensAt, "R")} — three taps if your profile is filled in.`
+    );
+    // The sentence that would send a channel to a form answering `too_early`.
+    expect(embed.description).not.toContain("Applications are open");
+    expect(embed.fields).toContainEqual({
+      name: "Applications open",
+      value: stamp(opensAt),
+      inline: true,
+    });
+    // Still one announcement, and still the published one: the second moment
+    // is the scheduler's (UC-38 2, Task 63), not this call site's.
+    expect(posted().map((message) => message.embeds[0].footer?.text)).toEqual(["New event"]);
   });
 });
 

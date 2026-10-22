@@ -715,6 +715,15 @@ async function noteFailure(
  * reader needs before deciding whether to apply (R-107 / UC-26 4).
  *
  * The extra read is the days, which is the only place the answer exists.
+ *
+ * The **signup window's start and the instant this is happening at** are the
+ * other pair the message cannot be built without (R-205 / UC-38 2): an event
+ * published a week ahead of its window must not be announced as one taking
+ * applications, and `eventPublishedMessage` can only tell the two apart if this
+ * call site says when each is. Both come from here rather than from the
+ * builder: `signup_opens_at` is a stored column, and the clock is this module's
+ * to read — `announce.ts` is pure, which is what makes its two sentences
+ * testable without a fake clock.
  */
 export function announceEventPublished(eventId: string, database: Database = defaultDb): void {
   announceGathered(
@@ -739,6 +748,16 @@ export function announceEventPublished(eventId: string, database: Database = def
             description: event.description,
             capacity: event.capacity,
             startsAt: dates.get(eventId)?.startsAt ?? null,
+            signupOpensAt: event.signupOpensAt,
+            /*
+             * Now, not a stored publish instant: `events` has no `published_at`
+             * column, and the moment is knowable only while it is happening
+             * (see `publishingOpensSignups`). `announceGathered` defers this
+             * build until after the response, so "now" is a moment or two after
+             * the status moved — which cannot change the answer, because a
+             * window either opened before the click or opens on a later day.
+             */
+            publishedAt: new Date(),
             signupClosesAt: event.signupClosesAt,
             origin: await announceOrigin(),
           },

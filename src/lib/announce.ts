@@ -41,6 +41,15 @@
  * {@link publishingOpensSignups}, which is UC-38 2a and is why an event already
  * open when it goes up posts one announcement rather than two.
  *
+ * The same question decides what the *published* announcement says, which is
+ * the other half of UC-38 2 and was missed when the eighth kind was built. One
+ * post rather than two is only right if the one post is true: an event going up
+ * a week ahead of its window cannot be announced with "applications are open",
+ * because `applicationsOpen` will answer `too_early` to everyone who taps it.
+ * So `eventPublishedMessage` asks the same predicate and says the other thing —
+ * when they open, as a stamp — and the "Applications open" field appears only
+ * on the event that has an opening still to come.
+ *
  * ## Mentions (R-202 / UC-37 4c, and the mention Constraint in
  * docs/requirements.md)
  *
@@ -936,6 +945,20 @@ export type EventPublishedInput = {
   capacity?: number | null;
   /** Rendered as a Discord timestamp so every reader sees their own zone. */
   startsAt?: Date | null;
+  /**
+   * When applications open, and the instant this publication is happening at —
+   * **one fact in two fields**, and the pair is what decides whether this
+   * message may say applications are open at all (R-205 / UC-38 2a).
+   *
+   * Both or neither. A caller that names `signupOpensAt` and leaves
+   * `publishedAt` out has asked a question with no clock to answer it against,
+   * and `signupsOpenAfterPublication` below treats that as the *later* moment
+   * rather than guessing the friendlier one — of the two sentences this builder
+   * has, only "applications are open" can be false in a way that sends a reader
+   * to a door that will not open.
+   */
+  signupOpensAt?: Date | null;
+  publishedAt?: Date | null;
   signupClosesAt?: Date | null;
   origin?: string | null;
 };
@@ -970,13 +993,67 @@ function valueOr(
   return declared?.whenAbsent ?? "";
 }
 
+/**
+ * The instant applications open, **when publishing is not that instant** —
+ * and null when it is, or when nothing says.
+ *
+ * A `Date | null` rather than a boolean because every caller below needs the
+ * instant itself, and a boolean beside a nullable date is two things that can
+ * disagree. {@link publishingOpensSignups} is still the rule; this only turns
+ * its answer into the value the message is built from.
+ *
+ * The missing-`publishedAt` case is the one judgement here. A window start with
+ * no instant to compare it against is unanswerable, so this answers "later",
+ * which is the side that cannot mislead: an event already open rendered as
+ * "applications open <the day they did>" is a reader reading a past date, while
+ * an event not yet open rendered as "applications are open" is a reader tapping
+ * through to a form that refuses them (`applicationsOpen`'s `too_early`).
+ * `announceEventPublished` passes both, so nothing in the site reaches it.
+ */
+function signupsOpenAfterPublication(input: {
+  signupOpensAt?: Date | null;
+  publishedAt?: Date | null;
+}): Date | null {
+  const opens = input.signupOpensAt ?? null;
+  if (!opens) return null;
+  const at = input.publishedAt ?? null;
+  if (at && publishingOpensSignups({ signupOpensAt: opens }, at)) return null;
+  return opens;
+}
+
 export function eventPublishedMessage(
   input: EventPublishedInput,
   template: AnnouncementTemplate | null = null
 ): DiscordMessage {
+  /*
+   * Whether this event is one somebody can apply to yet (R-205 / UC-38 2).
+   * Publishing ahead of the signup window is a supported setup — the Publish
+   * tab says "immediately" or names the date, `missingToPublish` demands the
+   * window before it will publish at all, and `applicationsOpen` answers
+   * `too_early` for exactly this event — so the message has two cases rather
+   * than one sentence that happens to be true of the commoner of them.
+   */
+  const opensLater = signupsOpenAfterPublication(input);
+
   const fields: DiscordEmbed["fields"] = [];
   if (input.startsAt) {
     fields.push({ name: "Starts", value: stamp(input.startsAt), inline: true });
+  }
+  if (opensLater) {
+    /*
+     * Only when it is news. An event already taking applications has an
+     * opening instant too, and a field saying when that was is a fact nobody
+     * reading "Applications are open" needs — it would also be a fourth field
+     * on every announcement the site has ever posted (R-201 / UC-37 2a).
+     *
+     * `F` rather than the `R` of the field beside it, because the countdown is
+     * already in the default sentence and repeating it says nothing new, while
+     * the instant itself does — and on an event that wrote its own description
+     * the field is then the only place the opening is stated at all. A stamp
+     * either way: no message this module builds contains a date the server
+     * formatted (README, "Times").
+     */
+    fields.push({ name: "Applications open", value: stamp(opensLater), inline: true });
   }
   if (input.signupClosesAt) {
     fields.push({
@@ -992,12 +1069,25 @@ export function eventPublishedMessage(
 
   const url = linkTo(`/events/${input.slug}`, input.origin ?? null);
 
+  /*
+   * The sentence for an event with nothing of its own to say — and there are
+   * two of them, for the reason `opensLater` exists. "Applications are open" on
+   * an event whose window opens next Tuesday is the site telling four hundred
+   * people something the apply form will refuse them for, and it is the one
+   * false sentence this module had.
+   *
+   * The second half is kept word for word, because it is still the thing to do
+   * now: a profile filled in while the window is shut is three taps saved when
+   * it opens.
+   */
+  const sentence = opensLater
+    ? `Applications open ${stamp(opensLater, "R")} — three taps if your profile is filled in.`
+    : "Applications are open — three taps if your profile is filled in.";
+
   return message(
     {
       title: clamp(input.title, 240),
-      description: input.description
-        ? clamp(input.description, 600)
-        : "Applications are open — three taps if your profile is filled in.",
+      description: input.description ? clamp(input.description, 600) : sentence,
       ...(url ? { url } : {}),
       color: COLOURS.gold,
       fields,
@@ -1037,7 +1127,12 @@ export function eventPublishedMessage(
  * the only state it has for "not yet". This answers the narrower question that
  * state implies: is there a *second* moment to announce at all?
  *
- * `true` means there is not, so the published announcement is the only one due.
+ * `true` means there is not, so the published announcement is the only one due
+ * — and, through {@link signupsOpenAfterPublication}, that the published
+ * announcement is the one that may say applications are open. The two readings
+ * are the same question, which is why they are the same function: a channel
+ * told once, in a sentence that is true of the event it names.
+ *
  * Two cases reach it:
  *
  *  - **`signupOpensAt` is already past.** Publishing and opening are one

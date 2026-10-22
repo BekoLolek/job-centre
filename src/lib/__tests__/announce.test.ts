@@ -13,6 +13,7 @@ import {
   announcementTemplateProblem,
   applicationDecidedMessage,
   defaultAnnouncementSettings,
+  type EventPublishedInput,
   eventPublishedMessage,
   linkTo,
   lotSoldMessage,
@@ -563,6 +564,23 @@ const ALL_KINDS = ANNOUNCEMENTS.map((spec) => spec.kind);
  * and `content` inserted in the wrong place is a different string), it catches
  * a key that arrived holding `undefined`, and it is the only form in which
  * "byte for byte" means anything at all.
+ *
+ * ## What these strings promise — all ten kinds, not just the one below
+ *
+ * Not "these bytes forever". Each one is **the bytes its builder produced for
+ * the inputs it was given**, which are the inputs in `build` above. The two
+ * readings only come apart when a kind learns a fact it could not previously
+ * be told — `event_published` learning that an event's signups open a week
+ * later is the first case to arrive — and there the golden still is that
+ * builder's own answer for its own inputs, so it stands untouched and the new
+ * case is captured beside it (`AS_IT_IS_PUBLISHED_EARLY` below). A kind that
+ * grows a case grows a golden; it does not get its old one rewritten.
+ *
+ * What no golden here may do is move because somebody reworded a message.
+ * R-201's promise is about an unedited **wording**, and a reworded default is
+ * a deployment quietly changing what the channel says — the exact thing these
+ * strings exist to catch. So rewriting one is a decision taken on purpose and
+ * written down here beside it, never a snapshot updated to make a suite green.
  */
 const AS_IT_WAS: Record<AnnouncementKind, string> = {
   event_published:
@@ -596,6 +614,55 @@ const AS_IT_WAS: Record<AnnouncementKind, string> = {
     '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications have opened — three taps if your profile is filled in.","url":"https://jc.test/events/friday-repo","color":4054148,"fields":[{"name":"Starts","value":"<t:1777658400:F>","inline":true},{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"Applications open"}}],"allowed_mentions":{"parse":[]}}',
 };
 
+/** The event in `build("event_published")`, published a week before it opens. */
+const PUBLISHED_EARLY_AT = new Date("2026-03-25T12:00:00Z");
+const OPENS_AT = new Date("2026-04-01T12:00:00Z");
+
+/**
+ * `event_published` for the event the golden above **cannot speak for**: one
+ * published a week before its signups open (R-205 / UC-38 2).
+ *
+ * The golden above still stands, and this is why rather than a rewrite of it.
+ * Its fixture names no `signupOpensAt`, which is not a fact left out of a test
+ * but a definite event: `publishingOpensSignups` answers `true` for a null
+ * window start, so what it captured is an event with nothing holding its
+ * signups shut — open the instant it goes up, and the only event
+ * `eventPublishedMessage` could be *told about* before `signupOpensAt` and
+ * `publishedAt` existed on its input. R-201's "a kind nobody has edited posts
+ * byte-for-byte what it posts today" is a promise about an unedited **wording**,
+ * and it is kept to the byte for that event: the payload above is untouched,
+ * and nothing an admin has or has not saved changes it.
+ *
+ * The event below is a different event, not a different wording — one no
+ * previous payload existed for, because the builder had no field to learn about
+ * it from. So it gets a golden of its own rather than a licence to edit the one
+ * next door, and R-201 needs no re-reading. The pair is also the assertion that
+ * matters: change either sentence and exactly one of these two fails, naming
+ * which event the channel would have been lied to about.
+ *
+ * Captured the same way as `signups_open` above — from this file's own failure
+ * output on a first run with a deliberately wrong golden — so the key order,
+ * the absent `content` and the field order each mean what they say.
+ */
+const AS_IT_IS_PUBLISHED_EARLY =
+  '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications open <t:1775044800:R> — three taps if your profile is filled in.","url":"https://jc.test/events/friday-repo","color":14922300,"fields":[{"name":"Starts","value":"<t:1777658400:F>","inline":true},{"name":"Applications open","value":"<t:1775044800:F>","inline":true},{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"New event"}}],"allowed_mentions":{"parse":[]}}';
+
+function buildPublishedEarly(template: AnnouncementTemplate | null = null) {
+  return eventPublishedMessage(
+    {
+      title: "Friday REPO night",
+      slug: "friday-repo",
+      capacity: 12,
+      startsAt: STARTS,
+      signupOpensAt: OPENS_AT,
+      publishedAt: PUBLISHED_EARLY_AT,
+      signupClosesAt: CLOSES,
+      origin: ORIGIN,
+    },
+    template
+  );
+}
+
 describe("a kind nobody has edited (UC-37 2a)", () => {
   it("posts byte for byte what it posted before an override could exist", () => {
     for (const kind of ALL_KINDS) {
@@ -624,6 +691,19 @@ describe("a kind nobody has edited (UC-37 2a)", () => {
       expect(build(kind)).not.toHaveProperty("content");
       expect(Object.keys(build(kind))).toEqual(["username", "embeds", "allowed_mentions"]);
     }
+  });
+
+  it("posts its own payload for an event published before its signups open", () => {
+    // The second golden rather than an edit of the first — see
+    // `AS_IT_IS_PUBLISHED_EARLY` for which promise each of them carries.
+    expect(JSON.stringify(buildPublishedEarly())).toBe(AS_IT_IS_PUBLISHED_EARLY);
+    expect(JSON.stringify(buildPublishedEarly({ body: null, mention: NO_MENTION }))).toBe(
+      AS_IT_IS_PUBLISHED_EARLY
+    );
+    expect(Object.keys(buildPublishedEarly())).toEqual(["username", "embeds", "allowed_mentions"]);
+    // And the event the first golden is about is still byte for byte itself,
+    // asserted here too so the pair fails together rather than a file apart.
+    expect(JSON.stringify(build("event_published"))).toBe(AS_IT_WAS.event_published);
   });
 });
 
@@ -1126,6 +1206,140 @@ describe("whether publishing is itself the moment signups open (UC-38 2a)", () =
     const same = new Date(PUBLISHED_AT.getTime());
     expect(same).not.toBe(PUBLISHED_AT);
     expect(publishingOpensSignups({ signupOpensAt: same }, PUBLISHED_AT)).toBe(true);
+  });
+});
+
+describe("the published announcement of an event nobody can apply to yet (UC-38 2)", () => {
+  /*
+   * The other half of 2a, and the half that was missed when the eighth kind
+   * was built: posting *one* announcement for an event published ahead of its
+   * window is only right if that one announcement is true. "Applications are
+   * open" is what `applicationsOpen` answers `too_early` to, so the channel
+   * was being sent to a door that does not open for another week.
+   *
+   * Every case below names the window start and the publish instant together,
+   * because neither one alone is a case — the pair is the fact.
+   */
+  const published = (over: Partial<EventPublishedInput> = {}) =>
+    eventPublishedMessage({
+      title: "Friday REPO night",
+      slug: "friday-repo",
+      capacity: 12,
+      startsAt: STARTS,
+      signupClosesAt: CLOSES,
+      origin: ORIGIN,
+      ...over,
+    }).embeds[0];
+
+  const fieldNames = (embed: { fields?: ReadonlyArray<{ name: string }> }) =>
+    (embed.fields ?? []).map((field) => field.name);
+
+  it("says when applications open, not that they are open", () => {
+    const embed = published({ signupOpensAt: OPENS_AT, publishedAt: PUBLISHED_EARLY_AT });
+
+    expect(embed.description).toBe(
+      `Applications open ${stamp(OPENS_AT, "R")} — three taps if your profile is filled in.`
+    );
+    // The sentence this fix exists to delete from this event's announcement.
+    expect(embed.description).not.toContain("Applications are open");
+  });
+
+  it("never shows a closing time without an opening one on an event not yet open", () => {
+    const embed = published({ signupOpensAt: OPENS_AT, publishedAt: PUBLISHED_EARLY_AT });
+
+    expect(embed.fields).toContainEqual({
+      name: "Applications open",
+      value: stamp(OPENS_AT),
+      inline: true,
+    });
+    // The half-told fact this fixes: a countdown to the shutting of a door
+    // that has not opened, with nothing saying when it will.
+    expect(fieldNames(embed)).toContain("Applications close");
+    // The two ends of the window read together, in the order they happen.
+    expect(fieldNames(embed)).toEqual([
+      "Starts",
+      "Applications open",
+      "Applications close",
+      "Places",
+    ]);
+  });
+
+  it("says applications are open, with no extra field, when publishing opens them", () => {
+    const embed = published({
+      signupOpensAt: new Date("2026-03-18T12:00:00Z"),
+      publishedAt: PUBLISHED_EARLY_AT,
+    });
+
+    expect(embed.description).toBe(
+      "Applications are open — three taps if your profile is filled in."
+    );
+    // A field saying when they opened is not news to a reader already told
+    // they are open — and would be a fourth field on every announcement the
+    // site has ever posted (R-201 / UC-37 2a).
+    expect(fieldNames(embed)).not.toContain("Applications open");
+  });
+
+  it("treats the boundary instant as open, matching publishingOpensSignups", () => {
+    // One function decides both the sentence and whether a second
+    // announcement is due, so the inclusive boundary has to be the same one.
+    const onTheInstant = published({
+      signupOpensAt: PUBLISHED_EARLY_AT,
+      publishedAt: PUBLISHED_EARLY_AT,
+    });
+    expect(onTheInstant.description).toBe(
+      "Applications are open — three taps if your profile is filled in."
+    );
+
+    const aMillisecondLater = published({
+      signupOpensAt: new Date(PUBLISHED_EARLY_AT.getTime() + 1),
+      publishedAt: PUBLISHED_EARLY_AT,
+    });
+    expect(aMillisecondLater.description).toContain("Applications open <t:");
+  });
+
+  it("says applications are open when nothing holds them shut", () => {
+    // A null window start is `publishingOpensSignups`'s other `true`: there is
+    // no instant at which signups open, because nothing is keeping them shut.
+    // This is also the event both goldens' predecessor captured.
+    const embed = published({ signupOpensAt: null, publishedAt: PUBLISHED_EARLY_AT });
+    expect(embed.description).toBe(
+      "Applications are open — three taps if your profile is filled in."
+    );
+    expect(fieldNames(embed)).not.toContain("Applications open");
+  });
+
+  it("does not claim applications are open when it was given no publish instant", () => {
+    /*
+     * Unreachable from the site — `announceEventPublished` passes both — and
+     * asserted anyway, because this is the case a future call site gets wrong
+     * by passing the column it has and not the clock. Of the two sentences,
+     * only one can send a reader to a form that refuses them, so a window
+     * start with nothing to compare it against reads as the later moment.
+     */
+    const embed = published({ signupOpensAt: OPENS_AT });
+    expect(embed.description).not.toContain("Applications are open");
+    expect(fieldNames(embed)).toContain("Applications open");
+  });
+
+  it("leaves the event's own description alone, and still says when it opens", () => {
+    // The sentence is a fallback; the field is structure. An admin who wrote a
+    // description keeps it, and the fact still reaches the embed.
+    const embed = published({
+      description: "Thirty-two of you, one bracket, no mercy.",
+      signupOpensAt: OPENS_AT,
+      publishedAt: PUBLISHED_EARLY_AT,
+    });
+
+    expect(embed.description).toBe("Thirty-two of you, one bracket, no mercy.");
+    expect(fieldNames(embed)).toContain("Applications open");
+  });
+
+  it("never formats the opening instant itself", () => {
+    // The repo invariant (README, "Times"): the opening date reaches Discord as
+    // a stamp in both the sentence and the field, and in neither as a date this
+    // process chose a timezone for.
+    const embed = published({ signupOpensAt: OPENS_AT, publishedAt: PUBLISHED_EARLY_AT });
+    expect(JSON.stringify(embed)).not.toMatch(/2026|April|Apr/);
   });
 });
 
