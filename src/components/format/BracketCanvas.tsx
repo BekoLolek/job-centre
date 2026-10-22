@@ -97,11 +97,11 @@ function Section({
     <section>
       <div className="mb-3 flex flex-wrap items-baseline gap-3">
         <Eyebrow as="h3">{section.label}</Eyebrow>
-        <span className="eyebrow text-dim">
+        <Eyebrow as="span">
           {section.columns.length === 1
             ? "1 round"
             : `${section.columns.length} rounds`}
-        </span>
+        </Eyebrow>
       </div>
 
       {/*

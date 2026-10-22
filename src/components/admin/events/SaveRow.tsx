@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, type ReactNode } from "react";
-import { Button, Eyebrow, cx } from "@/components/ui";
+import { Eyebrow, cx } from "@/components/ui";
 import { useUnsavedChanges } from "./UnsavedChanges";
 
 /**
@@ -80,44 +80,6 @@ export default function SaveRow({
     <div className={cx("flex flex-wrap items-center gap-3 pt-2", className)}>
       {children}
       {said && <span className="ml-auto">{said}</span>}
-    </div>
-  );
-}
-
-/**
- * The old inline row, for anywhere outside the editor that has no bar to
- * publish to. Nothing uses it yet; it exists so that adding a save control to
- * a screen without the provider does not mean inventing one.
- */
-export function InlineSaveRow({
-  state,
-  disabled,
-  onSave,
-  label = "Save",
-  note,
-  children,
-  className,
-}: SaveRowProps) {
-  return (
-    <div
-      className={cx("flex flex-wrap items-center gap-3 border-t border-hair pt-4", className)}
-    >
-      {children}
-      <span className="ml-auto flex items-center gap-3">
-        {note && state === "saved" && (
-          <Eyebrow as="span" className="text-success">
-            {note}
-          </Eyebrow>
-        )}
-        <Button
-          variant="union"
-          size="sm"
-          disabled={disabled || state === "saving"}
-          onClick={onSave}
-        >
-          {state === "saving" ? "Saving…" : label}
-        </Button>
-      </span>
     </div>
   );
 }

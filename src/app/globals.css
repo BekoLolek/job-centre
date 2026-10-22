@@ -266,14 +266,13 @@ body {
  *              below already relies on this ("a `hover:text-hot` on the element
  *              changes nothing at all"), and `a.wordmark-accent:hover` is how
  *              the hover is done *because* of it. Layering it would break that.
- *   .roundel   **nothing wears it.** No element in `src/**` carries the class,
- *              so there is no cascade to get wrong: a rule that never matches
- *              cannot eat a utility. It is dead CSS and should probably go, but
- *              deleting a gradient somebody may be about to use is a decision
- *              for whoever wants the insignia, not a side effect of an
- *              ordering fix.
  *
- * So every class rule in this file is layered except those two. The
+ * `.roundel` used to be the second entry here — an RAF insignia gradient that
+ * nothing in `src/**` ever wore. It was left in place by the ordering fix
+ * because deleting a gradient is not an ordering fix's business, and deleted
+ * outright by the dead-code sweep that owned that decision.
+ *
+ * So every class rule in this file is layered except that one. The
  * `prefers-reduced-motion` block at the foot is deliberately left unlayered:
  * it has to beat the animation classes above, and unlayered is how it does.
  *
@@ -447,27 +446,6 @@ h1 {
     border: 1px solid var(--hair);
     border-radius: var(--r-lg);
   }
-}
-
-/*
- * The RAF roundel, for the one place that wants an insignia — and there is no
- * such place: no element in `src/**` carries this class. It is left unlayered
- * for that reason and no other. A rule that never matches an element cannot
- * lose a utility to anything, so the ordering defect this file was audited for
- * does not reach it.
- *
- * It is dead, and `field-ordering.test.ts` will say so the moment it stops
- * being: the day something wears `roundel`, the reason above becomes false and
- * the test demands this block be layered like everything else.
- */
-.roundel {
-  background: radial-gradient(
-    circle,
-    var(--flare) 0 28%,
-    var(--hot) 28% 52%,
-    var(--union) 52% 78%,
-    transparent 78%
-  );
 }
 
 @layer components {

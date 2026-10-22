@@ -438,12 +438,12 @@ export default function TeamsTab({
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Names and seeds</Eyebrow>
           {perTeam ? (
-            <span className="eyebrow text-dim">Per-team balances</span>
+            <Eyebrow as="span">Per-team balances</Eyebrow>
           ) : (
-            <span className="eyebrow text-dim">
+            <Eyebrow as="span">
               Uniform balances · everyone starts on{" "}
               <Money value={config.defaultBalance} size="sm" />
-            </span>
+            </Eyebrow>
           )}
         </div>
 
@@ -589,9 +589,9 @@ export default function TeamsTab({
       <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Rosters</Eyebrow>
-          <span className="eyebrow text-dim">
+          <Eyebrow as="span">
             {plural(config.rosterTarget, "place")} a team, captain included
-          </span>
+          </Eyebrow>
         </div>
 
         {rosterError && <Alert tone="flare">{rosterError}</Alert>}

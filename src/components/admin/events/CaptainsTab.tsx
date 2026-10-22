@@ -252,9 +252,9 @@ export default function CaptainsTab({
         <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
           <div className="flex flex-wrap items-baseline gap-3">
             <Eyebrow>One captain per team</Eyebrow>
-            <span className="eyebrow text-dim">
+            <Eyebrow as="span">
               Accepted applicants only · {plural(accepted.length, "person", "people")}
-            </span>
+            </Eyebrow>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
@@ -312,9 +312,9 @@ export default function CaptainsTab({
                       )}
 
                       {pending && (
-                        <p className="eyebrow text-union">
+                        <Eyebrow as="p" className="text-union">
                           {pick === null ? "Captaincy cleared" : "Not saved yet"}
-                        </p>
+                        </Eyebrow>
                       )}
 
                       {pending && pick !== null && (

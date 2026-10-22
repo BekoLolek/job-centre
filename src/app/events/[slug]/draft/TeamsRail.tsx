@@ -80,7 +80,9 @@ export default function TeamsRail({ view }: TeamsRailProps) {
                         {team.bid !== null && <Money value={team.bid} size="lg" />}
                       </span>
                     ) : (
-                      <span className="eyebrow text-muted">No bid yet</span>
+                      <Eyebrow as="span" className="text-muted">
+                        No bid yet
+                      </Eyebrow>
                     ))}
 
                   {team.maxBid !== null && (

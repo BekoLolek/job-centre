@@ -197,7 +197,7 @@ export default function DaysTab({
           <Badge>
             {days.length}/{maxDays}
           </Badge>
-          <span className="eyebrow text-dim">Times in {zoneLabel()}</span>
+          <Eyebrow as="span">Times in {zoneLabel()}</Eyebrow>
         </div>
 
         {days.length === 0 ? (

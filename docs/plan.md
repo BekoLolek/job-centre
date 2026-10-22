@@ -622,12 +622,18 @@ bracket corrections safe (R-79).
 - **Files:** `src/lib/admin-games.ts`, `src/lib/availability-resolve.ts`, `src/lib/format-resolve.ts`, `src/components/admin/events/SaveRow.tsx`, `src/components/admin/events/UnsavedChanges.tsx`, `src/components/ui/Section.tsx`, `src/components/ui/index.ts`, `src/app/globals.css`, `src/db/schema.ts`, and the files carrying stale comments
 - **Do:** delete `activeGameCount`, `EMPTY_ANSWER`, `blankGames`, `InlineSaveRow`, `useIsDirty`, `SectionList`, `.roundel` and the unused `*Relations` objects. Fix comments that point at `session.ts`, `/login`, `TournamentBoard`, `postAnnouncement` or platform-plan section numbers, citing R and UC ids instead. No feature is removed: at Gate 2 every feature was kept (R-113 to R-169), and dev login stays as developer tooling (R-142).
 - **Acceptance criteria:** *(were prose — see Plan hygiene)*
-  - [ ] Suite, typecheck and build green
-  - [ ] Each removed name absent from `src`, asserted by a sweep that reads the names off a list rather than matching the deletions
-  - [ ] The stale comments named above cite R and UC ids instead
-  - [ ] `className="eyebrow"` outside `components/ui` is resolved — **58 uses across 34 files**, each a colour decision rather than a rename, because `<Eyebrow>` adds `text-dim` where the bare class inherits (Task 31's open half)
-  - [ ] `setApplicantAvailabilityAction`'s unread third `eventId` parameter is gone, and its caller stops passing it (Task 1's leftover)
+  - [x] Suite, typecheck and build green
+  - [x] Each removed name absent from `src`, asserted by a sweep that reads the names off a list rather than matching the deletions
+  - [ ] The stale comments named above cite R and UC ids instead — *met for the four pointers that named things no longer existing; the 391 `§` platform-plan references across 135 files are untraced rather than broken and are left deliberately*
+  - [ ] `className="eyebrow"` outside `components/ui` is resolved — **58 uses across 34 files**, each a colour decision rather than a rename, because `<Eyebrow>` adds `text-dim` where the bare class inherits (Task 31's open half) — *20 of 59 converted; the other 39 are blocked on Task 69, and 11 existing `<Eyebrow>` sites already render the wrong colour*
+  - [x] `setApplicantAvailabilityAction`'s unread third `eventId` parameter is gone, and its caller stops passing it (Task 1's leftover)
 - **Depends on:** the task that last touches each file
+- **Left over:** three of the five criteria met; two partly, and the measurements are the useful part.
+  **The deletion list in the Do line was wrong about two of its eight names.** `useIsDirty` is **live** — `EventEditor.tsx:519` reads it and branches on it for the Save-as-template copy. `SectionList` is **live** at three call sites plus its re-export in `components/ui/index.ts`. Both left in place. The other six went: `activeGameCount`, `EMPTY_ANSWER`, `blankGames` — distinct from the **live** `blankGamesFor`, which only a ``-anchored search tells apart — `InlineSaveRow`, `.roundel`, and **23** `relations()` objects, unused because nothing in the repo writes a `with:`. Confirmed no-SQL before deleting rather than after: `drizzle/meta/*.json` has no `relations` key and no snapshot mentions one. Same lesson as Task 31's, inverted — here the **list** was the stale artefact, not the grep.
+  **The sweep is `src/app/__tests__/dead-names.test.ts`** (33 tests), names as data so a tenth is one line. It strips comments and keeps strings: a deletion may leave a note, but a name reached through a mock path still fails. Three canaries — `blankGamesFor`, `SaveRow`, `ExtractTablesWithRelations` — must be *found* by the same matcher on the same corpus, which is the half an empty scan cannot fake, and each is the live sibling of something deleted so a matcher confusing the two is caught too.
+  **Task 38c's purge trap does not reach a deleted rule, and that was checked rather than assumed.** `roundel` is now named 15 times in `src/**`, 12 of them in a `.ts` file inside Tailwind's content globs — and the compiled stylesheet emits no rule for it. Content scanning decides whether to *keep a rule that exists in the stylesheet*; `.roundel` was hand-written CSS, not a generatable utility, so once the rule is gone a mention cannot bring it back. The guard asserts the **emitted CSS**, so prose cannot undo it either way.
+  **The eyebrow criterion is partly met — 20 of 59 converted, 39 left with reasons — and the figure is 59, not 58.** One site is `cx("eyebrow block", note.tone)`, which a `className="eyebrow` grep cannot see; the nineteen-fold miscount in Task 31's note has a smaller sibling here. Two measurements decide the split. `.eyebrow` declares no `color`, so a bare eyebrow inherits `--body` and renders **brighter** than `<Eyebrow>` — 31 of the 39 would be visibly darkened by conversion. And **Tailwind emits the colour utilities alphabetically**, so `text-dim` beats `text-body` and the chalk tones but loses to `text-flare`, `text-muted`, `text-success` and `text-union`: `<Eyebrow>` **cannot express** a chalk or body tone. That is now **Task 69**, because it also means **11 existing `<Eyebrow className="…text-chalk/7*">` call sites already render dim rather than what they ask for**, against the component's own docblock — a defect that exists today, independent of any conversion. The last 2 are `<button>`s, which `as` does not accept.
+  **The stale-comment criterion is met for the four named pointers and deliberately not attempted for the section numbers.** `session.ts` (two sites), `/login` and `TournamentBoard` now cite verified R/UC ids; `postAnnouncement` had already gone. But `docs/platform-plan.md` is still present, still marked "Status: built", and all 22 sections cited by `src/**` exist — so the remaining **391 `§` references across 135 files** are untraced rather than broken, and mass-citing them unverified is the failure mode this plan keeps recording. Note two files now mention `session.ts` and `/login` as explicit **negations**, so an absence grep for those strings would fail on correct prose.
 
 ## H. Kept features (R-113 to R-169)
 
@@ -821,6 +827,25 @@ Still open and **not** closable from this repo: Task 50's last criterion asks wh
   - [ ] Cold start after autosuspend does not surface as an error to a reader
   - [ ] The reasoning lives where the next person will meet it, as `docs/decisions/004` does for transactions
 - **Depends on:** nothing in the tree; it depends on an answer from whoever owns the Neon project. **Cannot be closed from this repo alone** — like Task 50's index, it needs production to look at.
+
+### Task 69: `<Eyebrow>` cannot express half the palette, and 11 call sites already render the wrong colour (found in Task 32)
+
+- **Serves:** R-201's neighbours — the design system; Task 31's open criterion
+- **Files:** `src/components/ui/Eyebrow.tsx`, the 11 call sites that pass a chalk tone, the 39 bare `className="eyebrow"` sites Task 32 left, `src/components/ui/__tests__/`
+- **Do:** Task 32 measured the cascade rather than assuming it, and found two facts that between them block the rest of Task 31's eyebrow criterion.
+  **Tailwind emits the colour utilities alphabetically.** Measured indices in the compiled sheet: `text-body` 505, `text-chalk` 506, `text-chalk/70` 507, `text-chalk/80` 508, **`text-dim` 511**, `text-flare` 513, `text-hot` 514, `text-muted` 515, `text-success` 518, `text-union` 519. All single classes at equal specificity, and `cx` is a plain join with no dedupe, so the later rule wins regardless of the order an author writes them in. `<Eyebrow>` hard-codes `text-dim`, so a call site passing `text-muted`, `text-flare`, `text-hot`, `text-success` or `text-union` wins — and one passing **`text-body`, `text-chalk`, `text-chalk/70` or `text-chalk/80` loses and renders dim.**
+  **So 11 existing call sites already render a colour they did not ask for**, against the component's own docblock: `grep -rn "<Eyebrow[^>]*text-chalk" src --include=*.tsx` finds all 11. That is the defect, and it exists today independently of any conversion.
+  **And it is the precondition for the 37 sites Task 32 could not convert.** `.eyebrow` declares no `color`, so a bare eyebrow inherits `--body` — *brighter* than `--dim`. 31 of those 37 would be visibly darkened by conversion, and 6 more want a chalk tone the component cannot currently express. The remaining 2 are `<button>` elements, which `Eyebrow`'s `as` prop does not accept (`div|span|p|h1-h4`).
+  The fix is to let the component's default lose to a passed colour rather than beat it — and **the visual decision is the task**, because it changes what 11 sites render the moment it lands. Decide whether those 11 wanted chalk (their authors wrote it) or dim (what they have had); the first is the honest reading and should be stated as such, not assumed. `as` also needs `button`.
+  **Do not reach for `!important`.** Nothing in `src/**` uses it, and Tasks 38c and 65 exist to keep this cascade clean; an `!` here would undo that work at the one place it is most visible.
+- **Acceptance criteria:**
+  - [ ] A colour passed to `<Eyebrow>` takes effect whatever its alphabetical position, proven on `text-chalk/70` and `text-dim` together
+  - [ ] The 11 call sites' rendered colour is decided deliberately, and the decision is recorded
+  - [ ] `as="button"` works, with the 2 sites that need it converted
+  - [ ] No existing `<Eyebrow>` changes colour except the 11, asserted over every call site
+  - [ ] The 37 bare sites Task 32 left are converted, or each remaining one has a reason
+  - [ ] No `!important` anywhere in `src/**`
+- **Depends on:** Task 32. Touches `globals.css`'s neighbours and many components, so not beside another task holding them.
 
 ## J. Discord announcements, editable (R-201 to R-208 / UC-37, UC-38)
 

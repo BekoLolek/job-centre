@@ -221,7 +221,9 @@ export default function AdminConsole({
                   <span className="flex-1 truncate text-14">
                     {team.name}
                     {team.roster.slotsLeft === 0 && (
-                      <span className="eyebrow ml-2 text-muted">full</span>
+                      <Eyebrow as="span" className="ml-2 text-muted">
+                        full
+                      </Eyebrow>
                     )}
                   </span>
                   <span className="w-24 text-right">

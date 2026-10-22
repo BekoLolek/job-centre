@@ -390,9 +390,7 @@ export default function BasicsTab({
       <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>When</Eyebrow>
-          <span className="eyebrow text-dim">
-            You are entering times in {zoneLabel()}
-          </span>
+          <Eyebrow as="span">You are entering times in {zoneLabel()}</Eyebrow>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">

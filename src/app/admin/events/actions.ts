@@ -982,14 +982,14 @@ export async function saveApplicationNoteAction(
  */
 export async function setApplicantAvailabilityAction(
   applicationId: string,
-  byDay: Record<string, AvailabilityState | null>,
-  eventId: string
+  byDay: Record<string, AvailabilityState | null>
 ): Promise<EventResult<Record<string, AvailabilityState>>> {
-    /*
-   * Authorised on the row about to be written, not on the `eventId` beside it.
-   * That argument comes from the browser and is only used to revalidate a page;
-   * trusting it here would let a host of one event act on another's by passing
-   * their own id alongside a foreign application id. See `src/lib/event-scope.ts`.
+  /*
+   * Authorised on the row about to be written, and the event it belongs to is
+   * what gets revalidated. There is deliberately **no `eventId` argument**: one
+   * sent by the browser would let a host of one event act on another's by
+   * passing their own id alongside a foreign application id, and it had no
+   * other use once `scope` replaced it. See `src/lib/event-scope.ts`.
    */
   const { user: manager, eventId: scope } = await requireManagerOfChild(() =>
     eventIdOfApplication(applicationId)

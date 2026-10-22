@@ -368,8 +368,9 @@ export function discordConfigStatus(env: AuthEnv = process.env as AuthEnv): Disc
  * Auth.js refuses to run without a `secret` — it is what signs the CSRF and
  * OAuth `state` cookies. With no client credentials nobody can start a sign-in,
  * so nothing is protected by this value and its only job is to let the app
- * build, boot and serve `/signin`. Same idea as the dev fallback in
- * `src/lib/session.ts`.
+ * build, boot and serve `/signin`. Same idea as the developer sign-in in
+ * `src/lib/dev-login.ts` (R-142 / UC-30): both exist so the site can be run
+ * before the Discord app that R-01 and R-02 need exists.
  */
 export const UNCONFIGURED_AUTH_SECRET = "job-centre-unconfigured-dev-only-auth-secret";
 

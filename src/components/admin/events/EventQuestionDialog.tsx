@@ -201,7 +201,9 @@ export default function EventQuestionDialog({
         <div className="flex flex-wrap items-baseline gap-2">
           <Eyebrow className="text-chalk/70">Prefill from the profile</Eyebrow>
           {linked && linkStillValid && (
-            <span className="eyebrow text-success">Linked · answered in advance</span>
+            <Eyebrow as="span" className="text-success">
+              Linked · answered in advance
+            </Eyebrow>
           )}
         </div>
 

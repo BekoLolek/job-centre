@@ -1,5 +1,5 @@
 /**
- * `/signin` — the Discord sign-in page (docs/platform-plan.md §3.2).
+ * `/signin` — the Discord sign-in page (R-01, R-02, R-06 / UC-01).
  *
  * Four states, all rendered server-side:
  *
@@ -11,8 +11,11 @@
  *     normal outcome of a correctly working gate rather than an error, and is
  *     explained as such.
  *
- * The legacy `/login` page (captain passwords, the draft board) is a separate
- * page and is not touched by any of this.
+ * There is no second sign-in page. `/login` — the old captain-password login
+ * the single-purpose draft board ran on — was retired with that board and does
+ * not exist. The only other way into a session is `/dev-login`, which is
+ * developer tooling (R-142 / UC-30) and answers not found unless the site is
+ * running locally against the local database.
  */
 
 import { Alert, Avatar, Badge, Button, Eyebrow, Panel } from "@/components/ui";

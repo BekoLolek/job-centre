@@ -1,5 +1,5 @@
 /**
- * Session helpers for the Discord identity (docs/platform-plan.md §3.2, §11).
+ * Session helpers for the Discord identity (R-01, R-02, R-06 / UC-01).
  *
  * These are what member and admin pages are built on:
  *
@@ -18,13 +18,20 @@
  * All three are server-only: they read the session cookie, so they belong in a
  * server component, a server action or a route handler.
  *
- * ## Not to be confused with `src/lib/session.ts`
+ * ## The one other way to get a session
  *
- * That module is the legacy password login the draft board runs on — its own
- * cookie, its own `Session` type with `role: admin | captain | observer`. It is
- * still live and is deliberately left alone. This module is the new,
- * database-backed Discord identity, and the two do not know about each other.
- * A person can hold both cookies at once with no interference.
+ * There used to be a second identity here: `src/lib/session.ts`, the legacy
+ * captain-password login the old draft board ran on, with its own cookie and
+ * its own `role: admin | captain | observer`. It was retired with the rest of
+ * the single-purpose board and **no longer exists**, so nothing below has a
+ * second cookie to be confused with.
+ *
+ * What remains beside Discord is the developer sign-in (R-142 / UC-30) in
+ * `src/lib/dev-login.ts`. That is not a parallel identity: it mints a real
+ * Auth.js database session, so these three helpers read it exactly as they read
+ * a Discord one. The draft room's `role` is a different thing again — a per-
+ * event view computed by `viewerFor` in `src/lib/draft.ts`, which is why a
+ * signed-out visitor can still watch a draft (R-70 / UC-16). It is not a login.
  */
 
 import { eq } from "drizzle-orm";

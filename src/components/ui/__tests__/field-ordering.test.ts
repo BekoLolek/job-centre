@@ -284,9 +284,10 @@ function expand(prop: string, value: string): [string, string][] {
     /*
      * The shorthand resets both, which is the point: a `bg-*` utility writes
      * only `background-color`, and a rule declaring `background` eats it.
-     * Without this, `.roundel`'s `background: radial-gradient(…)` read as
-     * clean — it declares a property no utility writes *by that name* — and the
-     * criterion-1 guard waved it through for the wrong reason.
+     * Without this, the `background: radial-gradient(…)` on the since-deleted
+     * `.roundel` read as clean — it declares a property no utility writes *by
+     * that name* — and the criterion-1 guard waved it through for the wrong
+     * reason. `.panel`'s `background` is still measured through this path.
      */
     return [
       ["background-color", value],
@@ -416,12 +417,6 @@ const MUST_KEEP_WINNING: Record<string, string> = {
     "through it via `background-clip: text`, and `a.wordmark-accent:hover` works " +
     "by dropping the image so that colour shows. A `text-*` that beat it would " +
     "replace the lit mark with flat colour.",
-  roundel:
-    "Nothing wears it. No element in `src/**` carries the class, so the rule " +
-    "never matches and cannot eat a utility — the defect does not reach it. It " +
-    "is dead CSS; deleting the gradient is a decision for whoever wants the " +
-    "insignia, not a side effect of an ordering fix. `roundel has a call site " +
-    "now` below turns this reason back into a failure if that changes.",
 };
 
 let BEFORE: ClassRule[];
@@ -948,14 +943,16 @@ describe("every class rule in globals.css", () => {
     /*
      * The assertion above is satisfied by finding nothing, which is also what a
      * broken parser returns. Every half is pinned: the top-level parser is
-     * checked by name against the two rules that are *supposed* to be there
-     * rather than by a count, because after Task 65 there are exactly two and a
-     * count of "at least two" would be met by any pair of rules at all.
+     * checked by name against the rules that are *supposed* to be there rather
+     * than by a count, because after Task 65 there were exactly two and a count
+     * of "at least two" would be met by any pair of rules at all. `.roundel`
+     * was the second, and the dead-code sweep deleted it — so the name is still
+     * what this asserts, and the list is now one long.
      */
     const unlayered = unlayeredClassRules().flatMap((rule) => rule.classes);
-    expect(unlayered.sort(), "the top-level parser no longer finds the two unlayered rules").toEqual(
-      ["roundel", "wordmark-accent"]
-    );
+    expect(unlayered.sort(), "the top-level parser no longer finds the unlayered rule").toEqual([
+      "wordmark-accent",
+    ]);
     expect(layeredSelectors().length, "the components layer parsed as empty").toBeGreaterThanOrEqual(
       28
     );
@@ -963,22 +960,18 @@ describe("every class rule in globals.css", () => {
     expect(SIZE_UTILITIES.size, "no font-size utilities were computed").toBeGreaterThanOrEqual(10);
   });
 
-  it("keeps .wordmark-accent and .roundel unlayered, which is the recorded decision", () => {
+  it("keeps .wordmark-accent unlayered, which is the recorded decision", () => {
     /*
      * The exit has to be used, or it is an allowlist quietly covering nothing.
-     * Both entries are asserted to still describe the file: layering either one
-     * would be a behaviour change — a flat mark instead of a lit one, or a
-     * gradient deleted by the purge — and it would show up here.
+     * The entry is asserted to still describe the file: layering it would be a
+     * behaviour change — a flat mark instead of a lit one — and it would show
+     * up here.
      */
     const layered = new Set(layeredSelectors());
     for (const [cls, reason] of Object.entries(MUST_KEEP_WINNING)) {
       expect(layered.has(`.${cls}`), `.${cls} is now layered — remove its entry`).toBe(false);
       expect(reason.length, `.${cls} has no reason written`).toBeGreaterThan(80);
     }
-
-    // `.roundel`'s reason is that nothing wears it. If something does now, the
-    // reason is false and the rule has to be layered instead.
-    expect(classLists("roundel"), "roundel has a call site now").toEqual([]);
   });
 });
 

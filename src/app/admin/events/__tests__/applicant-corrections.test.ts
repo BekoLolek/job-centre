@@ -215,11 +215,7 @@ describe("UC-14 E2: correcting an applicant's days", () => {
   it("saves it", async () => {
     const { eventId, applicationId, dayIds } = await eventWithApplicant();
 
-    const saved = await setApplicantAvailabilityAction(
-      applicationId,
-      { [dayIds[1]]: "yes" },
-      eventId
-    );
+    const saved = await setApplicantAvailabilityAction(applicationId, { [dayIds[1]]: "yes" });
     expect(saved.ok).toBe(true);
     if (saved.ok) expect(saved.data[dayIds[1]]).toBe("yes");
 
@@ -233,7 +229,7 @@ describe("UC-14 E2: correcting an applicant's days", () => {
     // E2's second clause, which had no implementation at all.
     const { eventId, applicationId, dayIds } = await eventWithApplicant();
 
-    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" }, eventId);
+    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" });
 
     const lines = await auditFor(applicationId, "application.availability");
     expect(lines).toHaveLength(1);
@@ -244,14 +240,13 @@ describe("UC-14 E2: correcting an applicant's days", () => {
   });
 
   it("audits every correction, not only the first", async () => {
-    const { eventId, applicationId, dayIds } = await eventWithApplicant();
+    const { applicationId, dayIds } = await eventWithApplicant();
 
-    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" }, eventId);
-    await setApplicantAvailabilityAction(
-      applicationId,
-      { [dayIds[0]]: "no", [dayIds[1]]: "maybe" },
-      eventId
-    );
+    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" });
+    await setApplicantAvailabilityAction(applicationId, {
+      [dayIds[0]]: "no",
+      [dayIds[1]]: "maybe",
+    });
 
     const lines = await auditFor(applicationId, "application.availability");
     expect(lines).toHaveLength(2);
@@ -266,18 +261,14 @@ describe("UC-14 E2: correcting an applicant's days", () => {
      * "Corrected an applicant's answers for 0 days." A log of changes that
      * were not changes costs the entries that are real.
      */
-    const { eventId, applicationId, dayIds } = await eventWithApplicant();
-    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" }, eventId);
+    const { applicationId, dayIds } = await eventWithApplicant();
+    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" });
     expect(await auditFor(applicationId, "application.availability")).toHaveLength(1);
 
     // The same answer again, and then a save naming no days at all.
-    const same = await setApplicantAvailabilityAction(
-      applicationId,
-      { [dayIds[0]]: "yes" },
-      eventId
-    );
+    const same = await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" });
     expect(same.ok).toBe(true);
-    await setApplicantAvailabilityAction(applicationId, {}, eventId);
+    await setApplicantAvailabilityAction(applicationId, {});
 
     expect(await auditFor(applicationId, "application.availability")).toHaveLength(1);
   });
@@ -286,11 +277,9 @@ describe("UC-14 E2: correcting an applicant's days", () => {
     const mine = await eventWithApplicant();
     const theirs = await eventWithApplicant();
 
-    const refused = await setApplicantAvailabilityAction(
-      mine.applicationId,
-      { [theirs.dayIds[0]]: "yes" },
-      mine.eventId
-    );
+    const refused = await setApplicantAvailabilityAction(mine.applicationId, {
+      [theirs.dayIds[0]]: "yes",
+    });
     expect(refused.ok).toBe(false);
 
     expect(await auditFor(mine.applicationId, "application.availability")).toHaveLength(0);
@@ -326,7 +315,7 @@ describe("UC-14 E3: once the event is complete", () => {
     await db.update(events).set({ status: "complete" }).where(eq(events.id, eventId));
 
     await setApplicationNote(applicationId, "after it finished", db);
-    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" }, eventId);
+    await setApplicantAvailabilityAction(applicationId, { [dayIds[0]]: "yes" });
 
     const applicants = await getApplicationsForEvent(eventId, db);
     const row = applicants.find((entry) => entry.id === applicationId);

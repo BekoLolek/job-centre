@@ -1,15 +1,19 @@
 /**
- * The session-aware half of the top bar (docs/platform-plan.md §4).
+ * The session-aware half of the top bar (R-01, R-06 / UC-01; the unread count
+ * is R-103 / UC-25).
  *
  * Signed out, this is a single quiet link. Signed in, it is the account menu —
- * one control that opens everything §4 lists, rather than a row of buttons per
- * destination. The links themselves moved into `NavMenu`, which needs to be a
- * client component to open and close; this stays a server component because it
- * reads the session, and hands the menu a sign-out action to submit.
+ * one control that opens every member and admin destination, rather than a row
+ * of buttons per destination. The links themselves moved into `NavMenu`, which
+ * needs to be a client component to open and close; this stays a server
+ * component because it reads the session, and hands the menu a sign-out action
+ * to submit.
  *
- * Client headers take it as a prop (`<TournamentBoard nav={<SessionNav />} />`),
- * which works because a server component passed through a client boundary is
- * rendered before it gets there.
+ * A client header takes it as a prop instead of importing it — `DraftRoom` is
+ * the one that does, as `<DraftRoom nav={<SessionNav />} …/>` from
+ * `src/app/events/[slug]/draft/page.tsx`. That works because a server component
+ * passed through a client boundary is rendered before it gets there.
+ * `AppHeader` renders it directly.
  */
 
 import Link from "next/link";

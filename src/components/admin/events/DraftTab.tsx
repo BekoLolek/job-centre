@@ -588,7 +588,7 @@ export default function DraftTab({
       <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow as="h2">The pool</Eyebrow>
-          <span className="eyebrow text-dim">Seeded from accepted applicants</span>
+          <Eyebrow as="span">Seeded from accepted applicants</Eyebrow>
         </div>
 
         {poolError && <Alert>{poolError}</Alert>}

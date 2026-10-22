@@ -342,7 +342,7 @@ export default function ScheduleTab({
       <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Days and lobbies</Eyebrow>
-          <span className="eyebrow text-dim">Times in {zoneLabel()}</span>
+          <Eyebrow as="span">Times in {zoneLabel()}</Eyebrow>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
@@ -358,9 +358,9 @@ export default function ScheduleTab({
                 touch();
               }}
             />
-            <span className="eyebrow mt-1 block text-dim">
+            <Eyebrow as="span" className="mt-1 block">
               Each day has its own start. One overrunning never moves another.
-            </span>
+            </Eyebrow>
           </label>
 
           <label>
@@ -375,9 +375,9 @@ export default function ScheduleTab({
                 touch();
               }}
             />
-            <span className="eyebrow mt-1 block text-dim">
+            <Eyebrow as="span" className="mt-1 block">
               How many matches share a start time. One means back to back.
-            </span>
+            </Eyebrow>
           </label>
         </div>
 
@@ -406,7 +406,7 @@ export default function ScheduleTab({
       <Panel as="section" padding="none" className="space-y-4 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>How long things take</Eyebrow>
-          <span className="eyebrow text-dim">Minutes · the longest case</span>
+          <Eyebrow as="span">Minutes · the longest case</Eyebrow>
         </div>
 
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">

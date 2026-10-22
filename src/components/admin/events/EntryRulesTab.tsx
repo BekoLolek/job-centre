@@ -186,7 +186,9 @@ function Threshold({
           No minimum
         </ChoiceChip>
         {value !== null && (
-          <span className="eyebrow self-center text-union">{value} or above</span>
+          <Eyebrow as="span" className="self-center text-union">
+            {value} or above
+          </Eyebrow>
         )}
       </ChoiceRow>
 

@@ -50,8 +50,6 @@ export type AvailabilityAnswer = {
   exceptions: AvailabilityException[];
 };
 
-export const EMPTY_ANSWER: AvailabilityAnswer = { timezone: null, rules: [], exceptions: [] };
-
 export type PersonAvailability = AvailabilityAnswer & {
   userId: string;
   name: string;

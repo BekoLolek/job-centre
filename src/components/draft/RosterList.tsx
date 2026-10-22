@@ -1,4 +1,4 @@
-import { Badge, EmptyState } from "@/components/ui";
+import { Badge, EmptyState, Eyebrow } from "@/components/ui";
 import Money from "./MoneyFigure";
 import PlayerChip from "./PlayerChip";
 import type { MemberLike, PlayerBook } from "./types";
@@ -76,7 +76,7 @@ export default function RosterList({
           className="flex items-center gap-2 py-1.5 text-14 text-dim"
         >
           <span className="inline-block h-6 w-6 shrink-0 rounded-full border border-dashed border-hair" />
-          <span className="eyebrow">Empty slot</span>
+          <Eyebrow as="span">Empty slot</Eyebrow>
         </li>
       ))}
     </ul>

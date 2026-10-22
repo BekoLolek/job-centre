@@ -29,10 +29,8 @@ import {
   type MatchSlot,
   type PlaySide,
   type PointsRule,
-  type StageConfig,
   type Tiebreaker,
   mapChooserFor,
-  modesFor,
   normaliseMatchSlot,
   parseSource,
   seriesTarget,
@@ -160,11 +158,6 @@ export function blankGamesFor(match: { modes: string[] }): MatchGameRecord[] {
     played: false,
     sideChosen: null,
   }));
-}
-
-/** The same, from a stage config and a series length. */
-export function blankGames(config: StageConfig, bestOf: number): MatchGameRecord[] {
-  return blankGamesFor({ modes: modesFor(config, bestOf) });
 }
 
 function gameWins(games: MatchGameRecord[]): { a: number; b: number } {

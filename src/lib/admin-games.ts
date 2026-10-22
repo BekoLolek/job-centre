@@ -34,7 +34,7 @@
  *    answers is refused and pointed at retirement.
  */
 
-import { and, asc, count, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   type Database,
   type Game,
@@ -953,15 +953,3 @@ export async function moveField(
   return done();
 }
 
-/* ------------------------------------------------------------------ */
-/* Small read helper the page uses for its heading                    */
-/* ------------------------------------------------------------------ */
-
-/** How many games are switched on. `ne` keeps it one statement. */
-export async function activeGameCount(database: Database = defaultDb): Promise<number> {
-  const [row] = await database
-    .select({ total: count() })
-    .from(games)
-    .where(ne(games.isActive, false));
-  return Number(row?.total ?? 0);
-}

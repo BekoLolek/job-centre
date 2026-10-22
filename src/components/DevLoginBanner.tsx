@@ -11,7 +11,7 @@
  * costs a deployment nothing and never forces a page to render dynamically.
  */
 
-import { PAGE_SHELL, cx } from "@/components/ui";
+import { Eyebrow, PAGE_SHELL, cx } from "@/components/ui";
 import { DEV_LOGIN_PATH, devLoginConfig, devLoginEnabled } from "@/lib/dev-login";
 import { getCurrentUser } from "@/lib/session-guards";
 
@@ -36,9 +36,9 @@ export default async function DevLoginBanner() {
         <div className={cx(PAGE_SHELL, "flex h-11 items-center gap-3")}>
           <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-flare live-dot" />
 
-          <span className="eyebrow truncate text-flare">
+          <Eyebrow as="span" className="truncate text-flare">
             Development sign-in active — not a real session
-          </span>
+          </Eyebrow>
 
           <span className="hidden truncate text-12 text-chalk/70 sm:inline">
             {signedIn

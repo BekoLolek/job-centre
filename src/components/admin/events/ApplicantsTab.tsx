@@ -677,7 +677,9 @@ function ApplicantRow({
 
         <TableCell>
           <span className="block text-14">{row.rank ?? "—"}</span>
-          <span className={cx("eyebrow block", note.tone)}>{note.label}</span>
+          <Eyebrow as="span" className={cx("block", note.tone)}>
+            {note.label}
+          </Eyebrow>
         </TableCell>
 
         <TableCell numeric className="text-12 text-muted" suppressHydrationWarning>
@@ -796,7 +798,7 @@ export function ApplicantDetail({
   const setDay = async (dayId: string, state: AvailabilityState | null) => {
     setBusyDay(dayId);
     try {
-      const result = await setApplicantAvailabilityAction(row.id, { [dayId]: state }, event.id);
+      const result = await setApplicantAvailabilityAction(row.id, { [dayId]: state });
       if (!result.ok) onError(result.error);
       else onChanged();
     } catch {
