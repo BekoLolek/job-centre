@@ -330,12 +330,12 @@ bracket corrections safe (R-79).
 - **Files:** new `src/lib/championship-policy.ts` (pure) and its tests; `src/db/schema.ts` (+ migration: `championships`, `championship_events`, `championship_placements`)
 - **Do:** the schema from `docs/domain-model.md`, and the pure scoring function: placements (member or team) + points table + weight + participation points + optional best-N -> ordered standings, with the tie rule (points, then most firsts, then most seconds, ...). A team's place scores for every member. Nothing stored but the placements.
 - **Acceptance criteria:**
-  - [ ] Team placement scores every member; a member placed twice (directly and via a team) is rejected
-  - [ ] Shared position gives both the same points and leaves the next position empty
-  - [ ] Weight and per-event table override apply; participation points scale with weight
-  - [ ] best-N keeps each member's best results only
+  - [x] Team placement scores every member; a member placed twice (directly and via a team) is rejected
+  - [x] Shared position gives both the same points and leaves the next position empty
+  - [x] Weight and per-event table override apply; participation points scale with weight
+  - [x] best-N keeps each member's best results only
   - [x] Tie rule ordered exactly as specified, and level players shown level
-  - [ ] Correcting a placement changes the standings with nothing stale left behind
+  - [x] Correcting a placement changes the standings with nothing stale left behind
 - **Depends on:** none
 
 ### Task 39: Set up and run a season
@@ -386,8 +386,8 @@ bracket corrections safe (R-79).
 - **Files:** `src/db/schema.ts` (+ migration: `pending` enum value, `config.entryMode`), `src/lib/events-policy.ts`, `src/lib/events.ts`, `src/components/admin/events/BasicsTab.tsx`, `src/components/admin/events/ApplicantsTab.tsx`, `src/components/admin/TemplatesManager.tsx`, `src/app/me/events/page.tsx`, tests
 - **Do:** add `entryMode: first_come | approval` (migration maps existing events to first_come). Approval: apply stores `pending`; manager accepts/waitlists/declines per `diagrams/application-state.md`. The existing `config.waitlist` switch stays for first-come events (R-170, kept): off means the event closes when full.
 - **Acceptance criteria:**
-  - [ ] UC-12 7b: approval event stores pending, member sees "Awaiting review"
-  - [ ] Pending → accepted/waitlisted/declined; pending → withdrawn by applicant
+  - [x] UC-12 7b: approval event stores pending, member sees "Awaiting review"
+  - [x] Pending → accepted/waitlisted/declined; pending → withdrawn by applicant
   - [x] Existing events behave exactly as before (first come, waitlist)
 - **Depends on:** Task 4
 
@@ -409,9 +409,9 @@ bracket corrections safe (R-79).
 - **Files:** `src/db/schema.ts` (+ migration `entry_waivers`), `src/lib/events.ts`, `src/lib/draft.ts` (`setCaptains`), `src/components/admin/events/ApplicantsTab.tsx`, `src/components/admin/events/CaptainsTab.tsx`, `src/app/events/[slug]/apply/page.tsx`
 - **Do:** manager waives a rule for a member on an event (amendment above). Apply checks enter-rule unless waived; `setCaptains` checks the captain rule server-side unless waived; the CaptainsTab override writes a waiver.
 - **Acceptance criteria:**
-  - [ ] Below-rank member: refused before questions; after a waiver, can apply
-  - [ ] Below-captain-rank captain refused by the server unless waived; waiver audited
-  - [ ] Apply page shows both rules and whether the member meets them
+  - [x] Below-rank member: refused before questions; after a waiver, can apply
+  - [x] Below-captain-rank captain refused by the server unless waived; waiver audited
+  - [x] Apply page shows both rules and whether the member meets them
 - **Depends on:** Task 7
 
 ### Task 10: Applicants change answers; profile stays the source
@@ -420,8 +420,8 @@ bracket corrections safe (R-79).
 - **Files:** `src/lib/events.ts`, `src/lib/profile.ts`, `src/db/schema.ts` (+ migration `profile_values.confirmed_at`), `src/app/events/[slug]/apply/page.tsx`, `src/components/apply/ApplyForm.tsx`, `src/app/me/page.tsx`, `src/components/me/MyEventCard.tsx`
 - **Do:** apply page shows the full profile for the game; edits are written to the profile and stamp `confirmed_at`; missing required details asked inline. Active applicants can edit answers while sign-ups are open (refused after; withdraw still allowed). Dashboard lists open applications with status/position and a to-do for questions changed since answering.
 - **Acceptance criteria:**
-  - [ ] Each listed use-case line has a test
-  - [ ] Editing after close refused; withdraw after close allowed
+  - [ ] Each listed use-case line has a test — *left open deliberately: this is a criterion about the test suite's coverage rather than about the software, so no test can hold it. Verified by hand against UC-10 instead; the behavioural criterion below it is what bites.*
+  - [x] Editing after close refused; withdraw after close allowed
 - **Depends on:** Task 8
 
 ## C. Setup, identity, profiles
@@ -433,7 +433,7 @@ bracket corrections safe (R-79).
 - **Do:** sign-ups close no later than the first day's start; days ordered and non-overlapping; cap at least 2 (constraint migration after checking live rows); every setup save audited; change/question notifications only when published and something changed.
 - **Acceptance criteria:**
   - [x] Each 10c rule refused with its named message; nothing saved
-  - [ ] Unpublished saves notify nobody
+  - [x] Unpublished saves notify nobody
 - **Depends on:** Task 3
 
 ### Task 12: Event dates come from its days
@@ -442,7 +442,7 @@ bracket corrections safe (R-79).
 - **Files:** `src/lib/events.ts` (`listEvents`, summaries), `src/lib/notifications.ts`, `src/app/page.tsx`, `src/app/events/[slug]/page.tsx`, `src/components/admin/events/BasicsTab.tsx`, `src/db/schema.ts` (+ migration dropping `starts_at`/`ends_at`, and the index that only reads them, in a follow-up commit — Task 50)
 - **Do:** start = first day's start; end = last day's; overview lists every day. Backfill a day from `starts_at` for any event that has none, then stop reading and drop the columns. Reminders to accepted seats only.
 - **Acceptance criteria:**
-  - [ ] Listings, hub, reminders order and filter by derived dates (existing tests pass unchanged in meaning)
+  - [x] Listings, hub, reminders order and filter by derived dates (existing tests pass unchanged in meaning)
   - [x] Migration backfill test: an event with only `starts_at` gains a day
 - **Depends on:** Task 11
 
