@@ -51,8 +51,62 @@ describe("event status", () => {
     expect(eventStatusTone("live")).toBe("live");
   });
 
-  it("says a draft is invisible, because that is the whole of what draft means", () => {
-    expect(eventStatusMeaning("draft")).toMatch(/Only admins/i);
+  /**
+   * Every role this site has a word for, as the draft banner's readers might
+   * name themselves.
+   *
+   * Not a list of who may see a draft — that question is answered by
+   * `canSeeEvent` in `src/lib/hosting.ts` and nowhere near here. It is the
+   * vocabulary the draft meaning is not allowed to reach for.
+   */
+  const ROLE_WORDS = [
+    "admin",
+    "admins",
+    "host",
+    "hosts",
+    "manager",
+    "managers",
+    "member",
+    "members",
+    "captain",
+    "captains",
+    "visitor",
+    "visitors",
+    "organiser",
+    "organisers",
+  ];
+
+  it("says what a draft is, in the exact words, because two different readers get this line", () => {
+    // The whole sentence, not a fragment of it. The loose `/Only admins/`
+    // match this replaces is how the bug lasted: R-32 / UC-08 2 gave a host
+    // access to their own unpublished event, the sentence went on claiming
+    // only admins could see it, and nothing went red. A substring would have
+    // been just as happy with "Only admins can see this (probably)".
+    expect(eventStatusMeaning("draft")).toBe(
+      "Not published yet, so it is not public. Nobody can apply."
+    );
+  });
+
+  it("names no role in the draft meaning, so widening who sees a draft cannot make it a lie", () => {
+    // This is the assertion that costs something. `canSeeEvent` decides who
+    // reads this line, and today that is two kinds of person — an admin, or a
+    // host of the event (R-32, UC-08 2). Anybody widening that set has two
+    // ways to leave this file honest: check that "not public" is still true
+    // of a draft, or re-word it. What they cannot do is the thing that reads
+    // easiest and breaks first — swap in whichever role they just added, or
+    // enumerate the roles at a reader who then has to work out which one they
+    // are. That attempt fails here.
+    const meaning = eventStatusMeaning("draft").toLowerCase();
+    for (const role of ROLE_WORDS) {
+      expect(meaning).not.toContain(role);
+    }
+  });
+
+  it("keeps 'Nobody can apply', which is true of a draft for every reader", () => {
+    // Unlike the visibility half, this one has never depended on who is
+    // looking: `applicationsOpen` shuts a draft with `not_published` before it
+    // reads a clock, a cap or a session.
+    expect(eventStatusMeaning("draft")).toContain("Nobody can apply.");
   });
 });
 

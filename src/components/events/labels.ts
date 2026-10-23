@@ -48,9 +48,25 @@ export function eventStatusLabel(status: EventStatus): string {
   return STATUS_LABEL[status];
 }
 
-/** One line saying what this status means, for a screen with room to explain. */
+/**
+ * One line saying what this status means, for a screen with room to explain.
+ *
+ * **The draft line names nobody.** It used to read "Only admins can see this",
+ * which was true until R-32 / UC-08 2 were built: an unpublished event is
+ * visible to its *managers* — an admin, or a host of that event (`canSeeEvent`
+ * in `src/lib/hosting.ts`) — and the draft banner on `/events/[slug]` is
+ * therefore read by a host who is not an admin, being told that only admins
+ * can see the page in front of them. The reader least sure of their own
+ * permissions was the one being misinformed.
+ *
+ * So it describes the *event* rather than the audience. "Not public" is true
+ * for every reader who gets this far and names none of them, which is also why
+ * it does not list the two roles instead: a host should not have to work out
+ * whether "managers" includes them, and a third reader added later would make
+ * any such list wrong again rather than merely incomplete.
+ */
 const STATUS_MEANING: Record<EventStatus, string> = {
-  draft: "Only admins can see this. Nobody can apply.",
+  draft: "Not published yet, so it is not public. Nobody can apply.",
   published: "Members can see it; applications follow the signup window.",
   live: "Running now. Applications are closed.",
   complete: "Finished. Kept for the record.",
