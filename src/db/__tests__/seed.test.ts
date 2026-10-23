@@ -1,7 +1,8 @@
 import { eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SETTING_KEYS, games, profileFields, settings, users } from "@/db";
+import { SETTING_KEYS, games, heroes, profileFields, settings, users } from "@/db";
 import { RIVALS_RANK_LADDER, parseAdminDiscordIds, seed } from "@/db/seed";
+import { drawableByRole } from "@/lib/heroes";
 import { type TestDatabase, freshDatabase, makeUser } from "./helpers";
 
 let ctx: TestDatabase;
@@ -20,6 +21,7 @@ async function census() {
   return {
     games: (await ctx.db.select().from(games)).length,
     fields: (await ctx.db.select().from(profileFields)).length,
+    heroes: (await ctx.db.select().from(heroes)).length,
     settings: (await ctx.db.select().from(settings)).length,
   };
 }
@@ -102,12 +104,14 @@ describe("seed", () => {
     const afterFirst = await census();
     expect(first.gamesInserted).toBe(2);
     expect(first.fieldsInserted).toBe(5);
+    expect(first.heroesInserted).toBe(54);
     expect(first.settingsInserted).toBe(2);
 
     const second = await seed(ctx.db, { DISCORD_GUILD_ID: "111" });
     expect(second).toMatchObject({
       gamesInserted: 0,
       fieldsInserted: 0,
+      heroesInserted: 0,
       settingsInserted: 0,
     });
     expect(await census()).toEqual(afterFirst);
@@ -138,6 +142,87 @@ describe("seed", () => {
     expect(guild.value).toBe("222");
     const [rivals] = await ctx.db.select().from(games).where(eq(games.key, "rivals"));
     expect(rivals.name).toBe("Rivals");
+  });
+
+  it("plants the 54 heroes on rivals, giving 15 / 28 / 13 drawable", async () => {
+    const summary = await seed(ctx.db, {});
+    expect(summary.heroesInserted).toBe(54);
+
+    const [rivals] = await ctx.db.select().from(games).where(eq(games.key, "rivals"));
+    const rows = await ctx.db.select().from(heroes);
+    expect(rows).toHaveLength(54);
+    expect(rows.every((row) => row.gameId === rivals.id)).toBe(true);
+    expect(rows.every((row) => row.retiredAt === null)).toBe(true);
+
+    const pools = drawableByRole(rows);
+    expect({
+      Vanguard: pools.Vanguard.length,
+      Duelist: pools.Duelist.length,
+      Strategist: pools.Strategist.length,
+    }).toEqual({ Vanguard: 15, Duelist: 28, Strategist: 13 });
+  });
+
+  /**
+   * The criterion that would otherwise pass vacuously.
+   *
+   * "Seed twice and still find 54 rows" is also true of a seed that wrote
+   * nothing at all on the first run, and of one that overwrote everything on the
+   * second with the same values. So the row is **edited in between**, to
+   * something the roster does not say, and the assertion is that the edit is
+   * still there: an admin who corrects a role after a rework must not have the
+   * next redeploy undo it (the rule in `seed.ts`'s own module comment).
+   */
+  it("leaves an admin-edited hero exactly as the admin left it", async () => {
+    const first = await seed(ctx.db, {});
+    expect(first.heroesInserted).toBe(54);
+
+    const retiredAt = new Date("2026-10-23T12:00:00Z");
+    await ctx.db
+      .update(heroes)
+      .set({ roles: ["Duelist"] })
+      .where(eq(heroes.name, "Deadpool"));
+    await ctx.db.update(heroes).set({ retiredAt }).where(eq(heroes.name, "The Hood"));
+
+    const second = await seed(ctx.db, {});
+    expect(second.heroesInserted).toBe(0);
+
+    const [deadpool] = await ctx.db.select().from(heroes).where(eq(heroes.name, "Deadpool"));
+    expect(deadpool.roles).toEqual(["Duelist"]);
+    const [hood] = await ctx.db.select().from(heroes).where(eq(heroes.name, "The Hood"));
+    expect(hood.retiredAt).toEqual(retiredAt);
+
+    // And no second Deadpool beside the edited one.
+    expect(await ctx.db.select().from(heroes)).toHaveLength(54);
+  });
+
+  /**
+   * The one thing a re-seed does change, asserted rather than left to the
+   * comment in `insertHero` that claims it.
+   *
+   * A hero is matched by (game, name), so a hero an admin has **renamed** no
+   * longer matches and the original name is planted again beside it. That is a
+   * visible duplicate an admin can retire, where overwriting would lose the
+   * correction outright — and no deploy triggers it, because `npm run build`
+   * runs `db:migrate` and not the seed.
+   */
+  it("plants the original name again beside a hero that was renamed", async () => {
+    await seed(ctx.db, {});
+    await ctx.db
+      .update(heroes)
+      .set({ name: "Gorr the God Butcher" })
+      .where(eq(heroes.name, "Gorr"));
+
+    const second = await seed(ctx.db, {});
+
+    expect(second.heroesInserted).toBe(1);
+    expect(await ctx.db.select().from(heroes)).toHaveLength(55);
+    const names = (await ctx.db.select({ name: heroes.name }).from(heroes)).map(
+      (row) => row.name
+    );
+    expect(names.filter((name) => name.startsWith("Gorr")).sort()).toEqual([
+      "Gorr",
+      "Gorr the God Butcher",
+    ]);
   });
 
   it("marks allowlisted members admin when they already exist", async () => {

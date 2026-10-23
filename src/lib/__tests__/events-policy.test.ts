@@ -5,6 +5,9 @@ import {
   EVENT_STATUS_FLOW,
   type EventTimingView,
   MIN_CAPACITY,
+  NIGHT_FORMATS,
+  isNightFormat,
+  teamFormatFrom,
   type WaitlistApplication,
   applicationsOpen,
   canTransition,
@@ -959,5 +962,61 @@ describe("changedSetupFields", () => {
     expect(changedSetupFields(setup(), setup({ signupClosesAt: null }))).toEqual([
       "signupClosesAt",
     ]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The night's format (R-215 / UC-41 1, 2)                            */
+/* ------------------------------------------------------------------ */
+
+describe("the night's format", () => {
+  it("reads 6v6 as a 2-2-2 comp and teams of six", () => {
+    expect(teamFormatFrom({ teamFormat: "6v6" })).toEqual({
+      format: "6v6",
+      teamSize: 6,
+      comp: "2-2-2",
+    });
+  });
+
+  it("reads 3v3 as a 1-1-1 comp and teams of three", () => {
+    expect(teamFormatFrom({ teamFormat: "3v3" })).toEqual({
+      format: "3v3",
+      teamSize: 3,
+      comp: "1-1-1",
+    });
+  });
+
+  /*
+   * The same tolerance `entryMode` has, and for the same reason: an event
+   * stored before the format existed, or a template carrying a value nobody
+   * recognises, behaves as the common night rather than as nothing.
+   */
+  it("falls back to 6v6 for anything it does not recognise", () => {
+    expect(teamFormatFrom(null).format).toBe("6v6");
+    expect(teamFormatFrom(undefined).format).toBe("6v6");
+    expect(teamFormatFrom({}).format).toBe("6v6");
+    expect(teamFormatFrom({ teamFormat: "5v5" }).format).toBe("6v6");
+    expect(teamFormatFrom({ teamFormat: 6 }).format).toBe("6v6");
+    expect(teamFormatFrom({ teamFormat: null }).format).toBe("6v6");
+  });
+
+  it("is not derived from anything else on the config", () => {
+    // The correction the plan records: the format is the admin's stored call,
+    // so a head count sitting beside it changes nothing.
+    expect(teamFormatFrom({ teamFormat: "3v3", teams: 2, capacity: 12 }).teamSize).toBe(3);
+    expect(teamFormatFrom({ teams: 4 }).format).toBe("6v6");
+  });
+
+  it("knows which strings off the wire are formats at all", () => {
+    expect(isNightFormat("6v6")).toBe(true);
+    expect(isNightFormat("3v3")).toBe(true);
+    expect(isNightFormat("5v5")).toBe(false);
+    expect(isNightFormat("")).toBe(false);
+    expect(isNightFormat(undefined)).toBe(false);
+    expect(isNightFormat(6)).toBe(false);
+  });
+
+  it("offers exactly the two formats R-215 names", () => {
+    expect([...NIGHT_FORMATS]).toEqual(["6v6", "3v3"]);
   });
 });

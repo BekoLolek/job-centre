@@ -501,6 +501,73 @@ export function waitlistEnabled(config: EventConfig | null | undefined): boolean
   return config?.waitlist !== false;
 }
 
+/* ------------------------------------------------------------------ */
+/* The night's format (R-215 / UC-41 1, 2)                            */
+/* ------------------------------------------------------------------ */
+
+/** The two sizes a night runs at (R-215). */
+export const NIGHT_FORMATS = ["6v6", "3v3"] as const;
+
+export type NightFormat = (typeof NIGHT_FORMATS)[number];
+
+export type TeamFormat = {
+  format: NightFormat;
+  /** How many players a team holds — and so the size the random shuffle makes. */
+  teamSize: number;
+  /**
+   * The composition this format implies. **Stated, never enforced** (R-215 /
+   * UC-41 2): the site prints it and nothing anywhere reads it back to refuse
+   * a team. See the type's docblock below for why that is a decision.
+   */
+  comp: string;
+};
+
+/**
+ * The format, resolved — and the reason it is a *stored admin choice* rather
+ * than arithmetic over the head count.
+ *
+ * An earlier draft of the plan had the site compute 6v6 from 11-12 accepted
+ * players and 3v3 from fewer, and the user corrected it: "11 players means
+ * 6v6" is how *they* decide which night to run, not a rule the site should
+ * reverse-engineer from a number that is still moving while people apply. A
+ * guess would also be wrong in the one case that matters — 12 people who came
+ * to play 3v3 — and wrong in a way nobody could override.
+ *
+ * ## Why `events.config`, and why this needed no migration
+ *
+ * The schedule settings already live there (`scheduleSettingsFrom` in
+ * `src/lib/format.ts` is the worked example, and its docblock gives the
+ * argument: a value read once per screen and saved with its neighbours is not
+ * worth a table). `events.config` is a `json<EventConfig>` column whose type
+ * ends in `& { [key: string]: SettingValue | undefined }`, so a new key needs
+ * no column, no enum and no migration — which is the whole point of putting it
+ * here.
+ *
+ * ## A *top-level* key, deliberately not inside `config.format`
+ *
+ * `updateEvent` merges a config patch **one level deep**:
+ * `{ ...current.config, ...patch.config }`. So `config.format` is replaced
+ * wholesale by any save that writes it, and `saveScheduleSettingsAction`
+ * writes all four of its fields together every time. A `teamFormat` nested in
+ * there would be silently erased the next time anybody touched the Schedule
+ * tab. As a sibling of `format` it survives, and the schedule survives this.
+ *
+ * Unrecognised or absent falls back to 6v6 — the common night — the same way
+ * `entryMode` reads anything but an explicit `approval` as first come, so an
+ * event stored before this existed behaves as one rather than as nothing.
+ */
+export function teamFormatFrom(config: EventConfig | null | undefined): TeamFormat {
+  const stored = config?.teamFormat;
+  return stored === "3v3"
+    ? { format: "3v3", teamSize: 3, comp: "1-1-1" }
+    : { format: "6v6", teamSize: 6, comp: "2-2-2" };
+}
+
+/** Whether a string off the wire is a format at all — the action's guard. */
+export function isNightFormat(raw: unknown): raw is NightFormat {
+  return raw === "6v6" || raw === "3v3";
+}
+
 /**
  * Whether this event is taking applications at `now`, and if not, why not.
  *

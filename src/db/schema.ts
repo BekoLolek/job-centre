@@ -252,6 +252,119 @@ export const games = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
+/* Heroes (R-214 / UC-40; the multi-role Constraint)                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The three roles a hero may be played in.
+ *
+ * A real Postgres enum rather than text, and the reason is the draw rather than
+ * tidiness: `drawableByRole` counts the pool **per role**, so a row saved as
+ * `"Strategist "` or `"strategist"` would not be counted as a Strategist by
+ * anything — the role would quietly hold one hero fewer, and a role that falls
+ * below three stops being drawable at all (UC-39 2a). An enum makes that typo a
+ * rejected insert instead of a silently shorter pool.
+ *
+ * Deliberately unlike `announcement_templates.kind`, which is text precisely so
+ * a new kind ships without a migration (drizzle/0029 argues it). The opposite
+ * holds here: the game has had exactly these three roles since launch, a fourth
+ * would change the whole shape of the draw — nine cards, three per role — and
+ * the migration that added it would be the smallest part of that work.
+ */
+export const heroRole = pgEnum("hero_role", ["Vanguard", "Duelist", "Strategist"]);
+
+export type HeroRole = (typeof heroRole.enumValues)[number];
+
+/**
+ * One hero in one game's catalogue, and the roles it can be played in.
+ *
+ * Admin-editable, pre-loaded with the current roster (R-214 / UC-40): a hero
+ * released next season is a row, not a deploy — the same bargain `games` and
+ * `profile_fields` already make one level up.
+ *
+ * ## Why `roles` is a set and not a column
+ *
+ * **Deadpool.** Checked against the live game on 2026-10-23 rather than
+ * recalled: 54 heroes at Season 10.5, which is 14 Vanguard + 27 Duelist + 12
+ * Strategist *plus Deadpool, playable as all three*. That is the last-but-one
+ * Constraint in `docs/requirements.md` — the one before the
+ * one-championship-per-event rule `championship_events` cites below — and it is
+ * a schema constraint, not a note: a single `role` column is already wrong
+ * against the roster as it stands, so it would need migrating the first time
+ * anybody noticed, and until then Deadpool would be absent from two of the
+ * three pools he belongs to. It also makes the published counts disagree, which
+ * is why the drawable pools are **15 / 28 / 13** and not 14 / 27 / 12.
+ *
+ * An enum array rather than a `hero_roles` join table, because the whole set is
+ * read and written together — the draw wants every hero in a role, and the
+ * admin screen ticks three boxes and saves — and because a join table cannot
+ * refuse a hero with *no* roles without a trigger, while the check below does it
+ * in one line. The set is bounded at three by the game itself, so none of the
+ * usual arguments for a join table (unbounded, independently queried, carrying
+ * its own columns) apply.
+ */
+export const heroes = pgTable(
+  "heroes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    gameId: uuid("game_id")
+      .notNull()
+      .references(() => games.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    /**
+     * One, two or three distinct roles. Never empty — see the check below, and
+     * UC-40 3b: a hero in no role can never be drawn, which is the list lying
+     * rather than a hero being unavailable.
+     */
+    roles: heroRole("roles").array().notNull(),
+    /**
+     * When an admin retired the hero (UC-40 4a, and the standing "nothing on the
+     * record is hard-deleted" rule).
+     *
+     * Retiring is the only way to take a hero out of future draws: the row
+     * stays, so a hand that was dealt before the rework still names it, and the
+     * draw simply stops offering it. Null means "still drawable", which is what
+     * every row written by the seed says.
+     */
+    retiredAt: instant("retired_at"),
+    createdAt: instant("created_at").notNull().defaultNow(),
+  },
+  (table) => [
+    // UC-40 3a: one name per game, refused by Postgres as well as by the screen.
+    // Per *game*, not globally — two games may both have a "Venom".
+    unique("heroes_game_name_uniq").on(table.gameId, table.name),
+    /*
+     * A hero holds **at least one** role and never the same role twice
+     * (UC-40 3b, 3c).
+     *
+     * Spelled out per cardinality rather than with a `distinct unnest`
+     * subquery, which a CHECK constraint may not contain at all. Three roles is
+     * the ceiling, so the three cases are the whole space: an empty array
+     * satisfies no branch and is refused, `{Duelist,Duelist}` fails the
+     * inequality, and a fourth element satisfies no branch either.
+     *
+     * `array_position(..., null) is null` is the separate half, and it is not
+     * decoration: a NULL element is a hero in no real role, and it would sail
+     * past the branches below because `null <> null` is NULL rather than false —
+     * which a CHECK treats as satisfied.
+     */
+    check(
+      "heroes_roles_distinct_nonempty",
+      sql`array_position(${table.roles}, null) is null and (
+        cardinality(${table.roles}) = 1
+        or (cardinality(${table.roles}) = 2 and ${table.roles}[1] <> ${table.roles}[2])
+        or (
+          cardinality(${table.roles}) = 3
+          and ${table.roles}[1] <> ${table.roles}[2]
+          and ${table.roles}[1] <> ${table.roles}[3]
+          and ${table.roles}[2] <> ${table.roles}[3]
+        )
+      )`
+    ),
+  ]
+);
+
+/* ------------------------------------------------------------------ */
 /* Profiles (§7, §14)                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -2708,6 +2821,8 @@ export type Account = typeof accounts.$inferSelect;
 export type Session = typeof sessions.$inferSelect;
 export type Game = typeof games.$inferSelect;
 export type NewGame = typeof games.$inferInsert;
+export type Hero = typeof heroes.$inferSelect;
+export type NewHero = typeof heroes.$inferInsert;
 export type ProfileField = typeof profileFields.$inferSelect;
 export type NewProfileField = typeof profileFields.$inferInsert;
 export type ProfileValueRow = typeof profileValues.$inferSelect;

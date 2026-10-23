@@ -53,16 +53,21 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/server", () => ({ after: () => {} }));
 
-const { placeOnRosterAction, previewTeamCountAction, setTeamCountAction } = await import(
-  "../draft-actions"
-);
+const {
+  placeOnRosterAction,
+  previewTeamCountAction,
+  saveTeamsAction,
+  setTeamCountAction,
+} = await import("../draft-actions");
 const { previewStagesAction, rebuildStageAction, saveStagesAction } = await import(
   "../format-actions"
 );
 const { applyToEvent, createEvent, publishEvent, setApplicationStatus } = await import(
   "@/lib/events"
 );
-const { getTeams } = await import("@/lib/draft");
+const { awardLot, getTeams, openLot, placeBid, setDraftPool, voidLot } = await import(
+  "@/lib/draft"
+);
 const { generateMatches, recordGames, setStages } = await import("@/lib/format");
 
 let handle: TestDatabase;
@@ -387,4 +392,101 @@ describe("previewTeamCountAction lists the generated matches too (UC-15 E1)", ()
     expect(result.error).toContain("who that result belongs to");
     expect(await getTeams(eventId).then((rows) => rows.length)).toBe(4);
   });
+});
+
+/* ------------------------------------------------------------------ */
+/* docs/decisions/004, one layer up — a refused save writes nothing   */
+/* ------------------------------------------------------------------ */
+
+describe("a refused team write leaves the generated matches alone", () => {
+  /** The team ids each generated match names, in slot order. */
+  async function naming(eventId: string): Promise<Array<string | null>> {
+    return (await rowsIn(eventId)).flatMap((row) => [row.teamAId, row.teamBId]);
+  }
+
+  /**
+   * Give one team a lot it won and then had voided — the reachable refusal.
+   *
+   * `removeTeamsIn` will not delete a team that any lot names as a winner at
+   * *any* status, because a voided award still records a price that was once
+   * paid. Nothing out here gates on that: `previewTeamCountAction` reports it
+   * as blocked, but the preview decides nothing and the save goes ahead and
+   * asks. So this is the save that gets all the way to the library and comes
+   * back refused — which is what makes it the one that catches a write done on
+   * the way in.
+   */
+  async function withVoidedAward(fixture: Fixture, teamId: string): Promise<void> {
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.accepted[0] }, db));
+    unwrap(await placeBid(lot.id, teamId, 10, {}, db));
+    unwrap(await awardLot(lot.id, teamId, {}, db));
+    unwrap(await voidLot(lot.id, {}, db));
+  }
+
+  it("leaves them naming their teams when a lower count is refused", async () => {
+    /*
+     * `matches.team_a_id` has no `on delete` action, so the team references
+     * have to be released before any team row can go. Run *before*
+     * `setTeamCount` — the obvious shape, and the one this action used — that
+     * release is a write with no transaction around it, so a count the library
+     * then refuses leaves the matches stripped of their teams and the admin
+     * told nothing changed.
+     *
+     * The assertion is that every match still names both of the teams it was
+     * generated over, and that the sentence coming back is the library's.
+     */
+    const fixture = await withRoundRobin();
+    const before = await naming(fixture.eventId);
+    expect(before.filter(Boolean)).toHaveLength(12);
+
+    // The last team by sort is the one a count of three removes.
+    const teamRows = await getTeams(fixture.eventId);
+    await withVoidedAward(fixture, teamRows[3].id);
+
+    const result = await setTeamCountAction(fixture.eventId, 3);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("has already drafted players");
+
+    // Three of the six table games name the team that was going. All six still
+    // name the pair they were generated over.
+    expect(await naming(fixture.eventId)).toEqual(before);
+    expect(await getTeams(fixture.eventId).then((rows) => rows.length)).toBe(4);
+  });
+
+  it("leaves them naming their teams when a list that drops one is refused", async () => {
+    // The other way to remove a team: a list that leaves it out. Same foreign
+    // key, same release, same refusal.
+    const fixture = await withRoundRobin();
+    const before = await naming(fixture.eventId);
+    expect(before.filter(Boolean)).toHaveLength(12);
+
+    const teamRows = await getTeams(fixture.eventId);
+    await withVoidedAward(fixture, teamRows[3].id);
+
+    const result = await saveTeamsAction(
+      fixture.eventId,
+      teamRows.slice(0, 3).map((team) => ({
+        id: team.id,
+        name: team.name,
+        seed: team.seed,
+        balanceStart: team.balanceStart,
+      }))
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain("has already drafted players");
+
+    expect(await naming(fixture.eventId)).toEqual(before);
+    expect(await getTeams(fixture.eventId).then((rows) => rows.length)).toBe(4);
+  });
+
+  /*
+   * The control is already above, twice over. "Follows the teams downwards too"
+   * lowers the count through this action and ends with three rebuilt matches,
+   * and that is only reachable if the release really ran — Postgres would have
+   * refused the delete with `matches_team_a_event_fk` otherwise. So the two
+   * tests here are about *when* the release happens, not about a hook that
+   * never fires.
+   */
 });

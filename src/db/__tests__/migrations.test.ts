@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, createPgliteDatabase, driverFor, games } from "@/db";
 import { applyMigrations } from "@/db/migrate";
+import { seed } from "@/db/seed";
 import { DEFAULT_POINTS_TABLE } from "@/lib/championship-policy";
 import { createTemplate } from "@/lib/admin-templates";
 import { createEvent } from "@/lib/events";
@@ -83,6 +84,10 @@ describe("migrations", () => {
       "event_templates",
       "events",
       "games",
+      // R-214 / UC-40: one game's heroes and the roles each may be played in.
+      // drizzle/0031 — and it starts empty on every install, because the 54 are
+      // the seed's to plant and an admin's to correct, not a migration's.
+      "heroes",
       "host_applications",
       // §7 sketched this as `games` too; the catalogue above already has that
       // name, so the per-match maps are `match_games`.
@@ -281,7 +286,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(45);
+    expect(await tableNames(ctx.client)).toHaveLength(46);
   });
 
   it("ships the default points table a new championship starts with", async () => {
@@ -1724,6 +1729,108 @@ describe("one template per name (drizzle/0028)", () => {
     const clash = await createTemplate({ name: "rivals   PLATE" }, db);
     expect(clash.ok).toBe(false);
     if (!clash.ok) expect(clash.error).toMatch(/already called/i);
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});
+
+describe("the hero catalogue, and no roster in the migration (drizzle/0031)", () => {
+  /**
+   * The claim 0031's comment makes about a deployment that already has games,
+   * asked of real rows rather than left as prose: **the table starts empty**,
+   * and the 54 heroes are the seed's to plant and an admin's to correct.
+   *
+   * A fresh database proves nothing here, for the reason drizzle/0030's test
+   * spells out at length: a migration that did `INSERT … SELECT id FROM games
+   * WHERE key = 'rivals'` would insert nothing into an empty database, so "the
+   * table is empty afterwards" passes on a bare replay whatever the file says.
+   * So the games go in **before** the migration runs, which is also what makes
+   * this a deployment rather than an install.
+   */
+  it("adds an empty table to a database that already has its games", async () => {
+    const client = new PGlite();
+    await replayUpTo(client, "0031");
+
+    const hasTable = async () =>
+      (
+        await client.query(
+          `select 1 from information_schema.tables
+           where table_schema = 'public' and table_name = 'heroes'`
+        )
+      ).rows.length > 0;
+
+    expect(await hasTable()).toBe(false);
+
+    // The two games the seed makes, as a deployment would already hold them —
+    // one of them the very row the roster hangs off.
+    await client.exec(
+      `insert into games (key, name, rank_ladder) values
+         ('rivals', 'Marvel Rivals', '["Bronze III","One Above All"]'::jsonb),
+         ('jackbox', 'Jackbox', '[]'::jsonb)`
+    );
+
+    await runFile(client, "0031_heroes");
+    expect(await hasTable()).toBe(true);
+
+    const columns = await client.query<{ column_name: string; is_nullable: string }>(
+      `select column_name, is_nullable from information_schema.columns
+       where table_name = 'heroes' order by column_name`
+    );
+    // The whole column list, not a `toContain`: the claim worth pinning is that
+    // there is no second place a hero's role could live — a single `role`
+    // column added beside `roles` is exactly the drift this table exists to
+    // prevent, and it would satisfy any narrower assertion.
+    expect(columns.rows.map((row) => row.column_name)).toEqual([
+      "created_at",
+      "game_id",
+      "id",
+      "name",
+      "retired_at",
+      "roles",
+    ]);
+    expect(
+      columns.rows.filter((row) => row.is_nullable === "YES").map((row) => row.column_name)
+    ).toEqual(["retired_at"]);
+
+    /*
+     * **Empty, with `rivals` sitting right there.** No backfill, no INSERT, and
+     * therefore nothing for a redeploy to undo: the first hero on any deployment
+     * is written by `npm run db:seed`, and from then on the row is the admin's.
+     * `npm run build` runs `db:migrate` and not the seed, so a deploy on its own
+     * never plants one.
+     */
+    const total = await client.query<{ total: string }>(
+      `select count(*)::text as total from heroes`
+    );
+    expect(total.rows[0].total).toBe("0");
+
+    /*
+     * And the seed is what fills it, asked of the real function as the 0028 test
+     * asks `createTemplate`: 54 rows on the game that was already there, no
+     * second `rivals`, and nothing on `jackbox`.
+     */
+    const db = createPgliteDatabase(client);
+    const summary = await seed(db, {});
+    expect(summary.heroesInserted).toBe(54);
+    expect(summary.gamesInserted).toBe(0);
+
+    const planted = await client.query<{ key: string; total: string }>(
+      `select g.key, count(h.id)::text as total
+         from games g left join heroes h on h.game_id = g.id
+        group by g.key order by g.key`
+    );
+    expect(planted.rows).toEqual([
+      { key: "jackbox", total: "0" },
+      { key: "rivals", total: "54" },
+    ]);
+
+    // Roles are the enum's, read back from the column type rather than assumed.
+    const type = await client.query<{ udt_name: string; data_type: string }>(
+      `select udt_name, data_type from information_schema.columns
+       where table_name = 'heroes' and column_name = 'roles'`
+    );
+    expect(type.rows[0].data_type).toBe("ARRAY");
+    expect(type.rows[0].udt_name).toBe("_hero_role");
 
     await client.close();
   }, PGLITE_BOOT_BUDGET_MS);

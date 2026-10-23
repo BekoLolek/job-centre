@@ -42,6 +42,7 @@ import {
   getApplicationsForEvent,
   getEventById,
 } from "@/lib/events";
+import { teamFormatFrom } from "@/lib/events-policy";
 import { MAX_STAGES, formatFor, matchIdsFor, scheduleSettingsFrom } from "@/lib/format";
 import { requireEventManager } from "@/lib/session-guards";
 
@@ -190,6 +191,9 @@ export default async function AdminEventPage({
       ])
     ),
     started: lots.some((lot) => lot.status === "awarded"),
+    // R-215's stored choice. On `events.config` beside the schedule settings,
+    // which is why Task 78 needed no migration — see `teamFormatFrom`.
+    teamFormat: teamFormatFrom(event.config),
   };
 
   // One `formatFor` for all three format tabs. It cannot be null here — the

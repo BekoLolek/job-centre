@@ -107,3 +107,11 @@ fix. It is not in `AGENTS.md` because `next dev` rewrites that file.
 `format-db.test.ts`, `archive-lock.test.ts`, `events.test.ts` and `draft.test.ts` each assert,
 for the writes that had this bug, that the refusal leaves the earlier rows exactly as they
 were — not merely that it answers `ok: false`, which the buggy version also did.
+
+The closing section's half of it — a pair of calls with no transaction around them — is held
+one layer up, in the action tests, because that is where the pair is: the
+`beforeRemoval`/`BeforeRemoval` hook in `src/lib/draft.ts` exists so that the release a team
+write needs first happens *inside* that write's transaction rather than ahead of it.
+`random-teams-actions.test.ts` (Task 78) and `format-follows-teams.test.ts` (Task 79) assert,
+for each of the three actions that remove a team, that a refused save leaves the generated
+matches still naming their teams.

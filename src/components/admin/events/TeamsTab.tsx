@@ -6,6 +6,8 @@ import {
   Alert,
   Badge,
   Button,
+  ChoiceChip,
+  ChoiceRow,
   EmptyState,
   Eyebrow,
   Field,
@@ -18,6 +20,14 @@ import {
 import { Money, PlayerChip, playerName } from "@/components/draft";
 import { MAX_TEAMS, MIN_TEAMS } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
+import { NIGHT_FORMATS, type NightFormat, teamFormatFrom } from "@/lib/events-policy";
+// The pure half, for the reason `EventEditor` imports `admin-templates-policy`
+// rather than `admin-templates`: `planTeams` is arithmetic over two numbers and
+// carries no database handle, so the screen can answer UC-41 4 — how many teams
+// and which are short — without a round trip, using the *same* function the
+// write uses. A second copy here is how a screen and its server start
+// disagreeing about what is about to be saved.
+import { planTeams } from "@/lib/random-teams";
 import {
   type RosterMove,
   type TeamFields,
@@ -25,7 +35,9 @@ import {
   placeOnRosterAction,
   previewTeamCountAction,
   previewTeamsAction,
+  randomiseTeamsAction,
   removeFromRosterAction,
+  saveNightFormatAction,
   saveTeamsAction,
   setTeamCountAction,
 } from "@/app/admin/events/draft-actions";
@@ -80,6 +92,29 @@ import type { DraftTabData } from "./types";
  * ignores any per-team figure sent to it. Rather than show an input whose value
  * is discarded, this shows the figure read-only and says where to change it. A
  * form that disagrees with the rule is worse than a form that omits it.
+ *
+ * ## The format and the shuffle sit above all of it (UC-41)
+ *
+ * R-215's 6v6 or 3v3 is the first decision about teams, because it is what
+ * sizes them, so it is the first panel. It is the **admin's** choice stored on
+ * the event, not arithmetic over the head count — `teamFormatFrom` has the
+ * reasoning — and the comp it implies is *printed and never enforced*: nothing
+ * on this screen or behind it assigns a role or refuses a team for its
+ * composition (UC-41 2).
+ *
+ * "Make random teams" (R-216) is the alternative to naming teams by hand, and
+ * three things about it are rules rather than polish. It **says what it will
+ * do before it does it** — how many teams, which come out short, how many
+ * existing teams get discarded (UC-41 3a, 4a) — using the same `planTeams`
+ * the server uses, so the dialog and the write cannot disagree. It is
+ * **refused outright once a lot has been awarded** (3b) rather than offered
+ * and then rejected, which is why `data.started` disables the button *and*
+ * explains itself. And **re-running is expected** (5a): the dialog is what
+ * stops a reshuffle being an accident, not a limit on how many are allowed.
+ *
+ * The button is also disabled while the format chip differs from what is
+ * stored. The write reads the stored format, so shuffling on an unsaved chip
+ * would make teams of a size the admin had not saved.
  */
 
 type DraftTeam = {
@@ -141,6 +176,20 @@ export function teamsOpenTo(
   );
 }
 
+/**
+ * How many people the shuffle has to work with — UC-41's "accepted
+ * participants", counted the same way the server counts them.
+ *
+ * `assignRandomTeams` reads `applications.status = 'accepted'`, so this counts
+ * exactly that and nothing else. A screen that counted everybody on the
+ * Applicants tab would promise teams for people who are on the waitlist, and
+ * the refusal the admin then met would name a different number from the one
+ * they had just read.
+ */
+export function acceptedCount(applicants: readonly ApplicantView[]): number {
+  return applicants.filter((row) => row.status === "accepted").length;
+}
+
 let counter = 0;
 const nextKey = () => `new-${(counter += 1)}`;
 
@@ -180,6 +229,18 @@ export default function TeamsTab({
   const [countError, setCountError] = useState<string | null>(null);
   /** The figure the pending confirm would write. Null when none is pending. */
   const [pendingCount, setPendingCount] = useState<number | null>(null);
+
+  /* --- The night's format, and the shuffle (UC-41) ---------------- */
+
+  const [format, setFormat] = useState<NightFormat>(data.teamFormat.format);
+  const [formatBusy, setFormatBusy] = useState(false);
+  const [formatError, setFormatError] = useState<string | null>(null);
+  const [formatNote, setFormatNote] = useState<string | null>(null);
+  const [shuffleBusy, setShuffleBusy] = useState(false);
+  const [shuffleError, setShuffleError] = useState<string | null>(null);
+  const [shuffleNote, setShuffleNote] = useState<string | null>(null);
+  /** True while the confirm for UC-41 3a / 4a is open. */
+  const [shuffleAsking, setShuffleAsking] = useState(false);
 
   /* --- The rosters ----------------------------------------------- */
 
@@ -295,6 +356,64 @@ export default function TeamsTab({
     }
   };
 
+  /* --- Writing the format, and the shuffle (UC-41) --------------- */
+
+  const saveFormat = async () => {
+    setFormatBusy(true);
+    setFormatError(null);
+    setFormatNote(null);
+    try {
+      const result = await saveNightFormatAction(eventId, format);
+      if (!result.ok) {
+        setFormatError(result.error);
+        return;
+      }
+      // Adopt what was *stored*, not what was clicked — the same rule the
+      // schedule settings follow.
+      setFormat(result.data.teamFormat.format);
+      setFormatNote(`Saved · ${result.data.teamFormat.format}`);
+      router.refresh();
+    } catch {
+      setFormatError("Could not reach the server. Nothing was saved.");
+    } finally {
+      setFormatBusy(false);
+    }
+  };
+
+  /**
+   * Shuffle for real. Only ever reached from the confirm dialog, which is
+   * UC-41 3a's "say so explicitly" and 5a's guard against an accident.
+   */
+  const commitShuffle = async () => {
+    setShuffleBusy(true);
+    setShuffleError(null);
+    try {
+      const result = await randomiseTeamsAction(eventId, true);
+      if (!result.ok) {
+        setShuffleError(result.error);
+        setShuffleAsking(false);
+        return;
+      }
+      setShuffleAsking(false);
+      adopt(result.data.teams);
+      setRosters(result.data.rosters);
+      setShuffleNote(
+        `Shuffled into ${plural(result.data.teams.length, "team")}${
+          result.data.short.length > 0
+            ? ` · ${plural(result.data.short.length, "team")} short of ${data.teamFormat.teamSize}`
+            : ""
+        }`
+      );
+      setState("idle");
+      setNote(null);
+      router.refresh();
+    } catch {
+      setShuffleError("Could not reach the server. Nothing was saved.");
+    } finally {
+      setShuffleBusy(false);
+    }
+  };
+
   /* --- Writing the list ------------------------------------------ */
 
   /** Ask what this would cost. Only writes once the answer has been read. */
@@ -384,6 +503,22 @@ export default function TeamsTab({
 
   const named = teams.filter((team) => team.name.trim().length > 0).length;
   const placeable = unplacedAccepted(applicants, rosters);
+
+  /*
+   * UC-41 4, worked out with the same function the write uses.
+   *
+   * **Sized from the stored format, and from nothing else.** That is what
+   * `assignRandomTeams` reads, so a plan drawn from the chip the admin has
+   * clicked but not saved would promise teams of three and then save teams of
+   * six. There is deliberately no second size in scope for this to be
+   * confused with: the comp each format implies is printed on the chips
+   * themselves, through the real `teamFormatFrom`, rather than held in a
+   * `chosen` variable sitting beside `data.teamFormat` waiting to be picked by
+   * mistake.
+   */
+  const accepted = acceptedCount(applicants);
+  const planned = planTeams(accepted, data.teamFormat.teamSize);
+  const unsavedFormat = format !== data.teamFormat.format;
   const sized = teams.filter((team): team is DraftTeam & { id: string } =>
     team.id !== undefined
   );
@@ -391,6 +526,139 @@ export default function TeamsTab({
   return (
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
+
+      {/* --- The format, and teams nobody picked (UC-41) ----------- */}
+      <Panel as="section" padding="none" className="space-y-5">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <Eyebrow>The night&rsquo;s format</Eyebrow>
+          <Badge tone="default">{data.teamFormat.format}</Badge>
+        </div>
+
+        {formatError && <Alert>{formatError}</Alert>}
+
+        <ChoiceRow>
+          {NIGHT_FORMATS.map((option) => {
+            // The comp comes off the real reader, so the 6v6 → 2-2-2 mapping
+            // exists once in the codebase and this screen cannot drift from
+            // what the draw page states or the write reads.
+            const shape = teamFormatFrom({ teamFormat: option });
+            return (
+              <ChoiceChip
+                key={option}
+                selected={format === option}
+                disabled={formatBusy}
+                aria-label={`Run this night as ${option}, a ${shape.comp} comp`}
+                onClick={() => {
+                  setFormat(option);
+                  setFormatError(null);
+                  setFormatNote(null);
+                }}
+              >
+                {option} · {shape.comp}
+              </ChoiceChip>
+            );
+          })}
+        </ChoiceRow>
+
+        <p className="max-w-prose text-12 text-muted">
+          {data.teamFormat.format} states a {data.teamFormat.comp} comp and makes teams of{" "}
+          {data.teamFormat.teamSize}. The comp is stated, never enforced — nobody is
+          assigned a role, and a team that fields three Duelists is not refused.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            size="sm"
+            variant="union"
+            disabled={formatBusy || !unsavedFormat}
+            onClick={() => void saveFormat()}
+          >
+            {formatBusy ? "Saving…" : "Save format"}
+          </Button>
+          {formatNote && <span className="text-12 text-muted">{formatNote}</span>}
+        </div>
+
+        <div className="space-y-4 border-t border-hair pt-5">
+          <div className="flex flex-wrap items-baseline gap-3">
+            <Eyebrow>Random teams</Eyebrow>
+            <Badge tone="default">{plural(accepted, "accepted player")}</Badge>
+          </div>
+
+          {shuffleError && <Alert tone="flare">{shuffleError}</Alert>}
+
+          {data.started ? (
+            // UC-41 3b. Refused outright rather than confirmed: the lots were
+            // awarded against the teams that exist, so replacing them would
+            // leave the prices paid attached to nothing.
+            <Alert tone="union" standing>
+              <span className="block font-medium">
+                The draft has already awarded lots
+              </span>
+              <span className="mt-1 block opacity-90">
+                Random teams would replace the teams those lots were awarded against, so
+                it is refused. Void the lots in the draft room first.
+              </span>
+            </Alert>
+          ) : planned.ok ? (
+            <p className="max-w-prose text-12 text-muted">
+              {plural(accepted, "accepted player")} make{" "}
+              {plural(planned.plan.teams, "team")} of {planned.plan.sizes.join(", ")}.{" "}
+              {planned.plan.short.length === 0
+                ? `Every team is a full ${data.teamFormat.teamSize}.`
+                : `${planned.plan.short.length === 1 ? "Team" : "Teams"} ${planned.plan.short.join(", ")} ${planned.plan.short.length === 1 ? "is" : "are"} short of ${data.teamFormat.teamSize} — the remainder is spread one per team rather than left on one short team.`}
+            </p>
+          ) : (
+            // `standing`, by `alert-announcement.test.ts`'s rule: this is
+            // derived from the applicants and the stored format alone, so it is
+            // already in the markup when the page arrives. Announcing it would
+            // interrupt every admin who opens the tab on an event that has not
+            // filled up yet.
+            <Alert tone="union" standing>
+              {planned.error}
+            </Alert>
+          )}
+
+          {/*
+            UC-41 3a, said on the panel rather than only in the dialog.
+            `Modal` renders nothing while it is closed, so a count that lives
+            only inside it is a count no test can read — and step 4 is meant to
+            say what the shuffle costs *before* step 5 asks.
+          */}
+          {!data.started && planned.ok && data.teams.length > 0 && (
+            <p className="max-w-prose text-12 text-union">
+              Shuffling discards the {plural(data.teams.length, "team")} that already
+              exist, with their names, seeds and{" "}
+              {plural(rosters.length, "roster place")}.
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              size="sm"
+              variant="union"
+              disabled={shuffleBusy || data.started || !planned.ok || unsavedFormat}
+              onClick={() => {
+                setShuffleError(null);
+                setShuffleNote(null);
+                setShuffleAsking(true);
+              }}
+            >
+              {shuffleBusy ? "Shuffling…" : "Make random teams"}
+            </Button>
+            {shuffleNote && <span className="text-12 text-muted">{shuffleNote}</span>}
+            {unsavedFormat && (
+              <span className="text-12 text-union">
+                Save the format first — the shuffle uses what is stored.
+              </span>
+            )}
+          </div>
+
+          <p className="max-w-prose text-12 text-dim">
+            Asking twice is fine: the second shuffle is a fresh one and replaces the
+            first.
+          </p>
+        </div>
+      </Panel>
 
       {/* --- How many (UC-15 1) ------------------------------------ */}
       <Panel as="section" padding="none" className="space-y-5">
@@ -732,6 +1000,82 @@ export default function TeamsTab({
           )}
         </div>
       </Panel>
+
+      {/* --- The shuffle confirm (UC-41 3a, 4a, 5) ----------------- */}
+      <Modal
+        open={shuffleAsking}
+        onClose={() => setShuffleAsking(false)}
+        size="sm"
+        eyebrow="Before this is saved"
+        title={
+          data.teams.length > 0 ? "This replaces the teams that exist" : "Make random teams"
+        }
+        footer={
+          <>
+            <Button size="sm" onClick={() => setShuffleAsking(false)}>
+              Leave them alone
+            </Button>
+            <Button
+              size="sm"
+              variant="flare"
+              disabled={shuffleBusy}
+              onClick={() => void commitShuffle()}
+            >
+              {shuffleBusy ? "Shuffling…" : "Shuffle and save"}
+            </Button>
+          </>
+        }
+      >
+        {/*
+          UC-41 3a: how many teams go, named before anything is written. The
+          count is `data.teams.length` — what the server last told this screen
+          exists — rather than the local edit list, because that is what the
+          write will actually discard.
+        */}
+        {data.teams.length > 0 && (
+          <Alert tone="flare">
+            <span className="block font-medium">
+              {plural(data.teams.length, "team")} discarded, with{" "}
+              {plural(rosters.length, "roster place")}
+            </span>
+            <span className="mt-1 block opacity-90">
+              Their names, seeds and rosters go. Everybody accepted is dealt out again
+              from scratch. Nothing has been changed yet.
+            </span>
+          </Alert>
+        )}
+
+        {planned.ok && (
+          <div className="space-y-2">
+            <p className="text-14">
+              {plural(accepted, "accepted player")} into{" "}
+              {plural(planned.plan.teams, "team")} of {data.teamFormat.teamSize} —{" "}
+              {data.teamFormat.format}, a {data.teamFormat.comp} comp that is stated and
+              not enforced.
+            </p>
+            <ul className="rounded-lg border border-hair">
+              {planned.plan.sizes.map((size, index) => (
+                <li
+                  key={index}
+                  className="flex items-baseline justify-between gap-3 border-b border-hair/60 p-2 last:border-b-0"
+                >
+                  <span className="text-14">Team {index + 1}</span>
+                  <span className="flex items-baseline gap-2">
+                    <span className="num text-12 text-muted">
+                      {size}/{data.teamFormat.teamSize}
+                    </span>
+                    {size < data.teamFormat.teamSize && (
+                      <Badge tone="union">
+                        Short by {data.teamFormat.teamSize - size}
+                      </Badge>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </Modal>
 
       {/* --- The confirm ------------------------------------------- */}
       <Modal

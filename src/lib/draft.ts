@@ -104,6 +104,9 @@ import {
   rosterState,
 } from "./draft-policy";
 import { lockRefusal } from "./archive-policy";
+// The arithmetic and the shuffle, with no database handle of their own — and no
+// `Math.random` anywhere in either (R-216; see `assignRandomTeams`).
+import { dealTeams, planTeams } from "./random-teams";
 // `gatesFor` rather than a second ladder-and-ranks read of its own: the captain
 // rule here has to give the same answer as the applicant list and the apply page.
 import { type EventResult, gatesFor } from "./events";
@@ -418,6 +421,51 @@ export type SetTeamsResult = {
 };
 
 /**
+ * Work a caller has to do before a team row can go, run **inside** the
+ * transaction that is about to delete it — after every refusal has been
+ * decided and before the first write — with the ids of the teams that are
+ * going. A returned sentence refuses the whole call; `null` lets it proceed.
+ *
+ * It exists for one reason, and the reason is
+ * `docs/decisions/004-refusals-inside-transactions.md` wearing the action
+ * layer's clothes. `matches.team_a_id` references `teams` with no `on delete`
+ * action, so Postgres refuses to delete a team that a generated match names —
+ * and this module knows nothing about matches and should not. The obvious shape
+ * is for the action to release those references *before* calling the write,
+ * which is what `setTeamCountAction` and `saveTeamsAction` both used to do.
+ * There it is a **write on a refusal path**: a save the library then refused
+ * had already stripped those match rows of their team references, with no
+ * transaction around the pair to undo it and the admin told nothing had
+ * changed. That is the "a write with no transaction at all is the same bug"
+ * case Task 57 found in `createEvent`, one layer up.
+ *
+ * Passed in and called here, the release lands after every refusal has been
+ * settled and inside the transaction, so anything that goes wrong below rolls
+ * it back with everything else. Because it may have written before refusing,
+ * its own refusal is *thrown* rather than returned, as {@link NothingRemoved}.
+ */
+export type BeforeRemoval = (
+  tx: Database,
+  doomed: readonly string[]
+) => Promise<string | null>;
+
+/**
+ * Carries a {@link BeforeRemoval} refusal out of the transaction so the
+ * rollback happens.
+ *
+ * `docs/decisions/004-refusals-inside-transactions.md`'s last shape, and the
+ * same one {@link NothingShuffled} uses below and `NothingSaved` uses in
+ * `./events`. Module-private: it never escapes {@link setTeams} or
+ * {@link setTeamCount} as an exception.
+ */
+class NothingRemoved extends Error {
+  constructor(readonly refusal: string) {
+    super(refusal);
+    this.name = "NothingRemoved";
+  }
+}
+
+/**
  * Delete these teams, or say why not — the one rule shared by every path that
  * removes one (`setTeams`'s list, `setTeamCount`'s lower figure).
  *
@@ -426,8 +474,17 @@ export type SetTeamsResult = {
  * destructive, and a roster with prices on it is a completed part of the
  * record. Two callers meant two copies of that, and the copy that drifts is the
  * one that lets a draft's prices vanish.
+ *
+ * `beforeRemoval` is the caller's own pre-removal work, and this is the one
+ * place it can correctly go: between the refusal above and the delete below.
+ * See {@link BeforeRemoval} for why it is a parameter rather than something the
+ * caller does first.
  */
-async function removeTeamsIn(tx: Database, doomed: readonly Team[]): Promise<string | null> {
+async function removeTeamsIn(
+  tx: Database,
+  doomed: readonly Team[],
+  beforeRemoval?: BeforeRemoval
+): Promise<string | null> {
   if (doomed.length === 0) return null;
 
   const ids = doomed.map((team) => team.id);
@@ -443,6 +500,17 @@ async function removeTeamsIn(tx: Database, doomed: readonly Team[]): Promise<str
       .map((team) => team.name)
       .join(", ");
     return `${named} has already drafted players, so removing the team would erase what they paid. Void those lots first.`;
+  }
+
+  /*
+   * Everything this function refuses is decided above, so the sentence above
+   * is still safe to *return* — nothing has been written when it is reached.
+   * From here it is not: the hook may write, so its refusal is thrown and the
+   * transaction (or the savepoint, when a caller passed a `tx`) rolls back.
+   */
+  if (beforeRemoval) {
+    const refused = await beforeRemoval(tx, ids);
+    if (refused) throw new NothingRemoved(refused);
   }
 
   await tx.delete(teams).where(inArray(teams.id, ids));
@@ -487,197 +555,211 @@ async function removeTeamsIn(tx: Database, doomed: readonly Team[]): Promise<str
  * the field, because nothing arrived that differs from what is stored. They
  * get the automatic rename they would have got anyway, and typing any other
  * name is what claims it.
+ *
+ * ## `beforeRemoval`
+ *
+ * Work the caller has to do before a dropped team's row can go — in practice
+ * releasing the generated matches that name it. It runs inside this
+ * transaction, immediately before the delete, and its refusal rolls the whole
+ * call back. {@link BeforeRemoval} has the reason it is a parameter here
+ * rather than something the action does on its way in.
  */
 export async function setTeams(
   eventId: string,
   input: readonly TeamInput[],
-  database: Database = defaultDb
+  database: Database = defaultDb,
+  beforeRemoval?: BeforeRemoval
 ): Promise<DraftResult<SetTeamsResult>> {
   if (input.length > MAX_TEAMS) {
     return fail(`An event can have at most ${MAX_TEAMS} teams.`);
   }
 
-  return database.transaction(async (tx) => {
-    // The row lock, for the reason the money writes take it: this rewrites
-    // `teams` and deletes `team_members` through the cascade, and
-    // `placeOnRoster`, `setCaptains` and the award path all write the same two
-    // tables. Serialising them on the event is what stops two managers' reads
-    // of "which teams exist" both being acted on.
-    const event = await lockEvent(tx, eventId);
-    if (!event) return fail("That event no longer exists.");
+  try {
+    return await database.transaction(async (tx) => {
+      // The row lock, for the reason the money writes take it: this rewrites
+      // `teams` and deletes `team_members` through the cascade, and
+      // `placeOnRoster`, `setCaptains` and the award path all write the same two
+      // tables. Serialising them on the event is what stops two managers' reads
+      // of "which teams exist" both being acted on.
+      const event = await lockEvent(tx, eventId);
+      if (!event) return fail("That event no longer exists.");
 
-    const config = await readConfig(tx, eventId);
-    const existing = await readTeams(tx, eventId);
+      const config = await readConfig(tx, eventId);
+      const existing = await readTeams(tx, eventId);
 
-    const locked = lockRefusal(event);
-    if (locked) return fail(locked);
-    const byExistingId = new Map(existing.map((team) => [team.id, team]));
+      const locked = lockRefusal(event);
+      if (locked) return fail(locked);
+      const byExistingId = new Map(existing.map((team) => [team.id, team]));
 
-    const errors: Record<string, string> = {};
-    const cleaned: Array<{
-      id: string;
-      name: string;
-      seed: number | null;
-      balanceStart: number;
-      sort: number;
-      /** True when this save is what made the name the manager's own. */
-      nameIsCustom: boolean;
-    }> = [];
-    const names = new Set<string>();
+      const errors: Record<string, string> = {};
+      const cleaned: Array<{
+        id: string;
+        name: string;
+        seed: number | null;
+        balanceStart: number;
+        sort: number;
+        /** True when this save is what made the name the manager's own. */
+        nameIsCustom: boolean;
+      }> = [];
+      const names = new Set<string>();
 
-    for (const [index, team] of input.entries()) {
-      const at = team.id ?? `new-${index}`;
+      for (const [index, team] of input.entries()) {
+        const at = team.id ?? `new-${index}`;
 
-      if (team.id && !byExistingId.has(team.id)) {
-        errors[at] = "That team belongs to a different event.";
-        continue;
+        if (team.id && !byExistingId.has(team.id)) {
+          errors[at] = "That team belongs to a different event.";
+          continue;
+        }
+        const stored = team.id ? byExistingId.get(team.id) : undefined;
+
+        const name = cleanText(team.name, NAME_MAX);
+        if (!name) {
+          errors[at] = "Give the team a name.";
+          continue;
+        }
+        // UC-15 6a's second half, and the half the Gate-2 amendment settled:
+        // **a typed duplicate is refused.** Only a name the site generated gets
+        // a distinguishing suffix (`setTeamCount`, `setCaptains`); silently
+        // renaming what somebody typed is worse than telling them.
+        //
+        // Folded case, and so stricter than `teams_event_name_uniq` — which is
+        // `unique(event_id, name)` over plain `text` and would take "alpha"
+        // beside "Alpha". Deliberately: the refusal is about two names a reader
+        // cannot tell apart, not about what the index happens to allow.
+        if (names.has(name.toLowerCase())) {
+          errors[at] = "Two teams cannot share a name.";
+          continue;
+        }
+        names.add(name.toLowerCase());
+
+        const wanted =
+          config.balanceMode === "per_team"
+            ? (team.balanceStart ?? config.defaultBalance)
+            : config.defaultBalance;
+        if (!Number.isInteger(wanted) || wanted < 0) {
+          errors[at] = "A starting balance has to be a whole number, and not negative.";
+          continue;
+        }
+
+        /*
+         * A seed is a rank, and `seedOrderFrom` sorts on the number exactly as it
+         * is typed — so `0` and `-3` rank *ahead* of seed 1, and `1.5` lands
+         * between two teams the bracket is meant to put side by side, in both
+         * cases with nothing on any screen to say why the bracket came out that
+         * way (R-160 / UC-18 E5).
+         *
+         * Duplicates are **not** refused, and that is a decision rather than an
+         * omission: two teams sharing a seed keep list order, which is pinned by a
+         * test, because a half-finished seeding is a real state a manager passes
+         * through while typing. `0`, a negative and a fraction are not states
+         * anybody passes through — a rank below the first rank is not a weaker
+         * answer to "which seed is this", it is a different question.
+         */
+        const seed = team.seed ?? null;
+        if (seed !== null && (!Number.isInteger(seed) || seed < 1)) {
+          errors[at] = "A seed has to be a whole number, 1 or more.";
+          continue;
+        }
+
+        cleaned.push({
+          id: team.id ?? "",
+          name,
+          seed,
+          balanceStart: wanted,
+          sort: index,
+          // A new row's name was typed into the box that created it. An existing
+          // row's was typed only if it differs from what is stored — see the
+          // docblock. Fails to `true`, the direction that never rewrites a name.
+          nameIsCustom: stored === undefined || name !== stored.name,
+        });
       }
-      const stored = team.id ? byExistingId.get(team.id) : undefined;
 
-      const name = cleanText(team.name, NAME_MAX);
-      if (!name) {
-        errors[at] = "Give the team a name.";
-        continue;
+      if (Object.keys(errors).length > 0) {
+        return fail("Some of those teams need another look.", errors);
       }
-      // UC-15 6a's second half, and the half the Gate-2 amendment settled:
-      // **a typed duplicate is refused.** Only a name the site generated gets
-      // a distinguishing suffix (`setTeamCount`, `setCaptains`); silently
-      // renaming what somebody typed is worse than telling them.
-      //
-      // Folded case, and so stricter than `teams_event_name_uniq` — which is
-      // `unique(event_id, name)` over plain `text` and would take "alpha"
-      // beside "Alpha". Deliberately: the refusal is about two names a reader
-      // cannot tell apart, not about what the index happens to allow.
-      if (names.has(name.toLowerCase())) {
-        errors[at] = "Two teams cannot share a name.";
-        continue;
-      }
-      names.add(name.toLowerCase());
 
-      const wanted =
-        config.balanceMode === "per_team"
-          ? (team.balanceStart ?? config.defaultBalance)
-          : config.defaultBalance;
-      if (!Number.isInteger(wanted) || wanted < 0) {
-        errors[at] = "A starting balance has to be a whole number, and not negative.";
-        continue;
-      }
+      const keeping = new Set(cleaned.map((team) => team.id).filter(Boolean));
+      const doomed = existing.filter((team) => !keeping.has(team.id));
 
       /*
-       * A seed is a rank, and `seedOrderFrom` sorts on the number exactly as it
-       * is typed — so `0` and `-3` rank *ahead* of seed 1, and `1.5` lands
-       * between two teams the bracket is meant to put side by side, in both
-       * cases with nothing on any screen to say why the bracket came out that
-       * way (R-160 / UC-18 E5).
+       * A starting balance is not a label. Every remaining balance on the site is
+       * derived — `balanceFor` is `balanceStart` minus the awarded lots, which is
+       * exactly why there is no `balance_left` column — so moving a team's
+       * starting figure after they have bought somebody silently rewrites what
+       * every past lot appears to have cost them. That is the standing rule's
+       * "erase a draft's prices" by another route, and it is refused for the same
+       * reason removing the team is.
        *
-       * Duplicates are **not** refused, and that is a decision rather than an
-       * omission: two teams sharing a seed keep list order, which is pinned by a
-       * test, because a half-finished seeding is a real state a manager passes
-       * through while typing. `0`, a negative and a fraction are not states
-       * anybody passes through — a rank below the first rank is not a weaker
-       * answer to "which seed is this", it is a different question.
+       * **Asked before `removeTeamsIn`, not after it**, and that ordering is the
+       * rule in docs/decisions/004-refusals-inside-transactions.md rather than a
+       * preference. `removeTeamsIn` deletes, and a refusal returned from a
+       * transaction callback commits what came before it — so one save that
+       * dropped a team *and* moved a surviving team's balance used to delete the
+       * team, cascade its roster away, commit the lot, and then answer with this
+       * sentence. The removal is refused by whether the *doomed* teams hold lots;
+       * this is refused by whether anybody does. Two different questions, so
+       * neither one covered the other.
        */
-      const seed = team.seed ?? null;
-      if (seed !== null && (!Number.isInteger(seed) || seed < 1)) {
-        errors[at] = "A seed has to be a whole number, 1 or more.";
-        continue;
-      }
+      const started = await tx
+        .select({ id: draftLots.id })
+        .from(draftLots)
+        .where(and(eq(draftLots.eventId, eventId), eq(draftLots.status, "awarded")))
+        .limit(1);
 
-      cleaned.push({
-        id: team.id ?? "",
-        name,
-        seed,
-        balanceStart: wanted,
-        sort: index,
-        // A new row's name was typed into the box that created it. An existing
-        // row's was typed only if it differs from what is stored — see the
-        // docblock. Fails to `true`, the direction that never rewrites a name.
-        nameIsCustom: stored === undefined || name !== stored.name,
-      });
-    }
-
-    if (Object.keys(errors).length > 0) {
-      return fail("Some of those teams need another look.", errors);
-    }
-
-    const keeping = new Set(cleaned.map((team) => team.id).filter(Boolean));
-    const doomed = existing.filter((team) => !keeping.has(team.id));
-
-    /*
-     * A starting balance is not a label. Every remaining balance on the site is
-     * derived — `balanceFor` is `balanceStart` minus the awarded lots, which is
-     * exactly why there is no `balance_left` column — so moving a team's
-     * starting figure after they have bought somebody silently rewrites what
-     * every past lot appears to have cost them. That is the standing rule's
-     * "erase a draft's prices" by another route, and it is refused for the same
-     * reason removing the team is.
-     *
-     * **Asked before `removeTeamsIn`, not after it**, and that ordering is the
-     * rule in docs/decisions/004-refusals-inside-transactions.md rather than a
-     * preference. `removeTeamsIn` deletes, and a refusal returned from a
-     * transaction callback commits what came before it — so one save that
-     * dropped a team *and* moved a surviving team's balance used to delete the
-     * team, cascade its roster away, commit the lot, and then answer with this
-     * sentence. The removal is refused by whether the *doomed* teams hold lots;
-     * this is refused by whether anybody does. Two different questions, so
-     * neither one covered the other.
-     */
-    const started = await tx
-      .select({ id: draftLots.id })
-      .from(draftLots)
-      .where(and(eq(draftLots.eventId, eventId), eq(draftLots.status, "awarded")))
-      .limit(1);
-
-    if (started.length > 0) {
-      const byId = new Map(existing.map((team) => [team.id, team]));
-      const moved = cleaned.filter(
-        (team) => team.id && byId.get(team.id)?.balanceStart !== team.balanceStart
-      );
-      if (moved.length > 0) {
-        return fail(
-          `${moved.map((team) => team.name).join(", ")} has already bid in this draft, so the starting balance cannot change now — every price paid would be measured against a different number.`
+      if (started.length > 0) {
+        const byId = new Map(existing.map((team) => [team.id, team]));
+        const moved = cleaned.filter(
+          (team) => team.id && byId.get(team.id)?.balanceStart !== team.balanceStart
         );
+        if (moved.length > 0) {
+          return fail(
+            `${moved.map((team) => team.name).join(", ")} has already bid in this draft, so the starting balance cannot change now — every price paid would be measured against a different number.`
+          );
+        }
       }
-    }
 
-    const refusal = await removeTeamsIn(tx, doomed);
-    if (refusal) return fail(refusal);
+      const refusal = await removeTeamsIn(tx, doomed, beforeRemoval);
+      if (refusal) return fail(refusal);
 
-    // Names are unique per event, so swapping two of them in place trips the
-    // constraint halfway through a perfectly legal rewrite. Parking every
-    // survivor on a name nobody can type sidesteps it without dropping rows —
-    // the same two-pass `setEventQuestions` uses for question keys.
-    for (const team of existing) {
-      if (!keeping.has(team.id)) continue;
-      await tx
-        .update(teams)
-        .set({ name: `tmp-${team.id}` })
-        .where(eq(teams.id, team.id));
-    }
-
-    for (const team of cleaned) {
-      const values = {
-        name: team.name,
-        seed: team.seed,
-        balanceStart: team.balanceStart,
-        sort: team.sort,
-      };
-      if (team.id) {
-        // `name_is_custom` is only ever *set*, never cleared, and only by a
-        // save that changed the name. Writing `false` back on an unchanged
-        // name would hand a placeholder's licence to a name somebody typed
-        // three saves ago.
+      // Names are unique per event, so swapping two of them in place trips the
+      // constraint halfway through a perfectly legal rewrite. Parking every
+      // survivor on a name nobody can type sidesteps it without dropping rows —
+      // the same two-pass `setEventQuestions` uses for question keys.
+      for (const team of existing) {
+        if (!keeping.has(team.id)) continue;
         await tx
           .update(teams)
-          .set(team.nameIsCustom ? { ...values, nameIsCustom: true } : values)
+          .set({ name: `tmp-${team.id}` })
           .where(eq(teams.id, team.id));
-      } else {
-        await tx.insert(teams).values({ eventId, ...values, nameIsCustom: true });
       }
-    }
 
-    return withData({ teams: await readTeams(tx, eventId), removed: doomed.length });
-  });
+      for (const team of cleaned) {
+        const values = {
+          name: team.name,
+          seed: team.seed,
+          balanceStart: team.balanceStart,
+          sort: team.sort,
+        };
+        if (team.id) {
+          // `name_is_custom` is only ever *set*, never cleared, and only by a
+          // save that changed the name. Writing `false` back on an unchanged
+          // name would hand a placeholder's licence to a name somebody typed
+          // three saves ago.
+          await tx
+            .update(teams)
+            .set(team.nameIsCustom ? { ...values, nameIsCustom: true } : values)
+            .where(eq(teams.id, team.id));
+        } else {
+          await tx.insert(teams).values({ eventId, ...values, nameIsCustom: true });
+        }
+      }
+
+      return withData({ teams: await readTeams(tx, eventId), removed: doomed.length });
+    });
+  } catch (error) {
+    if (error instanceof NothingRemoved) return fail(error.refusal);
+    throw error;
+  }
 }
 
 export type SetTeamCountResult = {
@@ -748,67 +830,299 @@ function nextPlaceholderName(taken: Set<string>, from: number): string {
  * What a removal costs is reported *before* the write by
  * `previewTeamCountAction`, because by the time this returns the rosters are
  * gone (R-161 / UC-15 E1).
+ *
+ * `beforeRemoval` is work the caller has to do before those rows can go — in
+ * practice releasing the generated matches that name them. It runs inside this
+ * transaction, immediately before the delete, and its refusal rolls the whole
+ * call back. {@link BeforeRemoval} has the reason it is a parameter here rather
+ * than something the action does on its way in.
  */
 export async function setTeamCount(
   eventId: string,
   count: number,
-  database: Database = defaultDb
+  database: Database = defaultDb,
+  beforeRemoval?: BeforeRemoval
 ): Promise<DraftResult<SetTeamCountResult>> {
   if (!Number.isInteger(count) || count < MIN_TEAMS || count > MAX_TEAMS) {
     return fail(`An event needs between ${MIN_TEAMS} and ${MAX_TEAMS} teams.`);
   }
 
-  return database.transaction(async (tx) => {
-    // Locked, not merely read: `placeOnRoster` and the award path write
-    // `team_members`, and the cascade from a deleted team takes those rows with
-    // it. Two managers setting a count at once, or a count landing as a lot is
-    // awarded, serialise on this row.
-    const event = await lockEvent(tx, eventId);
-    if (!event) return fail("That event no longer exists.");
+  try {
+    return await database.transaction(async (tx) => {
+      // Locked, not merely read: `placeOnRoster` and the award path write
+      // `team_members`, and the cascade from a deleted team takes those rows with
+      // it. Two managers setting a count at once, or a count landing as a lot is
+      // awarded, serialise on this row.
+      const event = await lockEvent(tx, eventId);
+      if (!event) return fail("That event no longer exists.");
 
-    const locked = lockRefusal(event);
-    if (locked) return fail(locked);
+      const locked = lockRefusal(event);
+      if (locked) return fail(locked);
 
-    const config = await readConfig(tx, eventId);
-    const existing = await readTeams(tx, eventId);
+      const config = await readConfig(tx, eventId);
+      const existing = await readTeams(tx, eventId);
 
-    if (count === existing.length) {
-      return withData({ teams: existing, added: 0, removed: 0 });
-    }
+      if (count === existing.length) {
+        return withData({ teams: existing, added: 0, removed: 0 });
+      }
 
-    if (count < existing.length) {
-      const doomed = existing.slice(count);
-      const refusal = await removeTeamsIn(tx, doomed);
-      if (refusal) return fail(refusal);
+      if (count < existing.length) {
+        const doomed = existing.slice(count);
+        const refusal = await removeTeamsIn(tx, doomed, beforeRemoval);
+        if (refusal) return fail(refusal);
+        return withData({
+          teams: await readTeams(tx, eventId),
+          added: 0,
+          removed: doomed.length,
+        });
+      }
+
+      const taken = new Set(existing.map((team) => team.name.trim().toLowerCase()));
+      for (let index = existing.length; index < count; index += 1) {
+        const name = nextPlaceholderName(taken, index + 1);
+        taken.add(name.toLowerCase());
+        await tx.insert(teams).values({
+          eventId,
+          name,
+          // The whole point of this path: the site wrote this name, so the site
+          // may replace it when a captain is chosen (UC-15 4).
+          nameIsCustom: false,
+          seed: index + 1,
+          balanceStart: config.defaultBalance,
+          sort: index,
+        });
+      }
+
       return withData({
         teams: await readTeams(tx, eventId),
-        added: 0,
-        removed: doomed.length,
+        added: count - existing.length,
+        removed: 0,
       });
-    }
-
-    const taken = new Set(existing.map((team) => team.name.trim().toLowerCase()));
-    for (let index = existing.length; index < count; index += 1) {
-      const name = nextPlaceholderName(taken, index + 1);
-      taken.add(name.toLowerCase());
-      await tx.insert(teams).values({
-        eventId,
-        name,
-        // The whole point of this path: the site wrote this name, so the site
-        // may replace it when a captain is chosen (UC-15 4).
-        nameIsCustom: false,
-        seed: index + 1,
-        balanceStart: config.defaultBalance,
-        sort: index,
-      });
-    }
-
-    return withData({
-      teams: await readTeams(tx, eventId),
-      added: count - existing.length,
-      removed: 0,
     });
-  });
+  } catch (error) {
+    if (error instanceof NothingRemoved) return fail(error.refusal);
+    throw error;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Teams nobody picked (R-216 / UC-41)                                */
+/* ------------------------------------------------------------------ */
+
+export type RandomTeamsInput = {
+  /** From the stored format: six for 6v6, three for 3v3 (`teamFormatFrom`). */
+  teamSize: number;
+  /**
+   * The source of randomness, **passed in**. Nothing in this module or in
+   * `./random-teams` calls `Math.random`; the action layer is the one place
+   * that supplies the real one, so every test here predicts an exact
+   * assignment instead of asserting that something moved.
+   */
+  random: () => number;
+  /**
+   * True once the admin has been told how many teams would be discarded and
+   * said to go ahead (UC-41 3a). Absent, existing teams are a refusal rather
+   * than something this quietly shreds.
+   */
+  replace?: boolean;
+  /**
+   * The same hook `setTeams` and `setTeamCount` take, called here instead
+   * because this function's first write is its own — see
+   * {@link BeforeRemoval} for what it is for and why it is a parameter rather
+   * than something the action does on its way in. Run after every guard and
+   * **before the first write**, with the ids of the teams that are about to be
+   * removed; a returned sentence refuses the whole call.
+   */
+  beforeRemoval?: BeforeRemoval;
+};
+
+export type RandomTeamsResult = {
+  teams: Team[];
+  /** Who went where, in team order. */
+  rosters: Array<{ teamId: string; userIds: string[] }>;
+  /** 1-based positions of the teams that came out short of `teamSize`. */
+  short: number[];
+  /** Teams this replaced. */
+  discarded: number;
+};
+
+/**
+ * Carries a callee's refusal out of the transaction so the rollback happens.
+ *
+ * `docs/decisions/004-refusals-inside-transactions.md`'s last shape, and the
+ * same one `NothingSaved` uses in `./events`. Module-private: it never escapes
+ * {@link assignRandomTeams} as an exception.
+ */
+class NothingShuffled extends Error {
+  constructor(readonly refusal: string) {
+    super(refusal);
+    this.name = "NothingShuffled";
+  }
+}
+
+/**
+ * Shuffle the accepted participants into teams of the format's size and save
+ * them — UC-41 6, and the second half of Task 78.
+ *
+ * ## It goes through `setTeams` and `setTeamCount`, not round them
+ *
+ * Those two own every write to `teams` and, more to the point, own the
+ * refusals that go with one: `removeTeamsIn`'s rule that a team which has
+ * drafted players is never deleted, the two-to-eight bound, the placeholder
+ * names recorded as placeholders. A third path writing team rows directly
+ * would be a third copy of that, and the copy that drifts is the one that lets
+ * a draft's prices vanish. So the list is emptied with `setTeams(eventId, [])`
+ * — which is what an authoritative empty list means — and the new teams are
+ * created by `setTeamCount`, which is the only path that can truthfully record
+ * `name_is_custom = false` (UC-15 4).
+ *
+ * Both are called on `tx`, so they run as **savepoints on this session**
+ * rather than as separate transactions. That is what makes the paragraph below
+ * work, and it is the behaviour Task 57 measured rather than assumed.
+ *
+ * ## Every refusal is decided before the first write — and the two that cannot
+ * be are thrown
+ *
+ * Read `docs/decisions/004` before touching this. A refusal *returned* from a
+ * transaction callback commits everything written before it, and the first
+ * write here deletes every team on the event — so a refusal after it would
+ * discard the admin's teams and then tell them nothing had changed. The
+ * ordering is therefore load-bearing, not tidiness: the lock, the awarded-lot
+ * gate, the existing-teams gate and the whole plan are settled while nothing
+ * has been written.
+ *
+ * Two refusals genuinely belong to the callees and cannot be asked earlier
+ * without restating their rules here. `setTeams` refuses to delete a team that
+ * any lot names as a winner **at any status** — a voided award still records a
+ * price that was once paid — which is a wider question than this function's
+ * `awarded` gate asks, and `setTeamCount` has its own bounds. Both are
+ * re-raised as {@link NothingShuffled} and turned back into the same sentence
+ * at the function boundary, because a *throw* rolls the savepoints and the
+ * outer transaction back and a returned refusal would not. Nothing is written
+ * on either path.
+ *
+ * ## Refused outright once the draft has started (UC-41 3b)
+ *
+ * Not "needs confirmation" — refused. Lots have been awarded against the teams
+ * that exist, so replacing them would leave the awards pointing at rows that
+ * are gone and the prices paid attached to nothing. The admin's way back is
+ * the undo UC-16 7a already gives: void the lots, then shuffle.
+ *
+ * ## Re-running it is the point (UC-41 5a)
+ *
+ * Unlike the hero draw, which is dealt once and stands, this is the admin's
+ * own tool and a second shuffle is a fresh one that replaces the first. The
+ * confirmation in 3a is what stops that being an accident; nothing here caps
+ * how many times it may be asked.
+ *
+ * ## The comp is not enforced, here or anywhere
+ *
+ * The format states 2-2-2 or 1-1-1 and this function sorts people into teams
+ * of the right *size*. It does not assign roles, does not read a hero draw and
+ * will not refuse a team fielding three Duelists (R-215 / UC-41 2). Who plays
+ * what is the team's conversation.
+ */
+export async function assignRandomTeams(
+  eventId: string,
+  input: RandomTeamsInput,
+  database: Database = defaultDb
+): Promise<DraftResult<RandomTeamsResult>> {
+  try {
+    return await database.transaction(async (tx) => {
+      // The same row lock every team write takes, and for the same reason:
+      // this rewrites `teams` and `team_members`, which the award path and the
+      // hand placements also write.
+      const event = await lockEvent(tx, eventId);
+      if (!event) return fail("That event no longer exists.");
+
+      const locked = lockRefusal(event);
+      if (locked) return fail(locked);
+
+      // UC-41 3b, asked first because it is the one refusal that is not about
+      // numbers. `awarded` is the status that matters: an open lot has settled
+      // nothing, and a voided one has been undone.
+      const awarded = await tx
+        .select({ id: draftLots.id })
+        .from(draftLots)
+        .where(and(eq(draftLots.eventId, eventId), eq(draftLots.status, "awarded")))
+        .limit(1);
+      if (awarded.length > 0) {
+        return fail(
+          "The draft has already awarded lots against these teams, so they cannot be shuffled now — the prices paid would be left pointing at teams that no longer exist. Void those lots in the draft room first."
+        );
+      }
+
+      const existing = await readTeams(tx, eventId);
+      if (existing.length > 0 && input.replace !== true) {
+        return fail(
+          `This event already has ${existing.length} ${existing.length === 1 ? "team" : "teams"}. Shuffling replaces ${existing.length === 1 ? "it" : "them"}, so say so explicitly.`
+        );
+      }
+
+      // The accepted applicants, in application order — the same read
+      // `getUnpooledApplicants` uses, and read inside the lock so it is still
+      // true when the rows land.
+      const accepted = await tx
+        .select({ userId: applications.userId })
+        .from(applications)
+        .where(and(eq(applications.eventId, eventId), eq(applications.status, "accepted")))
+        .orderBy(asc(applications.submittedAt));
+      const userIds = accepted.map((row) => row.userId);
+
+      const planned = planTeams(userIds.length, input.teamSize);
+      if (!planned.ok) return fail(planned.error);
+
+      // Everything above decided; the first write is below this line.
+      const dealt = dealTeams(userIds, planned.plan, input.random);
+
+      // The caller's own pre-removal work — see `beforeRemoval`. It may write,
+      // so from here every refusal is thrown rather than returned.
+      if (input.beforeRemoval) {
+        const refused = await input.beforeRemoval(
+          tx,
+          existing.map((team) => team.id)
+        );
+        if (refused) throw new NothingShuffled(refused);
+      }
+
+      const emptied = await setTeams(eventId, [], tx);
+      if (!emptied.ok) throw new NothingShuffled(emptied.error);
+
+      const made = await setTeamCount(eventId, planned.plan.teams, tx);
+      if (!made.ok) throw new NothingShuffled(made.error);
+
+      const now = new Date();
+      const rosters: Array<{ teamId: string; userIds: string[] }> = [];
+      for (const [index, team] of made.data.teams.entries()) {
+        const squad = dealt[index] ?? [];
+        for (const userId of squad) {
+          await tx.insert(teamMembers).values({
+            teamId: team.id,
+            eventId,
+            userId,
+            // Nobody was bid for, and nobody is captain: a captain is chosen on
+            // the Captains tab (UC-15 3), and inventing one here would decide
+            // something the admin has not been asked.
+            price: 0,
+            acquiredAt: now,
+            isCaptain: false,
+            lotId: null,
+          });
+        }
+        rosters.push({ teamId: team.id, userIds: squad });
+      }
+
+      return withData({
+        teams: made.data.teams,
+        rosters,
+        short: planned.plan.short,
+        discarded: emptied.data.removed,
+      });
+    });
+  } catch (error) {
+    if (error instanceof NothingShuffled) return fail(error.refusal);
+    throw error;
+  }
 }
 
 export type CaptainInput = {

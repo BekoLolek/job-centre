@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MemberLike, TeamLike } from "@/components/draft";
 import { DEFAULT_DRAFT_CONFIG, rosterState } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
+import { teamFormatFrom } from "@/lib/events-policy";
 import { applicant } from "./applicants-fixture";
 import type { DraftTabData } from "../types";
 
@@ -37,7 +38,9 @@ vi.mock("@/app/admin/events/draft-actions", () => ({
   placeOnRosterAction: vi.fn(),
   previewTeamCountAction: vi.fn(),
   previewTeamsAction: vi.fn(),
+  randomiseTeamsAction: vi.fn(),
   removeFromRosterAction: vi.fn(),
+  saveNightFormatAction: vi.fn(),
   saveTeamsAction: vi.fn(),
   setTeamCountAction: vi.fn(),
 }));
@@ -94,6 +97,10 @@ function tabData(teams: TeamLike[], over: Partial<DraftTabData> = {}): DraftTabD
       placed: { displayName: "Placed Pat" },
     },
     started: false,
+    // The real reader rather than a literal, for the reason `roster` uses the
+    // real `rosterState`: a hand-written format is what lets this screen and
+    // the rule it prints drift apart.
+    teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
     ...over,
   };
 }

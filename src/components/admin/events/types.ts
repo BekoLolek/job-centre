@@ -10,6 +10,7 @@ import type {
 } from "@/lib/championship-results";
 import type { EventChampionship } from "@/lib/championships";
 import type { DraftConfig } from "@/lib/draft-policy";
+import type { TeamFormat } from "@/lib/events-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
 
 /**
@@ -75,6 +76,15 @@ export type DraftTabData = {
    * rejection.
    */
   started: boolean;
+  /**
+   * The night's format as stored, from `teamFormatFrom(event.config)` —
+   * R-215's 6v6 or 3v3, the team size it implies and the comp it states.
+   *
+   * Read on the server like every other field here, so the tab renders what is
+   * stored rather than what was last clicked. The comp is for *printing*: no
+   * tab reads it back to refuse anything (UC-41 2).
+   */
+  teamFormat: TeamFormat;
 };
 
 /**

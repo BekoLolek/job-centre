@@ -1175,12 +1175,19 @@ Strategists each is what forces duplicates.
   Seed the 54 heroes on the `rivals` game row. The seed is idempotent and **must not overwrite an edited row** — `src/db/seed.ts` states that rule in its own module comment, and it applies exactly here: once an admin has corrected a role, a redeploy must not undo it.
   Role is an enum of Vanguard / Duelist / Strategist rather than free text, because the draw counts per role and a typo would silently make a role undrawable.
 - **Acceptance criteria:**
-  - [ ] A hero may hold one, two or three roles; Deadpool holds all three
-  - [ ] The seed plants 54 heroes giving 15 / 28 / 13 drawable per role, and re-running it changes nothing
-  - [ ] An edited hero survives a re-seed
-  - [ ] A hero with no role is refused by the database as well as the code
-  - [ ] The migration says what it does on a deployment that already has games
+  - [x] A hero may hold one, two or three roles; Deadpool holds all three
+  - [x] The seed plants 54 heroes giving 15 / 28 / 13 drawable per role, and re-running it changes nothing
+  - [x] An edited hero survives a re-seed
+  - [x] A hero with no role is refused by the database as well as the code
+  - [x] The migration says what it does on a deployment that already has games
 - **Depends on:** nothing. Needs a migration, so it must not run beside another that holds one.
+- **Left over:** nothing from the criteria, and three things the next tasks inherit.
+  **A hero is identified by (game, name)**, so a hero an admin *renames* no longer matches the roster and the next seed plants the original name again beside it — a visible duplicate they can retire. Documented at `insertHero` and asserted by a test rather than left as a claim. The alternative is a stable `key` column, which this task was not asked for and Task 77 would then have to maintain.
+  **An existing deployment gets no heroes from the migration.** `npm run build` runs `db:migrate` and **not** the seed, so a deploy alone plants nothing — somebody runs the seed, or `drizzle/seed-heroes.sql`, against production once. Until then the draw page names the game and offers nothing rather than dealing an empty hand (UC-39 1b).
+  `retired_at` is already on the table, so **Task 77 still needs no migration**.
+  **One mutation escaped the first pass, and it is the real evidence.** Swapping `hero_role[]` for `text[]` survived 14/14 green, because the rejection tests wrote `'{Healer}'::hero_role[]` — so the refusal came from the **cast**, not from the column, and arrived whatever the column was. A test satisfied for the wrong reason. Fixed by removing every cast so the literal is coerced by the column's own type, plus an exact `information_schema` assertion; it then failed twice over.
+  Two anti-vacuity measures worth keeping: the re-seed criterion edits a row **between** the two seeds (Deadpool cut to one role, The Hood retired) and asserts the edit survives, so it fails whether the second seed overwrote *or* the first wrote nothing; and the no-backfill migration test inserts the game rows **before** replaying 0031, because an `INSERT … SELECT FROM games` backfill inserts nothing into an empty database and would be invisible otherwise.
+  The CHECK spells out cardinalities 1, 2 and 3 rather than using `distinct unnest`, because a CHECK constraint may not contain a subquery; and the NULL-element half is separate because `null <> null` is NULL and a CHECK counts NULL as satisfied.
 
 ### Task 74: The draw, as a rule rather than a screen
 
@@ -1253,14 +1260,25 @@ Strategists each is what forces duplicates.
   **An uneven count spreads the remainder one per team** rather than leaving one short team, and the screen says which teams are short **before** anything is saved (UC-41 4a).
   **Refuse outright once the auction draft has started** (UC-41 3b): lots have been awarded against the teams that exist, and replacing them would orphan the result. `getTeams`/`lots.some(lot => lot.status === "awarded")` is how the editor already knows this.
 - **Acceptance criteria:**
-  - [ ] An admin chooses 6v6 or 3v3, and the choice persists with no migration
-  - [ ] The comp is stated and never enforced — no test asserts a refusal based on a team's roles
-  - [ ] A seeded shuffle produces an exactly predicted assignment
-  - [ ] An uneven count spreads the remainder one per team, and which teams are short is shown before saving
-  - [ ] Replacing existing teams needs confirmation, naming how many are discarded
-  - [ ] Refused once a lot has been awarded, with nothing written
-  - [ ] Fewer participants than one team needs is refused, naming both numbers
+  - [x] An admin chooses 6v6 or 3v3, and the choice persists with no migration
+  - [x] The comp is stated and never enforced — no test asserts a refusal based on a team's roles
+  - [x] A seeded shuffle produces an exactly predicted assignment
+  - [x] An uneven count spreads the remainder one per team, and which teams are short is shown before saving
+  - [x] Replacing existing teams needs confirmation, naming how many are discarded
+  - [x] Refused once a lot has been awarded, with nothing written
+  - [x] Fewer participants than one team needs is refused, naming both numbers
 - **Depends on:** nothing — it needs no migration and no hero data, so it may run beside Task 73.
+- **Left over:** nothing, and **two corrections to this entry, the second of which prevented a bug.**
+  `scheduleSettingsFrom` is in `src/lib/format.ts`, not `events-policy.ts` as this entry said. And following its shape *literally* would have been wrong: it nests under `config.format`, `updateEvent` merges a config patch **one level deep**, and `saveScheduleSettingsAction` rewrites the whole `config.format` object on every save — so a `teamFormat` stored inside it would have been **silently erased the first time anyone opened the Schedule tab**. It is a top-level `events.config.teamFormat` instead, with a mutation pinning both directions. No migration: `EventConfig` ends in an index signature, and `drizzle/` is unchanged.
+  **A surviving mutation exposed a decision-004 bug one layer above this task.** `releaseBefore` released match team-references *before* the library call with no transaction around the pair, so a shuffle refused for awarded lots would have stripped the matches and reported nothing changed. Fixed with a `beforeRemoval` hook that runs inside the transaction after every guard and throws its refusal. The same shape was then found in `setTeamCountAction` and `saveTeamsAction` and is fixed in the follow-up.
+  **A `toContain` escape, again.** The 3b refusal was asserted with `toContain("Void those lots")`, which `removeTeamsIn`'s *different* sentence also contains — so deleting the awarded-lot gate left it green. Now `toBe` on the full sentence plus `not.toContain` on the other.
+  **One mutation survives and is unkillable by construction**, stated rather than hidden: `releaseTeamsFromMatches` refuses before its own first write, so returning versus throwing commits nothing either way. The throw is kept as the invariant, the reasoning `rosterGuard`'s unreachable lot check already carries.
+  **16 at 6v6 is 6, 5, 5** — `ceil(people / size)` then the shortfall dealt round-robin, so no two teams differ by more than one. A floor would drop the remainder off the teams entirely. Proved as a property over every legal count at both sizes.
+  Reachability is proved by **enumerating all six orders of three players** rather than eyeballing a run, plus an aimed draw showing the last player can *stay* last — which `random() * index` makes impossible. An earlier seed-sweep version was dropped because it failed for a property of the weak test LCG rather than of the shuffle.
+  `Math.random` is injected at exactly one place and a test replaces it with a **thrower**, which proves the injection rather than asserting it.
+  **UC-41 gained a 4c** from this task: exactly one team's worth is refused, because one team is not two sides. `setTeamCount` would refuse it anyway, but with a sentence about team counts and nothing about the format.
+  The confirm dialog's own copy is **not** under test — `Modal` returns null while closed and the suite is a node environment — so UC-41 3a's discard count is also rendered on the panel, where it is asserted and mutation-proved.
+  One of its five new alerts is derived from props alone, so it is present at first render and had to be `standing` — otherwise it would interrupt every admin opening the tab for an event that has not filled up. Task 70's rule working on code written after it.
 
 ## L. The editor follows the event (R-217 to R-220 / UC-42)
 

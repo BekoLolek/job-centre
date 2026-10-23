@@ -1447,6 +1447,7 @@ A season of two to four events a month across different games, with one running 
 - **3b.** The auction draft has started on this event - refused outright. Lots have been awarded against the teams that exist, and replacing them would orphan the result.
 - **4a.** The participants do not divide evenly - the remainder is spread one per team rather than left as a short team on its own, and the screen says which teams are short before anything is saved.
 - **4b.** Fewer participants than one team needs - refused, naming the count and the team size.
+- **4c.** Exactly one team's worth - refused, because one team is not two sides. `setTeamCount` would refuse it anyway, but with its own sentence about team counts and nothing about the format, so the refusal is made here by name. Found in Task 78 rather than when this use case was written.
 - **5a.** Asked twice - the second shuffle is a fresh one and replaces the first. Unlike the hero draw, this is the admin's tool and re-running it is the point; 3a is what stops it being an accident.
 - **6a.** A participant withdraws after the shuffle - their seat on the team is freed, exactly as a withdrawal already does, and no reshuffle happens on its own.
 

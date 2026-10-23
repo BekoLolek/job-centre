@@ -48,10 +48,12 @@
 import { revalidatePath } from "next/cache";
 import type { DraftPoolKind } from "@/db/schema";
 import {
+  type BeforeRemoval,
   type CaptainInput,
   type DraftResult,
   type TeamInput,
   type TeamWithRoster,
+  assignRandomTeams,
   eventIdOfTeam,
   getDraftConfig,
   getDraftHistory,
@@ -67,6 +69,8 @@ import {
   setTeams,
 } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
+import { getEventById, updateEvent } from "@/lib/events";
+import { type TeamFormat, isNightFormat, teamFormatFrom } from "@/lib/events-policy";
 import {
   type SyncResult,
   type TeamRelease,
@@ -138,31 +142,42 @@ function toTeamInput(team: TeamFields): TeamInput {
 }
 
 /**
- * Let the teams this write is about to remove actually be deleted, or hand back
+ * Let the teams a write is about to remove actually be deleted, or hand back
  * the sentence saying why not (R-161 / UC-15 E1).
  *
- * ## Why the order is in the action rather than in the library
+ * ## Why the library calls this rather than the action calling it first
  *
  * `matches.team_a_id` references `teams` with no `on delete` action, so
  * Postgres refuses to delete a team any match names — and `setTeams` and
  * `setTeamCount` live in `src/lib/draft.ts`, which knows nothing about matches
- * and should not. Before this, lowering the team count on an event whose
- * matches had been generated came back as `matches_team_a_event_fk` in front of
- * the manager, and Task 21 made that the common case rather than a rare one by
- * generating the matches automatically.
+ * and should not. Before this existed, lowering the team count on an event
+ * whose matches had been generated came back as `matches_team_a_event_fk` in
+ * front of the manager, and Task 21 made that the common case rather than a
+ * rare one by generating the matches automatically.
  *
- * The rule itself is `releaseTeamsFromMatches`'s — including the refusal when
- * one of those matches carries a result. All that is here is the order the
- * foreign key forces: release the references, then write the teams, then sync.
+ * So the order the foreign key forces — release the references, then write the
+ * teams, then sync — is this layer's to arrange. It used to arrange it by
+ * running the release *before* the library call, and that was
+ * `docs/decisions/004` one layer up: this **writes**, so a save the library
+ * then refused had already stripped those match rows of their team references,
+ * with no transaction around the pair to undo it and the admin told nothing had
+ * changed. The reachable refusal is a team named as winner on a voided lot,
+ * which `removeTeamsIn` declines at any lot status while every gate out here
+ * lets it through.
+ *
+ * It is handed to the write instead, as `draft.ts`'s `BeforeRemoval`: called on
+ * the write's own transaction, after every refusal has been settled and
+ * immediately before the delete, so a refusal rolls this back with everything
+ * else. Which teams are going is the write's answer too, rather than a second
+ * copy of "the last by sort" / "the ones the list left out" read out here. The
+ * rule itself is still `releaseTeamsFromMatches`'s — including its own refusal
+ * when one of those matches carries a result.
  */
-async function releaseBefore(
-  eventId: string,
-  doomed: (existing: TeamWithRoster[]) => TeamWithRoster[]
-): Promise<string | null> {
-  const ids = doomed(await getTeams(eventId)).map((team) => team.id);
-  if (ids.length === 0) return null;
-  const released = await releaseTeamsFromMatches(eventId, ids);
-  return released.ok ? null : released.error;
+function releaseBefore(eventId: string): BeforeRemoval {
+  return async (tx, doomed) => {
+    const released = await releaseTeamsFromMatches(eventId, doomed, tx);
+    return released.ok ? null : released.error;
+  };
 }
 
 /**
@@ -286,13 +301,11 @@ export async function setTeamCountAction(
   const admin = await requireEventManager(eventId);
 
   // A lower count removes teams from the end, and a team a match names cannot
-  // be deleted until that match stops naming it — see `releaseBefore`.
-  const blocked = await releaseBefore(eventId, (existing) =>
-    count >= existing.length ? [] : existing.slice(count)
-  );
-  if (blocked) return { ok: false, error: blocked };
-
-  const result = await setTeamCount(eventId, count);
+  // be deleted until that match stops naming it — so the release travels
+  // *into* the write, which runs it inside its transaction once the removal is
+  // certain. See `releaseBefore`. The `undefined` is the library's own database
+  // handle, which this layer never names.
+  const result = await setTeamCount(eventId, count, undefined, releaseBefore(eventId));
   if (!result.ok) return result;
 
   // Nothing is logged when nothing moved: a manager pressing Save on the
@@ -327,6 +340,148 @@ export async function setTeamCountAction(
       })),
       added: result.data.added,
       removed: result.data.removed,
+      sync,
+    },
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* The night's format, and teams nobody picked (R-215, R-216 / UC-41) */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Store whether the night is 6v6 or 3v3 — UC-41 1, and the admin's call.
+ *
+ * Written through `updateEvent`, which is the event's single write path, onto
+ * `events.config` — so this needed no migration. `teamFormatFrom` explains why
+ * the key is a *sibling* of `config.format` rather than inside it: a config
+ * patch merges one level deep, and the Schedule tab replaces `config.format`
+ * wholesale every time it saves.
+ *
+ * The value is re-validated here rather than trusted. A server action is a
+ * public endpoint, so `isNightFormat` runs on whatever arrives, and the stored
+ * format is read **back** through `teamFormatFrom` so the screen shows what
+ * was stored rather than what was sent.
+ */
+export async function saveNightFormatAction(
+  eventId: string,
+  format: string
+): Promise<DraftResult<{ teamFormat: TeamFormat }>> {
+  const admin = await requireEventManager(eventId);
+
+  if (!isNightFormat(format)) {
+    return { ok: false, error: "A night is either 6v6 or 3v3." };
+  }
+
+  const before = teamFormatFrom((await getEventById(eventId))?.config);
+  const result = await updateEvent(eventId, { config: { teamFormat: format } });
+  if (!result.ok) return { ok: false, error: result.error };
+
+  const stored = teamFormatFrom(result.data.config);
+
+  // Nothing is logged when nothing moved, for the reason `team.count` says so:
+  // re-saving the figure already stored should not leave a line claiming the
+  // format changed.
+  if (before.format !== stored.format) {
+    await recordAudit({
+      action: "event.format",
+      actor: admin,
+      eventId,
+      summary: `Set the night to ${stored.format}, a ${stored.comp} comp.`,
+      detail: { format: stored.format, teamSize: stored.teamSize, comp: stored.comp },
+    });
+  }
+
+  refresh(eventId);
+  return { ok: true, data: { teamFormat: stored } };
+}
+
+/**
+ * Shuffle the accepted participants into teams of the format's size — UC-41 6.
+ *
+ * ## Where the randomness comes from
+ *
+ * Here, and only here. `assignRandomTeams` and `src/lib/random-teams.ts` take
+ * the generator as a parameter and never call one, which is what makes the
+ * shuffle testable at all (R-216; see `random-teams.ts`'s docblock). This is
+ * the boundary where the real `Math.random` is handed in, so there is exactly
+ * one line in the application to read to know what the production source is.
+ *
+ * ## `replace` is the admin's answer, not a default
+ *
+ * UC-41 3a refuses while teams exist until the admin says to replace them, and
+ * the screen names how many would go before asking. The flag travels from that
+ * confirmation; the library refuses without it rather than assuming consent.
+ * Re-running is allowed and expected (5a) — this is the admin's own tool, and
+ * 3a is what stops a reshuffle being an accident.
+ *
+ * The team size is read from the **stored** format rather than taken from the
+ * browser: the format is a decision with its own write and its own audit line,
+ * and a size sent beside the request would be a second place it could be
+ * decided.
+ */
+export async function randomiseTeamsAction(
+  eventId: string,
+  replace: boolean
+): Promise<
+  DraftResult<{
+    teams: Array<TeamFields & { id: string }>;
+    rosters: RosterMove[];
+    short: number[];
+    discarded: number;
+    sync: SyncResult | null;
+  }>
+> {
+  const admin = await requireEventManager(eventId);
+
+  // Read from what is stored, never from a size sent beside the request: the
+  // format is its own decision with its own audit line.
+  const teamFormat = teamFormatFrom((await getEventById(eventId))?.config);
+
+  const result = await assignRandomTeams(eventId, {
+    teamSize: teamFormat.teamSize,
+    random: Math.random,
+    replace,
+    /*
+     * The shuffle empties the team list, and a team a generated match names
+     * cannot be deleted until that match stops naming it — the same foreign
+     * key, and now literally the same hook the other two team writes take.
+     * Task 78 passed it here first and spelled it out inline; `releaseBefore`
+     * carries the reasoning, which is no longer this path's alone.
+     */
+    beforeRemoval: releaseBefore(eventId),
+  });
+  if (!result.ok) return result;
+
+  await recordAudit({
+    action: "team.random",
+    actor: admin,
+    eventId,
+    summary: `Shuffled ${result.data.rosters.reduce((total, row) => total + row.userIds.length, 0)} accepted players into ${result.data.teams.length} random teams of ${teamFormat.teamSize} (${teamFormat.format})${result.data.discarded > 0 ? `, replacing ${result.data.discarded}` : ""}.`,
+    detail: {
+      format: teamFormat.format,
+      teamSize: teamFormat.teamSize,
+      teams: result.data.teams.length,
+      short: result.data.short,
+      discarded: result.data.discarded,
+    },
+  });
+
+  const sync = await followTeams(admin, eventId);
+
+  refresh(eventId);
+  return {
+    ok: true,
+    data: {
+      teams: result.data.teams.map((team) => ({
+        id: team.id,
+        name: team.name,
+        seed: team.seed,
+        balanceStart: team.balanceStart,
+      })),
+      rosters: await rostersOf(eventId),
+      short: result.data.short,
+      discarded: result.data.discarded,
       sync,
     },
   };
@@ -467,14 +622,15 @@ export async function saveTeamsAction(
   const admin = await requireEventManager(eventId);
 
   // The list is authoritative, so a team whose id is absent is being removed
-  // — same foreign key, same release. See `releaseBefore`.
-  const keeping = new Set(input.map((team) => team.id).filter(Boolean) as string[]);
-  const blocked = await releaseBefore(eventId, (existing) =>
-    existing.filter((team) => !keeping.has(team.id))
+  // — same foreign key, same release, handed to the write for the same
+  // reason. `setTeams` works out which teams those are and calls this with
+  // their ids. See `releaseBefore`.
+  const result = await setTeams(
+    eventId,
+    input.map(toTeamInput),
+    undefined,
+    releaseBefore(eventId)
   );
-  if (blocked) return { ok: false, error: blocked };
-
-  const result = await setTeams(eventId, input.map(toTeamInput));
   if (!result.ok) return result;
 
   await recordAudit({
