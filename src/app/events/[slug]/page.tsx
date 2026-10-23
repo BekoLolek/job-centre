@@ -64,6 +64,7 @@ import BracketTab from "./BracketTab";
 import ResultsTab from "./ResultsTab";
 import ScheduleTab from "./ScheduleTab";
 import TeamsTab from "./TeamsTab";
+import { loadDraw } from "./draw/draw";
 import { getEventBoard, podiumFor, teamNames } from "@/lib/event-board";
 import {
   type EventDetail,
@@ -72,6 +73,7 @@ import {
   loadApplicationForm,
 } from "@/lib/events";
 import { dayName } from "@/lib/events-policy";
+import { handFor } from "@/lib/hero-hands";
 import { fieldTypeInfo } from "@/lib/profile-fields";
 import { canSeeEvent } from "@/lib/hosting";
 import { getCurrentUser } from "@/lib/session-guards";
@@ -127,6 +129,28 @@ export default async function EventPage({
   // still Saturday — and because a day worked out from `Date#getDate` would
   // come out differently on the server and in the browser.
   const dayBySlot = Object.fromEntries(dayOfSlot(board.format?.blocks ?? []));
+  /*
+   * Whether this reader has a draw to open, decided by `loadDraw` itself rather
+   * than by a second opinion here (Task 84 / UC-39 1).
+   *
+   * The link has to admit exactly who the page admits, and the only way for two
+   * screens to agree about that is for them to ask one function: a seat read, a
+   * game, a hero list that is not empty and not too thin to deal from are four
+   * conditions and `loadDraw` already owns all four, in that order, refusing
+   * each before it does the next question's work. Re-deriving them here would be
+   * a copy that drifts, and the direction it drifts is a link that offers a
+   * route answering `no_seat` — the dead end UC-39 1a exists to stop.
+   *
+   * So the link appears on `ready` and on nothing else. An event whose game has
+   * no hero list does not advertise a draw, and neither does one whose list is
+   * too thin, because in both cases the page behind the link refuses.
+   *
+   * Signed out there is nothing to ask: a hand belongs to one person, so there
+   * is no seat to hold and `requireUser` on the draw page would bounce them.
+   * Unseated readers cost one indexed row (`applications_event_user_uniq`),
+   * which is the common case and the cheapest branch `loadDraw` has.
+   */
+  const draw = user ? await loadDraw(event, user.id, handFor) : null;
 
   const action = viewerAction({
     slug: event.slug,
@@ -258,6 +282,32 @@ export default async function EventPage({
                     />
                   }
                 />
+              )}
+
+              {/*
+                The player's own draw, above the draft: both are event-night
+                links, and theirs comes before everyone's. The label says which
+                of the draw page's two screens is behind it, because the page
+                distinguishes "deal me in" from "here is your hand" and a link
+                reading the same either way throws that away (UC-39 2 vs 6a).
+
+                `union` only on the undrawn one. A hand that has not been dealt
+                is an action waiting on them; a hand they already hold is a
+                thing to look up, and the accent belongs to the first. The
+                wording carries the distinction on its own, so nothing here is
+                said in colour alone.
+              */}
+              {draw?.kind === "ready" && (
+                <div>
+                  <Eyebrow className="mb-2">Your draw</Eyebrow>
+                  <Button
+                    href={`/events/${event.slug}/draw`}
+                    variant={draw.hand ? "default" : "union"}
+                    size="sm"
+                  >
+                    {draw.hand ? "See your hand" : "Draw your heroes"}
+                  </Button>
+                </div>
               )}
 
               {board.teams.length > 0 && (

@@ -54,6 +54,7 @@ import {
   type EventResult,
   createEvent,
   describeApplication,
+  getEventById,
   getEventSetup,
   previewEventDays,
   publishEvent,
@@ -64,7 +65,24 @@ import {
   setEventQuestions,
   updateEvent,
 } from "@/lib/events";
-import { type ApplicationDecision, changedSetupFields } from "@/lib/events-policy";
+import {
+  type ApplicationDecision,
+  DRAFT_AWARDED_REFUSAL,
+  type EventShape,
+  changedSetupFields,
+  eventShapeFrom,
+  isSizingMode,
+  shapeProblem,
+  teamsInTheWayRefusal,
+} from "@/lib/events-policy";
+/*
+ * The team reads and the one team write the Format panel can cause (UC-42 2a).
+ * `setTeams` is the event's team write and owns every refusal that goes with
+ * removing one — this file must not grow a second way to delete a team, which
+ * is the rule `draft-actions.ts` already follows.
+ */
+import { getDraftHistory, getTeams, setTeams } from "@/lib/draft";
+import { releaseTeamsFromMatches } from "@/lib/format";
 import {
   type ChampionshipResult,
   type CountingEventFields,
@@ -712,6 +730,157 @@ export async function saveEntryRulesAction(
 
   refresh(eventId);
   return { ok: true, data: null };
+}
+
+/* ------------------------------------------------------------------ */
+/* What kind of event this is (R-217, R-218 / UC-42 1-4)              */
+/* ------------------------------------------------------------------ */
+
+/** The Format panel's three decisions, as they arrive off the wire. */
+export type EventShapeFields = {
+  teamEvent: boolean;
+  draft: boolean;
+  /** `"teams"` or `"perTeam"` — re-validated here, never trusted. */
+  mode: string;
+  value: number;
+  /** UC-42 2a: the admin has said the existing teams may go. */
+  discardTeams?: boolean;
+};
+
+/**
+ * Store whether this event has teams, whether it runs a draft, and how the
+ * sides are sized — UC-42 1-4, and R-217's "per event, not a flag on the game".
+ *
+ * ## Where it goes, and why nothing is migrated
+ *
+ * One top-level key on `events.config`, written whole on every save.
+ * `eventShapeFrom`'s docblock carries the argument in full, including the part
+ * that is easy to get wrong rather than merely true: `updateEvent` merges a
+ * config patch **one level deep** and `saveScheduleSettingsAction` rewrites the
+ * whole of `config.format` every time it runs, so a shape nested in there would
+ * be erased the first time anybody opened the Schedule tab. `events.config`
+ * ends in an index signature, so the key needs no column and `drizzle/` is
+ * untouched.
+ *
+ * **The derived figure is not stored and there is nowhere for it to be stored.**
+ * One mode and one number arrive; the other figure is `sizingConsequence`'s,
+ * recomputed on every read. That is R-218 and it is why the two cannot drift.
+ *
+ * ## The two refusals, and the order they are settled in
+ *
+ * **UC-42 3a first, and outright**: once a lot has been awarded the teams'
+ * rosters came from those awards, so the draft cannot be switched off from
+ * under them — and going solo is the same loss by another route, since a solo
+ * event has no Draft tab at all. No confirmation is offered, because there is
+ * no answer to it; voiding the lots is the deliberate act that makes this
+ * possible.
+ *
+ * **UC-42 2a second, with one**: turning teams off on an event that already has
+ * them is refused until the admin says to discard them, and the refusal names
+ * how many go.
+ *
+ * The discard then happens **before** the config write, which is
+ * `docs/decisions/004`'s rule read carefully rather than by habit. `setTeams`
+ * owns the refusals that remain — a team named as winner on a lot of any
+ * status, which 3a's awarded-only gate lets through — so the reachable refusal
+ * must be the one that has written nothing. `releaseTeamsFromMatches` goes in
+ * as the write's own `beforeRemoval` hook for the reason `draft-actions.ts`
+ * spells out: a match naming a team blocks the delete, and releasing the
+ * reference *before* the call is a write that a later refusal cannot undo.
+ *
+ * ## It guards itself, because hiding a tab is not forbidding it
+ *
+ * `requireEventManager` runs here whatever the editor happens to be drawing
+ * (UC-42 5b). Next's own note: "Render-time gating (only rendering a form on an
+ * authenticated page) is not a security boundary."
+ */
+export async function saveEventShapeAction(
+  eventId: string,
+  fields: EventShapeFields
+): Promise<EventResult<{ shape: EventShape; teamsDiscarded: number }>> {
+  const admin = await requireEventManager(eventId);
+
+  if (!isSizingMode(fields.mode)) {
+    return fail("Teams are sized either by a number of teams or by players per team.");
+  }
+
+  const before = await getEventById(eventId);
+  if (!before) return fail("That event no longer exists.");
+
+  const wanted: EventShape = {
+    teamEvent: fields.teamEvent,
+    draft: fields.draft,
+    sizing: { mode: fields.mode, value: fields.value },
+  };
+
+  const bounds = shapeProblem(wanted);
+  if (bounds) return fail(bounds);
+
+  const [existing, lots] = await Promise.all([getTeams(eventId), getDraftHistory(eventId)]);
+
+  // UC-42 3a. Asserted with the whole sentence in the tests, not a phrase of
+  // it — `removeTeamsIn` has a refusal about lots too, and Task 78's escape was
+  // exactly that confusion.
+  const losingDraft = !wanted.teamEvent || !wanted.draft;
+  if (losingDraft && lots.some((lot) => lot.status === "awarded")) {
+    return fail(DRAFT_AWARDED_REFUSAL);
+  }
+
+  // UC-42 2a.
+  const losingTeams = !wanted.teamEvent && existing.length > 0;
+  if (losingTeams && fields.discardTeams !== true) {
+    return fail(teamsInTheWayRefusal(existing.length));
+  }
+
+  if (losingTeams) {
+    const cleared = await setTeams(eventId, [], undefined, async (tx, doomed) => {
+      const released = await releaseTeamsFromMatches(eventId, doomed, tx);
+      return released.ok ? null : released.error;
+    });
+    if (!cleared.ok) return fail(cleared.error);
+  }
+
+  const result = await updateEvent(eventId, {
+    config: { eventShape: { ...wanted, sizing: { ...wanted.sizing } } },
+  });
+  if (!result.ok) return result;
+
+  // Read back through the same reader the screen uses, so what is reported is
+  // what is stored rather than what was sent — `saveNightFormatAction`'s rule.
+  const stored = eventShapeFrom(result.data.config);
+  const was = eventShapeFrom(before.config);
+  const moved =
+    was.teamEvent !== stored.teamEvent ||
+    was.draft !== stored.draft ||
+    was.sizing.mode !== stored.sizing.mode ||
+    was.sizing.value !== stored.sizing.value;
+
+  // Nothing is logged when nothing moved, the rule `team.count` and
+  // `event.format` already follow: re-saving the figure already stored should
+  // not leave a line claiming the event changed shape.
+  if (moved || losingTeams) {
+    await recordAudit({
+      action: "event.shape",
+      actor: admin,
+      eventId,
+      summary: stored.teamEvent
+        ? `Set "${result.data.title}" to teams ${stored.draft ? "with" : "without"} a draft, sized by ${stored.sizing.mode === "teams" ? `${stored.sizing.value} teams` : `${stored.sizing.value} per team`}.`
+        : `Set "${result.data.title}" to no teams${losingTeams ? `, discarding ${existing.length} ${existing.length === 1 ? "team" : "teams"}` : ""}.`,
+      detail: {
+        teamEvent: stored.teamEvent,
+        draft: stored.draft,
+        mode: stored.sizing.mode,
+        value: stored.sizing.value,
+        teamsDiscarded: losingTeams ? existing.length : 0,
+      },
+    });
+  }
+
+  refresh(eventId);
+  return {
+    ok: true,
+    data: { shape: stored, teamsDiscarded: losingTeams ? existing.length : 0 },
+  };
 }
 
 /* ------------------------------------------------------------------ */

@@ -781,6 +781,9 @@ A reconciliation of every acceptance criterion against the tree (2026-10-22, at 
   Related, from Task 75: a mutation can also turn red for the *wrong reason*. Deleting an `onConflictDoNothing` failed its test with `returning is not a function` — the sequencing proxy breaking, not the database refusing. Both shapes produce a green-to-red transition that proves nothing about the guard.
 - **The scratchpad is shared between concurrent agents.** Task 77 had its `mutate.mjs` overwritten mid-run by another agent; its process had already loaded the file so the run survived, but it moved to a private subdirectory and checked every failure name against its own mutation's target before trusting the results. A harness in the shared scratchpad is not private.
 
+- **A test file can vouch for the route it tests.** Task 84's inbound-link sweep matches `href` literals across `src`, and its own helper spelled out `href="/events/${slug}/draw"` — so the sweep read the **test** as an inbound link and passed with the real link deleted. Found by mutation (disabling the `__tests__` exclusion), and fixed twice over: `__tests__` is excluded as a link source, and the attribute name is now joined to the path only at runtime so the adjacency does not exist in the file at all.
+  This is the third shape in the same family. Task 65: a CSS class survived Tailwind's purge **because its own test file mentioned the name**, so the guard proved the rule while being the sole reason it held. Task 61: two source-assertion tests had to run against a **comment-stripped** copy, because the modules' own prose named the identifiers being asserted absent. **Any sweep that matches source text can be satisfied by itself** — strip comments, exclude the test tree, and prove it by deleting the real thing and watching the sweep fail.
+
 Still open and **not** closable from this repo: Task 50's last criterion asks whether an index on `events.status` is wanted, which needs `EXPLAIN` against production rows. `DATABASE_URL` is blank here by design. The query to run is recorded at `src/db/schema.ts:1091-1116`.
 
 ### Task 65: `.field` was one instance of the pattern, not the bug (found in Task 38c)
@@ -1352,12 +1355,21 @@ Task 82 retires it rather than patching the number.
   Stored in `events.config`, which already holds the schedule settings (`scheduleSettingsFrom`), so **no migration** — Task 78 put the comp format there for the same reason; extend that shape rather than adding a second.
   `tabs.ts` is a plain module **on purpose**: its own docblock records that exporting a helper from `EventEditor` (`"use client"`) and calling it from the server page fails at request time with "attempted to call tabFrom() from the server". That is the same defect that took `/admin/settings` down today. Keep it plain.
 - **Acceptance criteria:**
-  - [ ] A sixth Setup panel, reachable and persisted, with no migration
-  - [ ] Team sizing is one mode or the other, and the derived figure is never stored
-  - [ ] Changing the accepted count changes the derived figure without a save
-  - [ ] `?tab=format` still opens the bracket step, asserted — the alias order makes this easy to break
-  - [ ] Every refusal is shown on the panel, not swallowed
+  - [x] A sixth Setup panel, reachable and persisted, with no migration
+  - [x] Team sizing is one mode or the other, and the derived figure is never stored
+  - [x] Changing the accepted count changes the derived figure without a save
+  - [x] `?tab=format` still opens the bracket step, asserted — the alias order makes this easy to break
+  - [x] Every refusal is shown on the panel, not swallowed
 - **Depends on:** Task 78 for the config shape.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **The config key is top-level `events.config.eventShape`**, written whole on every save — `teamFormat`'s placement, not `scheduleSettingsFrom`'s, and for the reason Task 78 paid for: `updateEvent` merges one level deep and `saveScheduleSettingsAction` rewrites all of `config.format`, so a shape nested inside it would be erased by the next schedule save. A test saves the shape, saves the schedule, and asserts both survive in both orders; a mutation nesting it kills 11 tests. **No migration** — `EventConfig` ends in an index signature, and `drizzle/` is byte-identical (33 files, newest still `0032_hero_hands.sql`).
+  **The panel is keyed `shape`, and the bracket step is relabelled "Bracket".** `format` is deliberately *absent* from `SETUP_ALIASES`, because `tabFrom` checks the aliases before `TAB_KEYS` and adding it would silently redirect every existing `?tab=format` link. Held shut four ways, including end-to-end through the real page (`?tab=format` leaves the Bracket rail item `aria-selected="true"`). Reversible if the other naming is ever preferred.
+  **`config.teams`, `config.draft` and `config.bracket` already existed and were deliberately not reused.** They are template/label descriptors, read by `formatSummary` for the public page and validated by `normaliseTemplateConfig`; repurposing them would have changed public copy and the template round-trip in two files outside this task. The cost is that the same three facts now have a second, weaker vocabulary — **folding them into `eventShape` is a follow-up worth doing** (`labels.ts`, `admin-templates-policy.ts`, `TemplatesManager.tsx`).
+  **An absent key reads as a full team event**, the way `waitlistEnabled` reads an absent switch as on: every event on the site shows all nine tabs today, and defaulting to `false` would take four away from all of them at once. The sizing default is the night's own `teamFormat.teamSize`, so the panel opens agreeing with what Task 78 stored.
+  **The derived figure is a sentence, not a field** — the panel renders exactly one `<input>`, asserted. The per-team direction calls **Task 78's own `planTeams`** rather than a second copy, proved by injecting a thrower, and the two directions are held against each other over all 205 legal counts with a floor so an empty scan fails.
+  **UC-42 2a discards through `setTeams`, not a second team write**, with `releaseTeamsFromMatches` handed in as the write's `beforeRemoval` hook — and the discard runs *before* the config write, because `setTeams` owns the reachable refusal and that refusal must be the one that has written nothing. `draft-actions.ts`'s `releaseBefore` could not be shared: every export of a `"use server"` module must be async, so the four-line closure is repeated while the rule stays in `releaseTeamsFromMatches`.
+  **`audit.ts` gained `event.shape`** ("Event format changed") because `AuditAction` is `keyof typeof AUDIT_ACTIONS` and `recordAudit` will not compile without it. That makes `format.stages`'s existing label "Format changed" ambiguous with the relabel — **Task 82 should change it to "Bracket changed".**
+  **No browser verification, and it is not claimed** — a dev server was forbidden. What exists instead is structural: rendered through `renderToStaticMarkup` against the real primitives, with no new sizing or spacing introduced (`ChoiceChip`/`ChoiceRow`/`Panel`/`Field`/`Checkbox` only), so Task 38b's and Task 31a's tap-target work applies unchanged. `MAX_PER_TEAM = 32` is a typo guard, not a claim about sport: it is the one box where `66` typed for `6` would derive one team from eighteen players.
 
 ### Task 80: The editor shows only what applies
 
@@ -1367,13 +1379,20 @@ Task 82 retires it rather than patching the number.
   **Hiding a tab must not strand anybody on it.** A link to `?tab=draft` on a now-solo event has to land somewhere sensible and say why, rather than rendering an empty draft or 404ing — those links exist in `/admin`'s action lines and in bookmarks.
   **Hiding is not permission.** A hidden tab is a tab that does not apply, not one that is forbidden; the server actions keep their own guards, because a tab the UI stops drawing is still reachable by URL and by anybody who kept the page open.
 - **Acceptance criteria:**
-  - [ ] A non-team event shows no Draft, Teams, Captains or Bracket tab
-  - [ ] A team event with no draft shows Teams and Bracket but no Draft
-  - [ ] Schedule and Results show in every configuration
-  - [ ] A URL naming a hidden tab lands somewhere real and says why
-  - [ ] The server actions still refuse on their own, proven by calling one for a hidden tab
-  - [ ] The sweep reads the tab list off the module rather than a copy, so a seventh tab cannot be forgotten
+  - [x] A non-team event shows no Draft, Teams, Captains or Bracket tab
+  - [x] A team event with no draft shows Teams and Bracket but no Draft
+  - [x] Schedule and Results show in every configuration
+  - [x] A URL naming a hidden tab lands somewhere real and says why
+  - [x] The server actions still refuse on their own, proven by calling one for a hidden tab
+  - [x] The sweep reads the tab list off the module rather than a copy, so a seventh tab cannot be forgotten
 - **Depends on:** Task 79.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **`tabHiddenBecause` returns a sentence, not a boolean**, which is what lets one function serve both the rail and UC-42 5a's "say why". A predicate would have given the landing nothing to print and invited a second, drifting copy of the reason.
+  **A link to a hidden tab lands on Setup with the Format panel open** — the screen that brings the tab back — carrying the sentence that explains it ("Draft is only for an event with sides, and this one has none. Setup → Format is where that is decided."). A stale bookmark naming a word that was never a tab still lands on Setup, silently. The `?tab=` read happens on the **server page**, so the decision lives in the plain module; the matching case *after* arrival — teams turned off while standing on the Teams tab — is `standingOn`.
+  **`tabs.ts` is still a plain module with zero imports**, not even a type: `TabVisibility` is declared structurally and `EventShape` satisfies it without the file knowing it exists. That is the `/admin/settings` defect avoided by construction rather than by care, in the one file most likely to be reached from both sides.
+  **Hiding is not permission, and the proof says so in both directions.** On a solo event, `saveDraftConfigAction`, `setTeamCountAction` and `saveEventShapeAction` all reject for a plain member and for a signed-out caller — **and all three still succeed for the manager**, which is the half that makes it a statement about what the rule *is*. Removing `canManageEvent` from `requireEventManager` kills the test. Next's own server-actions guide says render-time gating is not a security boundary, and it is cited in both the module and the test.
+  **A reachability gap was found by mutation and fixed.** Deleting the Format item from the Setup rail left every test green, because they all arrived by URL — Task 84's unreachable-page failure one floor up. There is now a test reading the rail's items off `SETUP_KEYS`, which also means a seventh panel nobody adds to the rail fails.
+  **One mutation survives and is stated**: the editor's one-line call to `standingOn`. Reaching that state needs a click and this suite is a node environment with nothing to click — which is why the decision was pulled out as a pure function at all (Task 83's `manualPostStep` precedent). The decision itself is killed twice over; the call site does nothing but obey it. The visibility tests otherwise **exercise the real page**: dropping `initialTab`, `initialSetup` or `tabNotice` each fails tests, because the block awaits `AdminEventPage` and renders the `EventEditor` the page built.
 
 ### Task 81: Teams, filled three ways
 
@@ -1439,14 +1458,18 @@ Task 82 retires it rather than patching the number.
 
 ### Task 84: Nothing links to the draw page (found in Task 76)
 
-- **Serves:** R-211, R-213 / UC-39 1 — the use case's own first step
+- **Serves:** **R-211 / UC-39 1** — the use case's own first step. *R-213 was cited here and is a half over-claim: it is about the reveal playing out about a second per hero, which adding a link does not serve.*
 - **Files:** `src/app/events/[slug]/page.tsx`, its tests
 - **Do:** `/events/[slug]/draw` works, is browser-verified and is **unreachable**. The event page has no link to it, because `page.tsx` was outside Task 76's ownership. UC-39 1 is "Participant opens the event's draw page", and there is currently no way to.
   Show it to a **participant** of an event whose game has heroes — the same audience `loadDraw` admits, so the link and the page agree on who it is for rather than offering a route that answers `no_seat`. An event with no hero list should not advertise a draw.
   Say whether they have drawn, since the page itself distinguishes the two and a link that reads the same either way wastes the fact.
 - **Acceptance criteria:**
-  - [ ] A participant of a hero-game event sees the link on the event page
-  - [ ] A non-participant does not, and neither does an event whose game has no heroes
-  - [ ] The link says whether a hand has already been drawn
-  - [ ] A sweep asserts the route has at least one inbound link, so the next unreachable page fails rather than ships
+  - [x] A participant of a hero-game event sees the link on the event page
+  - [x] A non-participant does not, and neither does an event whose game has no heroes
+  - [x] The link says whether a hand has already been drawn
+  - [x] A sweep asserts the route has at least one inbound link, so the next unreachable page fails rather than ships
 - **Depends on:** Task 76.
+- **Left over:** nothing from the criteria, and three things worth keeping.
+  **The sweep vouched for itself**, which is recorded in full under Plan hygiene because it is the third instance of one family. Short version: the inbound-link sweep matched `href` literals across `src`, and the test's own helper spelled out `href="/events/${slug}/draw"`, so deleting the real link left it green. `__tests__` is now excluded as a link source *and* the attribute name is joined to the path at runtime, so the adjacency does not exist in the file to match.
+  **The link asks the same question the page does**, by calling `loadDraw`'s own audience decision rather than re-deriving "is a participant of a hero game" — so `no_seat`, `no_game`, `no_heroes` and `too_thin` each withhold the link, and the route cannot advertise itself into a refusal. The `too_thin` case is the one worth noting: a half-filled hero list hides the link rather than offering a draw that will be refused.
+  **The hand itself stays off the event page** — the link says *whether* one was drawn, not what it was, asserted directly. A spoiler on the way to the reveal would undo Task 76's whole shape.

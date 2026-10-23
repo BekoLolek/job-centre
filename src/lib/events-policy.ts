@@ -30,7 +30,10 @@ import type {
   EntryRule,
   EventConfig,
   EventStatus,
+  SettingValue,
 } from "@/db/schema";
+import { MAX_TEAMS, MIN_TEAMS } from "@/lib/draft-policy";
+import { type TeamPlanResult, planTeams } from "@/lib/random-teams";
 
 /* ------------------------------------------------------------------ */
 /* Status                                                             */
@@ -567,6 +570,311 @@ export function teamFormatFrom(config: EventConfig | null | undefined): TeamForm
 export function isNightFormat(raw: unknown): raw is NightFormat {
   return raw === "6v6" || raw === "3v3";
 }
+
+/* ------------------------------------------------------------------ */
+/* What kind of event this is (R-217, R-218 / UC-42 1-4)              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Which of the two figures the admin settled (R-218).
+ *
+ * `teams` is a count of sides; `perTeam` is how many play on one. **One mode at
+ * a time**, because the two are the same decision read from opposite ends and
+ * storing both is storing a disagreement waiting to happen: an admin who sets
+ * 3 teams, accepts six more players and comes back to find "6 per team" still
+ * sitting beside it has been told something that is no longer true. The other
+ * figure is {@link sizingConsequence}'s, computed on every read and never
+ * written down.
+ */
+export const SIZING_MODES = ["teams", "perTeam"] as const;
+
+export type SizingMode = (typeof SIZING_MODES)[number];
+
+/** The one figure, and which figure it is. */
+export type TeamSizing = {
+  mode: SizingMode;
+  /** A count of sides under `teams`; players on one side under `perTeam`. */
+  value: number;
+};
+
+/**
+ * The three decisions the Format panel holds — R-217 and R-218, per event.
+ *
+ * Per event and not a flag on the game, which is R-217's own note: a Fall Guys
+ * night is solo one week and teams the next, and a game that decided it for
+ * every event would make the second of those impossible to set up.
+ *
+ * `draft` is kept even while `teamEvent` is false rather than being folded into
+ * it. A solo event shows no Draft tab whatever `draft` says — that is
+ * `tabHiddenBecause`'s rule, one place — and keeping the admin's answer means
+ * turning teams back on restores the event they were describing instead of
+ * silently clearing the draft they had already asked for.
+ */
+export type EventShape = {
+  teamEvent: boolean;
+  draft: boolean;
+  sizing: TeamSizing;
+};
+
+/**
+ * The largest side this will store, and it is a typo guard rather than a rule
+ * about sport.
+ *
+ * The biggest format the site has a name for is 6v6 ({@link NIGHT_FORMATS}),
+ * and `MAX_TEAMS` caps the other mode at eight — so an unbounded `perTeam`
+ * would be the one box on the panel where `66` typed for `6` is stored and
+ * then quietly derives one team from eighteen accepted players. Thirty-two is
+ * past anything this site runs and short of any plausible slip.
+ */
+export const MAX_PER_TEAM = 32;
+
+/** An object off the stored config, or an empty one — never an array. */
+function record(value: SettingValue | undefined): Record<string, SettingValue> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, SettingValue>)
+    : {};
+}
+
+/**
+ * The shape, resolved — and **why it is one top-level `events.config` key**.
+ *
+ * ## No migration, for `teamFormat`'s reason
+ *
+ * `events.config` is a `json<EventConfig>` column whose type ends in
+ * `& { [key: string]: SettingValue | undefined }`, so a new key needs no
+ * column, no enum and no migration. `teamFormatFrom` above is the worked
+ * example and `drizzle/` is untouched by this.
+ *
+ * ## And a *top-level* key, deliberately not inside `config.format`
+ *
+ * This is the correction Task 78's `Left over` note paid for, and it applies
+ * here unchanged. `updateEvent` merges a config patch **one level deep**
+ * (`{ ...current.config, ...patch.config }`), and `saveScheduleSettingsAction`
+ * rewrites the whole `config.format` object on every save — so anything nested
+ * inside it is erased the first time somebody opens the Schedule tab.
+ * `scheduleSettingsFrom`'s *placement* is therefore the one thing not to copy;
+ * `teamFormat`'s is. `config.eventShape` is a sibling of `config.format`, and
+ * the only writer of it is `saveEventShapeAction`, which writes the whole
+ * object every time — so the one-level merge replaces it wholesale and there is
+ * no half-written shape to read.
+ *
+ * ## Absent reads as the event that exists today
+ *
+ * `teamEvent` and `draft` default to **true**, the way `waitlistEnabled` reads
+ * an absent switch as on: every event stored before this panel existed showed
+ * all nine tabs, and a default of false would take four of them away from every
+ * event on the site at once. Nothing is migrated because nothing needs to be.
+ *
+ * The sizing default is the night's own format — 6v6 means six to a side, 3v3
+ * three — rather than a number invented here, so the panel opens agreeing with
+ * what Task 78 already stored instead of contradicting it.
+ */
+export function eventShapeFrom(config: EventConfig | null | undefined): EventShape {
+  const shape = record(config?.eventShape);
+  const sizing = record(shape.sizing);
+
+  const mode: SizingMode = sizing.mode === "teams" ? "teams" : "perTeam";
+  const stored = sizing.value;
+  const value =
+    typeof stored === "number" && Number.isInteger(stored) && stored > 0
+      ? stored
+      : mode === "teams"
+        ? MIN_TEAMS
+        : teamFormatFrom(config).teamSize;
+
+  return {
+    teamEvent: shape.teamEvent !== false,
+    draft: shape.draft !== false,
+    sizing: { mode, value },
+  };
+}
+
+/** Whether a string off the wire names a sizing mode — the action's guard. */
+export function isSizingMode(raw: unknown): raw is SizingMode {
+  return raw === "teams" || raw === "perTeam";
+}
+
+/**
+ * Why this shape cannot be saved, or null when it can.
+ *
+ * Pure and shared, like every other refusal in this module, so the sentence the
+ * panel shows before a round trip is the sentence the save would have been
+ * refused with. A solo event is not sized at all, so nothing about the figure
+ * is held against it — an admin who turns teams off should not be stopped by a
+ * number that no longer describes anything.
+ */
+export function shapeProblem(shape: EventShape): string | null {
+  if (!shape.teamEvent) return null;
+
+  const { mode, value } = shape.sizing;
+  if (!Number.isInteger(value)) {
+    return mode === "teams"
+      ? "How many teams has to be a whole number."
+      : "How many players a team holds has to be a whole number.";
+  }
+  if (mode === "teams") {
+    if (value < MIN_TEAMS || value > MAX_TEAMS) {
+      return `An event has between ${MIN_TEAMS} and ${MAX_TEAMS} teams.`;
+    }
+    return null;
+  }
+  if (value < 1 || value > MAX_PER_TEAM) {
+    return `A team holds between 1 and ${MAX_PER_TEAM} players.`;
+  }
+  return null;
+}
+
+/**
+ * `people` dealt into `teams` sides, **the remainder one per team**
+ * (UC-42 4b) — eighteen into four is 5, 5, 4, 4 and never 6, 4, 4, 4.
+ *
+ * The same deal `planTeams` makes in `src/lib/random-teams.ts`, read from the
+ * other end: that one is given a side size and works out how many sides, this
+ * one is given the number of sides. They have to agree, so
+ * `shape-sizing.test.ts` holds them against each other over every legal count
+ * rather than trusting that two readings of one sentence stay the same.
+ */
+export function dealSizes(people: number, teams: number): number[] {
+  if (!Number.isInteger(teams) || teams < 1) return [];
+  const base = Math.floor(Math.max(0, people) / teams);
+  const spare = Math.max(0, people) % teams;
+  return Array.from({ length: teams }, (_, index) => (index < spare ? base + 1 : base));
+}
+
+/**
+ * The figure that follows from the one the admin set — **derived on every
+ * read, never stored** (R-218 / UC-42 4).
+ *
+ * This is the whole of why the two figures cannot drift: there is no second
+ * value to go stale. Accept three more players and the sentence changes with
+ * no save, because the sentence is arithmetic over the accepted count rather
+ * than something written down beside it.
+ *
+ * `assumed` is UC-42 4a. With nobody accepted yet there is no count to divide,
+ * and printing "0 teams" or a confident 3 from an assumption would both be
+ * saying something untrue — so the panel says what it is assuming instead.
+ */
+export type SizingConsequence = {
+  /** The figure the admin set, in words: "6 per team". */
+  stated: string;
+  /** What follows from it, in words — or the assumption (UC-42 4a). */
+  consequence: string;
+  /** How many sides, once the accepted count settles it. */
+  teams: number | null;
+  /** Each side's size, biggest first. Empty while it cannot be worked out. */
+  sizes: number[];
+  /** 1-based positions short of a full side (UC-42 4b). */
+  short: number[];
+  /** True when the consequence is an assumption rather than a count. */
+  assumed: boolean;
+  /** Why nothing can be derived — too few accepted, too many sides. */
+  problem: string | null;
+};
+
+export function sizingConsequence(
+  sizing: TeamSizing,
+  accepted: number,
+  planner: (people: number, teamSize: number) => TeamPlanResult = planTeams
+): SizingConsequence {
+  const people = Number.isInteger(accepted) && accepted > 0 ? accepted : 0;
+  const from = `from the ${people} accepted`;
+
+  if (sizing.mode === "perTeam") {
+    const stated = `${sizing.value} per team`;
+    if (people === 0) {
+      return {
+        stated,
+        consequence: `one team per ${sizing.value} accepted, once anybody is`,
+        teams: null,
+        sizes: [],
+        short: [],
+        assumed: true,
+        problem: null,
+      };
+    }
+    // Task 78's own planner, not a second copy of it: the number this panel
+    // prints is the number the random shuffle would make.
+    const plan = planner(people, sizing.value);
+    if (!plan.ok) {
+      return {
+        stated,
+        consequence: plan.error,
+        teams: null,
+        sizes: [],
+        short: [],
+        assumed: false,
+        problem: plan.error,
+      };
+    }
+    return {
+      stated,
+      consequence: `${plan.plan.teams} ${plan.plan.teams === 1 ? "team" : "teams"} ${from}`,
+      teams: plan.plan.teams,
+      sizes: plan.plan.sizes,
+      short: plan.plan.short,
+      assumed: false,
+      problem: null,
+    };
+  }
+
+  const stated = `${sizing.value} ${sizing.value === 1 ? "team" : "teams"}`;
+  if (people === 0) {
+    return {
+      stated,
+      consequence: `the accepted players split ${sizing.value} ways, once anybody is`,
+      teams: sizing.value,
+      sizes: [],
+      short: [],
+      assumed: true,
+      problem: null,
+    };
+  }
+
+  const sizes = dealSizes(people, sizing.value);
+  const biggest = sizes[0] ?? 0;
+  const even = sizes.every((size) => size === biggest);
+  return {
+    stated,
+    consequence: even
+      ? `${biggest} per team ${from}`
+      : `${sizes.join(", ")} ${from} — the remainder one per team`,
+    teams: sizing.value,
+    sizes,
+    // Short against the biggest side, because in this mode the side size is
+    // the derived figure: there is no stored target to be short of.
+    short: sizes.flatMap((size, index) => (size < biggest ? [index + 1] : [])),
+    assumed: false,
+    problem: null,
+  };
+}
+
+/**
+ * UC-42 2a — turning teams off on an event that already has them.
+ *
+ * Refused until the admin says to discard them, and the sentence names how
+ * many go, because the teams are the only record of who was on whose side and
+ * a switch that quietly took them would be the destructive act this site does
+ * not do.
+ */
+export function teamsInTheWayRefusal(count: number): string {
+  const one = count === 1;
+  return `This event already has ${count} ${one ? "team" : "teams"}. Turning teams off discards ${one ? "it" : "them"}, and the ${one ? "roster" : "rosters"} with ${one ? "it" : "them"} — confirm below and ${one ? "it goes" : "they go"}.`;
+}
+
+/**
+ * UC-42 3a — turning the draft off once lots have been awarded.
+ *
+ * Refused outright, with no confirmation offered: the awarded lots are where
+ * the teams' rosters and the prices on them came from, so a draft switched off
+ * underneath them leaves a roster nothing explains. Voiding the lots is the
+ * deliberate act that makes this possible, and it has its own screen.
+ *
+ * Worded so it shares no sentence with `removeTeamsIn`'s "Void those lots
+ * first." — Task 78's `Left over` note records a `toContain` assertion that
+ * stayed green because a *different* refusal carried the same phrase.
+ */
+export const DRAFT_AWARDED_REFUSAL =
+  "Lots have already been awarded in this event's draft, and the teams' rosters came from them. Void the awards on the Draft tab before turning the draft off.";
 
 /**
  * Whether this event is taking applications at `now`, and if not, why not.

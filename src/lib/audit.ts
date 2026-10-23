@@ -63,6 +63,17 @@ export const AUDIT_ACTIONS = {
   "event.entryRules": "Entry rules changed",
   "event.days": "Days changed",
   "event.questions": "Application form changed",
+  /*
+   * What kind of event this is — teams or not, draft or not, how the sides are
+   * sized (R-217, R-218 / UC-42).
+   *
+   * Its own action rather than a detail on `event.basics`, because it is the
+   * line somebody scans for when four tabs have gone from an editor they were
+   * using: "who turned the teams off, and did the teams go with them" is a
+   * question only this row answers. Deliberately not called "Format changed" —
+   * `format.stages` below already is, and it means the bracket.
+   */
+  "event.shape": "Event format changed",
   "application.decided": "Application decided",
   "application.availability": "Applicant's days corrected",
   "waiver.granted": "Entry rule waived",

@@ -28,9 +28,20 @@ import PublishTab from "./PublishTab";
 import QuestionsTab from "./QuestionsTab";
 import ResultsTab from "./ResultsTab";
 import ScheduleTab from "./ScheduleTab";
+import ShapeTab from "./ShapeTab";
 import TeamsTab from "./TeamsTab";
 import UnsavedChangesProvider, { useIsDirty, useNavigationLock } from "./UnsavedChanges";
-import type { SetupKey, TabKey } from "./tabs";
+import {
+  PEOPLE_KEYS,
+  SETUP_LABELS,
+  STEP_KEYS,
+  type SetupKey,
+  TAB_LABELS,
+  type TabKey,
+  standingOn,
+  visibleTabs,
+} from "./tabs";
+import { eventShapeFrom } from "@/lib/events-policy";
 // The pure half of the templates library, deliberately: `@/lib/admin-templates`
 // builds every Drizzle table at import time and a client bundle has no use for
 // any of it.
@@ -105,6 +116,15 @@ type EventEditorProps = {
   initialTab?: TabKey;
   /** Which Setup panel to open on — see {@link setupFrom}. */
   initialSetup?: SetupKey;
+  /**
+   * Why the editor did not open on the tab the URL asked for (UC-42 5a).
+   *
+   * The sentence is `landOn`'s, computed on the server because `?tab=` is read
+   * there — see `tabs.ts`. It is shown once, standing, and cleared the moment
+   * the admin picks a tab for themselves: it explains a redirect that has
+   * already happened, so it must not keep explaining it.
+   */
+  tabNotice?: string | null;
   applicants: ApplicantView[];
   games: GameOption[];
   linkableFields: LinkableField[];
@@ -151,6 +171,7 @@ function EditorBody({
   event,
   initialTab = "setup",
   initialSetup = "basics",
+  tabNotice = null,
   applicants,
   games,
   linkableFields,
@@ -169,13 +190,33 @@ function EditorBody({
   // a router push per click on a page that is already `force-dynamic`.
   const [tab, setTab] = useState<TabKey>(initialTab);
   const [setup, setSetup] = useState<SetupKey>(initialSetup);
+  const [redirected, setRedirected] = useState<string | null>(tabNotice);
   const guard = useNavigationLock();
 
   const queue = applicants.filter((row) => row.status === "waitlisted").length;
+  const accepted = applicants.filter((row) => row.status === "accepted").length;
   const undecided = applicants.filter(
     (row) => row.status === "waitlisted" && row.decidedAt === null
   ).length;
   const captains = draft.teams.filter((team) => team.captainUserId !== null).length;
+
+  /*
+   * R-219. Derived from the event's own stored config rather than taken as a
+   * prop, because there is then no prop for a page to forget to pass: the
+   * editor and the Format panel read one function over one key, and the server
+   * page reads the same one to decide where a `?tab=` lands.
+   */
+  const shape = eventShapeFrom(event.config);
+  const shown = visibleTabs(shape);
+
+  /*
+   * A tab can stop applying while the admin is standing on it — turn teams off
+   * from Setup and the Teams tab goes — so the body never trusts `tab` alone.
+   * The decision is `standingOn`'s, not this component's, because reaching that
+   * state needs a click and this suite has nothing to click: as two lines here
+   * it was a guard no test could kill. See that function's docblock.
+   */
+  const { here, notice } = standingOn(tab, shape, redirected);
 
   // Rows, not resolved slots: `formatFor` resolves a stage's matches from its
   // generated spec whether or not it has been generated, so counting those
@@ -186,7 +227,11 @@ function EditorBody({
   const playedMatches = allMatches.filter((match) => match.status === "done").length;
   const needsDecision = allMatches.filter((match) => match.needsDecision).length;
 
-  const go = (next: TabKey) => guard(() => setTab(next));
+  const go = (next: TabKey) =>
+    guard(() => {
+      setRedirected(null);
+      setTab(next);
+    });
 
   return (
     <div className="space-y-6">
@@ -244,45 +289,63 @@ function EditorBody({
 
       {/* --- The rail ----------------------------------------------- */}
       <div className="flex flex-wrap items-stretch gap-x-8 gap-y-1 overflow-x-auto overflow-y-hidden shadow-rail">
-        <StepRail current={tab} onGo={go} />
+        <StepRail current={here} onGo={go} />
 
         {/*
           The people screens. Same rail, same underline, but past a divider —
           they are not steps you complete, they are three lists you keep coming
           back to while you work through the steps, so nothing about them fills
           in as you go.
+
+          Drawn from `visibleTabs` rather than written out, so a solo event
+          loses Teams and Captains from here without this block knowing the rule
+          (R-219). Applicants is in every configuration — there is no event
+          whose applicants do not matter.
         */}
         <div className="flex items-stretch gap-6 sm:border-l sm:border-hair sm:pl-8">
-          <RailLink
-            label="Applicants"
-            count={applicants.length}
-            dot={undecided > 0}
-            current={tab === "applicants"}
-            onClick={() => go("applicants")}
-          />
-          <RailLink
-            label="Teams"
-            count={draft.teams.length}
-            current={tab === "teams"}
-            onClick={() => go("teams")}
-          />
-          <RailLink
-            label="Captains"
-            count={captains}
-            dot={draft.teams.length > 0 && captains < draft.teams.length}
-            current={tab === "captains"}
-            onClick={() => go("captains")}
-          />
+          {PEOPLE_KEYS.filter((key) => shown.includes(key)).map((key) => (
+            <RailLink
+              key={key}
+              label={TAB_LABELS[key]}
+              count={
+                key === "applicants"
+                  ? applicants.length
+                  : key === "teams"
+                    ? draft.teams.length
+                    : captains
+              }
+              dot={
+                key === "applicants"
+                  ? undecided > 0
+                  : key === "captains"
+                    ? draft.teams.length > 0 && captains < draft.teams.length
+                    : false
+              }
+              current={here === key}
+              onClick={() => go(key)}
+            />
+          ))}
         </div>
       </div>
+
+      {/*
+        UC-42 5a. The one thing hiding a tab must not do is strand somebody on
+        it: a bookmark or an `/admin` action line naming a tab this event no
+        longer has lands here, on a real screen, with the reason.
+      */}
+      {notice && (
+        <Alert tone="union" standing>
+          {notice}
+        </Alert>
+      )}
 
       {/*
         `resetKey` is in the key, so discarding rebuilds whichever panel is
         showing from its props. `tab` is in it too — a panel that stays mounted
         across a switch would carry one step's scroll and focus into the next.
       */}
-      <div key={`${tab}-${resetKey}`}>
-        {tab === "setup" && (
+      <div key={`${here}-${resetKey}`}>
+        {here === "setup" && (
           <Setup
             current={setup}
             onGo={(next) => guard(() => setSetup(next))}
@@ -303,13 +366,22 @@ function EditorBody({
             {setup === "championship" && (
               <ChampionshipTab eventId={event.id} data={championship} />
             )}
+            {setup === "shape" && (
+              <ShapeTab
+                eventId={event.id}
+                shape={shape}
+                accepted={accepted}
+                existingTeams={draft.teams.length}
+                draftStarted={draft.started}
+              />
+            )}
           </Setup>
         )}
 
-        {tab === "draft" && (
+        {here === "draft" && (
           <DraftTab eventId={event.id} applicants={applicants} data={draft} />
         )}
-        {tab === "format" && (
+        {here === "format" && (
           <FormatTab
             eventId={event.id}
             format={format.view}
@@ -317,7 +389,7 @@ function EditorBody({
             maxStages={maxStages}
           />
         )}
-        {tab === "schedule" && (
+        {here === "schedule" && (
           <ScheduleTab
             eventId={event.id}
             event={event}
@@ -326,10 +398,10 @@ function EditorBody({
             matchIds={format.matchIds}
           />
         )}
-        {tab === "results" && (
+        {here === "results" && (
           <ResultsTab format={format.view} matchIds={format.matchIds} />
         )}
-        {tab === "publish" && (
+        {here === "publish" && (
           <PublishTab
             event={event}
             applicants={applicants}
@@ -338,11 +410,11 @@ function EditorBody({
           />
         )}
 
-        {tab === "applicants" && <ApplicantsTab event={event} applicants={applicants} />}
-        {tab === "teams" && (
+        {here === "applicants" && <ApplicantsTab event={event} applicants={applicants} />}
+        {here === "teams" && (
           <TeamsTab eventId={event.id} applicants={applicants} data={draft} />
         )}
-        {tab === "captains" && (
+        {here === "captains" && (
           <CaptainsTab eventId={event.id} event={event} applicants={applicants} data={draft} />
         )}
       </div>
@@ -361,38 +433,46 @@ function EditorBody({
    *
    * Reached-but-not-current is a dimmer blue, so "where am I" and "how far have
    * I got" are two different readings of the same bar.
+   *
+   * ## The sequence is shorter on some events (R-219)
+   *
+   * `STEP_KEYS` filtered by `visibleTabs`, rather than six entries written out
+   * here. A solo event's sequence really is Setup → Schedule → Results →
+   * Publish, and the bar still fills in across it because the positions are
+   * read off the list that is drawn and not off a fixed six. **Nothing in this
+   * function knows which tabs are conditional** — that is `tabs.ts`'s to say,
+   * so a seventh step cannot arrive and be forgotten here.
+   *
+   * The labels come off `TAB_LABELS` for the same reason, which is also how the
+   * bracket step reads **"Bracket"**: the word "Format" now belongs to the
+   * Setup panel, and `tabs.ts` is where that trade is recorded.
    */
   function StepRail({ current, onGo }: { current: TabKey; onGo: (next: TabKey) => void }) {
-    const steps: Array<{ key: TabKey; label: string; count?: number; dot?: boolean }> = [
-      { key: "setup", label: "Setup" },
-      { key: "draft", label: "Draft", count: draft.pool.main.length },
-      { key: "format", label: "Format", count: format.view.stages.length },
-      { key: "schedule", label: "Schedule", count: format.view.days },
-      {
-        key: "results",
-        label: "Results",
-        count: playedMatches,
-        dot: needsDecision > 0,
-      },
-      { key: "publish", label: "Publish" },
-    ];
+    const counts: Partial<Record<TabKey, number>> = {
+      draft: draft.pool.main.length,
+      format: format.view.stages.length,
+      schedule: format.view.days,
+      results: playedMatches,
+    };
+
+    const steps = STEP_KEYS.filter((key) => shown.includes(key));
 
     // -1 when a people screen is showing, which leaves the bar empty — right,
     // because Applicants is not a point along this sequence.
-    const here = steps.findIndex((step) => step.key === current);
+    const at = steps.indexOf(current);
 
     return (
       <div className="flex items-stretch">
-        {steps.map((step, index) => (
+        {steps.map((key, index) => (
           <RailLink
-            key={step.key}
-            label={step.label}
-            count={step.count}
-            dot={step.dot}
-            current={current === step.key}
-            reached={here >= 0 && index < here}
+            key={key}
+            label={TAB_LABELS[key]}
+            count={counts[key]}
+            dot={key === "results" ? needsDecision > 0 : undefined}
+            current={current === key}
+            reached={at >= 0 && index < at}
             joined
-            onClick={() => onGo(step.key)}
+            onClick={() => onGo(key)}
           />
         ))}
       </div>
@@ -625,10 +705,14 @@ export function SaveAsTemplate({
 /**
  * Setup: the screens that are all answering "what is this event".
  *
- * They are one decision described five ways — what it is, when it runs, what
- * you have to tell us, who is allowed in, what it counts towards — so they are
- * one step with a secondary rail, rather than five steps that each look as
- * significant as running the draft.
+ * They are one decision described six ways — what it is, when it runs, what
+ * you have to tell us, who is allowed in, what it counts towards, and what
+ * shape it is — so they are one step with a secondary rail, rather than six
+ * steps that each look as significant as running the draft.
+ *
+ * Format is last of the six although it decides the most, and that is
+ * deliberate: it is the answer you give once and change rarely, and putting it
+ * first would make every admin walk past it to reach Basics.
  */
 function Setup({
   current,
@@ -654,11 +738,16 @@ function Setup({
           value={current}
           onChange={onGo}
           items={[
-            { value: "basics", label: "Basics" },
-            { value: "days", label: "Days", count: counts.days },
-            { value: "questions", label: "Questions", count: counts.questions },
-            { value: "rules", label: "Entry rules" },
-            { value: "championship", label: "Championship" },
+            { value: "basics", label: SETUP_LABELS.basics },
+            { value: "days", label: SETUP_LABELS.days, count: counts.days },
+            {
+              value: "questions",
+              label: SETUP_LABELS.questions,
+              count: counts.questions,
+            },
+            { value: "rules", label: SETUP_LABELS.rules },
+            { value: "championship", label: SETUP_LABELS.championship },
+            { value: "shape", label: SETUP_LABELS.shape },
           ]}
         />
       </div>

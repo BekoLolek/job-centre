@@ -19,7 +19,7 @@ import AppHeader from "@/components/AppHeader";
 import { Page } from "@/components/ui";
 import AdminNav from "@/components/admin/AdminNav";
 import EventEditor from "@/components/admin/events/EventEditor";
-import { setupFrom, tabFrom } from "@/components/admin/events/tabs";
+import { landOn } from "@/components/admin/events/tabs";
 import type {
   ChampionshipTabData,
   DraftTabData,
@@ -43,7 +43,7 @@ import {
   getApplicationsForEvent,
   getEventById,
 } from "@/lib/events";
-import { teamFormatFrom } from "@/lib/events-policy";
+import { eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
 import { MAX_STAGES, formatFor, matchIdsFor, scheduleSettingsFrom } from "@/lib/format";
 import { requireEventManager } from "@/lib/session-guards";
 
@@ -132,6 +132,13 @@ export default async function AdminEventPage({
     : null;
 
   const championship: ChampionshipTabData = { counting, seasons, result };
+
+  /*
+   * R-219 / UC-42 5, 5a. The shape is one key on `events.config`
+   * (`eventShapeFrom`), so this costs no read of its own — and it is what
+   * decides whether the tab the URL asked for is a tab this event has.
+   */
+  const landing = landOn(tab, eventShapeFrom(event.config));
 
   // What a question on this event may prefill from: its game's profile fields
   // plus the global ones. A field belonging to another game would prefill an
@@ -249,8 +256,17 @@ export default async function AdminEventPage({
            * down is how `NavMenu`, `PollList` and `SuggestionBox` all do it.
            */
           isAdmin={manager.isAdmin}
-          initialTab={tabFrom(tab)}
-          initialSetup={setupFrom(tab)}
+          /*
+           * UC-42 5a. `?tab=` is read here, on the server, which is why the
+           * decision about where it may land is `tabs.ts`'s and not the
+           * editor's — see that module's docblock for the request-time failure
+           * that rule exists to avoid. A link naming a tab this event does not
+           * have lands on Setup → Format, the screen that would bring it back,
+           * carrying the sentence that says why.
+           */
+          initialTab={landing.tab}
+          initialSetup={landing.setup}
+          tabNotice={landing.why}
           applicants={applicants}
           games={adminGames.games.map((game) => ({
             id: game.id,

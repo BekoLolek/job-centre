@@ -332,7 +332,18 @@ const CLASSIFIED: Record<string, Bucket[]> = {
     "announced",
     "standing",
   ],
-  "src/components/admin/events/EventEditor.tsx": ["announced"],
+  /*
+   * Two, and Task 80's is the first in source order (UC-42 5a).
+   *
+   * The editor's own notice is **standing**: it is `tabNotice`, computed by the
+   * server page from `?tab=` and therefore in the markup the moment the page
+   * arrives — it explains a redirect that happened *before* this render, so
+   * announcing it would interrupt an admin who followed a stale bookmark with
+   * something they can already see. The second is `SaveAsTemplate`'s `error`,
+   * which is handler state and starts null, so it exists only because somebody
+   * pressed Make template.
+   */
+  "src/components/admin/events/EventEditor.tsx": ["standing", "announced"],
   "src/components/admin/events/EventQuestionDialog.tsx": ["announced", "announced"],
   "src/components/admin/events/EventsManager.tsx": ["announced"],
   "src/components/admin/events/FormatTab.tsx": ["announced", "announced", "announced"],
@@ -367,6 +378,18 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   ],
   "src/components/admin/events/ResultsTab.tsx": ["announced", "announced", "announced"],
   "src/components/admin/events/ScheduleTab.tsx": ["announced", "standing", "standing"],
+  /*
+   * Two, both Task 79's (R-217, R-218 / UC-42).
+   *
+   * In source order: the save error, which is handler state and announced; and
+   * UC-42 2a's "this event already has N teams", which is **standing** because
+   * it is derived from props alone — the stored shape and the team count the
+   * server read — so it is present at first render for any event already set
+   * to solo with teams still on it. Announcing it would interrupt every admin
+   * who opened the panel on such an event, which is the rule Task 78's own
+   * props-derived alert had to follow for the same reason.
+   */
+  "src/components/admin/events/ShapeTab.tsx": ["announced", "standing"],
   /*
    * Twelve, five of them Task 78's (R-215, R-216 / UC-41).
    *
