@@ -14,6 +14,7 @@ import {
   capacityProblem,
   capacityState,
   changedSetupFields,
+  dayLabel,
   dayName,
   daySequenceProblem,
   confirmationDeadline,
@@ -828,6 +829,43 @@ describe("dayName", () => {
     expect(dayName({ startsAt: null, label: "   " }, 0)).toBe("Day 1");
     // Trimmed, not rejected, when there is something inside it.
     expect(dayName({ startsAt: null, label: "  Sunday  " }, 1)).toBe("Sunday");
+  });
+});
+
+/*
+ * The same rule asked as a question rather than answered: *is* there a name?
+ *
+ * The schedule tab's start-time fields are labelled by position ("Day 2 start")
+ * and show the manager's name as a hint beside them, so a day with no name must
+ * show no hint rather than saying "Day 2" twice — and the day-delete
+ * confirmation shows "No label" for the same reason. Both wrote `?? `, which
+ * renders a label of spaces as a blank: the original defect, two surfaces on.
+ */
+describe("dayLabel", () => {
+  it("gives the manager's label, trimmed", () => {
+    expect(dayLabel({ startsAt: null, label: "  Finals night  " })).toBe("Finals night");
+  });
+
+  it("gives null for no label, an empty one, or spaces", () => {
+    expect(dayLabel({ startsAt: null, label: null })).toBeNull();
+    expect(dayLabel({ startsAt: null, label: "" })).toBeNull();
+    expect(dayLabel({ startsAt: null, label: "   " })).toBeNull();
+    expect(dayLabel({ startsAt: null })).toBeNull();
+    expect(dayLabel(undefined)).toBeNull();
+  });
+
+  /*
+   * The two cannot disagree about what counts as a label, which is the point of
+   * one of them calling the other: a screen that asks "is there a name?" and
+   * then prints `dayName` must not get "no" and then "Finals night".
+   */
+  it("agrees with dayName about every one of those", () => {
+    for (const label of [null, undefined, "", "   ", "\t\n ", "Finals night", "  Sunday  "]) {
+      const day = { startsAt: null, label };
+      const named = dayLabel(day);
+
+      expect(dayName(day, 1)).toBe(named ?? "Day 2");
+    }
   });
 });
 

@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { localInput } from "@/components/events";
 import type { EventDaysImpact, EventDetail } from "@/lib/events";
+import { dayLabel } from "@/lib/events-policy";
 import { toInstant, zoneLabel } from "@/lib/time";
 import {
   type DayFields,
@@ -335,7 +336,14 @@ export default function DaysTab({
               {impact.removed.map((day) => (
                 <li key={day.id} className="flex items-baseline gap-2">
                   <span className="num text-12 text-muted">Day {day.dayIndex + 1}</span>
-                  <span>{day.label ?? "No label"}</span>
+                  {/*
+                    `dayLabel`, not `?? "No label"`: a day labelled with
+                    spaces would otherwise render as a blank in the one list
+                    where the manager is deciding what to delete, and a
+                    nameless row beside a day number reads as a rendering
+                    fault rather than as "this day has no name" (UC-08 E3).
+                  */}
+                  <span>{dayLabel(day) ?? "No label"}</span>
                 </li>
               ))}
             </ul>

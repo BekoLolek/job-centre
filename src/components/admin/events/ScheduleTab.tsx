@@ -17,6 +17,7 @@ import {
 import { localInput } from "@/components/events";
 import { BlockList, dayTotalsText, hhmm, modeLabel } from "@/components/format";
 import type { EventDetail } from "@/lib/events";
+import { dayLabel } from "@/lib/events-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
 import {
   type FormatTiming,
@@ -381,6 +382,19 @@ export default function ScheduleTab({
           </label>
         </div>
 
+        {/*
+          The hint under each field is the manager's own name for that day, and
+          nothing when there is no name — the field is already labelled by
+          position, so "Day 2" as a hint under "Day 2 start" says the same thing
+          twice. `dayLabel` rather than `?? undefined`, which renders a label of
+          spaces as an *empty* hint: a stray blank line that reads as a
+          rendering fault rather than as "this day is unnamed" (UC-08 E3).
+
+          Looked up by position, like `initialStarts` below, because this screen
+          is about the Nth day of the running order — the hint has to name the
+          same day as the time beside it, and that time came from
+          `event.days[index]`.
+        */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           {Array.from({ length: days }, (_, index) => (
             <Field
@@ -388,7 +402,7 @@ export default function ScheduleTab({
               label={`Day ${index + 1} start`}
               type="datetime-local"
               value={starts[index] ?? ""}
-              hint={event.days[index]?.label ?? undefined}
+              hint={dayLabel(event.days[index]) ?? undefined}
               onChange={(input) => {
                 setStarts((current) => {
                   const next = [...current];

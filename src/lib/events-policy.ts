@@ -142,8 +142,25 @@ export type EventDates = {
  * about to have, and there is no stored one to read yet.
  */
 export function dayName(day: DayView, index: number): string {
-  const label = typeof day.label === "string" ? day.label.trim() : "";
-  return label === "" ? `Day ${index + 1}` : label;
+  return dayLabel(day) ?? `Day ${index + 1}`;
+}
+
+/**
+ * The name the manager gave this day, or `null` when they did not.
+ *
+ * Split out of `dayName` because two screens need the *question* rather than
+ * the answer: the schedule tab's start-time fields are labelled by position
+ * ("Day 2 start") and show the manager's name as a hint beside them, so a day
+ * with no name of its own must show no hint rather than the words "Day 2"
+ * twice. Written with `??` that reads as a blank — the original defect, one
+ * surface further on.
+ *
+ * One trim, in one place, so "is there a name?" and "what is this day called?"
+ * cannot disagree about a label of spaces.
+ */
+export function dayLabel(day: DayView | undefined): string | null {
+  const label = typeof day?.label === "string" ? day.label.trim() : "";
+  return label === "" ? null : label;
 }
 
 /**
