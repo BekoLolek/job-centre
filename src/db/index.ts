@@ -101,6 +101,32 @@ export function createDatabase(options: { url?: string; dataDir?: string } = {})
   const url = options.url ?? process.env.DATABASE_URL;
 
   if (driverFor(url) === "neon") {
+    /*
+     * No `max`, no `idleTimeout`, no `connectionTimeout` — and that is a
+     * decision rather than an omission. See `docs/decisions/005-connection-pooling.md`.
+     *
+     * Production's `DATABASE_URL` names Neon's **pooled** endpoint (`-pooler`
+     * in the host), so PgBouncer absorbs the fan-out of a live draft and the
+     * real connection ceiling is set on Neon's side. A second ceiling here
+     * would be a number nobody can recompute when the plan changes, and the
+     * failure it causes — a request waiting on a pool slot while PgBouncer has
+     * capacity — does not show up in logs.
+     *
+     * `max: 1` is specifically wrong: this app uses interactive transactions,
+     * and a pool smaller than one instance's concurrent transactions deadlocks
+     * rather than queueing. No `connectionTimeout` either, because Neon's
+     * compute autosuspends and a short timeout turns the cold start into a
+     * failed request for whoever arrives first.
+     *
+     * **What this rests on:** transaction pooling gives each transaction a
+     * different backend, so nothing here may be session-scoped. Locks are
+     * `select … for update` (held by the transaction), and there is no
+     * `LISTEN`, no session advisory lock, no `WITH HOLD` cursor and no
+     * prepared statement anywhere. `src/db/__tests__/pooling.test.ts` sweeps
+     * for all of it. Moving to the direct endpoint removes the premise, and
+     * nothing in code can see that happen — the connection string never
+     * reaches a test.
+     */
     return drizzleNeon(new Pool({ connectionString: url as string }), { schema });
   }
 
