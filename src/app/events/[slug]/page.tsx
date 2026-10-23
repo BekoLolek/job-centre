@@ -189,7 +189,7 @@ export default async function EventPage({
         </nav>
 
         {event.status === "draft" && (
-          <Alert tone="union">
+          <Alert tone="union" standing>
             <span className="block font-medium">This event is still a draft</span>
             <span className="mt-1 block opacity-90">
               {eventStatusMeaning("draft")} Publish it from{" "}
@@ -457,7 +457,7 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
                   className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-hair/60 pb-2 last:border-0"
                 >
                   <span className="text-14">{question.label}</span>
-                  <span className="eyebrow">{fieldTypeInfo(question.type).label}</span>
+                  <Eyebrow as="span" className="text-inherit">{fieldTypeInfo(question.type).label}</Eyebrow>
                   {question.required && <Badge tone="union">Required</Badge>}
                   {question.profileFieldId && (
                     <span className="ml-auto text-12 text-body">
@@ -538,7 +538,7 @@ function Overview({ event, accepted }: { event: EventDetail; accepted: number })
 function Line({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-2">
-      <dt className="eyebrow w-28 shrink-0">{label}</dt>
+      <Eyebrow as="dt" className="w-28 shrink-0 text-inherit">{label}</Eyebrow>
       <dd className="min-w-0 flex-1 text-chalk/85">{children}</dd>
     </div>
   );

@@ -388,7 +388,7 @@ export default function DraftTab({
       {error && <Alert>{error}</Alert>}
 
       {rulesLocked && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           <span className="block font-medium">This draft has started, so its rules are fixed</span>
           <span className="mt-1 block opacity-90">
             Every setting below locked when the first player went up on the wheel. Captains
@@ -621,7 +621,7 @@ export default function DraftTab({
         </div>
 
         {slotsToFill > poolTotal && teams.length > 0 && (
-          <Alert tone="union">
+          <Alert tone="union" standing>
             There are {plural(slotsToFill, "slot")} to fill and only{" "}
             {plural(poolTotal, "player")} in the pool. The draft will end with teams short —
             accept more applicants, or lower the roster target.
@@ -699,7 +699,7 @@ export default function DraftTab({
           <Eyebrow>Not in the pool</Eyebrow>
 
           {data.unpooled.length > 0 && (
-            <Alert tone="union">
+            <Alert tone="union" standing>
               <span className="block font-medium">
                 {plural(data.unpooled.length, "accepted applicant")} in neither a roster nor
                 the pool

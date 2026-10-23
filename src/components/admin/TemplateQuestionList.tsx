@@ -111,12 +111,12 @@ export default function TemplateQuestionList({
                 <span className="num w-6 shrink-0 text-12 text-muted">{index + 1}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-14">{question.label}</span>
-                  <span className="eyebrow mt-0.5 block">
+                  <Eyebrow as="span" className="mt-0.5 block text-inherit">
                     {fieldTypeInfo(question.type).label}
                     {question.options && question.options.length > 0
                       ? ` · ${plural(question.options.length, "option")}`
                       : ""}
-                  </span>
+                  </Eyebrow>
                 </span>
                 {question.required && <Badge tone="union">Required</Badge>}
                 {question.profileFieldKey && (

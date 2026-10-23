@@ -184,7 +184,7 @@ export default async function MyEventsPage({
 
         {/* --- Just withdrew: what it cost, if anything ---------------- */}
         {gone && (
-          <Alert tone="success">
+          <Alert tone="success" standing>
             <span className="block font-medium">
               You have withdrawn from {gone.title}
             </span>

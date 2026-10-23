@@ -159,7 +159,7 @@ export default async function ProfilePage() {
         ) : (
           <div>
             {profile.untouched && (
-              <Alert tone="union" className="mb-2">
+              <Alert tone="union" standing className="mb-2">
                 <span className="block font-medium">You haven&apos;t answered anything yet</span>
                 <span className="mt-1 block opacity-90">
                   Tap your way through the sections below — every answer saves on its own,

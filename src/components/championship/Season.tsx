@@ -57,7 +57,7 @@ export default function Season({
   return (
     <>
       {season.status === "hidden" && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           <span className="block font-medium">This season is hidden</span>
           <span className="mt-1 block opacity-90">
             Nobody but an admin can reach this page, and it is not in the top bar. Publish it

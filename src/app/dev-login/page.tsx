@@ -68,7 +68,7 @@ export default async function DevLoginPage({
           Development sign-in
         </h1>
 
-        <Alert tone="flare">
+        <Alert tone="flare" standing>
           <span className="block font-medium">This is not a real sign-in</span>
           <span className="mt-1 block opacity-90">
             There is no Discord application configured yet, so this mints a session for a
@@ -129,7 +129,7 @@ export default async function DevLoginPage({
           <form action={devSignInAction} className="flex flex-wrap items-center gap-3">
             <input type="hidden" name="to" value={to} />
             <Button variant="union">Sign in as the development user</Button>
-            <span className="eyebrow">Lands on {to}</span>
+            <Eyebrow as="span" className="text-inherit">Lands on {to}</Eyebrow>
           </form>
         )}
       </div>
@@ -140,7 +140,7 @@ export default async function DevLoginPage({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-baseline gap-2">
-      <dt className="eyebrow w-24 shrink-0">{label}</dt>
+      <Eyebrow as="dt" className="w-24 shrink-0 text-inherit">{label}</Eyebrow>
       <dd className="min-w-0 flex-1">{children}</dd>
     </div>
   );

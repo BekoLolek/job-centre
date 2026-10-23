@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import tailwindcss from "tailwindcss";
 import { beforeAll, describe, expect, it } from "vitest";
 import tailwindConfig from "../../../../tailwind.config";
-import Eyebrow, { type EyebrowProps } from "../Eyebrow";
+import Eyebrow, { NAMES_A_COLOUR, type EyebrowProps } from "../Eyebrow";
 
 /**
  * A colour passed to `<Eyebrow>` has to win. This is the file that says so.
@@ -63,16 +63,6 @@ const DEFAULT_COLOUR = "text-dim";
 /** `!important`, spelled so the needle is not a literal in the file that looks for it. */
 const IMPORTANT = new RegExp(`${"!"}important`);
 
-/**
- * The overlay tokens are not text colours and are deliberately outside this file.
- *
- * They are plain `var()` rather than channel tokens, so one of them used as a
- * text colour is a 4%-opacity glyph, and `design-tokens.test.ts` bans that
- * utility outright. A class the suite refuses is not one `Eyebrow` has to
- * accommodate, and accommodating it would only add an alternative to the
- * component's regex that nothing could ever exercise.
- */
-const NOT_TEXT = /^overlay-/;
 
 /* --------------------------------------------------------------------- */
 /* Compiling the real stylesheet                                         */
@@ -237,6 +227,45 @@ function attributesAt(source: string, from: number): string | null {
 }
 
 /**
+ * The lines of one file that write `.eyebrow` into a class list by hand.
+ *
+ * Every double-quoted literal, split on the quote and taking the odd pieces,
+ * which is the same two-line parser the `!` scan uses and for the same reason:
+ * a regex over the raw line cannot tell a class list from the code between two
+ * strings. Matching the *literal* rather than `className=` is what catches a
+ * `cx("eyebrow", …)` — the exact form of the one call site Task 32's own grep
+ * missed, and of two of the five the kit still has.
+ *
+ * Comment lines are dropped. `PageHeader`'s docblock says, in prose, that the
+ * eyebrow "goes through `Eyebrow`, not `className="eyebrow"`" — a sentence that
+ * is true, is worth keeping, and is not a call site. Dropping whole comment
+ * lines is the same answer `dead-names.test.ts` reached.
+ */
+/**
+ * The files that render markup — everything but the tests beside them.
+ *
+ * `page-header.test.ts` asserts the exact string `class="eyebrow text-dim mb-2"`
+ * and this file asserts several more. Those are measurements *of* the class, and
+ * reading them as call sites of it would make the guard below impossible to
+ * satisfy without weakening the assertions that make it worth having.
+ */
+function markup(ext: RegExp): string[] {
+  return sourceFiles(ext).filter((file) => !relative(file).includes("/__tests__/"));
+}
+
+function writesTheClass(file: string): string[] {
+  const out: string[] = [];
+  for (const [i, line] of fs.readFileSync(file, "utf8").split("\n").entries()) {
+    if (/^\s*(\*|\/\/|\/\*)/.test(line)) continue;
+    const pieces = line.split('"');
+    for (let at = 1; at < pieces.length; at += 2) {
+      if (pieces[at].split(/\s+/).includes(EYEBROW)) out.push(`${i + 1}: ${line.trim()}`);
+    }
+  }
+  return out;
+}
+
+/**
  * Every `className` an `<Eyebrow>` is given that is **not** a literal, and every
  * class list it can actually produce.
  *
@@ -353,10 +382,10 @@ function callSites(): CallSite[] {
 }
 
 /**
- * The eleven, and what they are now decided to render.
+ * Every class list on the site that names a chalk tone, and why it does.
  *
  * **The decision is the task, not a side effect of it.** Fixing the component
- * changes eleven rendered colours the moment it lands, so the question "did
+ * changed eleven rendered colours the moment it landed, so the question "did
  * those authors want chalk, or did they want the dim they have had?" is answered
  * here, deliberately, once: **chalk — they wrote it.** Every one is a label
  * naming a control the reader is about to use, in an admin form or across the
@@ -378,23 +407,39 @@ const DECIDED: Record<string, string> = {
   "mb-2 text-chalk/70":
     "a field label in an admin form (BasicsTab ×4, EventQuestionDialog ×2, QuestionDialog ×2) — " +
     "chalk/70 is the form-label tone the author wrote; dim is the passive-meta tone",
-  "text-chalk/70": "the same label, in a dialog that spaces its rows itself (EventQuestionDialog)",
+  "text-chalk/70":
+    "the same label where the row spaces itself — EventQuestionDialog, and the three sites " +
+    "converted from a bare `.eyebrow` that had been rendering chalk/70 all along",
   "mb-1 text-chalk/70": "the same label, one step tighter (EntryRulesTab)",
+  "min-w-[9rem] text-chalk/70": "the same label as a `dt`, in the entry-rules list on /apply",
+  "min-w-[9rem] flex-1 text-chalk/70": "the same label as a `dt`, in the applicant detail panel",
+  "truncate text-chalk/70": "the captain's name on a draft team card",
   "hidden text-chalk/80 lg:inline":
     "the viewer's role in the draft-room bar, written to sit above the bare eyebrow beside it",
 };
 
 /**
- * The eleven by file and class list, which is how the sweep names them.
+ * Every call site whose colour the old hard-coded default would have eaten,
+ * by file and class list.
+ *
+ * **Seventeen, and the split matters.** Eleven were already `<Eyebrow>` and were
+ * really rendering dim against their own source — the defect Task 69 was opened
+ * for. The other six were hand-written `.eyebrow` spans, so nothing was
+ * overriding them and they have always rendered the chalk they ask for; they
+ * are here because they are now `<Eyebrow>` too, and before the fix the
+ * conversion would have darkened them. That is exactly why Task 32 could not do
+ * it: converting them was blocked on this.
  *
  * No line numbers: a line number is the one part of a call site's identity that
  * an unrelated edit three functions up can change, and a guard that has to be
  * re-numbered is a guard somebody will eventually re-number without looking.
  */
-const ELEVEN = [
+const WOULD_HAVE_BEEN_EATEN = [
+  "src/app/events/[slug]/apply/page.tsx min-w-[9rem] text-chalk/70",
   "src/app/events/[slug]/draft/DraftRoom.tsx hidden text-chalk/80 lg:inline",
   "src/components/admin/QuestionDialog.tsx mb-2 text-chalk/70",
   "src/components/admin/QuestionDialog.tsx mb-2 text-chalk/70",
+  "src/components/admin/events/ApplicantsTab.tsx min-w-[9rem] flex-1 text-chalk/70",
   "src/components/admin/events/BasicsTab.tsx mb-2 text-chalk/70",
   "src/components/admin/events/BasicsTab.tsx mb-2 text-chalk/70",
   "src/components/admin/events/BasicsTab.tsx mb-2 text-chalk/70",
@@ -403,7 +448,32 @@ const ELEVEN = [
   "src/components/admin/events/EventQuestionDialog.tsx mb-2 text-chalk/70",
   "src/components/admin/events/EventQuestionDialog.tsx mb-2 text-chalk/70",
   "src/components/admin/events/EventQuestionDialog.tsx text-chalk/70",
+  "src/components/apply/ApplyForm.tsx text-chalk/70",
+  "src/components/apply/ApplyForm.tsx text-chalk/70",
+  "src/components/draft/TeamCard.tsx truncate text-chalk/70",
+  "src/components/profile/ProfileSection.tsx text-chalk/70",
 ];
+
+/**
+ * The only places in `src/**` still allowed to write `.eyebrow` by hand.
+ *
+ * Task 31's open criterion, closed: the class is a kit implementation detail,
+ * and outside the kit there is now one way to wear it. These five are inside
+ * `components/ui`, where composing the class *is* the kit doing its job — the
+ * same relationship `Eyebrow` itself has with it. Listed rather than exempted
+ * by directory so that a sixth is a decision somebody takes on purpose.
+ */
+const MAY_WRITE_THE_CLASS: Record<string, string> = {
+  "src/components/ui/Eyebrow.tsx": "the component. It is the class.",
+  "src/components/ui/FieldShell.tsx":
+    "the label and hint around a field, which carry their own tones (chalk/70 and dim) " +
+    "and are part of the field's own shell rather than call sites of it",
+  "src/components/ui/StatusPill.tsx": "a pill is eyebrow type inside a rounded fill, not a label",
+  "src/components/ui/Stepper.tsx": "the unit suffix sitting inside the control",
+  "src/components/ui/Table.tsx":
+    "a `th`, which `as` does not take — a table header is a column label, and giving " +
+    "`Eyebrow` a `th` would put it in the middle of a `tr` where only a cell is valid",
+};
 
 /* --------------------------------------------------------------------- */
 
@@ -412,9 +482,7 @@ let AFTER_CSS: string;
 let PALETTE: ClassRule[];
 
 /** Every colour the theme defines, by the name its `text-*` utility carries. */
-const COLOURS = Object.keys(
-  (tailwindConfig.theme?.extend?.colors ?? {}) as Record<string, unknown>
-).filter((name) => !NOT_TEXT.test(name));
+const COLOURS = Object.keys((tailwindConfig.theme?.extend?.colors ?? {}) as Record<string, unknown>);
 
 beforeAll(async () => {
   const source = fs.readFileSync(GLOBALS, "utf8");
@@ -502,6 +570,45 @@ describe("the eyebrow colour cascade", () => {
     }
   });
 
+  it("agrees with the stylesheet about every text-* an eyebrow actually wears", () => {
+    /*
+     * The hole the theme sweep above cannot see, and it is a real one: `colors`
+     * sits under `extend` in `tailwind.config.ts`, so **Tailwind's own palette is
+     * still live here** — the whole of it compiles, and not one of those names is
+     * in the component's list. The theme sweep walks the names this site defines;
+     * this one walks every `text-*` actually written on an eyebrow, from the
+     * class lists the call-site sweep collects, and holds the component's sniff
+     * to the stylesheet's own answer: a class whose emitted rule declares `color`
+     * must read as a colour, and one whose rule does not must not.
+     *
+     * So the day somebody writes a colour from outside the palette on an eyebrow,
+     * this fails and names it, rather than that eyebrow quietly rendering dim —
+     * which is the entire shape of the defect this file exists for. It is scoped
+     * to eyebrows on purpose: what the rest of the site paints with is
+     * `design-tokens.test.ts`'s question, not this component's.
+     */
+    const declared = new Map(AFTER.map((rule) => [rule.cls, rule.colour]));
+    const wrong: string[] = [];
+    let colours = 0;
+
+    for (const site of callSites()) {
+      for (const list of site.lists) {
+        for (const token of list.split(/\s+/).filter(Boolean)) {
+          if (!token.startsWith("text-") || !declared.has(token)) continue;
+          const isColour = declared.get(token) !== null;
+          if (isColour) colours += 1;
+          if (NAMES_A_COLOUR.test(token) !== isColour) {
+            wrong.push(`${site.where}: ${token} declares ${declared.get(token) ?? "no colour"}`);
+          }
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+
+    // A floor, so a sweep that found no `text-*` at all could not pass this.
+    expect(colours).toBeGreaterThan(40);
+  });
+
   it("keeps its default where a call site writes a text-* that is not a colour", () => {
     /*
      * The other half, and the half an over-eager sniff breaks. `text-12` is a
@@ -520,6 +627,61 @@ describe("the eyebrow colour cascade", () => {
     const sizes = Object.keys((tailwindConfig.theme?.fontSize ?? {}) as Record<string, unknown>);
     expect(sizes.length).toBeGreaterThan(10);
     expect(sizes.filter((size) => COLOURS.includes(size))).toEqual([]);
+  });
+
+  it("takes text-inherit, for a label that follows whatever it sits in", () => {
+    /*
+     * The other half of Task 69's conversion, and the design rule said out loud.
+     * Thirty-three sites were hand-written `.eyebrow` spans with no colour on
+     * them: a class that declares none, so they inherited. Converting them to a
+     * component that supplies `text-dim` would have *darkened* all thirty-three,
+     * which is why Task 32 left them — so they carry `text-inherit` instead,
+     * which is the same computed colour as declaring none and says the thing
+     * the absence of a class was only implying.
+     *
+     * `inherit`, `current` and `transparent` are not palette tokens, so the
+     * theme sweep above cannot cover them and they are asserted here. Each has
+     * to suppress the default: `text-dim` beside a `text-inherit` would be
+     * decided by the alphabet, and it happens to favour `inherit` — a fix that
+     * works by luck of spelling is this task's own defect wearing a hat.
+     */
+    for (const keyword of ["inherit", "current", "transparent"]) {
+      const utility = `text-${keyword}`;
+      expect(renders(utility), `<Eyebrow className="${utility}">`).not.toContain(DEFAULT_COLOUR);
+      expect(resolve(PALETTE, renders(utility))).toBe(resolve(PALETTE, [utility]));
+    }
+
+    // And `color: inherit` is what a bare `.eyebrow` already resolved to: the
+    // class declares nothing, so the element takes its parent's colour either
+    // way. That equivalence is the whole claim of the conversion.
+    expect(resolve(AFTER, ["text-inherit"])).toBe("inherit");
+    expect(resolve(AFTER, [EYEBROW])).toBeNull();
+  });
+
+  it("renders a dt and a button, which the bare class was being used for", () => {
+    /*
+     * Task 69's third criterion. Both tags are on the list because the site was
+     * already writing `.eyebrow` on them by hand and `as` would not take them:
+     * four definition-list labels, and the two `Alert` dismiss controls.
+     *
+     * The `type` is the part worth a test rather than a comment. A `<button>`
+     * with no `type` defaults to `submit`, so an eyebrow dismiss control
+     * standing inside a form would submit it — the two call sites wrote
+     * `type="button"` themselves, and a third would eventually not. The
+     * component writes it, and writes it nowhere else.
+     */
+    const button = renderToStaticMarkup(
+      createElement(Eyebrow, { as: "button", className: "text-inherit" }, "Dismiss")
+    );
+    expect(button).toBe(
+      '<button type="button" class="eyebrow text-inherit">Dismiss</button>'
+    );
+
+    const dt = renderToStaticMarkup(createElement(Eyebrow, { as: "dt" }, "Capacity"));
+    expect(dt).toBe('<dt class="eyebrow text-dim">Capacity</dt>');
+
+    // Nothing else gets a `type`, which would be an invalid attribute on a div.
+    expect(renderToStaticMarkup(createElement(Eyebrow, null, "x"))).not.toContain("type=");
   });
 
   it("renders the same class list it always did where no colour is passed", () => {
@@ -547,10 +709,11 @@ describe("every eyebrow on the site", () => {
   it("finds the call sites, so an empty sweep cannot pass", () => {
     const sites = callSites();
 
-    // A floor rather than an equality: adding an eyebrow is not a failure. 258
-    // is what the site has today, 132 of them with a `className`.
-    expect(sites.length).toBeGreaterThanOrEqual(250);
-    expect(sites.filter((site) => site.written !== "").length).toBeGreaterThanOrEqual(130);
+    // A floor rather than an equality: adding an eyebrow is not a failure. 297
+    // is what the site has today — 258 before Task 69 converted the 39 that had
+    // been writing the class by hand — and 171 of them carry a `className`.
+    expect(sites.length).toBeGreaterThanOrEqual(290);
+    expect(sites.filter((site) => site.written !== "").length).toBeGreaterThanOrEqual(170);
 
     /*
      * And the sweep sees every opening tag there is. `attributesAt` walks the
@@ -593,13 +756,56 @@ describe("every eyebrow on the site", () => {
     expect(odd).toEqual([]);
   });
 
-  it("changes the rendered colour of the eleven that asked for one, and nothing else", () => {
+  it("never overrides a colour the call site names", () => {
+    /*
+     * The durable form of the whole task, and it needs no history: for every
+     * call site, what the component renders resolves to the same colour as the
+     * bare class plus that call site's own classes would. The component adds a
+     * colour where none is named and gets out of the way where one is — which is
+     * what the docblock promises, said as a measurement over all 297 of them.
+     *
+     * The two sides differ at exactly the sites that name no colour, and there
+     * the bare class resolves to `null` (inherited) while the component supplies
+     * dim. That is the default, not an override, so those are the only ones
+     * excluded — and the count of them is asserted so this cannot pass by
+     * excluding everything.
+     */
+    const named: CallSite[] = [];
+    const quiet: CallSite[] = [];
+
+    for (const site of callSites()) {
+      for (const list of site.lists) {
+        const classes = list.split(/\s+/).filter(Boolean);
+        const bare = resolve(AFTER, [EYEBROW, ...classes]);
+        if (bare === null) {
+          quiet.push(site);
+          expect(resolve(AFTER, renders(list)), `${site.where} names no colour`).toBe(
+            resolve(AFTER, [DEFAULT_COLOUR])
+          );
+          continue;
+        }
+        named.push(site);
+        expect(resolve(AFTER, renders(list)), `${site.where} ${list}`).toBe(bare);
+      }
+    }
+
+    expect(named.length).toBeGreaterThanOrEqual(50);
+    expect(quiet.length).toBeGreaterThanOrEqual(120);
+  });
+
+  it("changes the rendered colour of the seventeen that asked for one, and nothing else", () => {
     /*
      * Task 69's second and fourth criteria in one pass, over every call site and
      * every branch of every computed className rather than over the eleven a grep
      * finds. `before` is the old component's class list, `after` the real one's;
      * the comparison is the colour each resolves to out of the compiled sheet, so
      * a site writing a tone that already won reads as unchanged — which it is.
+     *
+     * Seventeen now, not eleven, and the extra six are a conversion rather than a
+     * defect: they were hand-written `.eyebrow` spans rendering the chalk they
+     * asked for, and this comparison asks what the *old component* would have
+     * done with them, which is eat it. That is the answer to why Task 32 could
+     * not convert them. `WOULD_HAVE_BEEN_EATEN` keeps the two groups apart.
      */
     const changed: { where: string; written: string; from: string | null; to: string | null }[] = [];
     const same: CallSite[] = [];
@@ -616,9 +822,8 @@ describe("every eyebrow on the site", () => {
       if (!moved) same.push(site);
     }
 
-    // The count first, because it is the claim. Eleven is not a number this loop
-    // was written towards: it is what the grep in the task found, independently.
-    expect(changed.map((site) => site.where).sort()).toEqual(ELEVEN);
+    // The count first, because it is the claim.
+    expect(changed.map((site) => site.where).sort()).toEqual(WOULD_HAVE_BEEN_EATEN);
 
     // Each one moves off dim and onto the tone its own class list names, and each
     // class list is a decision somebody took rather than a diff somebody accepted.
@@ -633,7 +838,46 @@ describe("every eyebrow on the site", () => {
 
     // And the rest are untouched — the majority of the claim, and the half a grep
     // for `text-chalk` could not have made.
-    expect(same.length).toBeGreaterThanOrEqual(240);
+    expect(same.length).toBeGreaterThanOrEqual(270);
+  });
+
+  it("leaves nobody outside the kit writing the class by hand", () => {
+    /*
+     * Task 31's criterion, carried through Task 32 and closed here: outside
+     * `components/ui` there is one way to wear `.eyebrow`, and it is this
+     * component. Thirty-nine call sites were writing the class directly, and
+     * every one of them was a colour decision rather than a rename — which is
+     * why this could not be a sweep until the component could carry a colour.
+     *
+     * Matched on the class list rather than on `className=`, so a `cx("eyebrow",
+     * …)` cannot slip past: that is the exact form of the one site Task 32's own
+     * grep missed. `.ts` files are read too, because `board.ts` and `labels.ts`
+     * author class strings.
+     */
+    const written: string[] = [];
+    for (const file of markup(/\.tsx?$/)) {
+      const rel = relative(file);
+      if (rel.startsWith("src/components/ui/")) continue;
+      written.push(...writesTheClass(file).map((line) => `${rel}:${line}`));
+    }
+    expect(written).toEqual([]);
+
+    /*
+     * And inside the kit it is written in exactly five files, each with a reason
+     * — read off the directory rather than listed, so a sixth is a decision
+     * somebody takes on purpose instead of a line nobody noticed. Composing the
+     * class is what a kit component is allowed to do; `Eyebrow` is one of the
+     * five itself.
+     */
+    const inKit = markup(/\.tsx?$/)
+      .filter((file) => relative(file).startsWith("src/components/ui/"))
+      .filter((file) => writesTheClass(file).length > 0)
+      .map(relative);
+
+    expect(inKit.sort()).toEqual(Object.keys(MAY_WRITE_THE_CLASS).sort());
+    for (const [rel, why] of Object.entries(MAY_WRITE_THE_CLASS)) {
+      expect(why.length, `${rel} has no reason`).toBeGreaterThan(20);
+    }
   });
 });
 

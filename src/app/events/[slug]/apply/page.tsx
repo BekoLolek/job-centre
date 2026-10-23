@@ -212,7 +212,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
             <dl className="mt-3 space-y-2 border-t border-hair pt-3">
               {rules.map((rule) => (
                 <div key={rule.label} className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                  <dt className="eyebrow min-w-[9rem] text-chalk/70">{rule.label}</dt>
+                  <Eyebrow as="dt" className="min-w-[9rem] text-chalk/70">{rule.label}</Eyebrow>
                   <dd className="min-w-0 flex-1 text-14">
                     <span className="text-union">{rule.minRank}</span> or above
                     <span className="mt-1 block text-12 leading-relaxed text-muted">
@@ -272,7 +272,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
           <>
             {form.canEditAnswers ? (
               <>
-                <Alert tone="union">
+                <Alert tone="union" standing>
                   <span className="block font-medium">
                     {application.status === "accepted"
                       ? "You're in — this is your application"
@@ -371,7 +371,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
         ) : (
           <>
             {application?.status === "withdrawn" && (
-              <Alert tone="union">
+              <Alert tone="union" standing>
                 <span className="block font-medium">You withdrew from this one before</span>
                 <span className="mt-1 block opacity-90">
                   {mode === "approval"
@@ -382,7 +382,7 @@ export default async function ApplyPage({ params }: { params: Promise<{ slug: st
             )}
 
             {willWaitlist && (
-              <Alert tone="union">
+              <Alert tone="union" standing>
                 <span className="block font-medium">Every seat is taken</span>
                 <span className="mt-1 block opacity-90">
                   You can still apply — it joins the waitlist, and everybody moves up

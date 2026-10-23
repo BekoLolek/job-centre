@@ -22,6 +22,9 @@ export type StepperProps = {
   suffix?: string;
   className?: string;
   "aria-label"?: string;
+  /** For a refusal about this number — set on the `<input>`, not the wrapper. */
+  "aria-invalid"?: boolean;
+  "aria-describedby"?: string;
 };
 
 export default function Stepper({
@@ -34,6 +37,8 @@ export default function Stepper({
   suffix,
   className,
   "aria-label": ariaLabel,
+  "aria-invalid": ariaInvalid,
+  "aria-describedby": ariaDescribedBy,
 }: StepperProps) {
   const clamp = (next: number) => Math.min(max, Math.max(min, next));
   // Stepping from empty starts at the floor rather than at zero-plus-one, so a
@@ -59,6 +64,8 @@ export default function Stepper({
         type="number"
         inputMode="numeric"
         aria-label={ariaLabel}
+        aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
         value={value ?? ""}
         min={min}
         max={max}

@@ -136,7 +136,7 @@ export default function AdminAllowlist({
       )}
 
       {unlisted.length > 0 && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           <span className="block font-medium">
             {plural(unlisted.length, "id")} in ADMIN_DISCORD_IDS not listed above
           </span>

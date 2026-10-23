@@ -284,10 +284,10 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
 
         {error && <Alert tone="flare">{error}</Alert>}
         {note && <Alert tone="success">{note}</Alert>}
-        {tie && !spinning && <Alert tone="flare">{tie}</Alert>}
-        {completion && <Alert tone="union">{completion}</Alert>}
+        {tie && !spinning && <Alert tone="flare" standing>{tie}</Alert>}
+        {completion && <Alert tone="union" standing>{completion}</Alert>}
         {noCaptains && (
-          <Alert tone="union">
+          <Alert tone="union" standing>
             No team has a captain yet, so nobody can bid. An admin sets captains on the
             event&rsquo;s Teams tab.
           </Alert>

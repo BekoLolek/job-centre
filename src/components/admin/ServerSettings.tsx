@@ -120,7 +120,7 @@ function GuildGate({ gate }: { gate: ServerSettingsProps["gate"] }) {
         />
 
         {!enabled && (
-          <Alert tone="flare">
+          <Alert tone="flare" standing>
             <span className="block font-medium">Anyone with a Discord account could sign in</span>
             <span className="mt-1 block opacity-90">
               Not just people in your server — anybody, from anywhere. They would land on the

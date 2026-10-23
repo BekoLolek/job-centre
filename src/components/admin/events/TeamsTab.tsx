@@ -405,7 +405,7 @@ export default function TeamsTab({
 
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-[11rem]">
-            <span className="eyebrow mb-1 block">Teams</span>
+            <Eyebrow as="span" className="mb-1 block text-inherit">Teams</Eyebrow>
             <Stepper
               value={count}
               min={MIN_TEAMS}
@@ -476,7 +476,7 @@ export default function TeamsTab({
                     />
 
                     <label className="min-w-[9rem] flex-1">
-                      <span className="eyebrow mb-1 block">Seed</span>
+                      <Eyebrow as="span" className="mb-1 block text-inherit">Seed</Eyebrow>
                       <Stepper
                         value={team.seed}
                         min={1}
@@ -488,7 +488,7 @@ export default function TeamsTab({
 
                     {perTeam ? (
                       <label className="min-w-[11rem] flex-1">
-                        <span className="eyebrow mb-1 block">Starting balance</span>
+                        <Eyebrow as="span" className="mb-1 block text-inherit">Starting balance</Eyebrow>
                         <Stepper
                           value={team.balanceStart}
                           min={0}
@@ -597,7 +597,7 @@ export default function TeamsTab({
         {rosterError && <Alert tone="flare">{rosterError}</Alert>}
 
         {data.started && (
-          <Alert tone="union">
+          <Alert tone="union" standing>
             <span className="block font-medium">The draft has started</span>
             <span className="mt-1 block opacity-90">
               Rosters are filled in the draft room from here on. Void the lots first if one

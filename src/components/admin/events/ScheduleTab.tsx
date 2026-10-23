@@ -347,7 +347,7 @@ export default function ScheduleTab({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label>
-            <span className="eyebrow mb-1 block">Days</span>
+            <Eyebrow as="span" className="mb-1 block text-inherit">Days</Eyebrow>
             <Stepper
               value={days}
               min={1}
@@ -364,7 +364,7 @@ export default function ScheduleTab({
           </label>
 
           <label>
-            <span className="eyebrow mb-1 block">Concurrent lobbies</span>
+            <Eyebrow as="span" className="mb-1 block text-inherit">Concurrent lobbies</Eyebrow>
             <Stepper
               value={lobbies}
               min={1}
@@ -487,7 +487,7 @@ export default function ScheduleTab({
         </div>
 
         {overruns.length > 0 && (
-          <Alert tone="union">
+          <Alert tone="union" standing>
             <span className="block font-medium">
               {overruns.length === 1
                 ? `Day ${overruns[0].day} does not finish on the day it starts`
@@ -512,7 +512,7 @@ export default function ScheduleTab({
         )}
 
         {staleOverrides && (
-          <Alert tone="union">
+          <Alert tone="union" standing>
             <span className="block font-medium">The day overrides no longer fit the plan</span>
             <span className="mt-1 block opacity-90">
               There {blocks.length === 1 ? "is" : "are"} now {plural(blocks.length, "block")}{" "}

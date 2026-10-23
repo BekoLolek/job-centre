@@ -345,6 +345,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - **Scale.** One community: hundreds of members, tens of concurrent users normally, the whole room during a live draft.
 - **Signing up is clicks, not typing.** Free text only where unavoidable (an in-game name, "anything else").
 - **Usable on a phone** at ~400px wide; readable contrast (WCAG AA); respects reduced-motion.
+- **A refusal reaches a reader who cannot see it.** Added 2026-10-23, because its absence was found by a browser sweep rather than by a test: `Alert` carried no `role` or `aria-*` attribute at all, so every failed save on the site was announced to nobody. The contrast line above was the nearest thing to an accessibility requirement in this document and it does not cover programmatic announcement — nothing did, which is why the defect existed. A message produced *because* somebody acted must be announced; one that is part of the page on arrival must not interrupt.
 - **Secrets** (`AUTH_SECRET`, `DISCORD_CLIENT_SECRET`, `DATABASE_URL`, bot token, cron secret) never reach the browser, the settings screen or the audit log. The webhook URL is shown masked only.
 - **Nothing on the record is hard-deleted** - events, applications, results and draft lots. (Polls and suggestions may be deleted by an admin; R-95.)
 - **Championship points are worked out from recorded finishing places, never stored as a total.** Correcting a place re-scores the season, the same rule that already makes bracket corrections safe (R-79).

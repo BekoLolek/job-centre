@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { Avatar, cx } from "@/components/ui";
+import { Avatar, Eyebrow, cx } from "@/components/ui";
 
 /**
  * The account menu: an avatar and a name that open a panel of links.
@@ -182,7 +182,7 @@ export default function NavMenu({
 
           {user.isAdmin && (
             <>
-              <p className="eyebrow border-t border-hair px-4 pb-1.5 pt-3">Admin</p>
+              <Eyebrow as="p" className="border-t border-hair px-4 pb-1.5 pt-3 text-inherit">Admin</Eyebrow>
               <div className="pb-1">{group(ADMIN)}</div>
             </>
           )}

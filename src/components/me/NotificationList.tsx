@@ -316,7 +316,7 @@ function Prefs({
     >
       <div className="space-y-4">
         {!discordAvailable && (
-          <Alert>
+          <Alert standing>
             <span className="block font-medium">Direct messages are not switched on</span>
             <span className="mt-1 block opacity-90">
               They need a Discord bot, which is a different thing from the webhook the site
@@ -327,7 +327,7 @@ function Prefs({
         )}
 
         {discordAvailable && !hasDiscordAccount && (
-          <Alert>
+          <Alert standing>
             Your account has no Discord id on it, so there is nowhere to send a direct
             message. Signing in through Discord once fixes that.
           </Alert>

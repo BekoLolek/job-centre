@@ -229,7 +229,7 @@ export default function LadderEditor({
           >
             Revert
           </Button>
-          <span className="eyebrow">Nothing is written until you save.</span>
+          <Eyebrow as="span" className="text-inherit">Nothing is written until you save.</Eyebrow>
         </div>
       )}
     </div>

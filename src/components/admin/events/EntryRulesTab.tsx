@@ -71,7 +71,9 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
     return (
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Entry rules</Eyebrow>
-        <Alert tone="union">This event has no game, so there is no rank ladder to gate on.</Alert>
+        <Alert tone="union" standing>
+          This event has no game, so there is no rank ladder to gate on.
+        </Alert>
         <p className="text-14 leading-relaxed text-muted">
           Pick a game under Setup → Basics and its ladder appears here. An event without one —
           a movie night, a Jackbox evening — takes everybody, which is usually the point.
@@ -84,7 +86,9 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
     return (
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Entry rules</Eyebrow>
-        <Alert tone="union">{event.game.name} has no rank ladder, so there is nothing to compare.</Alert>
+        <Alert tone="union" standing>
+          {event.game.name} has no rank ladder, so there is nothing to compare.
+        </Alert>
         <p className="text-14 leading-relaxed text-muted">
           Ladders are per game and live under Admin → Games. Plenty of games never get one —
           Jackbox has no ranks and never will — and an event on such a game simply has no
@@ -193,7 +197,7 @@ function Threshold({
       </ChoiceRow>
 
       {unknown && (
-        <Alert tone="flare">
+        <Alert tone="flare" standing>
           “{unknown}” is not in this ladder any more, so it is not being enforced — everybody
           clears it. Pick a current rank, or clear it.
         </Alert>

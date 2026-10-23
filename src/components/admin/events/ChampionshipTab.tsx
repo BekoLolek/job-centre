@@ -279,7 +279,7 @@ function Counting({
   return (
     <>
       {error && <Alert>{error}</Alert>}
-      {closed && <Alert tone="union">{CHAMPIONSHIP_LOCKED_REFUSAL}.</Alert>}
+      {closed && <Alert tone="union" standing>{CHAMPIONSHIP_LOCKED_REFUSAL}.</Alert>}
 
       <Panel as="section" padding="none" className="space-y-6">
         <div>

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Avatar, cx } from "@/components/ui";
+import { Avatar, Eyebrow, cx } from "@/components/ui";
 
 /**
  * One person, on a line: initials, name, whatever the screen wants to say about
@@ -64,7 +64,7 @@ export default function PlayerChip({
         ) : (
           <span className="block truncate text-14 leading-tight">{name}</span>
         )}
-        {meta && <span className="eyebrow block truncate">{meta}</span>}
+        {meta && <Eyebrow as="span" className="block truncate text-inherit">{meta}</Eyebrow>}
       </span>
 
       {trailing && <span className="flex shrink-0 items-center gap-1.5">{trailing}</span>}

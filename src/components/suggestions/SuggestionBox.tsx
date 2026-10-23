@@ -207,7 +207,7 @@ export default function SuggestionBox({
           </div>
         </Panel>
       ) : (
-        <Alert>
+        <Alert standing>
           Anyone can read this list.{" "}
           <Link href="/signin" className="underline">
             Sign in

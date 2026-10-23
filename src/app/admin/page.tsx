@@ -23,6 +23,7 @@ import {
   Badge,
   Button,
   EmptyState,
+  Eyebrow,
   Page,
   PageHeader,
   Section,
@@ -218,7 +219,7 @@ export default async function AdminDashboardPage() {
                   <li key={row.id} className="flex flex-wrap items-baseline gap-x-3 py-3">
                     <Badge tone={row.tone === "flare" ? "flare" : "default"}>{row.label}</Badge>
                     <span className="min-w-0 flex-1 text-14 text-chalk">{row.summary}</span>
-                    <span className="eyebrow shrink-0">{row.actor.name}</span>
+                    <Eyebrow as="span" className="shrink-0 text-inherit">{row.actor.name}</Eyebrow>
                   </li>
                 ))}
               </ul>

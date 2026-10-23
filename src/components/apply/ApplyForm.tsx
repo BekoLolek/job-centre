@@ -96,6 +96,19 @@ import { detailWrites } from "./writes";
  * apart all the way down.
  */
 
+/**
+ * The id of the sentence refusing one answer, so its control can point at it.
+ *
+ * Per row, because the server refuses rows and not the form: UC-12's refusals
+ * arrive as a map keyed by field or question id, and a single id shared by every
+ * row would have the first one on the page describing all of them. The form-wide
+ * refusal is a different thing and lives in the Alert at the top, which announces
+ * itself.
+ */
+export function answerRefusalId(id: string): string {
+  return `apply-answer-refusal-${id}`;
+}
+
 export type ApplyDay = {
   id: string;
   dayIndex: number;
@@ -332,7 +345,7 @@ export default function ApplyForm({
     return (
       <div key={detail.id} className="px-5 py-4">
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2">
-          <span className="eyebrow text-chalk/70">{detail.label}</span>
+          <Eyebrow as="span" className="text-chalk/70">{detail.label}</Eyebrow>
 
           {detail.attention === "stale" && (
             <Badge tone="union">Question changed</Badge>
@@ -384,13 +397,17 @@ export default function ApplyForm({
             <FieldControl
               field={{ ...detail, value }}
               value={value}
+              invalid={Boolean(errors[detail.id])}
+              describedBy={errors[detail.id] ? answerRefusalId(detail.id) : undefined}
               onChange={(next) => changeDetail(detail.id, next)}
             />
           </div>
         )}
 
         {errors[detail.id] && (
-          <p className="mt-2 text-12 text-flare">{errors[detail.id]}</p>
+          <p id={answerRefusalId(detail.id)} className="mt-2 text-12 text-flare">
+            {errors[detail.id]}
+          </p>
         )}
       </div>
     );
@@ -488,7 +505,7 @@ export default function ApplyForm({
             {questions.map((question) => (
               <div key={question.id} className="px-5 py-4">
                 <div className="mb-3 flex flex-wrap items-baseline gap-2">
-                  <span className="eyebrow text-chalk/70">{question.label}</span>
+                  <Eyebrow as="span" className="text-chalk/70">{question.label}</Eyebrow>
                   {question.required && !hasAnswer(answers[question.id] ?? null) && (
                     <Badge tone="union">Needed</Badge>
                   )}
@@ -506,11 +523,17 @@ export default function ApplyForm({
                     value: answers[question.id] ?? null,
                   }}
                   value={answers[question.id] ?? null}
+                  invalid={Boolean(errors[question.id])}
+                  describedBy={
+                    errors[question.id] ? answerRefusalId(question.id) : undefined
+                  }
                   onChange={(next) => changeAnswer(question.id, next)}
                 />
 
                 {errors[question.id] && (
-                  <p className="mt-2 text-12 text-flare">{errors[question.id]}</p>
+                  <p id={answerRefusalId(question.id)} className="mt-2 text-12 text-flare">
+                    {errors[question.id]}
+                  </p>
                 )}
               </div>
             ))}

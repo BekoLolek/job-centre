@@ -323,7 +323,7 @@ export default function ApplicantsTab({
       {error && <Alert>{error}</Alert>}
 
       {overCapacity && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           This event is over its capacity of {event.seats.capacity}. That is allowed — an
           override is the point of §8.3 — but nothing will stop you doing it again, so it is
           worth being deliberate.
@@ -340,7 +340,7 @@ export default function ApplicantsTab({
         an adjective.
       */}
       {unsure > 0 && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           <span className="block font-medium">
             {plural(unsure, "seat")} held by somebody who is not sure
           </span>
@@ -651,7 +651,7 @@ function ApplicantRow({
             <span className="min-w-0">
               <span className="block truncate text-14">{name}</span>
               {row.waitlistPosition !== null && (
-                <span className="eyebrow block">Queue #{row.waitlistPosition}</span>
+                <Eyebrow as="span" className="block text-inherit">Queue #{row.waitlistPosition}</Eyebrow>
               )}
             </span>
           </button>
@@ -820,10 +820,10 @@ export function ApplicantDetail({
           <dl className="space-y-2">
             {event.questions.map((question) => (
               <div key={question.id} className="flex flex-wrap gap-x-3 border-b border-hair/40 pb-2">
-                <dt className="eyebrow min-w-[9rem] flex-1 text-chalk/70">
+                <Eyebrow as="dt" className="min-w-[9rem] flex-1 text-chalk/70">
                   {question.label}
                   {question.required && <span className="text-union"> *</span>}
-                </dt>
+                </Eyebrow>
                 <dd className="min-w-0 flex-[2] text-14">
                   {formatAnswer(
                     {

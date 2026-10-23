@@ -194,7 +194,7 @@ export default function ProfileSection({ section }: { section: ProfileSectionVie
           {section.fields.map((field) => (
             <div key={field.id} className="py-5 first:pt-0">
               <div className="mb-3 flex flex-wrap items-baseline gap-2">
-                <span className="eyebrow text-chalk/70">{field.label}</span>
+                <Eyebrow as="span" className="text-chalk/70">{field.label}</Eyebrow>
                 {field.required && !hasAnswer(values[field.id] ?? null) && (
                   <Badge tone="union">Needed</Badge>
                 )}

@@ -140,10 +140,10 @@ export default function QuestionList({
 
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-14">{field.label}</span>
-                <span className="eyebrow mt-0.5 block truncate">
+                <Eyebrow as="span" className="mt-0.5 block truncate text-inherit">
                   {field.key} · {fieldTypeInfo(field.type).label}
                   {field.options.length > 0 && ` · ${plural(field.options.length, "option")}`}
-                </span>
+                </Eyebrow>
               </span>
 
               {field.required && <Badge tone="union">Required</Badge>}
@@ -216,9 +216,9 @@ export default function QuestionList({
               <li key={field.id} className="flex flex-wrap items-center gap-3 px-3 py-2.5">
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-14 text-muted">{field.label}</span>
-                  <span className="eyebrow mt-0.5 block truncate">
+                  <Eyebrow as="span" className="mt-0.5 block truncate text-inherit">
                     {field.key} · {fieldTypeInfo(field.type).label} · not asked
-                  </span>
+                  </Eyebrow>
                 </span>
 
                 <Badge tone={field.answers > 0 ? "success" : "default"}>

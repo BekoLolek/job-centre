@@ -44,6 +44,14 @@ import {
 } from "@/app/admin/templates/actions";
 
 /**
+ * The refusal bar's id, so the name box can point `aria-describedby` at it.
+ *
+ * A constant rather than a literal in two places: the whole mechanism is the two
+ * strings being equal, and a typo in one of them is invisible on screen.
+ */
+export const NAME_REFUSAL_ID = "template-name-refusal";
+
+/**
  * `/admin/templates`, client side.
  *
  * ## Where the data lives
@@ -65,11 +73,22 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Whether the refusal in `error` is about the name box below.
+   *
+   * One Alert carries every refusal on this screen, but only some of them are
+   * about a value the admin typed: "a template is already called …" is, and a
+   * failure coming back from `FromEventPanel` or a reorder is not. `aria-invalid`
+   * on the name box for a refusal that had nothing to do with it would be a
+   * worse lie than the silence this task is closing.
+   */
+  const [nameRefused, setNameRefused] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
 
   const run = (action: () => Promise<{ ok: boolean; error?: string }>) => {
     setError(null);
+    setNameRefused(false);
     startTransition(async () => {
       const result = await action();
       if (!result.ok) setError(result.error ?? "That did not work.");
@@ -81,9 +100,13 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
     const name = newName.trim();
     if (!name) return;
     setError(null);
+    setNameRefused(false);
     startTransition(async () => {
       const result = await createTemplateAction({ name });
-      if (!result.ok) return setError(result.error);
+      if (!result.ok) {
+        setNameRefused(true);
+        return setError(result.error);
+      }
       setNewName("");
       setOpenId(result.data.id);
       router.refresh();
@@ -92,7 +115,11 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
 
   return (
     <div>
-      {error && <Alert className="mb-6">{error}</Alert>}
+      {error && (
+        <Alert id={NAME_REFUSAL_ID} className="mb-6">
+          {error}
+        </Alert>
+      )}
 
       <FromEventPanel
         sources={view.sources}
@@ -101,7 +128,10 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
           setOpenId(id);
           router.refresh();
         }}
-        onError={setError}
+        onError={(message) => {
+          setNameRefused(false);
+          setError(message);
+        }}
       />
 
       {/* --- From nothing -------------------------------------------- */}
@@ -116,6 +146,11 @@ export default function TemplatesManager({ view }: { view: AdminTemplatesView })
             hint="“Rivals tournament”, “Jackbox night”. Rename it later if you like."
             value={newName}
             maxLength={80}
+            // UC-28 4a: the name is empty or already used. The sentence lands in
+            // the Alert above, which announces itself; these two are what tell a
+            // screen reader *which box* it is about once the announcement is over.
+            aria-invalid={nameRefused || undefined}
+            aria-describedby={nameRefused ? NAME_REFUSAL_ID : undefined}
             wrapperClassName="flex-1 min-w-[16rem]"
             onChange={(event) => setNewName(event.target.value)}
             onKeyDown={(event) => {
@@ -466,7 +501,7 @@ function TemplateCard({
             <span className="block truncate font-display text-20 leading-none">
               {template.name}
             </span>
-            <span className="eyebrow mt-1 block">
+            <Eyebrow as="span" className="mt-1 block text-inherit">
               {describeTemplate({
                 type: template.type,
                 config: template.config,
@@ -477,7 +512,7 @@ function TemplateCard({
                 minRankToEnter: template.minRankToEnter,
                 minRankToCaptain: template.minRankToCaptain,
               }).join(" · ")}
-            </span>
+            </Eyebrow>
           </span>
         </button>
 

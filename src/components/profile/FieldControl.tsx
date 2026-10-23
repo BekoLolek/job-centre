@@ -33,6 +33,20 @@ export type FieldControlProps = {
   onChange: (value: ProfileValue, options?: { debounce?: boolean }) => void;
   /** Called when a typed control loses focus, so a pending save can go early. */
   onCommit?: () => void;
+  /**
+   * A refusal is standing against this answer, and the element id carrying it.
+   *
+   * Only the two cases that render a real form control take these — `text` and
+   * `number`. `aria-invalid` is defined on a widget that holds a value, and
+   * `select`, `multiselect`, `rank` and `bool` are rows of buttons: putting it
+   * on the group would be an attribute on an element that has no value to be
+   * invalid. Those four are refused by the server for being *absent*, which the
+   * announced refusal bar says in words, and the per-row sentence is still
+   * visible beside them. Said here rather than left to be inferred, because an
+   * attribute quietly missing from four of six branches looks like an oversight.
+   */
+  invalid?: boolean;
+  describedBy?: string;
 };
 
 export default function FieldControl({
@@ -41,6 +55,8 @@ export default function FieldControl({
   disabled,
   onChange,
   onCommit,
+  invalid,
+  describedBy,
 }: FieldControlProps) {
   switch (field.type) {
     case "select": {
@@ -123,6 +139,8 @@ export default function FieldControl({
           max={NUMBER_MAX}
           disabled={disabled}
           aria-label={field.label}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
           onChange={(next) => onChange(next, { debounce: true })}
         />
       );
@@ -135,6 +153,8 @@ export default function FieldControl({
           disabled={disabled}
           placeholder="Type it in"
           aria-label={field.label}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy}
           className="max-w-sm"
           onChange={(event) => onChange(event.target.value, { debounce: true })}
           onBlur={onCommit}

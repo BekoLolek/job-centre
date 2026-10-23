@@ -1277,7 +1277,7 @@ export function StageSettings({
           <Eyebrow>Groups</Eyebrow>
           <div className="grid gap-4 sm:grid-cols-3">
             <label>
-              <span className="eyebrow mb-1 block">Groups</span>
+              <Eyebrow as="span" className="mb-1 block text-inherit">Groups</Eyebrow>
               <Stepper
                 value={config.groups}
                 min={1}
@@ -1287,7 +1287,7 @@ export function StageSettings({
               />
             </label>
             <label>
-              <span className="eyebrow mb-1 block">Through per group</span>
+              <Eyebrow as="span" className="mb-1 block text-inherit">Through per group</Eyebrow>
               <Stepper
                 value={config.advancePerGroup}
                 min={1}
@@ -1320,7 +1320,7 @@ export function StageSettings({
         <section className="space-y-3 border-t border-hair pt-5">
           <Eyebrow>Swiss</Eyebrow>
           <label className="block max-w-xs">
-            <span className="eyebrow mb-1 block">Rounds</span>
+            <Eyebrow as="span" className="mb-1 block text-inherit">Rounds</Eyebrow>
             <Stepper
               value={config.rounds}
               min={1}
@@ -1357,7 +1357,7 @@ export function StageSettings({
           <div className="grid gap-4 sm:grid-cols-3">
             {(["win", "draw", "loss"] as const).map((key) => (
               <label key={key}>
-                <span className="eyebrow mb-1 block">Points for a {key}</span>
+                <Eyebrow as="span" className="mb-1 block text-inherit">Points for a {key}</Eyebrow>
                 <Stepper
                   value={config.points[key]}
                   min={0}

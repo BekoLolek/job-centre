@@ -162,7 +162,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
           </Eyebrow>
         </div>
         <div data-reason={refusal.reason}>
-          <Alert tone="flare">{refusal.message}</Alert>
+          <Alert tone="flare" standing>{refusal.message}</Alert>
         </div>
         {refusal.reason === "roster_full" && (
           <p className="mt-3 text-14 text-muted">

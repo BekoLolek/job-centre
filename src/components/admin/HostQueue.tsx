@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Alert, Badge, Button, EmptyState, Field, Select, plural } from "@/components/ui";
+import { Alert, Badge, Button, EmptyState, Eyebrow, Field, Select, plural } from "@/components/ui";
 import type { HostApplication } from "@/lib/hosting";
 import {
   approveHostApplicationAction,
@@ -65,7 +65,7 @@ export default function HostQueue({
 
       {decided.length > 0 && (
         <div className="space-y-2">
-          <span className="eyebrow">Already decided</span>
+          <Eyebrow as="span" className="text-inherit">Already decided</Eyebrow>
           <div className="divide-y divide-hair/60">
             {decided.map((application) => (
               <div
@@ -230,7 +230,7 @@ function Card({
 
       {/* The part the event is built from. */}
       <div className="mt-4 rounded bg-overlay-1 px-4 py-3">
-        <span className="eyebrow">What they need from each player</span>
+        <Eyebrow as="span" className="text-inherit">What they need from each player</Eyebrow>
         <p className="mt-1.5 max-w-2xl whitespace-pre-wrap text-13 leading-relaxed text-chalk">
           {application.playerInfoNeeded}
         </p>

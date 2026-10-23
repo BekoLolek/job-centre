@@ -171,7 +171,7 @@ export default function AdminConsole({
           </div>
 
           {resolution?.kind === "tie" && (
-            <Alert tone="flare" className="mb-3">
+            <Alert tone="flare" standing className="mb-3">
               <span className="block font-medium">
                 Tied at {resolution.amount}
               </span>

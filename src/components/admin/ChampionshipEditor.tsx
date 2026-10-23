@@ -191,7 +191,7 @@ export default function ChampionshipEditor({
         </Alert>
       )}
       {closed && (
-        <Alert tone="union" className="mb-6">
+        <Alert tone="union" standing className="mb-6">
           This season is finished, so nothing about it can change. Reopen it to record or
           correct a result.
         </Alert>

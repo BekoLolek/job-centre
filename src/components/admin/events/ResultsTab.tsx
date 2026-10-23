@@ -310,13 +310,13 @@ export default function ResultsTab({
                 ? "Saved · nothing later moved"
                 : `Saved · ${plural(shifts.length, "later match", "later matches")} moved`}
             </span>
-            <button
-              type="button"
-              className="eyebrow underline decoration-dotted"
+            <Eyebrow
+              as="button"
+              className="text-inherit underline decoration-dotted"
               onClick={() => setShifts(null)}
             >
               Dismiss
-            </button>
+            </Eyebrow>
           </div>
           {shifts.length > 0 && (
             <ul className="mt-2 space-y-0.5 text-12 opacity-90">
@@ -569,13 +569,13 @@ export function FlaggedAlert({
           {one ? "has" : "have"} a different team, and {one ? "has" : "have"} maps
           recorded already
         </span>
-        <button
-          type="button"
-          className="eyebrow underline decoration-dotted"
+        <Eyebrow
+          as="button"
+          className="text-inherit underline decoration-dotted"
           onClick={onDismiss}
         >
           Dismiss
-        </button>
+        </Eyebrow>
       </div>
       <ul className="mt-2 space-y-0.5 text-12 opacity-90">
         {flagged.map((flag) => (
@@ -828,7 +828,7 @@ export function MatchEditor({
     <div className="space-y-3">
       <div className="flex gap-2">
         <label className="flex-1">
-          <span className="eyebrow mb-1 block">Start</span>
+          <Eyebrow as="span" className="mb-1 block text-inherit">Start</Eyebrow>
           <Field
             type="datetime-local"
             className="py-1.5 text-11"
@@ -845,7 +845,7 @@ export function MatchEditor({
           duration is derived from it.
         */}
         <label className="w-24">
-          <span className="eyebrow mb-1 block">Mins</span>
+          <Eyebrow as="span" className="mb-1 block text-inherit">Mins</Eyebrow>
           <Field
             inputMode="numeric"
             className="py-1.5 text-11"
@@ -989,9 +989,9 @@ export function MatchEditor({
       ))}
 
       <label className="block">
-        <span className="eyebrow mb-1 block">
+        <Eyebrow as="span" className="mb-1 block text-inherit">
           Winner override {match.needsDecision && <span className="text-flare">· needed</span>}
-        </span>
+        </Eyebrow>
         <Select
           className="py-1.5 text-11"
           value={form.winnerOverride}

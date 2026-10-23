@@ -63,9 +63,9 @@ export default function TeamCard({
           <div className="mt-1 flex flex-wrap items-center gap-1.5">
             {team.seed !== null && <Badge>Seed {team.seed}</Badge>}
             {team.captainUserId ? (
-              <span className="eyebrow truncate text-chalk/70">
+              <Eyebrow as="span" className="truncate text-chalk/70">
                 © {playerName(players, team.captainUserId)}
-              </span>
+              </Eyebrow>
             ) : warnNoCaptain ? (
               <Badge tone="union">No captain</Badge>
             ) : null}

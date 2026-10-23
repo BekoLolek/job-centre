@@ -219,7 +219,7 @@ function PlannedDays({ days }: { days: ScheduleDayRow[] }) {
               key={day.id}
               className="flex flex-wrap items-baseline gap-x-4 gap-y-1 rounded-lg border border-hair bg-raised px-4 py-3"
             >
-              <span className="eyebrow">Day {day.dayIndex + 1}</span>
+              <Eyebrow as="span" className="text-inherit">Day {day.dayIndex + 1}</Eyebrow>
               {/* What the day is called (UC-08 E3) — `dayName` is the one rule,
                   so the overview, the apply form, `/me/events` and a day
                   sequence refusal all name a day the same way. Numbered from

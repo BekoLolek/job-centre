@@ -240,7 +240,7 @@ export default async function SignInPage({
           <Eyebrow className="mb-6">Sign in</Eyebrow>
 
           {problem && (
-            <Alert tone={problem.tone} className="mb-6">
+            <Alert tone={problem.tone} standing className="mb-6">
               <span className="block font-medium">{problem.title}</span>
               <span className="mt-1 block opacity-90">{problem.body}</span>
             </Alert>
@@ -272,7 +272,7 @@ export default async function SignInPage({
 function NotConfigured({ missing }: { missing: string[] }) {
   return (
     <>
-      <Alert tone="union" className="mb-6">
+      <Alert tone="union" standing className="mb-6">
         <span className="block font-medium">Discord sign-in is not configured yet</span>
         <span className="mt-1 block opacity-90">
           The site is running, but no Discord application has been set up, so there is

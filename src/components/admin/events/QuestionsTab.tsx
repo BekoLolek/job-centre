@@ -348,12 +348,12 @@ export default function QuestionsTab({
 
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-14">{question.label}</span>
-                    <span className="eyebrow mt-0.5 block truncate">
+                    <Eyebrow as="span" className="mt-0.5 block truncate text-inherit">
                       {fieldTypeInfo(question.type).label}
                       {question.options.length > 0 &&
                         ` · ${plural(question.options.length, "option")}`}
                       {link && ` · prefills from ${link.label}`}
-                    </span>
+                    </Eyebrow>
                     {problem && <span className="mt-1 block text-12 text-flare">{problem}</span>}
                   </span>
 

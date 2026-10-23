@@ -89,7 +89,7 @@ export default function BidCeiling({ teams, config, bare, className }: BidCeilin
       )}
 
       {stuck.length > 0 && (
-        <Alert tone="flare">
+        <Alert tone="flare" standing>
           <span className="block font-medium">
             {stuck.length === 1 ? "One team cannot" : `${stuck.length} teams cannot`} meet the
             minimum bid

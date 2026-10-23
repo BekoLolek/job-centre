@@ -225,7 +225,7 @@ function GameCard({
             <span className="block truncate font-display text-20 leading-none">
               {game.name}
             </span>
-            <span className="eyebrow mt-1 block">{game.key}</span>
+            <Eyebrow as="span" className="mt-1 block text-inherit">{game.key}</Eyebrow>
           </span>
         </button>
 

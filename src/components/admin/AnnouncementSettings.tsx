@@ -509,7 +509,7 @@ export default function AnnouncementSettings({
       className="space-y-5"
     >
       {!configured && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           No webhook is set, so every switch below is inert. Get one from{" "}
           <strong>Server Settings → Integrations → Webhooks → New Webhook</strong> in
           Discord, pick the channel, copy the URL, and paste it under{" "}
@@ -635,6 +635,18 @@ export function editorStatus(
   return { dirty, problem, canSave: dirty && problem === null };
 }
 
+/**
+ * The id of one kind's wording refusal bar, so its textarea can describe itself.
+ *
+ * Keyed by kind because the screen mounts one editor per kind — seven of them at
+ * the time of writing, each inside its own Disclosure — and a fixed id would put
+ * seven elements on the page claiming the same one, which makes every
+ * `aria-describedby` on the screen point at whichever came first.
+ */
+export function wordingRefusalId(kind: AnnouncementKind): string {
+  return `announcement-wording-refusal-${kind}`;
+}
+
 export type AnnouncementEditorProps = {
   spec: AnnouncementSpec;
   stored: StoredAnnouncementTemplate;
@@ -717,7 +729,7 @@ export function AnnouncementEditor({
       <p className="max-w-[62ch] text-13 leading-relaxed text-muted">{spec.detail}</p>
 
       {!posts && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           <span className="block font-medium">Nothing in the site posts this yet</span>
           <span className="mt-1 block">
             The wording, the mention and the switch below are all real and all saved — but
@@ -729,7 +741,7 @@ export function AnnouncementEditor({
       )}
 
       {posts && !on && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           This announcement is switched off, so nothing is posted whatever the wording
           says. Saving the wording here does not turn it on — the switch beside the row
           above does.
@@ -754,6 +766,13 @@ export function AnnouncementEditor({
           }
           value={body}
           maxLength={DISCORD_LIMITS.description + 200}
+          // UC-37 3a/3b/3c — a placeholder this kind does not offer, no words at
+          // all, or over Discord's limit. Every one of those three is a refusal
+          // about *this box's* value, and `problem` is the only state that says
+          // so, which is why these hang off it rather than off `error` (a save
+          // that did not land) or `moved` (somebody else's edit).
+          aria-invalid={problem !== null || undefined}
+          aria-describedby={problem !== null ? wordingRefusalId(spec.kind) : undefined}
           onChange={(event) => setBody(event.target.value)}
         />
         <p className="text-12 leading-relaxed text-muted">
@@ -813,7 +832,11 @@ export function AnnouncementEditor({
 
       {/* ---------------- refusals ---------------- */}
 
-      {problem && <Alert tone="flare">{problem}</Alert>}
+      {problem && (
+        <Alert tone="flare" id={wordingRefusalId(spec.kind)}>
+          {problem}
+        </Alert>
+      )}
       {error && <Alert tone="flare">{error}</Alert>}
       {moved && <WordingMoved current={moved} />}
 
@@ -1130,7 +1153,7 @@ export function RoleMention({
       {/* ---------------- a role that has been deleted (UC-37 4b) ---------------- */}
 
       {dead.length > 0 && (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           <span className="block font-medium">
             {dead.length === 1
               ? "This announcement mentions a role your server no longer has"

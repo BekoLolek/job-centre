@@ -23,6 +23,29 @@ process.env.TZ = "Europe/Budapest";
  */
 const SERIAL_TESTS = "src/db/__tests__/migrations.test.ts";
 
+/*
+ * The same argument, for a second kind of expensive file.
+ *
+ * These four compile `src/app/globals.css` with the real Tailwind config over
+ * the real `src/**` content globs, because what they assert is the *emitted*
+ * stylesheet — which rule wins, which class survived the purge — and nothing
+ * short of a real compile answers that. Solo each is about two seconds. A
+ * dozen workers each running a Tailwind build at once is not, and
+ * `dead-names.test.ts` was failing its 5s budget on a timeout rather than an
+ * assertion: a green test reported red by contention, which is the exact
+ * failure `migrations.test.ts` already has this treatment for.
+ *
+ * Raising the budget instead would have hidden it rather than fixed it, and
+ * would have had to be sized against the worst parallel case rather than the
+ * real cost of the work.
+ */
+const STYLESHEET_TESTS = [
+  "src/app/__tests__/dead-names.test.ts",
+  "src/components/ui/__tests__/checkbox-hit-area.test.ts",
+  "src/components/ui/__tests__/eyebrow-colour.test.ts",
+  "src/components/ui/__tests__/field-ordering.test.ts",
+];
+
 export default defineConfig({
   resolve: {
     alias: {
@@ -61,7 +84,7 @@ export default defineConfig({
         test: {
           name: "app",
           include: ["src/**/__tests__/**/*.test.ts"],
-          exclude: [...configDefaults.exclude, SERIAL_TESTS],
+          exclude: [...configDefaults.exclude, SERIAL_TESTS, ...STYLESHEET_TESTS],
         },
       },
       {
@@ -69,6 +92,14 @@ export default defineConfig({
         test: {
           name: "migrations",
           include: [SERIAL_TESTS],
+          fileParallelism: false,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "stylesheet",
+          include: STYLESHEET_TESTS,
           fileParallelism: false,
         },
       },

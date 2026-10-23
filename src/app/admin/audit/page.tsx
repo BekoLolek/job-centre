@@ -23,6 +23,7 @@ import {
   Badge,
   Button,
   EmptyState,
+  Eyebrow,
   Page,
   PageHeader,
   Section,
@@ -174,7 +175,7 @@ export default async function AdminAuditPage({
 
           {/* --- The log ---------------------------------------------- */}
           {filter.kind === "unknown" ? (
-            <Alert tone="flare" className="my-6">
+            <Alert tone="flare" standing className="my-6">
               <span className="block font-medium">That filter does not name an event</span>
               <span className="mt-1 block opacity-90">
                 Nothing was read, because showing the whole log under a filter you asked
@@ -210,9 +211,9 @@ export default async function AdminAuditPage({
                       {row.summary}
                     </span>
 
-                    <span className="eyebrow shrink-0">
+                    <Eyebrow as="span" className="shrink-0 text-inherit">
                       <LocalTime at={row.at.toISOString()} />
-                    </span>
+                    </Eyebrow>
                   </div>
 
                   <div className="mt-1 flex flex-wrap items-baseline gap-x-3 text-12 text-muted">

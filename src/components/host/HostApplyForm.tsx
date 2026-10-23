@@ -109,7 +109,7 @@ export default function HostApplyForm({
       )}
 
       {pending ? (
-        <Alert tone="union">
+        <Alert tone="union" standing>
           <span className="block font-medium">You have one waiting</span>
           <span className="mt-1 block opacity-90">
             An admin will look at it. Withdraw it above if you would rather send a different
