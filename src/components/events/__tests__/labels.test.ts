@@ -52,12 +52,12 @@ describe("event status", () => {
   });
 
   /**
-   * Every role this site has a word for, as the draft banner's readers might
+   * Every role this site has a word for, as any of these lines' readers might
    * name themselves.
    *
-   * Not a list of who may see a draft — that question is answered by
+   * Not a list of who may see an event — that question is answered by
    * `canSeeEvent` in `src/lib/hosting.ts` and nowhere near here. It is the
-   * vocabulary the draft meaning is not allowed to reach for.
+   * vocabulary a status meaning is not allowed to reach for.
    */
   const ROLE_WORDS = [
     "admin",
@@ -87,18 +87,35 @@ describe("event status", () => {
     );
   });
 
-  it("names no role in the draft meaning, so widening who sees a draft cannot make it a lie", () => {
-    // This is the assertion that costs something. `canSeeEvent` decides who
-    // reads this line, and today that is two kinds of person — an admin, or a
-    // host of the event (R-32, UC-08 2). Anybody widening that set has two
-    // ways to leave this file honest: check that "not public" is still true
-    // of a draft, or re-word it. What they cannot do is the thing that reads
-    // easiest and breaks first — swap in whichever role they just added, or
+  it("says what a published event is, in the exact words, because a signed-out visitor reads this one", () => {
+    // It used to read "Members can see it; applications follow the signup
+    // window." — and `canSeeEvent` is `status !== "draft" ||
+    // canManageEvent(...)`, so a published event is visible to anybody at all,
+    // session or none. R-43 is a Must ("As a visitor, I want to see an event's
+    // details and dates"), `/events/[slug]` requires no session to read, and
+    // the reader of that line was therefore most often somebody being told
+    // they had to be a member to see the page they had already opened.
+    expect(eventStatusMeaning("published")).toBe(
+      "Public now. Applications follow the signup window."
+    );
+  });
+
+  it("names no role in any of the five meanings, so widening who sees an event cannot make one a lie", () => {
+    // This is the assertion that costs something, and it covers all five
+    // rather than only `draft` — `published` is why it could not before.
+    // `canSeeEvent` decides who reads these lines: today that is anybody for a
+    // non-draft event (R-43, UC-11), and an admin or a host of the event for a
+    // draft (R-32, UC-08 2). Anybody widening either set has two ways to leave
+    // this file honest: check that the sentence is still true of the event, or
+    // re-word it. What they cannot do is the thing that reads easiest and
+    // caused both of these bugs — swap in whichever role was just admitted, or
     // enumerate the roles at a reader who then has to work out which one they
-    // are. That attempt fails here.
-    const meaning = eventStatusMeaning("draft").toLowerCase();
-    for (const role of ROLE_WORDS) {
-      expect(meaning).not.toContain(role);
+    // are. That attempt fails here, for every status.
+    for (const status of EVERY_STATUS) {
+      const meaning = eventStatusMeaning(status).toLowerCase();
+      for (const role of ROLE_WORDS) {
+        expect(meaning, `${status}: "${eventStatusMeaning(status)}"`).not.toContain(role);
+      }
     }
   });
 
@@ -107,6 +124,15 @@ describe("event status", () => {
     // looking: `applicationsOpen` shuts a draft with `not_published` before it
     // reads a clock, a cap or a session.
     expect(eventStatusMeaning("draft")).toContain("Nobody can apply.");
+  });
+
+  it("keeps 'Applications follow the signup window', which was the true half of the published line", () => {
+    // The clause that survived the rewrite: `applicationsOpen` gates a
+    // published event on `signupOpensAt` / `signupClosesAt`, which is a
+    // property of the event and not of whoever is reading about it.
+    expect(eventStatusMeaning("published")).toContain(
+      "Applications follow the signup window."
+    );
   });
 });
 

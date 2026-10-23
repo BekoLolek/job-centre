@@ -1127,7 +1127,7 @@ fire a two-hour reminder, and `docs/requirements.md` already carried that as a c
 
 ### Task 72: A visitor is told they must be a member to see the page they are on (found in Task 71)
 
-- **Serves:** R-43 (**Must**) / UC-10, UC-11
+- **Serves:** R-43 (**Must**) / **UC-11** — *UC-10 was cited here and is wrong: `docs/use-cases.md:19` gives UC-10 R-32, R-40, R-41 and R-42, R-43 is not among them, and `eventStatusMeaning` renders only on `/events/[slug]` and the admin Publish tab, neither a UC-10 screen. Third citation error on this plan caught by checking rather than reading, after R-77 in Task 56 and R-196 in seven places.*
 - **Files:** `src/components/events/labels.ts`, `src/components/events/__tests__/labels.test.ts`, `src/lib/events-policy.ts` (one stale comment)
 - **Do:** the same defect Task 71 fixed, one role further on. `STATUS_MEANING.published` reads **"Members can see it; applications follow the signup window."** — but a published event is public to signed-out visitors, and deliberately so: `canSeeEvent` in `src/lib/hosting.ts:115` is `event.status !== "draft" || canManageEvent(...)`, which returns true for **any** non-draft event whatever the user, `null` included. R-43 is a **Must** — *"As a visitor, I want to see an event's details and dates"* — and the event page's own header says no session is required to read any of it.
   So a signed-out visitor reads a line implying they need to be a member to see the page they are already looking at. Exactly Task 71's shape: a status meaning that names an audience, written before the audience widened.
@@ -1135,8 +1135,14 @@ fire a two-hour reminder, and `docs/requirements.md` already carried that as a c
   **Then widen the guard.** `labels.test.ts` has a role-noun assertion over 14 nouns, currently scoped to the `draft` entry **because `published` would fail it today**. Once this is fixed, apply it to all five entries — that is what stops the next one of these.
   **Also stale, same assumption:** `src/lib/events-policy.ts:~458` comments the `not_published` reason as *"Still a draft — members cannot even see it"*, which predates Task 2 giving hosts access.
 - **Acceptance criteria:**
-  - [ ] The published meaning is true for a signed-out visitor
-  - [ ] "Applications follow the signup window" is preserved
-  - [ ] The role-noun guard covers all five `STATUS_MEANING` entries, not just `draft`
-  - [ ] The `not_published` comment in `events-policy.ts` no longer says members cannot see a draft
+  - [x] The published meaning is true for a signed-out visitor
+  - [x] "Applications follow the signup window" is preserved
+  - [x] The role-noun guard covers all five `STATUS_MEANING` entries, not just `draft`
+  - [x] The `not_published` comment in `events-policy.ts` no longer says members cannot see a draft
 - **Depends on:** Task 71.
+- **Left over:** nothing of this shape remains in `STATUS_MEANING`. The role-noun guard now covers **all five** entries, and `live`, `complete` and `cancelled` were **run through it** rather than only read — none names a role, so there was no judgement to make and nothing else was reworded.
+  The wording is `published: "Public now. Applications follow the signup window."` — the bare-state-then-applications register its three siblings already use, and it shares the hinge word with `draft`'s "it is not public", so the two statuses now read as each other's negation. `"Published, so it is public."` mirrored `draft` more literally and was rejected because `PublishTab` prints the label beside the meaning, rendering it as "Published — Published, so it is public."
+  **The guard's limit is unchanged from Task 71 and now covers a wider claim:** no presentation test can observe `canSeeEvent`, which is database-backed and covered in `hosting.test.ts`. What the guard blocks is the *repair* that caused both bugs — naming the role just admitted — and it is proven by mutation rather than asserted: `"Members and visitors can see it…"` fails the guard **on its own**, and a role noun planted in `cancelled` fails it too, which is what shows the widening is real rather than a loop that never runs.
+  **The `toBe` carries the half the guard cannot.** An append with no role noun — `"… Probably."` — passes both `toContain`s *and* the noun guard, and dies only to the full-sentence equality. That is why Task 71 chose `toBe` over `toContain`, and it is now demonstrated rather than argued.
+  The guard also names the offending status in its failure message, so a future red prints which of five it came from instead of a bare lowercase sentence.
+  `src/lib/events-policy.ts:458` now reads "Still a draft, so it is not public — only its managers reach it at all." Its neighbour at `:456` ("Why a member cannot apply") is accurate and was left: only a member can apply. One further pre-Task-2 echo was found and has been fixed since: a test **name** in `src/lib/__tests__/announce-schedule.test.ts` read "which members cannot see at all" — misinforming only a reader of the suite, but the same stale assumption.

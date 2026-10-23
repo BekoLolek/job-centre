@@ -51,23 +51,30 @@ export function eventStatusLabel(status: EventStatus): string {
 /**
  * One line saying what this status means, for a screen with room to explain.
  *
- * **The draft line names nobody.** It used to read "Only admins can see this",
- * which was true until R-32 / UC-08 2 were built: an unpublished event is
- * visible to its *managers* — an admin, or a host of that event (`canSeeEvent`
- * in `src/lib/hosting.ts`) — and the draft banner on `/events/[slug]` is
- * therefore read by a host who is not an admin, being told that only admins
- * can see the page in front of them. The reader least sure of their own
- * permissions was the one being misinformed.
+ * **None of the five names a role.** Two of them used to, and both were read
+ * by the person they misinformed. `draft` said "Only admins can see this",
+ * true until R-32 / UC-08 2 were built: an unpublished event is visible to its
+ * *managers* — an admin, or a host of that event (`canSeeEvent` in
+ * `src/lib/hosting.ts`) — so the draft banner on `/events/[slug]` was read by a
+ * host who is not an admin, being told only admins could see the page in front
+ * of them. `published` said "Members can see it", but `canSeeEvent` is
+ * `status !== "draft" || canManageEvent(...)`, true for *any* non-draft event
+ * whatever the user, `null` included; R-43 is a **Must** and this page needs no
+ * session to read, so that line's commonest reader was a signed-out visitor
+ * being told they had to be a member to see the page they were already on.
  *
- * So it describes the *event* rather than the audience. "Not public" is true
- * for every reader who gets this far and names none of them, which is also why
- * it does not list the two roles instead: a host should not have to work out
- * whether "managers" includes them, and a third reader added later would make
- * any such list wrong again rather than merely incomplete.
+ * Each time the audience had widened after the sentence was written, and the
+ * reader least sure of their own permissions was the one it lied to. So every
+ * line here describes the *event* and not who may read it: "not public" and
+ * "public now" hold for every reader who gets that far and name none of them.
+ * Listing the roles instead was considered and rejected — a host should not
+ * have to work out whether "managers" covers them, and a reader admitted later
+ * makes such a list wrong again rather than merely incomplete. `labels.test.ts`
+ * pins all five, by exact sentence and by a guard over this site's role nouns.
  */
 const STATUS_MEANING: Record<EventStatus, string> = {
   draft: "Not published yet, so it is not public. Nobody can apply.",
-  published: "Members can see it; applications follow the signup window.",
+  published: "Public now. Applications follow the signup window.",
   live: "Running now. Applications are closed.",
   complete: "Finished. Kept for the record.",
   cancelled: "Called off. Applications stay for the record.",

@@ -169,7 +169,7 @@ describe("signups closing soon", () => {
     expect(await closing(id, now)).toBeNull();
   });
 
-  it("gets nothing for a draft, which members cannot see at all", async () => {
+  it("gets nothing for a draft, which is not public at all", async () => {
     const id = await makeEvent({
       status: "draft",
       signupClosesAt: new Date(now.getTime() + 20 * HOUR),

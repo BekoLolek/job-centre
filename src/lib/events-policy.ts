@@ -455,7 +455,7 @@ export type SeatCounts = {
 
 /** Why a member cannot apply. The UI shows the reason, not a shrug. */
 export type ClosedReason =
-  /** Still a draft — members cannot even see it. */
+  /** Still a draft, so it is not public — only its managers reach it at all. */
   | "not_published"
   | "cancelled"
   /** The event has been and gone. */
