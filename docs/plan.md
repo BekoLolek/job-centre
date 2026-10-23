@@ -978,7 +978,7 @@ fire a two-hour reminder, and `docs/requirements.md` already carried that as a c
   it is published must post *one* announcement, not two. Publishing and opening are one moment
   there, and two posts a second apart is the kind of thing a channel is muted for.
 - **Acceptance criteria:**
-  - [ ] An event published before its signups open posts the published announcement, then the signups-open one when they open
+  - [x] An event published before its signups open posts the published announcement, then the signups-open one when they open  *(delivered by Task 68; `discord.test.ts:993` and `:934`, the latter mutation-proven)*
   - [x] An event already open when published posts only the published announcement
   - [x] Switchable like every other kind, and off does not suppress the published one
 - **Depends on:** Task 59.
@@ -1010,7 +1010,7 @@ fire a two-hour reminder, and `docs/requirements.md` already carried that as a c
   window must tolerate that rather than assuming exactness — and `/api/cron/reminders` already
   fails closed without `CRON_SECRET`, which is what makes a public URL safe to ping.
 - **Acceptance criteria:**
-  - [ ] Each posts once per event, proven by running the scheduler twice in one window
+  - [x] Each posts once per event, proven by running the scheduler twice in one window  *(delivered by Task 68; `discord.test.ts:993` and `:934`, the latter mutation-proven)*
   - [x] An event with no closing time, and one with no dated day, get nothing
   - [x] A cancelled event gets no starting-soon reminder
   - [x] A full event still gets the closing-soon one, and says it is full
