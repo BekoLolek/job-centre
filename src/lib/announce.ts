@@ -17,32 +17,35 @@
  * too, though nobody gets it unless an admin asks. Which of them actually post
  * is an **admin setting** (`SETTING_KEYS.announcements`), read through
  * `announcementSettingsFrom`, which supplies a default for anything the stored
- * object does not mention. That is what let a seventh kind ship without a
+ * object does not mention. That is what lets each new kind ship without a
  * migration and without a deployment silently starting to post something nobody
- * asked for.
+ * asked for — the seventh, and the three after it, arrived that way.
  *
- * ## `signups_open` has no trigger yet, and that is recorded rather than hidden
+ * ## The three kinds nothing requests triggers
  *
- * The eighth kind (R-205 / UC-38 2) is wording, vocabulary and a switch, and
- * **nothing in the site posts it**. That is not an oversight, and a reader
- * about to wire one up should know why before choosing a call site.
+ * Ten kinds now, and three of them — `signups_open` (R-205 / UC-38 2),
+ * `signups_closing_soon` (R-206 / UC-38 3) and `event_starting_soon` (R-207 /
+ * UC-38 4) — are **not posted by anything a request reaches**, deliberately.
  *
- * Applications opening is a *clock* event. The site has exactly one thing that
- * watches a clock — `/api/cron/reminders` — and the other moments it has to
- * watch (UC-38 3, 4) are Task 63's, together with the look-ahead-and-claim
- * shape that makes a second run inside one window post nothing (UC-38 5a, 5b).
- * Posting this kind from anywhere a request happens to reach instead would be a
- * second scheduler with worse properties: a page view cannot be relied on to
- * happen, and an announcement that fires because somebody loaded a page is one
- * that arrives twice on a busy evening and never on a quiet one.
+ * Each is a *clock* event: nothing happens at the moment applications open, or
+ * at the moment an event becomes "closing tomorrow". The site has exactly one
+ * thing that watches a clock — `/api/cron/reminders` — and `postDueAnnouncements`
+ * in `./discord` is the step that posts them, over the windows
+ * `./announce-schedule` decides and behind the claim row that makes a second
+ * run inside one window post nothing (UC-38 5a, 5b). Posting any of them from
+ * somewhere a request happens to reach would be a second scheduler with worse
+ * properties: a page view cannot be relied on to happen, and an announcement
+ * that fires because somebody loaded a page is one that arrives twice on a busy
+ * evening and never on a quiet one.
  *
  * The one moment a request *can* observe is publication, and there the question
  * is not "post it" but "is this the same moment" —
  * {@link publishingOpensSignups}, which is UC-38 2a and is why an event already
- * open when it goes up posts one announcement rather than two.
+ * open when it goes up posts one announcement rather than two. It is the same
+ * predicate the scheduler asks with `now`, so the two readings cannot drift.
  *
  * The same question decides what the *published* announcement says, which is
- * the other half of UC-38 2 and was missed when the eighth kind was built. One
+ * the other half of UC-38 2 and was missed when `signups_open` was built. One
  * post rather than two is only right if the one post is true: an event going up
  * a week ahead of its window cannot be announced with "applications are open",
  * because `applicationsOpen` will answer `too_early` to everyone who taps it.
@@ -133,6 +136,24 @@ export type AnnouncementKind =
   | "application_waitlisted"
   /** An application was declined. */
   | "application_declined"
+  /**
+   * One day before applications close (R-206 / UC-38 3).
+   *
+   * Scheduled rather than reactive: nothing *happens* at the moment an event
+   * becomes "closing tomorrow", so the clock is what triggers it
+   * (`./announce-schedule`). A full event still gets it and says so, which is
+   * UC-38 4c and the reason this kind has a `{full}` placeholder that is words
+   * either way rather than a blank.
+   */
+  | "signups_closing_soon"
+  /**
+   * Two hours before the first dated day starts (R-207 / UC-38 4).
+   *
+   * The same clock, and the same claim. A cancelled event never gets one
+   * (UC-38 4b): a reminder to turn up to a called-off event is the worst
+   * message this feature could send.
+   */
+  | "event_starting_soon"
   /** A draft lot settled with a winner and a price. */
   | "draft_lot_sold"
   /** A series was decided. */
@@ -188,6 +209,29 @@ export const ANNOUNCEMENTS: readonly AnnouncementSpec[] = [
      * It is also the honest default while nothing fires it: see the module
      * comment on the trigger, which is Task 63's scheduler.
      */
+    fallback: false,
+  },
+  {
+    kind: "signups_closing_soon",
+    label: "Applications close tomorrow",
+    detail:
+      "Posts a day before applications close, with the countdown and how many places there are. A full event still gets one, and says it is full.",
+    /*
+     * Off, like `signups_open` above and `standings_changed` below, and for the
+     * reason in the module comment rather than the "consolation" rule: a kind
+     * that ships with its switch on is a deployment silently starting to post
+     * something nobody asked for. This one would be the loudest possible
+     * version of that — it fires off a clock, on every event with a closing
+     * time, the first time the scheduler wakes after a deploy.
+     */
+    fallback: false,
+  },
+  {
+    kind: "event_starting_soon",
+    label: "An event starts in two hours",
+    detail:
+      "Posts two hours before the first dated day starts. An event with no dated day, and a cancelled one, get nothing.",
+    // Off, for the same reason as the kind above.
     fallback: false,
   },
   {
@@ -309,6 +353,31 @@ export type Placeholder = {
 };
 
 /**
+ * The two things `{full}` can say, and the reason it is words rather than a
+ * flag (UC-38 4c).
+ *
+ * A full event still gets the closing-soon announcement, because a waitlist
+ * place is still worth having — but the message has to **say** it is full, or
+ * the announcement is an invitation to apply for a seat that is not there.
+ * That makes "full" a *sentence* in this module rather than a boolean a screen
+ * renders, and both halves are declared here so that neither can be the empty
+ * string: a placeholder that renders as nothing is the mistake found in the
+ * channel, and it is also how a test asserting "it says it is full" goes
+ * vacuous.
+ *
+ * `open` is the other half rather than a blank for the same reason. An event
+ * with seats left reads "There are still places." — which is news a reader can
+ * act on, and is what keeps `{full}` a placeholder an admin can put anywhere in
+ * a sentence without having to know which state it is in.
+ */
+export const CLOSING_SOON_FULLNESS = {
+  /** Every seat taken. Contains the word "full" on purpose; a test asserts it. */
+  full: "The event is full, so this is for the waitlist.",
+  /** Seats left. */
+  open: "There are still places.",
+} as const;
+
+/**
  * What each kind offers — **and only what that kind actually has.**
  *
  * This is the table a save is checked against, and the reason it is a table
@@ -387,6 +456,58 @@ export const ANNOUNCEMENT_PLACEHOLDERS: Readonly<Record<AnnouncementKind, readon
         describe: "When applications close, as a countdown",
         example: "<t:1800000000:R>",
         whenAbsent: "no closing date",
+      },
+    ],
+    /*
+     * Four facts, and `{full}` is the one worth explaining.
+     *
+     * No `{starts}`. This announcement is about a *door closing*, and the
+     * window it fires in is a day wide: the event itself may be weeks away, so
+     * "starts" is not the fact a reader is being asked to act on. The three
+     * that are — what it is, how long is left, how many seats — are here.
+     *
+     * No `whenAbsent` on any of them, which is the declared meaning of its
+     * absence ("one the kind always has a value for") rather than an omission:
+     * `dueScheduledAnnouncements` only puts an event in this list when its
+     * closing time is inside the window, so there is always a closing instant;
+     * `{places}` is the seat count or the words "No limit"; and `{full}` is one
+     * of the two sentences in {@link CLOSING_SOON_FULLNESS}, never a blank.
+     * `signupsClosingSoonMessage`'s input types are non-nullable for exactly
+     * these fields, so the compiler holds that claim rather than a fallback.
+     */
+    signups_closing_soon: [
+      { name: "title", describe: "The event's title", example: "Friday REPO night" },
+      {
+        name: "closes",
+        describe: "How long is left, as a countdown",
+        example: "<t:1800000000:R>",
+      },
+      {
+        name: "places",
+        describe: "How many seats there are, or “No limit”",
+        example: "12",
+      },
+      {
+        name: "full",
+        describe: "Whether every seat is taken, in words — one sentence or the other, never nothing",
+        example: CLOSING_SOON_FULLNESS.full,
+      },
+    ],
+    /*
+     * Two facts, because there are two. A reminder two hours out is "this
+     * thing you signed up for is about to happen"; the seat count stopped
+     * being news when applications closed, and the closing time is in the past
+     * by then on every event that can reach this window
+     * (`signupWindowProblem` refuses a closing time after the first day
+     * starts), so offering either would be offering a placeholder whose only
+     * honest rendering is about something already over.
+     */
+    event_starting_soon: [
+      { name: "title", describe: "The event's title", example: "Friday REPO night" },
+      {
+        name: "starts",
+        describe: "When it starts, in each reader's own timezone",
+        example: "<t:1800000000:F>",
       },
     ],
     application_accepted: [
@@ -1233,6 +1354,125 @@ export function signupsOpenMessage(
           "closes",
           input.signupClosesAt ? stamp(input.signupClosesAt, "R") : null
         ),
+      },
+    }
+  );
+}
+
+export type SignupsClosingSoonInput = {
+  title: string;
+  slug: string;
+  /**
+   * How long is left, **already Discord markup** — `<t:unix:R>` from
+   * {@link stamp}, never a date this or any other module formatted.
+   *
+   * A string rather than a `Date`, unlike every other builder in this file, and
+   * on purpose: `dueScheduledAnnouncements` has already rendered it (that is
+   * what `DueClosingSoon.stamp` is), and taking the markup means this builder
+   * never holds an instant at all. The repo invariant — no instant is formatted
+   * on the server — is then structural here rather than a rule to follow.
+   */
+  closes: string;
+  /** Null when the event is uncapped. */
+  capacity?: number | null;
+  /** Whether every seat is taken (UC-38 4c). Words, not a blank: see below. */
+  full: boolean;
+  origin?: string | null;
+};
+
+/**
+ * Applications close tomorrow (R-206 / UC-38 3, 4c).
+ *
+ * Ember rather than the gold of a new event or the green of a door opening:
+ * this is the one announcement in the set that is a *deadline*, and it is the
+ * same colour `application_declined` uses — the colour this site reserves for
+ * "this is the one to read".
+ *
+ * The fullness sentence is in the description rather than in a field, because
+ * UC-38 4c asks for the message to **say** the event is full and a field
+ * reading "Full: yes" is not a thing anybody says. It is also what `{full}`
+ * renders to, so an admin who rewords this keeps the fact.
+ */
+export function signupsClosingSoonMessage(
+  input: SignupsClosingSoonInput,
+  template: AnnouncementTemplate | null = null
+): DiscordMessage {
+  // One expression, read by the "Places" field and by `{places}`, so an edited
+  // wording cannot disagree with the embed beside it about the seat count.
+  const places = input.capacity && input.capacity > 0 ? String(input.capacity) : "No limit";
+  const fullness = input.full ? CLOSING_SOON_FULLNESS.full : CLOSING_SOON_FULLNESS.open;
+  const url = linkTo(`/events/${input.slug}`, input.origin ?? null);
+
+  return message(
+    {
+      title: clamp(input.title, 240),
+      description: `Applications close ${input.closes}. ${fullness}`,
+      ...(url ? { url } : {}),
+      color: COLOURS.ember,
+      fields: [
+        { name: "Applications close", value: input.closes, inline: true },
+        { name: "Places", value: places, inline: true },
+      ],
+      footer: { text: "Closing soon" },
+    },
+    {
+      template,
+      values: {
+        title: clamp(input.title, 240),
+        // Markup in, markup out. No `valueOr` on any of these: each one is
+        // structurally always present (see `ANNOUNCEMENT_PLACEHOLDERS`), which
+        // is why none of them declares a `whenAbsent` to fall back to.
+        closes: input.closes,
+        places,
+        full: fullness,
+      },
+    }
+  );
+}
+
+export type EventStartingSoonInput = {
+  title: string;
+  slug: string;
+  /**
+   * When it starts, **already Discord markup** — `<t:unix:F>` from
+   * {@link stamp}. A string for the same reason as `closes` above.
+   */
+  starts: string;
+  origin?: string | null;
+};
+
+/**
+ * The event starts in two hours (R-207 / UC-38 4).
+ *
+ * Green, because by this point the question is not whether to apply but
+ * whether to turn up, and this is the same "go" the site uses for an
+ * acceptance. No seat count and no closing time: see the vocabulary note in
+ * `ANNOUNCEMENT_PLACEHOLDERS`.
+ *
+ * Nothing about *who* is playing. The accepted list is on the event page, which
+ * the embed links to, and naming four hundred people in a channel message is
+ * not a reminder.
+ */
+export function eventStartingSoonMessage(
+  input: EventStartingSoonInput,
+  template: AnnouncementTemplate | null = null
+): DiscordMessage {
+  const url = linkTo(`/events/${input.slug}`, input.origin ?? null);
+
+  return message(
+    {
+      title: clamp(input.title, 240),
+      description: `Starts ${input.starts} — if you are in, this is your reminder.`,
+      ...(url ? { url } : {}),
+      color: COLOURS.signal,
+      fields: [{ name: "Starts", value: input.starts, inline: true }],
+      footer: { text: "Starting soon" },
+    },
+    {
+      template,
+      values: {
+        title: clamp(input.title, 240),
+        starts: input.starts,
       },
     }
   );

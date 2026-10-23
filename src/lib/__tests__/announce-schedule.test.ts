@@ -12,10 +12,12 @@ import {
   GITHUB_PING_INTERVAL_MS,
   GITHUB_PING_LATENESS_MS,
   SCHEDULE_TOLERATES_LATENESS,
+  SIGNUPS_OPENING_LEAD_MS,
   SIGNUP_CLOSING_LEAD_MS,
   WORST_RUN_GAP_MS,
   dueScheduledAnnouncements,
 } from "@/lib/announce-schedule";
+import { publishingOpensSignups } from "@/lib/announce";
 
 /**
  * The two moments nobody triggers (R-206, R-207 / UC-38 3, 3a, 4, 4a, 4b, 4c,
@@ -46,6 +48,7 @@ const HOUR = 60 * MINUTE;
 type Setup = {
   status?: EventStatus;
   capacity?: number | null;
+  signupOpensAt?: Date | null;
   signupClosesAt?: Date | null;
   /** Written as `event_days` rows, because that is where a start lives (R-24). */
   dayStarts?: Array<Date | null>;
@@ -61,6 +64,7 @@ async function makeEvent(setup: Setup = {}): Promise<string> {
       title: `Scheduled ${suffix}`,
       status: setup.status ?? "published",
       capacity: setup.capacity ?? null,
+      signupOpensAt: setup.signupOpensAt ?? null,
       signupClosesAt: setup.signupClosesAt ?? null,
     })
     .returning({ id: events.id });
@@ -90,6 +94,12 @@ async function starting(eventId: string, now: Date) {
   return due.startingSoon.find((row) => row.eventId === eventId) ?? null;
 }
 
+/** This event's signups-opening entry, or null. */
+async function opening(eventId: string, now: Date) {
+  const due = await dueScheduledAnnouncements(now, db);
+  return due.signupsOpen.find((row) => row.eventId === eventId) ?? null;
+}
+
 /* ------------------------------------------------------------------ */
 /* One day before signups close (R-206 / UC-38 3, 3a, 4c)             */
 /* ------------------------------------------------------------------ */
@@ -104,6 +114,27 @@ describe("signups closing soon", () => {
     const due = await closing(id, now);
     expect(due).not.toBeNull();
     expect(due?.at.toISOString()).toBe(closesAt.toISOString());
+  });
+
+  it("carries the seat cap, which is what {places} renders", async () => {
+    /*
+     * The cap travels beside `full` rather than being derived from it: a full
+     * event with twelve seats and a full uncapped event are different
+     * sentences, and "No limit" is a thing the message says. Asserted because
+     * dropping it is silent — `signupsClosingSoonMessage` would just say "No
+     * limit" on every event, which reads perfectly well and is wrong.
+     */
+    const capped = await makeEvent({
+      signupClosesAt: new Date(now.getTime() + 20 * HOUR),
+      capacity: 12,
+    });
+    expect((await closing(capped, now))?.capacity).toBe(12);
+
+    const uncapped = await makeEvent({
+      signupClosesAt: new Date(now.getTime() + 20 * HOUR),
+      capacity: null,
+    });
+    expect((await closing(uncapped, now))?.capacity).toBeNull();
   });
 
   it("is not due the moment before the window opens", async () => {
@@ -328,6 +359,125 @@ describe("the instants travel as Discord markup", () => {
 /* A late run (the criterion that needs a moving clock)               */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Applications opening (R-205 / UC-38 2, 2a)                         */
+/* ------------------------------------------------------------------ */
+
+describe("signups opening", () => {
+  const now = new Date("2026-11-02T12:00:00.000Z");
+
+  it("is due inside the lead before the window opens, and carries that instant", async () => {
+    const opensAt = new Date(now.getTime() + 10 * MINUTE);
+    const id = await makeEvent({ signupOpensAt: opensAt });
+
+    const due = await opening(id, now);
+    expect(due).not.toBeNull();
+    expect(due?.at.toISOString()).toBe(opensAt.toISOString());
+  });
+
+  it("is not due further out than the lead", async () => {
+    const id = await makeEvent({
+      signupOpensAt: new Date(now.getTime() + SIGNUPS_OPENING_LEAD_MS + MINUTE),
+    });
+    expect(await opening(id, now)).toBeNull();
+  });
+
+  it("is due at the very edge of the window", async () => {
+    const id = await makeEvent({
+      signupOpensAt: new Date(now.getTime() + SIGNUPS_OPENING_LEAD_MS),
+    });
+    expect(await opening(id, now)).not.toBeNull();
+  });
+
+  /**
+   * **UC-38 2a, and the whole reason the window is forward-only.**
+   *
+   * An event whose signups were already open when it was published has
+   * `signupOpensAt` in the past — and `events` has no `published_at` column, so
+   * after the fact there is nothing to distinguish it from any other open
+   * event. The window is what distinguishes them: an instant in the past is in
+   * no forward window, ever, so this event never gets a signups-open
+   * announcement beside its published one.
+   *
+   * Asserted across a **sweep of instants** rather than at one `now`, because
+   * the claim is "never", and a single `now` is exactly the assertion that
+   * would survive somebody widening the window backwards by an hour.
+   */
+  it("is never due for an event whose signups were already open (UC-38 2a)", async () => {
+    const opensAt = new Date(now.getTime() - MINUTE);
+    const id = await makeEvent({ signupOpensAt: opensAt });
+
+    for (const after of [
+      MINUTE,
+      10 * MINUTE,
+      SIGNUPS_OPENING_LEAD_MS,
+      2 * SIGNUPS_OPENING_LEAD_MS,
+      24 * HOUR,
+      30 * 24 * HOUR,
+    ]) {
+      expect(
+        await opening(id, new Date(opensAt.getTime() + after)),
+        `${after}ms after it opened`
+      ).toBeNull();
+    }
+    // And the predicate that decides it, asked directly: `true` means "there is
+    // no second moment to announce". Task 68 calls this rather than re-deriving
+    // the comparison, which is what keeps the two readings from drifting.
+    expect(publishingOpensSignups({ signupOpensAt: opensAt }, now)).toBe(true);
+    expect(publishingOpensSignups({ signupOpensAt: new Date(now.getTime() + MINUTE) }, now)).toBe(
+      false
+    );
+  });
+
+  it("is never due for an event with no signup window start", async () => {
+    // `missingToPublish` refuses to publish without one, so this is unreachable
+    // through the gate — but `publishingOpensSignups` answers `true` for a null
+    // start (nothing holds the signups shut), and that must mean "nothing to
+    // announce" here too rather than a crash or a message with a hole.
+    const id = await makeEvent({ signupOpensAt: null });
+    expect(await opening(id, now)).toBeNull();
+    expect(await opening(id, new Date(now.getTime() + 24 * HOUR))).toBeNull();
+  });
+
+  it("is not due for a draft or a cancelled event", async () => {
+    const opensAt = new Date(now.getTime() + 10 * MINUTE);
+    for (const status of ["draft", "cancelled"] as const) {
+      const id = await makeEvent({ status, signupOpensAt: opensAt });
+      expect(await opening(id, now), status).toBeNull();
+    }
+    // The same window on a published event is due, so the statuses above are
+    // the reason and not the clock.
+    const published = await makeEvent({ status: "published", signupOpensAt: opensAt });
+    expect(await opening(published, now)).not.toBeNull();
+  });
+
+  it("carries the facts the message is made of, including a start it has to derive", async () => {
+    const opensAt = new Date(now.getTime() + 10 * MINUTE);
+    const startsAt = new Date(now.getTime() + 20 * HOUR);
+    const closesAt = new Date(now.getTime() + 10 * HOUR);
+    const id = await makeEvent({
+      signupOpensAt: opensAt,
+      signupClosesAt: closesAt,
+      capacity: 12,
+      dayStarts: [startsAt],
+    });
+
+    const due = await opening(id, now);
+    expect(due?.capacity).toBe(12);
+    expect(due?.startsAt?.toISOString()).toBe(startsAt.toISOString());
+    expect(due?.signupClosesAt?.toISOString()).toBe(closesAt.toISOString());
+  });
+
+  it("carries a null start for an event with no dated day", async () => {
+    // Unlike starting-soon, a missing start does not disqualify this one: the
+    // message drops the field, as `event_published` does (R-24).
+    const id = await makeEvent({ signupOpensAt: new Date(now.getTime() + 10 * MINUTE) });
+    const due = await opening(id, now);
+    expect(due).not.toBeNull();
+    expect(due?.startsAt).toBeNull();
+  });
+});
+
 /**
  * GitHub's scheduler is best-effort, so the test moves the clock instead of
  * asserting a comment.
@@ -373,9 +523,50 @@ describe("a run that is late", () => {
    */
   const SLIPS = [0, 5 * MINUTE, 10 * MINUTE, GITHUB_PING_LATENESS_MS];
 
-  it("the arithmetic says both windows survive the worst gap", () => {
+  it("the arithmetic says every window survives the worst gap", () => {
     expect(SCHEDULE_TOLERATES_LATENESS).toBe(true);
     expect(WORST_RUN_GAP_MS).toBe(GITHUB_PING_INTERVAL_MS + GITHUB_PING_LATENESS_MS);
+    // Each lead named, rather than trusting the conjunction above: a lead that
+    // was shortened to nothing would still leave `SCHEDULE_TOLERATES_LATENESS`
+    // asserting something true about the other two.
+    expect(SIGNUP_CLOSING_LEAD_MS).toBeGreaterThanOrEqual(WORST_RUN_GAP_MS);
+    expect(EVENT_STARTING_LEAD_MS).toBeGreaterThanOrEqual(WORST_RUN_GAP_MS);
+    expect(SIGNUPS_OPENING_LEAD_MS).toBeGreaterThanOrEqual(WORST_RUN_GAP_MS);
+  });
+
+  /**
+   * The opening window is the tightest of the three — exactly one worst-case
+   * gap — so it is the one where "certain to contain a wake" is a claim worth
+   * testing rather than an obvious consequence of a two-hour lead.
+   *
+   * Swept over the same slips, and over **every phase of the grid**, because a
+   * single starting instant would only prove that one alignment works: the
+   * wakes are 15 minutes apart and the window is 30 wide, so a test that
+   * happened to put the opening on a wake boundary would pass on a window half
+   * that size.
+   */
+  it.each(SLIPS)("catches a signup window opening at a slip of %ims", async (slip) => {
+    const opensAt = new Date("2026-11-06T20:00:00.000Z");
+    const id = await makeEvent({ signupOpensAt: opensAt });
+
+    for (const phase of [0, MINUTE, 7 * MINUTE, 14 * MINUTE]) {
+      const seen: Date[] = [];
+      for (const at of runs(
+        new Date(opensAt.getTime() - 3 * HOUR + phase),
+        new Date(opensAt.getTime() + HOUR),
+        slip
+      )) {
+        if (await opening(id, at)) seen.push(at);
+      }
+      expect(seen.length, `phase ${phase}`).toBeGreaterThan(0);
+      // Every wake that saw it was before the door opened, and none further
+      // out than the lead — the two bounds of the window, from the inside.
+      for (const at of seen) {
+        const lead = opensAt.getTime() - at.getTime();
+        expect(lead).toBeGreaterThan(0);
+        expect(lead).toBeLessThanOrEqual(SIGNUPS_OPENING_LEAD_MS);
+      }
+    }
   });
 
   it.each(SLIPS)("still fires at the right moment when every run slips %ims", async (slip) => {
@@ -411,8 +602,9 @@ describe("a run that is late", () => {
    *
    * That is not a bug — it is precisely why a claim is required, and pinning it
    * is what stops somebody "fixing" the repeat by narrowing the window, which
-   * would reintroduce the missed moment a late run causes. The claim itself is
-   * not built; see the note at the foot of `announce-schedule.ts`.
+   * would reintroduce the missed moment a late run causes. The claim lives with
+   * the posting, in `postDueAnnouncements`; `discord.test.ts` is where "every
+   * wake sees it, and only one wake posts" is asserted as one statement.
    */
   it.each(SLIPS)("is seen by every wake inside the window at a slip of %ims", async (slip) => {
     const id = await makeEvent({ dayStarts: [startsAt] });

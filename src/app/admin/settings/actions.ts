@@ -15,13 +15,23 @@
  */
 
 import { revalidatePath } from "next/cache";
-import { type AnnouncementSettings, normaliseAnnouncementSettings } from "@/lib/announce";
+import {
+  ANNOUNCEMENTS,
+  type AnnouncementKind,
+  type AnnouncementSettings,
+  normaliseAnnouncementSettings,
+} from "@/lib/announce";
 import { maskWebhook, resolveSiteOrigin, resolveWebhookUrl } from "@/lib/announce";
 import { recordAudit } from "@/lib/audit";
 import { getGateConfig, setGateConfig } from "@/lib/auth";
 import { getIntegrationConfig, setIntegrationSetting } from "@/lib/discord";
 import { SETTING_KEYS } from "@/db/schema";
-import { getAnnouncementSettings, setAnnouncementSettings } from "@/lib/discord";
+import {
+  type TemplateSaveResult,
+  getAnnouncementSettings,
+  setAnnouncementSettings,
+  setAnnouncementTemplate,
+} from "@/lib/discord";
 import type { EventResult } from "@/lib/events";
 import { requireAdmin } from "@/lib/session-guards";
 
@@ -55,6 +65,68 @@ export async function saveAnnouncementSettingsAction(
 
   revalidatePath("/admin/settings");
   return { ok: true, data: { settings: stored } };
+}
+
+/**
+ * One kind's wording and mention choice (R-201, R-202 / UC-37 6, 7, 7a).
+ *
+ * Thin, like every other action here: the refusals, the version check, the
+ * conflict's `current` row and both audit lines are `setAnnouncementTemplate`'s,
+ * and nothing below re-decides any of them. What this adds is the two things an
+ * action owes: `requireAdmin()`, because a server action is a public endpoint
+ * whatever rendered the form, and a sceptical read of the payload.
+ *
+ * ## What is checked here, and what is deliberately not
+ *
+ * The **kind** is checked against `ANNOUNCEMENTS`, because it is the primary key
+ * of the row being written and a kind that does not exist is not a refusal an
+ * admin should have to read — it is a stale tab or somebody poking the endpoint.
+ *
+ * The **role ids are not cleaned**. `announcementTemplateFrom` would be the
+ * obvious thing to run the payload through, and it is the wrong one: it *drops*
+ * anything that is not a snowflake, so an admin who pasted a role name would
+ * get a successful save with their mention silently missing. UC-37 wants them
+ * told. So the strings are passed through as strings and
+ * `announcementTemplateProblem` — asked first, inside
+ * `setAnnouncementTemplate` — refuses them by name. The only coercion is to the
+ * declared types, which is what stops a non-string reaching a regular
+ * expression.
+ */
+export async function saveAnnouncementTemplateAction(input: {
+  kind: string;
+  body: string | null;
+  everyone: boolean;
+  roleIds: string[];
+  /** The version the editor was opened at. `0` is a kind with no row. */
+  expectedVersion: number;
+}): Promise<TemplateSaveResult> {
+  const admin = await requireAdmin();
+
+  const kind = ANNOUNCEMENTS.find((spec) => spec.kind === input.kind)?.kind;
+  if (!kind) {
+    return { ok: false, error: "There is no announcement of that kind." };
+  }
+
+  const body = typeof input.body === "string" ? input.body : null;
+  const roleIds = Array.isArray(input.roleIds)
+    ? input.roleIds.filter((id): id is string => typeof id === "string")
+    : [];
+  const expectedVersion =
+    Number.isInteger(input.expectedVersion) && input.expectedVersion >= 0
+      ? input.expectedVersion
+      : 0;
+
+  const result = await setAnnouncementTemplate(
+    kind satisfies AnnouncementKind,
+    { body, mention: { everyone: input.everyone === true, roleIds } },
+    { expectedVersion, actor: admin }
+  );
+
+  // Only on a save that happened. A refusal and a lost race both leave the row
+  // as it was, and re-rendering the page under a conflict would replace the
+  // admin's unsaved words with the ones that beat them.
+  if (result.ok) revalidatePath("/admin/settings");
+  return result;
 }
 
 /* ------------------------------------------------------------------ */

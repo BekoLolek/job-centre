@@ -16,13 +16,17 @@
 
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
-import AnnouncementSettings from "@/components/admin/AnnouncementSettings";
+import AnnouncementSettings, { NOT_POSTED_YET, posted } from "@/components/admin/AnnouncementSettings";
 import ServerSettings from "@/components/admin/ServerSettings";
 import { Page, PageHeader, Section, StatTile } from "@/components/ui";
-import { ANNOUNCEMENTS } from "@/lib/announce";
+import { ANNOUNCEMENTS, type AnnouncementKind } from "@/lib/announce";
 import { maskWebhook } from "@/lib/announce";
 import { getGateConfig } from "@/lib/auth";
-import { getAnnouncementSettings, getIntegrationConfig } from "@/lib/discord";
+import {
+  getAnnouncementSettings,
+  getAnnouncementTemplates,
+  getIntegrationConfig,
+} from "@/lib/discord";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -31,14 +35,38 @@ export const metadata = {
   title: "Settings · Job Centre Events",
 };
 
-export default async function AdminSettingsPage() {
+export default async function AdminSettingsPage({
+  searchParams,
+}: {
+  /*
+   * Optional, and defaulted below. `?kind=` is a convenience — a link straight
+   * to one announcement's editor — and a page whose only job is to render eight
+   * switches must not refuse to render because nobody passed it a query.
+   */
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
+} = {}) {
   await requireAdmin();
 
+  const params = (await searchParams) ?? {};
+  const asked = Array.isArray(params.kind) ? params.kind[0] : params.kind;
+  // Through `ANNOUNCEMENTS` rather than cast: a query string is anybody's, and
+  // the prop is a `AnnouncementKind`.
+  const openKind: AnnouncementKind | null =
+    ANNOUNCEMENTS.find((spec) => spec.kind === asked)?.kind ?? null;
+
   const saved = await getAnnouncementSettings();
+  const templates = await getAnnouncementTemplates();
   const gate = await getGateConfig();
   const integrations = await getIntegrationConfig();
   const configured = Boolean(integrations.webhook);
-  const on = ANNOUNCEMENTS.filter((spec) => saved[spec.kind]).length;
+  /*
+   * Counted over the kinds something actually posts. A tile reading
+   * "Announcing 5/8" that includes a kind with no trigger is the page telling
+   * an admin a message is going out when none is; the eighth is accounted for
+   * on its own row, which says so in as many words (R-205, Task 68).
+   */
+  const live = ANNOUNCEMENTS.filter((spec) => posted(spec.kind, NOT_POSTED_YET));
+  const on = live.filter((spec) => saved[spec.kind]).length;
 
   return (
     <div className="min-h-screen">
@@ -60,7 +88,7 @@ export default async function AdminSettingsPage() {
             <>
               <StatTile
                 label="Announcing"
-                value={`${on}/${ANNOUNCEMENTS.length}`}
+                value={`${on}/${live.length}`}
                 valueClassName={configured && on > 0 ? "text-success" : "text-muted"}
               />
               <StatTile
@@ -77,6 +105,20 @@ export default async function AdminSettingsPage() {
             specs={ANNOUNCEMENTS}
             saved={saved}
             configured={configured}
+            templates={templates}
+            /*
+             * The site address, so a preview carries the link the post will.
+             * The webhook is a credential and stays on the server (see above);
+             * the address is on every page of the site already.
+             */
+            origin={integrations.origin}
+            openKind={openKind}
+            /*
+             * Named at the call site rather than left to the component's
+             * default, so the one place that decides which kinds have a
+             * trigger is the one place that reads it for the tile above.
+             */
+            notPosted={NOT_POSTED_YET}
           />
 
           <Section

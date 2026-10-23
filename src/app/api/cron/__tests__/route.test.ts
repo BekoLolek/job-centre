@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/cron/reminders/route";
+import { postDueAnnouncements } from "@/lib/discord";
 import { sendDueReminders } from "@/lib/notifications";
 
 /**
@@ -22,7 +23,22 @@ vi.mock("@/lib/notifications", () => ({
   sendDueReminders: vi.fn(async () => ({ events: 2, delivered: 3, asking: 1, asked: 1 })),
 }));
 
+/*
+ * The channel half of the same wake (R-205, R-206, R-207 / UC-38 2, 3, 4).
+ *
+ * Mocked rather than exercised: `discord.test.ts` is where `postDueAnnouncements`
+ * is tested against a real database and a fake Discord. What this file is for is
+ * the one thing only the route can get wrong — that neither half runs for a
+ * request that was refused.
+ */
+vi.mock("@/lib/discord", () => ({
+  postDueAnnouncements: vi.fn(async () => ({
+    posted: [{ kind: "event_starting_soon", eventId: "e1" }],
+  })),
+}));
+
 const run = vi.mocked(sendDueReminders);
+const announce = vi.mocked(postDueAnnouncements);
 
 const SECRET = "not-a-real-secret-just-a-test-value";
 
@@ -31,6 +47,7 @@ let hadSecret: string | undefined;
 beforeEach(() => {
   hadSecret = process.env.CRON_SECRET;
   run.mockClear();
+  announce.mockClear();
 });
 
 afterEach(() => {
@@ -64,6 +81,10 @@ describe("the reminders endpoint with no secret configured", () => {
     expect(response.status).toBe(503);
     // The thing that actually matters: nothing was sent to anybody.
     expect(run).not.toHaveBeenCalled();
+    // And nothing was posted to the channel either. This endpoint is public:
+    // the refusal has to cover both halves of what a good day does, and before
+    // Task 68 there was only one half to cover.
+    expect(announce).not.toHaveBeenCalled();
   });
 
   it("treats a secret of only whitespace as no secret", async () => {
@@ -75,6 +96,10 @@ describe("the reminders endpoint with no secret configured", () => {
     const response = await GET(ping("Bearer    "));
     expect(response.status).toBe(503);
     expect(run).not.toHaveBeenCalled();
+    // And nothing was posted to the channel either. This endpoint is public:
+    // the refusal has to cover both halves of what a good day does, and before
+    // Task 68 there was only one half to cover.
+    expect(announce).not.toHaveBeenCalled();
   });
 });
 
@@ -88,12 +113,20 @@ describe("the reminders endpoint with a secret configured", () => {
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toEqual({ ok: false });
     expect(run).not.toHaveBeenCalled();
+    // And nothing was posted to the channel either. This endpoint is public:
+    // the refusal has to cover both halves of what a good day does, and before
+    // Task 68 there was only one half to cover.
+    expect(announce).not.toHaveBeenCalled();
   });
 
   it("refuses the wrong secret", async () => {
     const response = await GET(ping("Bearer something-else"));
     expect(response.status).toBe(401);
     expect(run).not.toHaveBeenCalled();
+    // And nothing was posted to the channel either. This endpoint is public:
+    // the refusal has to cover both halves of what a good day does, and before
+    // Task 68 there was only one half to cover.
+    expect(announce).not.toHaveBeenCalled();
   });
 
   it("refuses the right secret offered the wrong way", async () => {
@@ -102,13 +135,21 @@ describe("the reminders endpoint with a secret configured", () => {
     const response = await GET(ping(SECRET));
     expect(response.status).toBe(401);
     expect(run).not.toHaveBeenCalled();
+    // And nothing was posted to the channel either. This endpoint is public:
+    // the refusal has to cover both halves of what a good day does, and before
+    // Task 68 there was only one half to cover.
+    expect(announce).not.toHaveBeenCalled();
   });
 
-  it("runs the reminders for the right secret, and reports what went out", async () => {
+  it("runs the reminders and the announcements, and reports what went out", async () => {
     const response = await GET(ping(`Bearer ${SECRET}`));
 
     expect(response.status).toBe(200);
     expect(run).toHaveBeenCalledTimes(1);
+    // Both halves of the wake, each exactly once. The announcements are not an
+    // afterthought here: before Task 68 nothing posted them at all, so "the
+    // route still only sends DMs" is the regression this names.
+    expect(announce).toHaveBeenCalledTimes(1);
     // The counts, not just `ok`: a run log that says `{"ok":true}` and nothing
     // else cannot tell a working schedule from one that found no events.
     await expect(response.json()).resolves.toEqual({
@@ -117,7 +158,32 @@ describe("the reminders endpoint with a secret configured", () => {
       delivered: 3,
       asking: 1,
       asked: 1,
+      announcements: 1,
     });
+  });
+
+  it("reports a quiet run as nought announcements rather than leaving it out", async () => {
+    // The ordinary case — most wakes have nothing due — and a body with the key
+    // missing would be indistinguishable from a deployment where the posting
+    // step was never wired in.
+    announce.mockResolvedValueOnce({ posted: [] });
+
+    const response = await GET(ping(`Bearer ${SECRET}`));
+    await expect(response.json()).resolves.toMatchObject({ ok: true, announcements: 0 });
+  });
+
+  it("answers 500 when the announcements fail, without leaking the reason", async () => {
+    // The other half of the failure path: a channel that went quiet because the
+    // posting step threw must not be reported as a successful run.
+    announce.mockRejectedValueOnce(new Error("the webhook is on fire"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const response = await GET(ping(`Bearer ${SECRET}`));
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({ ok: false, error: "Reminders failed." });
+    expect(errors).toHaveBeenCalled();
+
+    errors.mockRestore();
   });
 
   it("answers 500, without leaking the reason, when a run fails", async () => {

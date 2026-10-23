@@ -1,0 +1,75 @@
+-- A channel announcement is claimed before it is posted, once per kind per
+-- event (R-205, R-206, R-207 / UC-38 5a).
+--
+-- One new table and nothing else. The two scheduled announcements — one day
+-- before signups close, two hours before the first dated day starts — are
+-- decided by a *window* rather than an instant (see the module comment in
+-- `src/lib/announce-schedule.ts`), because a scheduler wakes when it wakes.
+-- A window a day wide is a window the quarter-hour schedule wakes inside
+-- ninety-odd times, so the row below is the whole of what makes "once per
+-- event" true. Signups opening is the third, and the same shape.
+--
+-- ## What happens to existing deployments
+--
+-- **Nothing, and that is the whole answer.** There is no backfill here, no
+-- INSERT, no UPDATE and no data statement of any kind — which makes this file
+-- unlike drizzle/0015, 0018, 0020 and 0025, so the reason is worth writing down
+-- rather than inferring from the absence. drizzle/0027 and 0029 are the other
+-- two files in this folder whose answer is "nothing", and the argument here is
+-- a third shape of it: not "the defaults match the old behaviour" (0027) and
+-- not "the absence of a row *is* the default" (0029), but **there is no old
+-- behaviour at all**.
+--
+-- Nothing has ever posted either of these announcements. The three kinds arrive
+-- switched **off** on every install (`ANNOUNCEMENTS` in `src/lib/announce.ts`),
+-- and nothing in the repo called the scheduler's post step before this commit,
+-- so on an existing deployment there is no event that has had one of these
+-- announcements and therefore no claim that *should* already exist. An empty
+-- table is the true state of the world, and a backfill could only invent one.
+--
+-- The one thing a backfill could plausibly have been for is worth naming so it
+-- is a decision and not an oversight: it could insert a claim for every event
+-- whose window has **already passed**, so that an admin who switches a kind on
+-- is not sent a flurry of announcements about events whose moment has gone.
+-- That is not needed, and inserting those rows would be a worse answer than
+-- nothing, because the *window* already refuses them. `0 < target − now ≤ lead`
+-- has a lower bound at the instant it counts back from (UC-38 5b): an event
+-- whose signups closed yesterday, or which started this morning, is outside
+-- every window and gets nothing however many times the scheduler runs and
+-- whatever this table holds. A backfill would be rows written to prevent
+-- something that cannot happen — and it would have to guess, per event, which
+-- of the three kinds to write, from a history the database does not record.
+--
+-- So the table starts empty on every install, and the first row on any
+-- deployment is written by the first announcement that actually goes out.
+--
+-- ## Why a table and not a column on `notification_dm_claims`
+--
+-- That table is `PRIMARY KEY (user_id, dedupe_key)` with `user_id` a NOT NULL
+-- reference to `users`, because a DM claim is a claim about one person's phone.
+-- **A channel announcement has no recipient.** Making `user_id` nullable would
+-- not only widen a security-shaped column for a row that has no user — it would
+-- break the dedupe it exists for, because NULL is not equal to NULL in a unique
+-- index, so every channel claim would be distinct from every other one and the
+-- second run inside a window would post again. Hence `(kind, event_id)`: the
+-- announcement, and the thing it is about.
+--
+-- `kind` is text rather than an enum for the reason `announcement_templates`
+-- gives at length in drizzle/0029 — a new announcement kind must ship without
+-- an `ALTER TYPE` and a deploy, and this very commit adds two.
+--
+-- ## Re-running it changes nothing
+--
+-- One CREATE TABLE and one ADD CONSTRAINT, no data, so a second pass fails on
+-- the CREATE rather than corrupting anything — and a deploy cannot reach a
+-- second pass at all: `PgDialect.migrate` runs every pending migration inside
+-- one transaction (the note in drizzle/0025 has the detail), so a half-applied
+-- file rolls back.
+CREATE TABLE "announcement_claims" (
+	"kind" text NOT NULL,
+	"event_id" uuid NOT NULL,
+	"claimed_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "announcement_claims_kind_event_id_pk" PRIMARY KEY("kind","event_id")
+);
+--> statement-breakpoint
+ALTER TABLE "announcement_claims" ADD CONSTRAINT "announcement_claims_event_id_events_id_fk" FOREIGN KEY ("event_id") REFERENCES "public"."events"("id") ON DELETE cascade ON UPDATE no action;

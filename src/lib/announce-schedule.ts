@@ -1,20 +1,21 @@
 import { inArray } from "drizzle-orm";
 import { type Database, applications, db as defaultDb, events } from "@/db";
-import { stamp } from "./announce";
+import { publishingOpensSignups, stamp } from "./announce";
 import { readDatesFor } from "./events";
 import { capacityState } from "./events-policy";
 
 /**
- * The two announcements nobody triggers (R-206, R-207 / UC-38 3, 3a, 4, 4a, 4b,
- * 4c, 5a, 5b).
+ * The three announcements nobody triggers (R-205, R-206, R-207 / UC-38 2, 2a,
+ * 3, 3a, 4, 4a, 4b, 4c, 5a, 5b).
  *
  * ## Why this is a module and not a call site
  *
  * Every other announcement is *reactive*: somebody published an event, somebody
  * awarded a lot, so the code that does the thing can also do the telling. These
- * two are not. Nothing happens at the moment an event becomes "closing
- * tomorrow" or "starting in two hours" — the clock simply moves, and if nobody
- * is running, nobody is told. That is the same argument
+ * three are not. Nothing happens at the moment applications open, or at the
+ * moment an event becomes "closing tomorrow" or "starting in two hours" — the
+ * clock simply moves, and if nobody is running, nobody is told. That is the
+ * same argument
  * `src/app/api/cron/reminders/route.ts` makes about reminder DMs, and this is
  * the announcement half of the same wake.
  *
@@ -113,7 +114,40 @@ export const SIGNUP_CLOSING_LEAD_MS = 24 * 60 * 60 * 1000;
 export const EVENT_STARTING_LEAD_MS = 2 * 60 * 60 * 1000;
 
 /**
- * Whether both windows are wide enough to be certain of catching a run, given
+ * The look-ahead for applications **opening** (R-205 / UC-38 2, 2a).
+ *
+ * The narrowest lead the schedule permits, and deliberately not a round number
+ * somebody liked: exactly {@link WORST_RUN_GAP_MS}, the smallest window that is
+ * still certain to contain a run. The other two leads are chosen by the
+ * requirement — "one day before", "two hours before" are what R-206 and R-207
+ * ask for — and this one is not, because R-205 asks for the channel to be told
+ * *when signups open* rather than some period beforehand. So the lead here is
+ * pure schedule tolerance, and every millisecond of it is a millisecond the
+ * announcement can be early by.
+ *
+ * **Why it is forward-looking at all, when the moment it announces is "now".**
+ * The window has to be forward-only, and that is the whole of how UC-38 2a is
+ * satisfied without a `published_at` column (see
+ * {@link dueScheduledAnnouncements}): an event whose signups were already open
+ * when it was published has `signupOpensAt` in the past *forever*, so it never
+ * enters a window of the form `0 < target − now ≤ lead` and never gets a second
+ * announcement a moment after its first. A window that reached backwards — "it
+ * opened within the last half hour" — would post one for every event ever
+ * published into an open window, on the first run after this deploy, which is
+ * exactly the double post 2a forbids.
+ *
+ * The cost is that this announcement can go out up to one gap **before** the
+ * door actually opens, and `signupsOpenMessage`'s sentence reads "Applications
+ * have opened". Half an hour is the worst case and it is the smallest worst
+ * case available; it is recorded in docs/plan.md as Task 68's one open
+ * question rather than papered over here, because narrowing it means either a
+ * more frequent schedule or a reworded default, and a reworded default is a
+ * golden that moves (see `AS_IT_WAS` in the tests).
+ */
+export const SIGNUPS_OPENING_LEAD_MS = WORST_RUN_GAP_MS;
+
+/**
+ * Whether every window is wide enough to be certain of catching a run, given
  * how late GitHub may be.
  *
  * Exported as the arithmetic rather than asserted in a comment, so that
@@ -121,7 +155,9 @@ export const EVENT_STARTING_LEAD_MS = 2 * 60 * 60 * 1000;
  * discovery made in a quiet channel. See the module comment.
  */
 export const SCHEDULE_TOLERATES_LATENESS =
-  SIGNUP_CLOSING_LEAD_MS >= WORST_RUN_GAP_MS && EVENT_STARTING_LEAD_MS >= WORST_RUN_GAP_MS;
+  SIGNUP_CLOSING_LEAD_MS >= WORST_RUN_GAP_MS &&
+  EVENT_STARTING_LEAD_MS >= WORST_RUN_GAP_MS &&
+  SIGNUPS_OPENING_LEAD_MS >= WORST_RUN_GAP_MS;
 
 /* ------------------------------------------------------------------ */
 /* What is due                                                        */
@@ -150,9 +186,46 @@ export type DueAnnouncement = {
  * queue has lost nothing. But the message has to *say* it is full, or the
  * announcement is an invitation to apply for a seat that is not there.
  */
-export type DueClosingSoon = DueAnnouncement & { full: boolean };
+export type DueClosingSoon = DueAnnouncement & {
+  full: boolean;
+  /**
+   * The seat cap, or null when uncapped — what `{places}` renders.
+   *
+   * Carried beside `full` rather than derived from it, because they answer
+   * different questions: a full event with twelve seats and a full uncapped
+   * event are different sentences, and "No limit" is a thing the message says.
+   */
+  capacity: number | null;
+};
+
+/**
+ * Applications opening, which carries the facts `signupsOpenMessage` was built
+ * to take (R-205 / UC-38 2).
+ *
+ * The one entry whose instants are **not** pre-rendered, and the reason is that
+ * its builder predates this module: `signupsOpenMessage` takes the start and
+ * the closing time as `Date`s and stamps them itself, exactly as
+ * `eventPublishedMessage` does, because it is the same four facts said at the
+ * other moment. Handing it strings would mean a second copy of its vocabulary.
+ * Nothing is *formatted* either way — `./announce`'s `stamp` is still the only
+ * thing that turns an instant into text.
+ *
+ * `at` is the opening instant itself, which is what the window was measured on.
+ */
+export type DueSignupsOpen = {
+  eventId: string;
+  title: string;
+  slug: string;
+  /** The instant applications open. */
+  at: Date;
+  capacity: number | null;
+  /** The derived start — its first dated day's (R-24). Null when it has none. */
+  startsAt: Date | null;
+  signupClosesAt: Date | null;
+};
 
 export type ScheduledAnnouncementsDue = {
+  signupsOpen: DueSignupsOpen[];
   closingSoon: DueClosingSoon[];
   startingSoon: DueAnnouncement[];
 };
@@ -177,6 +250,25 @@ export type ScheduledAnnouncementsDue = {
  * excluded by name (UC-38 4b): a reminder to turn up to a called-off event is
  * the single worst message this feature could send.
  *
+ * **Signups opening is `published` only**, and for the stronger of the closing
+ * reasons: applications follow the signup window on a published event and
+ * nowhere else, so on a `draft` there is no door to open and on a `cancelled`
+ * one there never will be.
+ *
+ * ## Why opening asks {@link publishingOpensSignups} instead of `inWindow`
+ *
+ * The lower bound of all three windows is the same comparison — is the instant
+ * still ahead of us — but for this one that comparison already has a name, a
+ * docblock and a test to the millisecond, because it is **also** the rule that
+ * decides whether publishing and opening are one moment or two (UC-38 2a). So
+ * this asks it rather than re-deriving `delta > 0` beside it: `true` means
+ * there is no second moment to announce, either because the window opened
+ * before now or because nothing ever held it shut. The upper bound is then the
+ * lead, and the window stays **forward-only** — which is what makes 2a free.
+ * See {@link SIGNUPS_OPENING_LEAD_MS}; widening it backwards would post a
+ * signups-open announcement for every event ever published into an open
+ * window.
+ *
  * ## Nothing to count back from
  *
  * `signupClosesAt` is nullable and so is `event_days.starts_at`, so an event
@@ -194,6 +286,7 @@ export async function dueScheduledAnnouncements(
       slug: events.slug,
       status: events.status,
       capacity: events.capacity,
+      signupOpensAt: events.signupOpensAt,
       signupClosesAt: events.signupClosesAt,
     })
     .from(events);
@@ -218,19 +311,46 @@ export async function dueScheduledAnnouncements(
     });
   }
 
+  /*
+   * Applications opening, decided by the one predicate that already names this
+   * rule (see the docblock). `!publishingOpensSignups(row, now)` is the lower
+   * bound — the opening is still ahead — and the lead is the upper one.
+   */
+  const openingCandidates = rows.filter((row) => {
+    if (row.status !== "published") return false;
+    const opens = row.signupOpensAt;
+    if (!opens) return false;
+    if (publishingOpensSignups({ signupOpensAt: opens }, now)) return false;
+    return opens.getTime() - now.getTime() <= SIGNUPS_OPENING_LEAD_MS;
+  });
+
   const startingCandidates = rows.filter(
     (row) => row.status === "published" || row.status === "live"
   );
 
   /*
-   * One read of the days for every event that could still be starting soon,
-   * because the start is only in `event_days` (R-24) and a per-event read would
-   * be a query per event on a job that runs every fifteen minutes.
+   * One read of the days for every event that could still be starting soon or
+   * opening, because the start is only in `event_days` (R-24) and a per-event
+   * read would be a query per event on a job that runs every fifteen minutes.
+   * The opening announcement carries the start too — it is one of the four
+   * facts `signupsOpenMessage` says — so both lists are asked for together
+   * rather than in two round trips.
    */
-  const dates = await readDatesFor(
-    database,
-    startingCandidates.map((row) => row.id)
-  );
+  const dates = await readDatesFor(database, [
+    ...new Set([...startingCandidates, ...openingCandidates].map((row) => row.id)),
+  ]);
+
+  const signupsOpen: DueSignupsOpen[] = openingCandidates.map((row) => ({
+    eventId: row.id,
+    title: row.title,
+    slug: row.slug,
+    // Non-null by construction: `openingCandidates` dropped every row whose
+    // `signupOpensAt` is null or already past.
+    at: row.signupOpensAt as Date,
+    capacity: row.capacity,
+    startsAt: dates.get(row.id)?.startsAt ?? null,
+    signupClosesAt: row.signupClosesAt,
+  }));
 
   const startingSoon: DueAnnouncement[] = [];
   for (const row of startingCandidates) {
@@ -264,9 +384,10 @@ export async function dueScheduledAnnouncements(
     // already uses for a closing time: "in 23 hours" is what a reader needs.
     stamp: stamp(row.closesAt, "R"),
     full: capacityState({ capacity: row.capacity }, seats.get(row.id) ?? []).full,
+    capacity: row.capacity,
   }));
 
-  return { closingSoon, startingSoon };
+  return { signupsOpen, closingSoon, startingSoon };
 }
 
 /**
@@ -308,28 +429,29 @@ async function seatsFor(
 }
 
 /* ------------------------------------------------------------------ */
-/* Still to come — see docs/plan.md Task 63's "Left over"             */
+/* Where the posting lives                                            */
 /* ------------------------------------------------------------------ */
 
 /**
- * Posting these is not here, and it is not an oversight.
+ * This module decides **which** events are due and **what the facts are**. It
+ * does not post, and it does not word anything.
  *
- * Two things it needs are in files another task holds, and one of them is a
- * schema change:
+ * `postDueAnnouncements` in `./discord` is the other half, and the split is the
+ * same one every announcement in this repo has: the sentence belongs in
+ * `./announce` with every other sentence, the webhook and the audit row belong
+ * in `./discord` with every other outbound call, and this file is the clock.
  *
- *  1. **Two kinds in `ANNOUNCEMENTS`** (`./announce`) —
- *     `signups_closing_soon` and `event_starting_soon` — with their placeholder
- *     tables and a builder each. Without a registered kind, `deliver` in
- *     `./discord` reads an undefined switch, treats it as off, and posts
- *     nothing: the feature would be dead code that looked wired up.
- *  2. **A claim keyed on the announcement and the event**, which is what makes
- *     a second run inside one window post nothing (UC-38 5a). The existing
- *     `notification_dm_claims` cannot hold it — it is keyed on a `user_id` with
- *     a not-null reference to `users`, and a channel announcement has no
- *     recipient — so this is a new table and a migration, not a new column.
+ * Two things that half needs, which is why it is there and not here:
  *
- * {@link dueScheduledAnnouncements} is deliberately the whole of the part that
- * does not depend on either: which events are due, and the facts a sentence
- * would be made of. Wiring is then a gatherer in `./discord` shaped exactly
- * like `announceEventPublished`, claiming before it builds.
+ *  1. **The three kinds** in `ANNOUNCEMENTS` — `signups_open`,
+ *     `signups_closing_soon` and `event_starting_soon` — each with a
+ *     placeholder table and a builder. Without a registered kind, `deliver`
+ *     reads an undefined switch, treats it as off, and posts nothing, so the
+ *     feature would be dead code that looked wired up.
+ *  2. **The claim**, `announcement_claims`, keyed `(kind, event_id)` — what
+ *     makes a second run inside one window post nothing (UC-38 5a). A window a
+ *     day wide is one the quarter-hour schedule wakes inside ninety-odd times,
+ *     so this is not an optimisation. `notification_dm_claims` could not hold
+ *     it: a channel announcement has no recipient, and that table's key is a
+ *     NOT NULL `user_id` (drizzle/0030 has the argument in full).
  */

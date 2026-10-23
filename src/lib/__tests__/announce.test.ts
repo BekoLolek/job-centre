@@ -13,8 +13,10 @@ import {
   announcementTemplateProblem,
   applicationDecidedMessage,
   defaultAnnouncementSettings,
+  CLOSING_SOON_FULLNESS,
   type EventPublishedInput,
   eventPublishedMessage,
+  eventStartingSoonMessage,
   linkTo,
   lotSoldMessage,
   maskWebhook,
@@ -25,6 +27,7 @@ import {
   publishingOpensSignups,
   resolveSiteOrigin,
   resolveWebhookUrl,
+  signupsClosingSoonMessage,
   signupsOpenMessage,
   siteOrigin,
   stamp,
@@ -70,11 +73,25 @@ describe("the toggle settings", () => {
      * settings screen telling an untruth.
      */
     expect(defaults.signups_open).toBe(false);
+    /*
+     * And the two the clock owns (R-206, R-207 / UC-38 3, 4), off for that same
+     * rule. These two would be the loudest version of it: they fire off a
+     * clock, on every event with a closing time or a dated day, the first time
+     * the scheduler wakes after a deploy — so on-by-default would turn a
+     * deployment into a flurry of announcements about events nobody asked to
+     * have announced.
+     */
+    expect(defaults.signups_closing_soon).toBe(false);
+    expect(defaults.event_starting_soon).toBe(false);
   });
 
   it("has a spec for every kind, and only for kinds", () => {
-    expect(ANNOUNCEMENTS).toHaveLength(8);
-    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(8);
+    // Ten: the seven that predate Task 59, `signups_open` (Task 62) and the two
+    // the clock posts (Task 68). The count is asserted rather than derived so
+    // that a kind added without a vocabulary, a builder and a golden fails here
+    // first — every sweep in this file runs over `ANNOUNCEMENTS` itself.
+    expect(ANNOUNCEMENTS).toHaveLength(10);
+    expect(new Set(ANNOUNCEMENTS.map((spec) => spec.kind)).size).toBe(10);
     for (const spec of ANNOUNCEMENTS) {
       expect(spec.label.length).toBeGreaterThan(0);
       expect(spec.detail.length).toBeGreaterThan(0);
@@ -482,6 +499,38 @@ function build(kind: AnnouncementKind, template: AnnouncementTemplate | null = n
         },
         template
       );
+    case "signups_closing_soon":
+      /*
+       * The same event again, and `full: false` — so the sweeps below compare
+       * like for like, and so the fullness sentence this fixture pins is the
+       * *ordinary* one. The full case is a second golden
+       * (`AS_IT_IS_FULL_AND_CLOSING`), for the reason `AS_IT_IS_PUBLISHED_EARLY`
+       * is one: a kind that grows a case grows a golden.
+       *
+       * `closes` is markup rather than a `Date`, which is the builder's own
+       * contract — `dueScheduledAnnouncements` has already stamped it.
+       */
+      return signupsClosingSoonMessage(
+        {
+          title: "Friday REPO night",
+          slug: "friday-repo",
+          closes: stamp(CLOSES, "R"),
+          capacity: 12,
+          full: false,
+          origin: ORIGIN,
+        },
+        template
+      );
+    case "event_starting_soon":
+      return eventStartingSoonMessage(
+        {
+          title: "Friday REPO night",
+          slug: "friday-repo",
+          starts: stamp(STARTS),
+          origin: ORIGIN,
+        },
+        template
+      );
     case "application_accepted":
     case "application_declined":
       return applicationDecidedMessage(
@@ -612,6 +661,22 @@ const AS_IT_WAS: Record<AnnouncementKind, string> = {
    */
   signups_open:
     '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications have opened — three taps if your profile is filled in.","url":"https://jc.test/events/friday-repo","color":4054148,"fields":[{"name":"Starts","value":"<t:1777658400:F>","inline":true},{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"Applications open"}}],"allowed_mentions":{"parse":[]}}',
+  /*
+   * The last two are the same kind of entry as `signups_open` above and not the
+   * kind above that: there was nothing to capture from before, because neither
+   * kind existed before Task 68. Each was taken from this file's own failure
+   * output on a first run with a deliberately wrong golden — the same
+   * discipline, and the only way the key order means anything.
+   *
+   * What they hold these kinds to is the forward promise: an unedited
+   * `signups_closing_soon` posts *this*, with no `content` key and
+   * `{"parse":[]}`, so the admin who switches it on is switching on a payload
+   * somebody has read.
+   */
+  signups_closing_soon:
+    '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications close <t:1777140000:R>. There are still places.","url":"https://jc.test/events/friday-repo","color":16731420,"fields":[{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"Closing soon"}}],"allowed_mentions":{"parse":[]}}',
+  event_starting_soon:
+    '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Starts <t:1777658400:F> — if you are in, this is your reminder.","url":"https://jc.test/events/friday-repo","color":4054148,"fields":[{"name":"Starts","value":"<t:1777658400:F>","inline":true}],"footer":{"text":"Starting soon"}}],"allowed_mentions":{"parse":[]}}',
 };
 
 /** The event in `build("event_published")`, published a week before it opens. */
@@ -646,6 +711,42 @@ const OPENS_AT = new Date("2026-04-01T12:00:00Z");
  */
 const AS_IT_IS_PUBLISHED_EARLY =
   '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications open <t:1775044800:R> — three taps if your profile is filled in.","url":"https://jc.test/events/friday-repo","color":14922300,"fields":[{"name":"Starts","value":"<t:1777658400:F>","inline":true},{"name":"Applications open","value":"<t:1775044800:F>","inline":true},{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"New event"}}],"allowed_mentions":{"parse":[]}}';
+
+/**
+ * `signups_closing_soon` for the event its golden **cannot speak for**: a full
+ * one (UC-38 4c).
+ *
+ * A second golden rather than an edit of the first, for the reason
+ * `AS_IT_IS_PUBLISHED_EARLY` is one — a kind that grows a case grows a golden.
+ * And the case is not a decoration: UC-38 4c says a full event *still* gets
+ * this announcement, because a waitlist place is worth having, and that the
+ * message says it is full. Those are two claims, and only a payload can hold
+ * the second one.
+ *
+ * Unlike the goldens above, this one was **written** rather than captured —
+ * from the entry next door, changing the one sentence fullness changes — and
+ * then confirmed by this file on its first run. That is only honest because the
+ * two differ in exactly one field; anything less mechanical than that, and
+ * capturing from the failure output is the discipline (see `signups_open`).
+ */
+const AS_IT_IS_FULL_AND_CLOSING =
+  '{"username":"Job Centre Events","embeds":[{"title":"Friday REPO night","description":"Applications close <t:1777140000:R>. The event is full, so this is for the waitlist.","url":"https://jc.test/events/friday-repo","color":16731420,"fields":[{"name":"Applications close","value":"<t:1777140000:R>","inline":true},{"name":"Places","value":"12","inline":true}],"footer":{"text":"Closing soon"}}],"allowed_mentions":{"parse":[]}}';
+
+function buildFullAndClosing(template: AnnouncementTemplate | null = null) {
+  // `build("signups_closing_soon")`'s event, full. One field differs from that
+  // fixture, so the pair is a clean statement about what fullness changes.
+  return signupsClosingSoonMessage(
+    {
+      title: "Friday REPO night",
+      slug: "friday-repo",
+      closes: stamp(CLOSES, "R"),
+      capacity: 12,
+      full: true,
+      origin: ORIGIN,
+    },
+    template
+  );
+}
 
 function buildPublishedEarly(template: AnnouncementTemplate | null = null) {
   return eventPublishedMessage(
@@ -704,6 +805,142 @@ describe("a kind nobody has edited (UC-37 2a)", () => {
     // And the event the first golden is about is still byte for byte itself,
     // asserted here too so the pair fails together rather than a file apart.
     expect(JSON.stringify(build("event_published"))).toBe(AS_IT_WAS.event_published);
+  });
+
+  it("posts its own payload for an event that is full and closing (UC-38 4c)", () => {
+    expect(JSON.stringify(buildFullAndClosing())).toBe(AS_IT_IS_FULL_AND_CLOSING);
+    expect(JSON.stringify(buildFullAndClosing({ body: null, mention: NO_MENTION }))).toBe(
+      AS_IT_IS_FULL_AND_CLOSING
+    );
+    // And the event with seats left is still byte for byte itself, so the pair
+    // fails together and names which of the two the channel would be wrong to.
+    expect(JSON.stringify(build("signups_closing_soon"))).toBe(AS_IT_WAS.signups_closing_soon);
+  });
+});
+
+/* ================================================================== */
+/* Task 68 — the two kinds the clock posts (R-206, R-207 / UC-38)     */
+/* ================================================================== */
+
+describe("applications closing tomorrow (R-206 / UC-38 3, 4c)", () => {
+  /**
+   * UC-38 4c, as the two claims it actually makes.
+   *
+   * Asserted on the **sentence** rather than on a flag, because "says it is
+   * full" is a claim about words a reader sees. And not with a bare
+   * `toContain("full")`: the word has to be in the *description*, which is the
+   * only part of the embed an admin's wording can replace and the only part a
+   * reader reads as a sentence. A match anywhere in the serialised payload
+   * would be satisfied by a field label or a footer somebody added later —
+   * which is the shape of the `toContain("PAGE_SHELL")` that a comment
+   * satisfied on this project.
+   */
+  it("still posts for a full event, and says so in the description", () => {
+    const full = buildFullAndClosing();
+    expect(full.embeds[0].description).toContain("full");
+    expect(full.embeds[0].description).toBe(
+      `Applications close ${stamp(CLOSES, "R")}. ${CLOSING_SOON_FULLNESS.full}`
+    );
+  });
+
+  it("says something other than nothing when the event is not full", () => {
+    /*
+     * The other half, and the one that stops `{full}` being a blank. An event
+     * with seats left must not render the fullness as an empty string — a
+     * placeholder that silently disappears is the mistake found in the channel,
+     * and it is also how the assertion above goes vacuous.
+     */
+    const open = build("signups_closing_soon");
+    expect(open.embeds[0].description).toContain(CLOSING_SOON_FULLNESS.open);
+    expect(open.embeds[0].description).not.toContain("full");
+    // The two sentences are different, and neither is empty.
+    expect(CLOSING_SOON_FULLNESS.open.trim()).not.toBe("");
+    expect(CLOSING_SOON_FULLNESS.full.trim()).not.toBe("");
+    expect(CLOSING_SOON_FULLNESS.open).not.toBe(CLOSING_SOON_FULLNESS.full);
+  });
+
+  it("renders {full} as the right sentence in an admin's own wording", () => {
+    // The placeholder, not the default sentence: an admin who rewords this
+    // keeps the fact, which is the whole reason `{full}` exists rather than the
+    // fullness being hard-wired into the compiled copy.
+    const wording: AnnouncementTemplate = {
+      body: "{title} shuts {closes}. {full} Seats: {places}.",
+      mention: NO_MENTION,
+    };
+    expect(buildFullAndClosing(wording).embeds[0].description).toBe(
+      `Friday REPO night shuts ${stamp(CLOSES, "R")}. ${CLOSING_SOON_FULLNESS.full} Seats: 12.`
+    );
+    expect(build("signups_closing_soon", wording).embeds[0].description).toBe(
+      `Friday REPO night shuts ${stamp(CLOSES, "R")}. ${CLOSING_SOON_FULLNESS.open} Seats: 12.`
+    );
+  });
+
+  it("says “No limit” for an uncapped event rather than a hole", () => {
+    const uncapped = signupsClosingSoonMessage(
+      {
+        title: "Friday REPO night",
+        slug: "friday-repo",
+        closes: stamp(CLOSES, "R"),
+        capacity: null,
+        full: false,
+        origin: ORIGIN,
+      },
+      { body: "{places}", mention: NO_MENTION }
+    );
+    expect(uncapped.embeds[0].description).toBe("No limit");
+    // And the embed's own field agrees with the wording beside it.
+    expect(uncapped.embeds[0].fields).toEqual([
+      { name: "Applications close", value: stamp(CLOSES, "R"), inline: true },
+      { name: "Places", value: "No limit", inline: true },
+    ]);
+  });
+});
+
+describe("an event starting soon (R-207 / UC-38 4)", () => {
+  it("carries the start as Discord markup and nothing a server formatted", () => {
+    const message = build("event_starting_soon");
+    expect(message.embeds[0].description).toBe(
+      `Starts ${stamp(STARTS)} — if you are in, this is your reminder.`
+    );
+    expect(message.embeds[0].fields).toEqual([
+      { name: "Starts", value: stamp(STARTS), inline: true },
+    ]);
+  });
+
+  it("offers only the two facts it has", () => {
+    /*
+     * The vocabulary, asserted as the whole list rather than as two
+     * `toContain`s. A kind that gained `{places}` or `{closes}` by somebody
+     * copying a table would satisfy the narrower assertion, and the reason this
+     * kind does not offer them is in `ANNOUNCEMENT_PLACEHOLDERS`: both are
+     * about a door that shut before this announcement fires.
+     */
+    expect(placeholdersFor("event_starting_soon").map((p) => p.name)).toEqual(["title", "starts"]);
+    expect(placeholdersFor("signups_closing_soon").map((p) => p.name)).toEqual([
+      "title",
+      "closes",
+      "places",
+      "full",
+    ]);
+  });
+
+  it("refuses a placeholder from the kind next door, naming what it does offer", () => {
+    // The two new kinds have overlapping-looking vocabularies, which is exactly
+    // when a wording written for one gets pasted into the other.
+    const problem = announcementTemplateProblem("event_starting_soon", {
+      body: "{title} closes {closes}.",
+      mention: NO_MENTION,
+    });
+    expect(problem).toContain("{closes}");
+    expect(problem).toContain("{starts}");
+    expect(problem).toContain("{title}");
+    // And the other direction: `{starts}` is not a fact this one has.
+    expect(
+      announcementTemplateProblem("signups_closing_soon", {
+        body: "{title} starts {starts}.",
+        mention: NO_MENTION,
+      })
+    ).toContain("{starts}");
   });
 });
 

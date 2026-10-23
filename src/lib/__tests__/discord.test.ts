@@ -1,7 +1,21 @@
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Database, SETTING_KEYS, announcementTemplates } from "@/db";
+import {
+  type Database,
+  SETTING_KEYS,
+  announcementClaims,
+  announcementTemplates,
+  applications,
+  eventDays,
+  events,
+} from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
-import type { AnnouncementSettings, DiscordMessage } from "@/lib/announce";
+import type {
+  AnnouncementKind,
+  AnnouncementSettings,
+  DiscordMessage,
+} from "@/lib/announce";
+import { EVENT_STARTING_LEAD_MS } from "@/lib/announce-schedule";
 
 /*
  * Posting, against a real in-memory Postgres and a fake Discord.
@@ -48,12 +62,15 @@ const {
   getAnnouncementSettings,
   getAnnouncementTemplate,
   getAnnouncementTemplates,
+  postDueAnnouncements,
   setAnnouncementSettings,
   setAnnouncementTemplate,
   setIntegrationSetting,
   unedited,
 } = await import("@/lib/discord");
+type PostedAnnouncement = Awaited<ReturnType<typeof postDueAnnouncements>>["posted"][number];
 const {
+  CLOSING_SOON_FULLNESS,
   NO_MENTION,
   applicationDecidedMessage,
   defaultAnnouncementSettings,
@@ -803,5 +820,424 @@ describe("a post still in flight when the webhook is replaced", () => {
 
     const view = await loadDashboard({}, db);
     expect(view.items.filter((item) => item.kind === "announcements" && item.event?.id === eventId)).toEqual([]);
+  });
+});
+
+/* ================================================================== */
+/* Task 68 — the three the clock posts (R-205, R-206, R-207 / UC-38)  */
+/* ================================================================== */
+
+/**
+ * One event at a chosen distance from a chosen instant.
+ *
+ * Inserted directly rather than built through `createEvent`, for the reason
+ * `announce-schedule.test.ts` does the same: every test below is about a window
+ * measured against `NOW`, and `PUBLISHABLE`'s window — open since 2000,
+ * shutting in 2100 — is deliberately nowhere near any of them.
+ */
+async function scheduled(setup: {
+  signupOpensAt?: Date | null;
+  signupClosesAt?: Date | null;
+  capacity?: number | null;
+  status?: "draft" | "published" | "live" | "cancelled";
+  dayStarts?: readonly Date[];
+  accepted?: number;
+}): Promise<{ id: string; title: string }> {
+  counter += 1;
+  const title = `Clock ${counter}`;
+  const [event] = await db
+    .insert(events)
+    .values({
+      slug: `cron-${counter}-${Math.random().toString(36).slice(2, 8)}`,
+      title,
+      status: setup.status ?? "published",
+      capacity: setup.capacity ?? null,
+      signupOpensAt: setup.signupOpensAt ?? null,
+      signupClosesAt: setup.signupClosesAt ?? null,
+    })
+    .returning({ id: events.id });
+
+  for (const [dayIndex, startsAt] of (setup.dayStarts ?? []).entries()) {
+    await db.insert(eventDays).values({ eventId: event.id, dayIndex, startsAt });
+  }
+  for (let seat = 0; seat < (setup.accepted ?? 0); seat += 1) {
+    const userId = await makeUser(db);
+    await db.insert(applications).values({ eventId: event.id, userId, status: "accepted" });
+  }
+  return { id: event.id, title };
+}
+
+/**
+ * The one payload that went out **for this event**, by the title in its embed.
+ *
+ * Not `posted()[0]`, and the difference is not pedantry: this file shares one
+ * database, so a run can legitimately post for an event some earlier test left
+ * behind, and `posted()[0]` is then a different event's message. That is not
+ * hypothetical — it is what the first draft of these tests did, and the full
+ * suite caught it while the same test passed in isolation.
+ */
+function sentFor(title: string): DiscordMessage {
+  const matches = posted().filter((message) => message.embeds[0].title === title);
+  expect(matches, `exactly one post for ${title}`).toHaveLength(1);
+  return matches[0];
+}
+
+/** One run of the scheduler's posting step, at `now`. */
+async function wake(now: Date): Promise<PostedAnnouncement[]> {
+  const { posted: went } = await postDueAnnouncements(now, db);
+  return went;
+}
+
+/**
+ * This event's share of a run, as the kinds that went out for it.
+ *
+ * **Never a count of the whole run.** The file shares one database, so a count
+ * would be a statement about every event any other test left lying around — and
+ * "one post went out" is also what a channel sees when the *wrong* one of two
+ * announcements fires.
+ */
+function forEvent(went: PostedAnnouncement[], eventId: string): AnnouncementKind[] {
+  return went.filter((one) => one.eventId === eventId).map((one) => one.kind);
+}
+
+/** This event's claim rows, which are the whole of why it posts once. */
+async function claimsFor(eventId: string) {
+  return db
+    .select({ kind: announcementClaims.kind, eventId: announcementClaims.eventId })
+    .from(announcementClaims)
+    .where(eq(announcementClaims.eventId, eventId));
+}
+
+const NOW = new Date("2026-11-02T12:00:00.000Z");
+const MIN = 60 * 1000;
+const HR = 60 * MIN;
+
+describe("the scheduled announcements, posted", () => {
+  /**
+   * **UC-38 5a, and the trap this test is written around.**
+   *
+   * "Posts once per event, proven by running the scheduler twice in one window"
+   * is a criterion a test can satisfy without testing anything: run it twice,
+   * count one post, pass — and it passes identically when the *first* run
+   * posted nothing and the second did. Task 63 hit exactly that.
+   *
+   * So the two runs are asserted **separately**, and by kind rather than by
+   * count: the first run posted this kind for this event, and the second posted
+   * nothing at all for it. Both halves must hold, and neither is satisfiable by
+   * silence. The second run is a quarter of an hour later, which is what the
+   * schedule actually does.
+   */
+  it.each([
+    ["signups_closing_soon", { signupClosesAt: new Date(NOW.getTime() + 20 * HR), capacity: 12 }],
+    ["event_starting_soon", { dayStarts: [new Date(NOW.getTime() + 90 * MIN)] }],
+    ["signups_open", { signupOpensAt: new Date(NOW.getTime() + 10 * MIN) }],
+  ] as const)("posts %s once per event, and the next run posts nothing", async (kind, setup) => {
+    await switches({ [kind]: true } as Partial<AnnouncementSettings>);
+    const { id, title } = await scheduled(setup);
+
+    const first = await wake(NOW);
+    // Posted, and *this* kind — not "something happened".
+    expect(forEvent(first, id)).toEqual([kind]);
+    // And one payload actually reached Discord for this event.
+    expect(sentFor(title).embeds[0].title).toBe(title);
+    const callsAfterFirst = fetchStub.mock.calls.length;
+
+    const second = await wake(new Date(NOW.getTime() + 15 * MIN));
+    // And nothing the second time, as its own statement.
+    expect(forEvent(second, id)).toEqual([]);
+    expect(fetchStub.mock.calls.length).toBe(callsAfterFirst);
+    // Still exactly one post for this event, not two.
+    expect(sentFor(title).embeds[0].title).toBe(title);
+
+    // The claim is why, and it is one row rather than two.
+    expect(await claimsFor(id)).toEqual([{ kind, eventId: id }]);
+  });
+
+  /**
+   * UC-38 5a across a whole window of wakes, at every slip.
+   *
+   * `announce-schedule.test.ts` proves every wake inside the window *sees* the
+   * event, which is why a claim is needed at all. This is the other half of
+   * that sentence: of all those wakes, exactly one posts.
+   *
+   * **A slip of exactly 15 minutes reproduces the same grid of wake times**, so
+   * "every run a quarter of an hour late" fires at identical instants to "on
+   * time" and on its own proves nothing — hence 0/5/10/15 (Task 63's note).
+   */
+  it.each([0, 5 * MIN, 10 * MIN, 15 * MIN])(
+    "posts exactly once across a window of wakes slipped by %ims",
+    async (slip) => {
+      await switches({ event_starting_soon: true });
+      const startsAt = new Date("2026-11-06T20:00:00.000Z");
+      const { id, title } = await scheduled({ dayStarts: [startsAt] });
+
+      const fired: Array<{ at: Date; kinds: AnnouncementKind[] }> = [];
+      for (let at = startsAt.getTime() - 4 * HR; at <= startsAt.getTime() + HR; at += 15 * MIN) {
+        const mine = forEvent(await wake(new Date(at + slip)), id);
+        if (mine.length > 0) fired.push({ at: new Date(at + slip), kinds: mine });
+      }
+
+      // Exactly one wake posted, and it posted the right kind — not "at most
+      // one", which silence also satisfies.
+      expect(fired.map((one) => one.kinds)).toEqual([["event_starting_soon"]]);
+      // And it fired inside the two hours before the start, not merely once.
+      const lead = startsAt.getTime() - fired[0].at.getTime();
+      expect(lead).toBeGreaterThan(0);
+      expect(lead).toBeLessThanOrEqual(EVENT_STARTING_LEAD_MS);
+      // One payload for this event across all those wakes, named rather than
+      // counted over the whole run.
+      expect(sentFor(title).embeds[0].footer).toEqual({ text: "Starting soon" });
+    }
+  );
+
+  it("posts the signups-open announcement when the window opens (UC-38 2)", async () => {
+    await switches({ signups_open: true, event_published: true });
+    const { id, title } = await scheduled({
+      signupOpensAt: new Date(NOW.getTime() + 10 * MIN),
+      signupClosesAt: new Date(NOW.getTime() + 10 * HR),
+      capacity: 12,
+      dayStarts: [new Date(NOW.getTime() + 20 * HR)],
+    });
+
+    expect(forEvent(await wake(NOW), id)).toEqual(["signups_open"]);
+    // The payload, not just the fact of a post: the footer is what tells it
+    // apart from the published announcement it must not duplicate.
+    const message = sentFor(title);
+    expect(message.embeds[0].footer).toEqual({ text: "Applications open" });
+    expect(message.embeds[0].description).toBe(
+      "Applications have opened — three taps if your profile is filled in."
+    );
+  });
+
+  /**
+   * UC-38 2a from the scheduler's side — the half that could not be tested
+   * before this task existed.
+   *
+   * The event is already taking applications, so publishing it *was* the moment
+   * its signups opened. `announceEventPublished` posts one announcement (the
+   * test much further up), and the scheduler must never add a second: not on
+   * the next wake, and not on any wake after it. Swept forward a month, because
+   * what makes this true is the window being forward-only, and a single `now`
+   * is exactly the assertion that would survive somebody widening it backwards.
+   */
+  it("never posts signups-open for an event already open when published (UC-38 2a)", async () => {
+    await switches({ signups_open: true });
+    const { id } = await scheduled({
+      signupOpensAt: new Date(NOW.getTime() - MIN),
+      signupClosesAt: new Date(NOW.getTime() + 40 * 24 * HR),
+    });
+
+    for (const after of [MIN, 30 * MIN, HR, 24 * HR, 30 * 24 * HR]) {
+      expect(forEvent(await wake(new Date(NOW.getTime() + after)), id), `${after}ms later`).toEqual(
+        []
+      );
+    }
+    expect(await claimsFor(id)).toEqual([]);
+    // Not because the kind is off or unregistered: it is on, and the very same
+    // run posts it for an event whose window is still ahead.
+    expect((await getAnnouncementSettings(db)).signups_open).toBe(true);
+    const ahead = await scheduled({ signupOpensAt: new Date(NOW.getTime() + 10 * MIN) });
+    expect(forEvent(await wake(NOW), ahead.id)).toEqual(["signups_open"]);
+  });
+
+  /**
+   * UC-38 4c, as the two claims it actually makes: a full event **still** gets
+   * this announcement, and the message **says** it is full.
+   *
+   * Asserted on the description of *this event's* payload. Fullness is the only
+   * thing that differs between this test and the one below, so between them
+   * neither sentence can be the one the builder produces regardless.
+   */
+  it("posts the closing reminder for a full event, and says it is full (UC-38 4c)", async () => {
+    await switches({ signups_closing_soon: true });
+    const { id, title } = await scheduled({
+      signupClosesAt: new Date(NOW.getTime() + 20 * HR),
+      capacity: 2,
+      accepted: 2,
+    });
+
+    expect(forEvent(await wake(NOW), id)).toEqual(["signups_closing_soon"]);
+    expect(sentFor(title).embeds[0].description).toContain("full");
+    expect(sentFor(title).embeds[0].description).toContain(CLOSING_SOON_FULLNESS.full);
+    // And the seat cap reached the embed. Dropping it is silent — the message
+    // would read "No limit" on every event, which is perfectly fluent and
+    // wrong, so the number is asserted rather than the message's shape.
+    expect(sentFor(title).embeds[0].fields).toContainEqual({
+      name: "Places",
+      value: "2",
+      inline: true,
+    });
+  });
+
+  it("says there are still places when the event is not full", async () => {
+    // The other half, so the assertion above cannot be passing on a message
+    // that says "full" whatever the seats are doing.
+    await switches({ signups_closing_soon: true });
+    const { id, title } = await scheduled({
+      signupClosesAt: new Date(NOW.getTime() + 20 * HR),
+      capacity: 10,
+      accepted: 1,
+    });
+
+    expect(forEvent(await wake(NOW), id)).toEqual(["signups_closing_soon"]);
+    expect(sentFor(title).embeds[0].description).toContain(CLOSING_SOON_FULLNESS.open);
+    expect(sentFor(title).embeds[0].description).not.toContain("full");
+    // A different cap from the test above, so between the two neither number
+    // can be one the builder produces regardless of the event.
+    expect(sentFor(title).embeds[0].fields).toContainEqual({
+      name: "Places",
+      value: "10",
+      inline: true,
+    });
+  });
+
+  it("posts nothing for an event with no closing time, and none for one with no dated day", async () => {
+    await switches({ signups_closing_soon: true, event_starting_soon: true });
+    const noClose = await scheduled({ dayStarts: [] });
+    const noDay = await scheduled({ signupClosesAt: null });
+
+    const went = await wake(NOW);
+    expect(forEvent(went, noClose.id)).toEqual([]);
+    expect(forEvent(went, noDay.id)).toEqual([]);
+    expect(await claimsFor(noClose.id)).toEqual([]);
+    expect(await claimsFor(noDay.id)).toEqual([]);
+  });
+
+  it("posts no starting-soon reminder for a cancelled event (UC-38 4b)", async () => {
+    await switches({ event_starting_soon: true });
+    const startsAt = new Date(NOW.getTime() + 90 * MIN);
+    const cancelled = await scheduled({ status: "cancelled", dayStarts: [startsAt] });
+    const live = await scheduled({ status: "live", dayStarts: [startsAt] });
+
+    const went = await wake(NOW);
+    expect(forEvent(went, cancelled.id)).toEqual([]);
+    // And the identical event that was not cancelled did get one, so the
+    // silence above is the cancellation rather than the clock.
+    expect(forEvent(went, live.id)).toEqual(["event_starting_soon"]);
+  });
+
+  /** UC-38 5b — the window was slept through. */
+  it("does not post a missed moment late", async () => {
+    await switches({ signups_closing_soon: true, event_starting_soon: true });
+    const closed = await scheduled({ signupClosesAt: new Date(NOW.getTime() - MIN) });
+    const begun = await scheduled({ dayStarts: [new Date(NOW.getTime() - MIN)] });
+
+    const went = await wake(NOW);
+    expect(forEvent(went, closed.id)).toEqual([]);
+    expect(forEvent(went, begun.id)).toEqual([]);
+    // ...and both would have fired, had anything been awake a minute earlier,
+    // so the silence above is the lower bound of the window and not the fixture.
+    const earlier = await wake(new Date(NOW.getTime() - 2 * MIN));
+    expect(forEvent(earlier, closed.id)).toEqual(["signups_closing_soon"]);
+    expect(forEvent(earlier, begun.id)).toEqual(["event_starting_soon"]);
+  });
+
+  /**
+   * The repo invariant, asserted structurally rather than by eye: every instant
+   * in every one of these payloads is Discord's own markup.
+   *
+   * Not `toContain("<t:")`, which a payload carrying one stamp *and* one
+   * formatted date would satisfy. The assertion is that **no** substring
+   * anywhere in the serialised body looks like a date the server formatted,
+   * over all three kinds in one run — plus the positive half, so the four
+   * refusals cannot be passing on a message with no time in it at all.
+   */
+  it("formats no instant on the server, over all three kinds at once", async () => {
+    await switches({
+      signups_open: true,
+      signups_closing_soon: true,
+      event_starting_soon: true,
+    });
+    const opening = await scheduled({
+      signupOpensAt: new Date(NOW.getTime() + 10 * MIN),
+      // A window *and* a dated day, so this payload has instants in it to get
+      // wrong. Without them the embed carries no time at all, and the positive
+      // assertion below would be the only thing standing between this test and
+      // passing on three messages that mention no instant whatsoever.
+      signupClosesAt: new Date(NOW.getTime() + 30 * HR),
+      dayStarts: [new Date(NOW.getTime() + 40 * HR)],
+      capacity: 8,
+    });
+    const closing = await scheduled({
+      signupClosesAt: new Date(NOW.getTime() + 20 * HR),
+      capacity: 4,
+    });
+    const starting = await scheduled({ dayStarts: [new Date(NOW.getTime() + 90 * MIN)] });
+
+    const went = await wake(NOW);
+    expect(forEvent(went, opening.id)).toEqual(["signups_open"]);
+    expect(forEvent(went, closing.id)).toEqual(["signups_closing_soon"]);
+    expect(forEvent(went, starting.id)).toEqual(["event_starting_soon"]);
+
+    for (const { title } of [opening, closing, starting]) {
+      const body = JSON.stringify(sentFor(title));
+      // The four shapes a formatted date arrives in on this site.
+      expect(body, title).not.toMatch(/\d{4}-\d{2}-\d{2}/);
+      expect(body, title).not.toMatch(/\b20\d{2}\b/);
+      expect(body, title).not.toMatch(
+        /\b(January|February|March|April|May|June|July|August|September|October|November|December)\b/
+      );
+      expect(body, title).not.toMatch(/\b\d{1,2}:\d{2}\b/);
+      // And it does carry Discord markup, so the four refusals above are not
+      // passing on a message with no instant in it to begin with.
+      expect(body, title).toMatch(/<t:\d+:[FR]>/);
+    }
+  });
+
+  it("claims nothing while the kind is switched off", async () => {
+    /*
+     * The failure this guards is an **unreleasable claim**. If a run claimed an
+     * event whose kind is off, the admin who switched it on inside the same
+     * window would get silence for ever, because a claim is never released. So:
+     * off posts nothing *and* claims nothing, and turning it on then posts.
+     */
+    await switches({});
+    const { id } = await scheduled({ signupClosesAt: new Date(NOW.getTime() + 20 * HR) });
+
+    expect(forEvent(await wake(NOW), id)).toEqual([]);
+    expect(await claimsFor(id)).toEqual([]);
+
+    await switches({ signups_closing_soon: true });
+    expect(forEvent(await wake(NOW), id)).toEqual(["signups_closing_soon"]);
+  });
+
+  it("claims nothing while there is no webhook", async () => {
+    // The same argument one layer out: an install nobody has configured yet
+    // must not burn its claims before anybody could have received them.
+    await switches({ signups_closing_soon: true });
+    await setIntegrationSetting(SETTING_KEYS.webhookUrl, null);
+    const { id } = await scheduled({ signupClosesAt: new Date(NOW.getTime() + 20 * HR) });
+
+    expect(forEvent(await wake(NOW), id)).toEqual([]);
+    expect(await claimsFor(id)).toEqual([]);
+
+    await setIntegrationSetting(
+      SETTING_KEYS.webhookUrl,
+      "https://discord.test/api/webhooks/1/token"
+    );
+    expect(forEvent(await wake(NOW), id)).toEqual(["signups_closing_soon"]);
+  });
+
+  it("records a failure against the event when Discord refuses (R-208 / UC-38 5c)", async () => {
+    await switches({ event_starting_soon: true });
+    const { id } = await scheduled({ dayStarts: [new Date(NOW.getTime() + 90 * MIN)] });
+    fetchStub.mockResolvedValue(new Response(null, { status: 500 }));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await wake(NOW);
+
+    const rows = await listAudit({ eventId: id }, db);
+    const failure = rows.find((row) => row.action === "announcement.failed");
+    // The kind and the status in the row, not just "something failed": the
+    // admin home shows this line, and "an announcement failed" is not a
+    // sentence anybody can act on.
+    expect(failure?.detail).toMatchObject({ kind: "event_starting_soon", status: 500 });
+
+    // And the claim stays taken — a post that failed after its claim is not
+    // retried, which is the bargain `postDueAnnouncements` states and the one
+    // `claimForDiscord` already made.
+    fetchStub.mockResolvedValue(new Response(null, { status: 204 }));
+    expect(forEvent(await wake(new Date(NOW.getTime() + 15 * MIN)), id)).toEqual([]);
+    errors.mockRestore();
   });
 });

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { postDueAnnouncements } from "@/lib/discord";
 import { sendDueReminders } from "@/lib/notifications";
 
 /**
@@ -36,6 +37,19 @@ import { sendDueReminders } from "@/lib/notifications";
  * redeploys and retries. That is what lets a daily run use a look-ahead wider
  * than a day (`REMINDER_WINDOW_MS`) rather than something clever that has to
  * fire exactly once.
+ *
+ * `postDueAnnouncements` is idempotent the same way and for the same reason,
+ * through a row in `announcement_claims` per kind per event rather than a
+ * dedupe key (UC-38 5a) — a channel announcement has no recipient, so it
+ * cannot use the DM claim table. Its windows are wider still: a day for
+ * signups closing, two hours for an event starting.
+ *
+ * ## It does two things, not one
+ *
+ * The DMs (R-99 / UC-25) and the three **channel announcements** the clock owns
+ * (R-205, R-206, R-207 / UC-38 2, 3, 4) are the same wake, because they are the
+ * same question — what has the clock made true since the last run. Both are
+ * awaited and both are reported in the body.
  *
  * ## Once a day in `vercel.json`, and no more
  *
@@ -76,7 +90,27 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   try {
     const result = await sendDueReminders();
-    return NextResponse.json({ ok: true, ...result });
+    /*
+     * The channel half of the same wake (R-205, R-206, R-207 / UC-38 2, 3, 4).
+     *
+     * After the DMs rather than beside them, and awaited rather than deferred:
+     * the two are independent, and a run that reported `{"ok":true}` while
+     * silently failing to post is the failure this endpoint's body exists to
+     * make visible. `announcements` is a count of what actually went out, which
+     * is what tells a working schedule from one that found nothing — the same
+     * argument as the counts beside it.
+     *
+     * Safe to call as often as the schedulers like, for a reason of its own:
+     * `sendDueReminders` is idempotent through its dedupe key, and this is
+     * idempotent through `announcement_claims`, so a retried or double-pinged
+     * run posts nothing twice.
+     */
+    const announcements = await postDueAnnouncements();
+    return NextResponse.json({
+      ok: true,
+      ...result,
+      announcements: announcements.posted.length,
+    });
   } catch (error) {
     console.error("[cron/reminders] failed", error);
     return NextResponse.json({ ok: false, error: "Reminders failed." }, { status: 500 });

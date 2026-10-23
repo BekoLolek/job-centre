@@ -51,6 +51,11 @@ describe("migrations", () => {
     expect(await tableNames(ctx.client)).toEqual([
       "accounts",
       "admin_allowlist",
+      // R-205, R-206, R-207 / UC-38 5a: which channel announcements have been
+      // claimed, one row per kind per event. drizzle/0030 — a second claim
+      // table rather than a column on `notification_dm_claims`, because a
+      // channel announcement has no recipient.
+      "announcement_claims",
       // R-201, R-202: an admin's own wording for one announcement kind, and
       // who it mentions. drizzle/0029 — and it starts empty on every install,
       // because the absence of a row *is* "unedited".
@@ -276,7 +281,7 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(44);
+    expect(await tableNames(ctx.client)).toHaveLength(45);
   });
 
   it("ships the default points table a new championship starts with", async () => {
@@ -1388,6 +1393,171 @@ describe("an announcement's wording, and no backfill (drizzle/0029)", () => {
     expect(fresh.mention_everyone).toBe(false);
     expect(fresh.mention_role_ids).toEqual([]);
     expect(fresh.version).toBe(1);
+
+    await client.close();
+  }, PGLITE_BOOT_BUDGET_MS);
+});
+
+describe("a claim with no recipient, and no backfill (drizzle/0030)", () => {
+  /**
+   * The two claims 0030 makes, asked of a real database rather than left as
+   * prose: that the table **cannot hold a row that needs a user**, and that it
+   * does nothing to an existing deployment.
+   *
+   * The first is the whole reason the migration exists. `notification_dm_claims`
+   * is keyed on a NOT NULL `user_id`, so a channel announcement — which has no
+   * recipient at all — has no row shape there. Asserted as the **whole column
+   * list** rather than as a `not.toContain("user_id")`, for the same reason the
+   * `events` date test above is: a column added later under another name would
+   * satisfy the narrow version, and the claim worth pinning is "there is
+   * nowhere in this table for a person".
+   */
+  it("is keyed on the kind and the event, with no column for a person", async () => {
+    const client = new PGlite();
+    await replayUpTo(client, "0030");
+
+    const hasTable = async () =>
+      (
+        await client.query(
+          `select 1 from information_schema.tables
+           where table_schema = 'public' and table_name = 'announcement_claims'`
+        )
+      ).rows.length > 0;
+
+    // Not there yet, which is what makes this a deployment rather than a fresh
+    // database.
+    expect(await hasTable()).toBe(false);
+
+    /*
+     * **Events, inserted before the migration runs.**
+     *
+     * This is the difference between asserting the no-backfill claim and only
+     * appearing to: a migration that did `INSERT … SELECT id FROM events` would
+     * insert nothing on an empty database, so "the table is empty afterwards"
+     * passes on a fresh replay whatever the file says. A mutation that added
+     * exactly that backfill survived this test until these three rows existed.
+     *
+     * Three events spanning the cases a backfill would have had to guess
+     * between: one whose signups close in the future, one whose window has
+     * closed, and one with no window at all.
+     */
+    const [soon] = (
+      await client.query<{ id: string }>(
+        `insert into events (slug, title, status, signup_closes_at)
+         values ('closing-soon', 'Closing soon', 'published', now() + interval '20 hours')
+         returning id`
+      )
+    ).rows;
+    await client.exec(
+      `insert into events (slug, title, status, signup_closes_at)
+       values ('long-gone', 'Long gone', 'complete', now() - interval '40 days')`
+    );
+    await client.exec(
+      `insert into events (slug, title, status) values ('no-window', 'No window', 'draft')`
+    );
+
+    await runFile(client, "0030_announcement_claims");
+    expect(await hasTable()).toBe(true);
+
+    const columns = await client.query<{ column_name: string; is_nullable: string }>(
+      `select column_name, is_nullable from information_schema.columns
+       where table_name = 'announcement_claims' order by column_name`
+    );
+    expect(columns.rows.map((row) => row.column_name)).toEqual([
+      "claimed_at",
+      "event_id",
+      "kind",
+    ]);
+    // Both halves of the key are NOT NULL, which is what makes the primary key
+    // able to deduplicate at all — a nullable member would make every row
+    // distinct from every other, since NULL is not equal to NULL.
+    expect(columns.rows.filter((row) => row.is_nullable === "NO").map((row) => row.column_name))
+      .toEqual(["claimed_at", "event_id", "kind"]);
+
+    const key = await client.query<{ column_name: string }>(
+      `select kcu.column_name
+         from information_schema.table_constraints tc
+         join information_schema.key_column_usage kcu
+           on kcu.constraint_name = tc.constraint_name
+        where tc.table_name = 'announcement_claims'
+          and tc.constraint_type = 'PRIMARY KEY'
+        order by kcu.ordinal_position`
+    );
+    expect(key.rows.map((row) => row.column_name)).toEqual(["kind", "event_id"]);
+
+    /*
+     * **Empty, with three events sitting there.** The no-backfill claim: the
+     * migration writes no rows, so the first row on any deployment is written
+     * by the first announcement that actually goes out. An inserted claim would
+     * be an announcement suppressed before anybody decided to send it — and
+     * because the events above exist, a backfill over them fails here instead
+     * of being invisible.
+     */
+    const total = await client.query<{ total: string }>(
+      `select count(*)::text as total from announcement_claims`
+    );
+    expect(total.rows[0].total).toBe("0");
+    // Named, so the failure says which deployment state was wrong rather than
+    // just "not zero".
+    expect(
+      (
+        await client.query<{ slug: string }>(
+          `select e.slug from announcement_claims c join events e on e.id = c.event_id`
+        )
+      ).rows
+    ).toEqual([]);
+
+    /*
+     * And the dedupe actually dedupes, asked of the database rather than of the
+     * ORM: the same kind for the same event twice is one row, and the same kind
+     * for a *different* event is a second. Both halves, because a key that
+     * collapsed every event onto one row would satisfy the first on its own.
+     */
+    const event = soon;
+    const [other] = (
+      await client.query<{ id: string }>(
+        `insert into events (slug, title, status) values ('claimed-2', 'Claimed 2', 'published')
+         returning id`
+      )
+    ).rows;
+
+    await client.exec(
+      `insert into announcement_claims (kind, event_id)
+       values ('event_starting_soon', '${event.id}')`
+    );
+    await client.exec(
+      `insert into announcement_claims (kind, event_id)
+       values ('event_starting_soon', '${event.id}') on conflict do nothing`
+    );
+    await client.exec(
+      `insert into announcement_claims (kind, event_id)
+       values ('signups_closing_soon', '${event.id}')`
+    );
+    await client.exec(
+      `insert into announcement_claims (kind, event_id)
+       values ('event_starting_soon', '${other.id}')`
+    );
+
+    const rows = await client.query<{ kind: string; event_id: string }>(
+      `select kind, event_id from announcement_claims order by kind, event_id`
+    );
+    expect(rows.rows).toHaveLength(3);
+    expect(rows.rows.filter((row) => row.kind === "event_starting_soon")).toHaveLength(2);
+
+    // A claim naming a kind that no longer exists is accepted and simply never
+    // read, which is what lets a kind ship without an `ALTER TYPE`.
+    await client.exec(
+      `insert into announcement_claims (kind, event_id)
+       values ('retired_kind', '${event.id}')`
+    );
+
+    // And the one thing it must refuse: a claim for an event that is not there.
+    await expect(
+      client.exec(
+        `insert into announcement_claims (kind, event_id)
+         values ('event_starting_soon', '00000000-0000-0000-0000-000000000000')`
+      )
+    ).rejects.toThrow();
 
     await client.close();
   }, PGLITE_BOOT_BUDGET_MS);

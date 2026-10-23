@@ -43,6 +43,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import {
   type Database,
   SETTING_KEYS,
+  announcementClaims,
   announcementTemplates,
   applications,
   db as defaultDb,
@@ -66,15 +67,19 @@ import {
   announcementTemplateProblem,
   applicationDecidedMessage,
   eventPublishedMessage,
+  eventStartingSoonMessage,
   lotSoldMessage,
   matchResultMessage,
   mentionLine,
+  signupsClosingSoonMessage,
+  signupsOpenMessage,
   standingsMessage,
   type AnnounceEnv,
   resolveSiteOrigin,
   resolveWebhookUrl,
   siteOrigin,
 } from "./announce";
+import { dueScheduledAnnouncements } from "./announce-schedule";
 import { type Movement, topOfTheTable } from "./championship-policy";
 import { seasonOfEvent, seasonPage } from "./championship-season";
 import { recordAudit } from "./audit";
@@ -1024,4 +1029,161 @@ export function announceStandings(eventId: string, database: Database = defaultD
     },
     { subject: { eventId }, eventOf: async () => eventId }
   );
+}
+
+/* ------------------------------------------------------------------ */
+/* The three the clock announces (R-205, R-206, R-207 / UC-38)        */
+/* ------------------------------------------------------------------ */
+
+/** One announcement that went out, named rather than counted. */
+export type PostedAnnouncement = { kind: AnnouncementKind; eventId: string };
+
+/**
+ * Post whatever the clock says is due, once per event, ever.
+ *
+ * ## Why this one is `async` when the five above are `void`
+ *
+ * Every announcer above returns nothing synchronously and hands its work to
+ * `after()`, because each is called from inside an action that must not wait on
+ * Discord (see the module comment). This one is called from
+ * `/api/cron/reminders`, where the opposite is true: there is no member waiting
+ * for a response, and the response *is* the only report anybody gets of whether
+ * the schedule is working. So it is awaited and it says what it posted —
+ * `sendDueReminders` next door makes the same trade for the same reason.
+ *
+ * ## Claim, then post, and in that order
+ *
+ * {@link dueScheduledAnnouncements} decides dueness with a **window**, not an
+ * instant, because a scheduler wakes when it wakes. A window a day wide is one
+ * the quarter-hour schedule wakes inside ninety-odd times, so "due" is true
+ * over and over, and the claim row is the whole of what makes the announcement
+ * happen once (UC-38 5a). `announcement_claims` is keyed `(kind, event_id)`;
+ * the insert is `onConflictDoNothing` and this run only posts for the rows it
+ * actually wrote, so two overlapping runs cannot both win the insert and
+ * therefore cannot both post.
+ *
+ * The price is the same bargain `claimForDiscord` in `./notifications` strikes
+ * and states: **a post that fails after its claim is never retried.** It is
+ * logged and audited as `announcement.failed` (R-208 / UC-38 5c) and the claim
+ * stays taken. A missed announcement is the better failure than one the channel
+ * gets twice, and the audit row is what stops it being a silent one.
+ *
+ * ## Nothing is claimed that could not have been posted
+ *
+ * The switch and the webhook are both read **before** any claim, and a kind
+ * that is off or an install with no webhook claims nothing at all. That is
+ * load-bearing rather than tidy: a claim taken while the feature was switched
+ * off could never be released, so an admin who turned the switch on next week
+ * would get silence for every event already in flight. Same reason
+ * `claimForDiscord` claims nobody while there is no bot token.
+ */
+export async function postDueAnnouncements(
+  now: Date = new Date(),
+  database: Database = defaultDb
+): Promise<{ posted: PostedAnnouncement[] }> {
+  const posted: PostedAnnouncement[] = [];
+
+  /*
+   * Read once for the whole run rather than per candidate. A settings object
+   * that changed halfway through would be a run that posted about some of its
+   * events and not others, for no reason a reader of the channel could see.
+   */
+  const enabled = await getAnnouncementSettings(database);
+  /*
+   * One read for the webhook *and* the origin, through the caller's database
+   * rather than `announceOrigin`'s default handle. The five announcers above
+   * call `announceOrigin()` per message because they run one at a time inside
+   * `after()`; this runs three lists in a loop, and taking the pair together
+   * also means the links in these messages come out of the same database the
+   * events did (the gap `wordingFor`'s comment names).
+   */
+  const { webhook, origin } = await getIntegrationConfig(database);
+  // Nowhere to post. Nothing is claimed, so nothing is burnt — see above.
+  if (!webhook) return { posted };
+
+  const kinds = ["signups_open", "signups_closing_soon", "event_starting_soon"] as const;
+  /*
+   * Not an optimisation: `dueScheduledAnnouncements` reads every event and then
+   * their days, and that is not work to do every quarter hour on behalf of
+   * three switches that are all off — which is the default for all three.
+   */
+  if (!kinds.some((kind) => enabled[kind])) return { posted };
+
+  const due = await dueScheduledAnnouncements(now, database);
+
+  /** Claim this (kind, event), and say whether this run is the one that got it. */
+  const claim = async (kind: AnnouncementKind, eventId: string): Promise<boolean> => {
+    const rows = await database
+      .insert(announcementClaims)
+      .values({ kind, eventId })
+      .onConflictDoNothing({
+        target: [announcementClaims.kind, announcementClaims.eventId],
+      })
+      .returning({ kind: announcementClaims.kind });
+    return rows.length === 1;
+  };
+
+  /**
+   * One candidate: switched on, not already claimed, then built and posted.
+   *
+   * `build` is a callback rather than a built message, so no payload is ever
+   * assembled for an announcement that is not going out — and the wording is
+   * read *inside* it, at post time, exactly as every other announcer reads it
+   * (see {@link wordingFor}).
+   */
+  const post = async (
+    kind: AnnouncementKind,
+    eventId: string,
+    build: (template: AnnouncementTemplate) => DiscordMessage
+  ): Promise<void> => {
+    if (!enabled[kind]) return;
+    if (!(await claim(kind, eventId))) return;
+    await deliver(kind, build(await wordingFor(kind, database)), { eventId });
+    posted.push({ kind, eventId });
+  };
+
+  for (const event of due.signupsOpen) {
+    await post("signups_open", event.eventId, (template) =>
+      signupsOpenMessage(
+        {
+          title: event.title,
+          slug: event.slug,
+          capacity: event.capacity,
+          startsAt: event.startsAt,
+          signupClosesAt: event.signupClosesAt,
+          origin,
+        },
+        template
+      )
+    );
+  }
+
+  for (const event of due.closingSoon) {
+    await post("signups_closing_soon", event.eventId, (template) =>
+      signupsClosingSoonMessage(
+        {
+          title: event.title,
+          slug: event.slug,
+          // Already `<t:unix:R>`: the scheduler rendered it, and nothing here
+          // turns an instant into text (README, "Times").
+          closes: event.stamp,
+          capacity: event.capacity,
+          full: event.full,
+          origin,
+        },
+        template
+      )
+    );
+  }
+
+  for (const event of due.startingSoon) {
+    await post("event_starting_soon", event.eventId, (template) =>
+      eventStartingSoonMessage(
+        { title: event.title, slug: event.slug, starts: event.stamp, origin },
+        template
+      )
+    );
+  }
+
+  return { posted };
 }

@@ -26,7 +26,7 @@
  * and jsonb for anything shaped by admin configuration rather than by code.
  */
 
-import { relations, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   boolean,
@@ -853,6 +853,55 @@ export const notificationDmClaims = pgTable(
     claimedAt: instant("claimed_at").notNull().defaultNow(),
   },
   (table) => [primaryKey({ columns: [table.userId, table.dedupeKey] })]
+);
+
+/**
+ * Which **channel announcements** have been claimed (about to be posted), one
+ * row per kind per event (R-205, R-206, R-207 / UC-38 5a).
+ *
+ * ## Why this cannot be `notification_dm_claims`
+ *
+ * That table is keyed `(user_id, dedupe_key)` with `user_id` a NOT NULL
+ * reference to `users`, because a DM claim is a claim about *one person's*
+ * phone. **A channel announcement has no recipient**, so there is no row shape
+ * for it there — not a missing column but a missing concept, and the reason
+ * this is a second table rather than a nullable `user_id` on the first. A
+ * nullable `user_id` would also take the DM claim's primary key with it: NULL
+ * is not equal to NULL in a unique index, so every channel claim would be
+ * distinct from every other and the table would stop deduplicating the thing it
+ * exists to deduplicate.
+ *
+ * ## Why `(kind, event_id)` is the key
+ *
+ * The announcement, and the thing it is about. Both scheduled announcements are
+ * windows the scheduler may wake inside more than once — a day wide for signups
+ * closing, two hours for an event starting — so without this row the second run
+ * inside one window would post the same message again. One row per kind per
+ * event, claimed before the post and never released, is what makes "once per
+ * event" true across redeploys, retries and a double-pinged endpoint (UC-38 5a,
+ * and the same bargain `claimForDiscord` in src/lib/notifications.ts strikes).
+ *
+ * ## Why `kind` is text and not an enum
+ *
+ * The same reason `announcement_templates.kind` is (see its comment): a new
+ * announcement kind must be able to ship without an `ALTER TYPE` and a deploy.
+ * A row naming a kind that no longer exists is simply never read.
+ *
+ * `claimed_at` is kept for the operator rather than for the code — nothing
+ * reads it, and it is the only way to answer "when did this go out" from the
+ * database after the fact.
+ */
+export const announcementClaims = pgTable(
+  "announcement_claims",
+  {
+    /** An `AnnouncementKind` from src/lib/announce.ts. Text on purpose; see above. */
+    kind: text("kind").notNull(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    claimedAt: instant("claimed_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.kind, table.eventId] })]
 );
 
 /* ------------------------------------------------------------------ */
@@ -2629,150 +2678,23 @@ export const auditLog = pgTable(
 );
 
 /* ------------------------------------------------------------------ */
-/* Relations — for db.query.* joins                                   */
+/* Why there are no `relations()` declarations                        */
 /* ------------------------------------------------------------------ */
 
-export const usersRelations = relations(users, ({ many }) => ({
-  accounts: many(accounts),
-  sessions: many(sessions),
-  profileValues: many(profileValues),
-  applications: many(applications),
-  notes: many(userNotes),
-}));
-
-export const userNotesRelations = relations(userNotes, ({ one }) => ({
-  user: one(users, { fields: [userNotes.userId], references: [users.id] }),
-  author: one(users, { fields: [userNotes.authorUserId], references: [users.id] }),
-}));
-
-export const eventTemplatesRelations = relations(eventTemplates, ({ one, many }) => ({
-  game: one(games, { fields: [eventTemplates.gameId], references: [games.id] }),
-  events: many(events),
-}));
-
-export const accountsRelations = relations(accounts, ({ one }) => ({
-  user: one(users, { fields: [accounts.userId], references: [users.id] }),
-}));
-
-export const sessionsRelations = relations(sessions, ({ one }) => ({
-  user: one(users, { fields: [sessions.userId], references: [users.id] }),
-}));
-
-export const gamesRelations = relations(games, ({ many }) => ({
-  profileFields: many(profileFields),
-  events: many(events),
-}));
-
-export const profileFieldsRelations = relations(profileFields, ({ one, many }) => ({
-  game: one(games, { fields: [profileFields.gameId], references: [games.id] }),
-  values: many(profileValues),
-}));
-
-export const profileValuesRelations = relations(profileValues, ({ one }) => ({
-  user: one(users, { fields: [profileValues.userId], references: [users.id] }),
-  field: one(profileFields, {
-    fields: [profileValues.fieldId],
-    references: [profileFields.id],
-  }),
-}));
-
-export const eventsRelations = relations(events, ({ one, many }) => ({
-  game: one(games, { fields: [events.gameId], references: [games.id] }),
-  template: one(eventTemplates, {
-    fields: [events.createdFromTemplateId],
-    references: [eventTemplates.id],
-  }),
-  creator: one(users, { fields: [events.createdBy], references: [users.id] }),
-  days: many(eventDays),
-  questions: many(eventQuestions),
-  applications: many(applications),
-}));
-
-export const eventDaysRelations = relations(eventDays, ({ one, many }) => ({
-  event: one(events, { fields: [eventDays.eventId], references: [events.id] }),
-  availability: many(availability),
-}));
-
-export const eventQuestionsRelations = relations(eventQuestions, ({ one }) => ({
-  event: one(events, { fields: [eventQuestions.eventId], references: [events.id] }),
-  profileField: one(profileFields, {
-    fields: [eventQuestions.profileFieldId],
-    references: [profileFields.id],
-  }),
-}));
-
-export const applicationsRelations = relations(applications, ({ one, many }) => ({
-  event: one(events, { fields: [applications.eventId], references: [events.id] }),
-  user: one(users, { fields: [applications.userId], references: [users.id] }),
-  decider: one(users, { fields: [applications.decidedBy], references: [users.id] }),
-  availability: many(availability),
-  confirmation: one(confirmations),
-}));
-
-export const availabilityRelations = relations(availability, ({ one }) => ({
-  application: one(applications, {
-    fields: [availability.applicationId],
-    references: [applications.id],
-  }),
-  day: one(eventDays, { fields: [availability.eventDayId], references: [eventDays.id] }),
-}));
-
-export const confirmationsRelations = relations(confirmations, ({ one }) => ({
-  application: one(applications, {
-    fields: [confirmations.applicationId],
-    references: [applications.id],
-  }),
-}));
-
-export const teamsRelations = relations(teams, ({ one, many }) => ({
-  event: one(events, { fields: [teams.eventId], references: [events.id] }),
-  captain: one(users, { fields: [teams.captainUserId], references: [users.id] }),
-  members: many(teamMembers),
-  bids: many(draftBids),
-}));
-
-export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
-  team: one(teams, { fields: [teamMembers.teamId], references: [teams.id] }),
-  user: one(users, { fields: [teamMembers.userId], references: [users.id] }),
-}));
-
-export const draftPoolEntriesRelations = relations(draftPoolEntries, ({ one }) => ({
-  event: one(events, { fields: [draftPoolEntries.eventId], references: [events.id] }),
-  user: one(users, { fields: [draftPoolEntries.userId], references: [users.id] }),
-}));
-
-export const draftLotsRelations = relations(draftLots, ({ one, many }) => ({
-  event: one(events, { fields: [draftLots.eventId], references: [events.id] }),
-  player: one(users, { fields: [draftLots.playerUserId], references: [users.id] }),
-  winner: one(teams, { fields: [draftLots.winnerTeamId], references: [teams.id] }),
-  bids: many(draftBids),
-}));
-
-export const draftBidsRelations = relations(draftBids, ({ one }) => ({
-  lot: one(draftLots, { fields: [draftBids.lotId], references: [draftLots.id] }),
-  team: one(teams, { fields: [draftBids.teamId], references: [teams.id] }),
-}));
-
-export const draftConfigsRelations = relations(draftConfigs, ({ one }) => ({
-  event: one(events, { fields: [draftConfigs.eventId], references: [events.id] }),
-}));
-
-export const stagesRelations = relations(stages, ({ one, many }) => ({
-  event: one(events, { fields: [stages.eventId], references: [events.id] }),
-  matches: many(matches),
-}));
-
-export const matchesRelations = relations(matches, ({ one, many }) => ({
-  stage: one(stages, { fields: [matches.stageId], references: [stages.id] }),
-  event: one(events, { fields: [matches.eventId], references: [events.id] }),
-  teamA: one(teams, { fields: [matches.teamAId], references: [teams.id] }),
-  teamB: one(teams, { fields: [matches.teamBId], references: [teams.id] }),
-  games: many(matchGames),
-}));
-
-export const matchGamesRelations = relations(matchGames, ({ one }) => ({
-  match: one(matches, { fields: [matchGames.matchId], references: [matches.id] }),
-}));
+/*
+ * Drizzle's `relations()` helper exists to feed the relational query builder's
+ * `with:` clause, and nothing in this repo writes a `with:`. The one
+ * `db.query.*` call in the suite passes `where` and `orderBy` only, which needs
+ * the table and not a relation — so the twenty-three declarations that used to
+ * sit here were read by nothing at all.
+ *
+ * They were also never schema. `relations()` emits no DDL: drizzle-kit's
+ * snapshots under ./drizzle have no key for it and no migration mentions one,
+ * so deleting them changed no generated SQL. The foreign keys are on the table
+ * definitions above and are untouched either way.
+ *
+ * Declaring one again is fine the moment a `with:` needs it.
+ */
 
 /* ------------------------------------------------------------------ */
 /* Row types                                                          */
