@@ -1146,3 +1146,118 @@ fire a two-hour reminder, and `docs/requirements.md` already carried that as a c
   **The `toBe` carries the half the guard cannot.** An append with no role noun — `"… Probably."` — passes both `toContain`s *and* the noun guard, and dies only to the full-sentence equality. That is why Task 71 chose `toBe` over `toContain`, and it is now demonstrated rather than argued.
   The guard also names the offending status in its failure message, so a future red prints which of five it came from instead of a bare lowercase sentence.
   `src/lib/events-policy.ts:458` now reads "Still a draft, so it is not public — only its managers reach it at all." Its neighbour at `:456` ("Why a member cannot apply") is accurate and was left: only a member can apply. One further pre-Task-2 echo was found and has been fixed since: a test **name** in `src/lib/__tests__/announce-schedule.test.ts` read "which members cannot see at all" — misinforming only a reader of the suite, but the same stale assumption.
+
+## K. Random hero draw and random teams (R-209 to R-216 / UC-39, UC-40, UC-41)
+
+Decisions taken with the user on 2026-10-23, and the two that changed on review are the
+important ones. **Nine heroes per player** — three in each role, so nobody picks a role
+before seeing what they hold. **Duplicates allowed across players**, because
+unique-within-team is arithmetically impossible at nine each. **Each player rolls on their
+own device.** The hero list is **admin-editable, pre-loaded with the current roster**.
+
+Changed on review: the format is **chosen by the admin, not derived from a head count** —
+an earlier draft had the site compute 6v6 from 11-12 or 17-18 players, and the user's own
+rule is how *they* decide, not something the site should guess. And the comp is **stated,
+never enforced**: the site says 2-2-2 or 1-1-1 and does not assign roles or refuse a team
+that fields three Duelists. Added on review: **random team assignment** (Task 78).
+
+**The roster, checked on the day rather than recalled:** 54 heroes at Season 10.5 — 14
+Vanguard, 27 Duelist, 12 Strategist, plus **Deadpool, playable as all three**. That is why
+published counts disagree, and it is a schema constraint: a hero carries a **set** of
+roles. Drawable pools are therefore 15 / 28 / 13, and 13 against six players needing three
+Strategists each is what forces duplicates.
+
+### Task 73: A hero is a name and the roles it can play
+
+- **Serves:** R-214 / UC-40 3c
+- **Files:** `src/db/schema.ts` (+ migration), `src/db/seed.ts`, new `src/lib/heroes.ts`, tests
+- **Do:** a `heroes` table on `games` — name, and the roles it may be played in. **Not one role per hero:** Deadpool is Vanguard, Duelist *and* Strategist, so a single `role` column is wrong against the roster as it stands and would need migrating the first time anybody noticed. Model the roles as a set.
+  Seed the 54 heroes on the `rivals` game row. The seed is idempotent and **must not overwrite an edited row** — `src/db/seed.ts` states that rule in its own module comment, and it applies exactly here: once an admin has corrected a role, a redeploy must not undo it.
+  Role is an enum of Vanguard / Duelist / Strategist rather than free text, because the draw counts per role and a typo would silently make a role undrawable.
+- **Acceptance criteria:**
+  - [ ] A hero may hold one, two or three roles; Deadpool holds all three
+  - [ ] The seed plants 54 heroes giving 15 / 28 / 13 drawable per role, and re-running it changes nothing
+  - [ ] An edited hero survives a re-seed
+  - [ ] A hero with no role is refused by the database as well as the code
+  - [ ] The migration says what it does on a deployment that already has games
+- **Depends on:** nothing. Needs a migration, so it must not run beside another that holds one.
+
+### Task 74: The draw, as a rule rather than a screen
+
+- **Serves:** R-209, R-210 / UC-39 4, 4a, 2a
+- **Files:** new `src/lib/heroes-policy.ts`, tests
+- **Do:** the pure half — no database, no React. Given a pool and a source of randomness, deal **three distinct heroes per role**: distinct *within* a player's three, because dealing the same hero twice is a wasted roll, and freely repeating *across* players, which the pool sizes force.
+  **Randomness is injected, never called.** A function reaching for `Math.random` cannot be tested, and this is the one place where "it looked random" is not evidence. The test passes a known sequence and asserts the exact hand.
+  Refuse before dealing when a role holds fewer than three (UC-39 2a): a partial hand is worse than none.
+- **Acceptance criteria:**
+  - [ ] Nine heroes, three per role, the three distinct within each role
+  - [ ] A seeded generator produces an exactly predicted hand
+  - [ ] Every hero in the pool is reachable — a shuffle that can never deal the last element is the classic off-by-one and is invisible without a test that looks for it
+  - [ ] Deadpool can be dealt in any role, and may appear in more than one of a player's role-sets
+  - [ ] A role with fewer than three heroes is refused by name, and nothing is dealt
+- **Depends on:** Task 73.
+
+### Task 75: Dealt once, and it stands
+
+- **Serves:** R-212 / UC-39 3a, 3b, 5a, 6a
+- **Files:** `src/db/schema.ts` (+ migration), `src/lib/heroes.ts`, tests
+- **Do:** store a hand against (event, participant). **The uniqueness is the feature**, so it belongs in the database as well as the code: a unique index on (event, user), the shape `applications_event_user_uniq` already uses.
+  **Two clicks at once must not deal twice**, and the pattern is already here: `announcement_claims` uses `insert … onConflictDoNothing … returning()`, where a run that gets no row back did not win. Use that rather than read-then-write, which is the race `applyToEvent` needed a lock for.
+  **Read `docs/decisions/004` first.** A refusal returned from a transaction commits what came before it — if the deal writes and then refuses, the hand is stored and the player is told it was not.
+- **Acceptance criteria:**
+  - [ ] A second draw deals nothing and returns the stored hand
+  - [ ] Two simultaneous draws store one hand and both callers see the same nine, proven with the sequencing helpers rather than a race
+  - [ ] A failed store leaves no hand and the player may draw again
+  - [ ] A hero retired later is still shown in a hand that holds it
+  - [ ] The migration states what it does on existing events
+- **Depends on:** Tasks 73, 74. Needs a migration.
+
+### Task 76: The draw page
+
+- **Serves:** R-211, R-213 / UC-39 1, 1a, 1b, 2, 6, 7, 7a
+- **Files:** new `src/app/events/[slug]/draw/page.tsx` and a client component, tests
+- **Do:** one click, nine reveals about a second apart, then the hand grouped by role. The reveal is presentation only — **the hand is decided server-side before the first card turns**, so a player who closes the tab mid-animation still holds exactly what was dealt. An animation that decides anything is a reroll waiting to happen.
+  State the comp the admin chose, and say the draw happens once **before** the button rather than after. **Never enforce it** (UC-39 7a): no role assignment, no refusing a team of three Duelists.
+  **Respect `prefers-reduced-motion`** — it is in the Constraints and a nine-step reveal is exactly what it exists for. Reduced motion shows the hand.
+  A non-participant is told so (1a); an event whose game has no hero list names the game rather than rendering an empty draw (1b).
+- **Acceptance criteria:**
+  - [ ] One click reveals nine about a second apart, then shows the hand by role
+  - [ ] The hand is server-decided before the animation starts, proven by asserting the payload rather than the animation
+  - [ ] Reloading mid-reveal shows the same hand, complete
+  - [ ] With reduced motion the hand appears without the reveal
+  - [ ] A non-participant and a game with no heroes each get their own sentence
+  - [ ] Works at 400px — nine cards is the case most likely to overflow
+- **Depends on:** Tasks 74, 75.
+
+### Task 77: Editing the hero list
+
+- **Serves:** R-214 / UC-40
+- **Files:** the admin game screen, `src/lib/heroes.ts`, tests
+- **Do:** add, rename, retire and change a hero's roles, beside the rank ladder on the game screen — the ladder is the precedent for an admin-maintained per-game list and should be followed rather than reinvented.
+  **Retire rather than delete**, as the profile fields do: a hero removed from the game is still in hands that were dealt, and deleting the row would either break those or silently rewrite history (UC-40 4a).
+- **Acceptance criteria:**
+  - [ ] Add, rename and change roles, each audited with who did it
+  - [ ] A duplicate name is refused, naming it
+  - [ ] A hero with no role ticked is refused
+  - [ ] A retired hero is not dealt, and still shows in hands that hold it
+  - [ ] Works at 400px
+- **Depends on:** Task 73.
+
+### Task 78: The format, and teams nobody picked
+
+- **Serves:** R-215, R-216 / UC-41
+- **Files:** `src/lib/draft.ts` or a sibling, `src/lib/events-policy.ts`, the event editor's teams tab, tests
+- **Do:** two things that belong together because the first sizes the second.
+  **The format is the admin's choice, stored on the event**, not derived from a head count. `events.config` already holds the schedule settings (`scheduleSettingsFrom`), so this needs **no migration** — follow that shape. 6v6 states a 2-2-2 comp and makes teams of six; 3v3 states 1-1-1 and makes teams of three. The comp is **stated only**.
+  **Random teams** shuffles the accepted participants into teams of that size. Randomness is **injected, not called**, for Task 74's reason. `setTeams` and `setTeamCount` in `draft.ts` already own team writes and their refusals — use them rather than writing teams a second way, and read Task 57's note on `setTeams`, which had a delete that committed before a later refusal.
+  **An uneven count spreads the remainder one per team** rather than leaving one short team, and the screen says which teams are short **before** anything is saved (UC-41 4a).
+  **Refuse outright once the auction draft has started** (UC-41 3b): lots have been awarded against the teams that exist, and replacing them would orphan the result. `getTeams`/`lots.some(lot => lot.status === "awarded")` is how the editor already knows this.
+- **Acceptance criteria:**
+  - [ ] An admin chooses 6v6 or 3v3, and the choice persists with no migration
+  - [ ] The comp is stated and never enforced — no test asserts a refusal based on a team's roles
+  - [ ] A seeded shuffle produces an exactly predicted assignment
+  - [ ] An uneven count spreads the remainder one per team, and which teams are short is shown before saving
+  - [ ] Replacing existing teams needs confirmation, naming how many are discarded
+  - [ ] Refused once a lot has been awarded, with nothing written
+  - [ ] Fewer participants than one team needs is refused, naming both numbers
+- **Depends on:** nothing — it needs no migration and no hero data, so it may run beside Task 73.

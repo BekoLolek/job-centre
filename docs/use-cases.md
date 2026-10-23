@@ -1360,3 +1360,92 @@ A season of two to four events a month across different games, with one running 
 - **5b.** The scheduler does not run for a day - a missed moment is not posted late. A reminder two hours before an event that started yesterday is noise, and the look-ahead window is what decides, not the fact a row exists.
 - **5c.** Discord refuses the post - it is recorded as `announcement.failed` against that event and appears on the admin home (R-208, UC-27).
 
+
+## UC-39: Draw my heroes
+
+**Actor:** Participant
+**Requirements covered:** R-209, R-210, R-211, R-212, R-213
+**Trigger:** A participant opens the event's draw page on the night.
+
+**Preconditions**
+1. The event's game has a hero list with at least three heroes in each role.
+2. The participant holds a seat at this event.
+3. They have not drawn before.
+
+**Main success path**
+1. Participant opens the event's draw page.
+2. System states the comp the admin chose (2-2-2 or 1-1-1) and that the draw happens once.
+3. Participant clicks once.
+4. System draws three Vanguards, three Duelists and three Strategists, revealing them one at a time.
+5. System stores the nine against this participant and this event.
+6. System shows the full hand, grouped by role.
+7. Participant and their team decide who plays what, knowing what everyone holds.
+
+**Outcome**
+- The participant holds nine heroes they did not choose, and cannot draw again.
+
+**Alternate and error flows**
+- **1a.** Not a participant - the page is not theirs; they are told so rather than shown an empty draw.
+- **1b.** The event's game has no hero list - nothing to draw from; the page names the game.
+- **2a.** Fewer than three heroes in a role - refused before any draw, naming the role, because a partial hand is worse than none.
+- **3a.** Clicked twice, or reloaded mid-reveal - the second click draws nothing and the stored hand is shown.
+- **3b.** Two devices click at the same instant - one hand is stored and both see it.
+- **4a.** A player's three in a role are distinct from each other; across players they may repeat, which the pool sizes force (13 Strategists against six players needing three each).
+- **5a.** The storing write fails - nothing is shown as drawn and the participant may click again. A hand that was never stored is not a hand.
+- **6a.** Returning later - the stored hand is shown, with no button to draw.
+- **7a.** The comp is **stated, never enforced**. The site does not assign roles and does not refuse a team that fields three Duelists.
+
+## UC-40: Keep the hero list current
+
+**Actor:** Admin
+**Requirements covered:** R-214
+**Trigger:** A new hero is released, or one is reworked into a different role.
+
+**Preconditions**
+1. The admin is signed in as an admin.
+
+**Main success path**
+1. Admin opens the game's hero list.
+2. System shows every hero with the roles it may be played in.
+3. Admin adds a hero, naming it and ticking its roles.
+4. System saves it and records who changed it in the audit log.
+5. The next draw on that game can deal the new hero.
+
+**Outcome**
+- The list matches the game as it is now, without a deployment.
+
+**Alternate and error flows**
+- **3a.** A name already on the list - refused, naming it.
+- **3b.** No role ticked - refused; a hero in no role can never be drawn, which is the list lying rather than a hero being unavailable.
+- **3c.** A hero in several roles - accepted. Deadpool is the case this exists for.
+- **4a.** Retiring a hero somebody has drawn - the stored hand keeps it. What was dealt was dealt; the list governs future draws only.
+
+## UC-41: Sort the players into teams at random
+
+**Actor:** Admin
+**Requirements covered:** R-215, R-216
+**Trigger:** Everybody who is coming is known, and the admin wants sides nobody chose.
+
+**Preconditions**
+1. The admin manages this event.
+2. The event has accepted applicants.
+
+**Main success path**
+1. Admin says whether the night is 6v6 or 3v3.
+2. System states the comp that implies - 2-2-2 or 1-1-1 - and does not enforce it.
+3. Admin asks for random teams.
+4. System shows how many teams that makes and how many would be left short.
+5. Admin confirms.
+6. System shuffles the accepted participants into teams of that size and saves them.
+7. System records who did it in the audit log.
+
+**Outcome**
+- Teams nobody picked, ready for the draw page.
+
+**Alternate and error flows**
+- **3a.** Teams already exist - refused until the admin says to replace them, naming how many would be discarded.
+- **3b.** The auction draft has started on this event - refused outright. Lots have been awarded against the teams that exist, and replacing them would orphan the result.
+- **4a.** The participants do not divide evenly - the remainder is spread one per team rather than left as a short team on its own, and the screen says which teams are short before anything is saved.
+- **4b.** Fewer participants than one team needs - refused, naming the count and the team size.
+- **5a.** Asked twice - the second shuffle is a fresh one and replaces the first. Unlike the hero draw, this is the admin's tool and re-running it is the point; 3a is what stops it being an accident.
+- **6a.** A participant withdraws after the shuffle - their seat on the team is freed, exactly as a withdrawal already does, and no reshuffle happens on its own.

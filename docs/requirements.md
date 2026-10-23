@@ -334,6 +334,27 @@ three moments in an event's signup life that nothing announces today.
 | R-207 | As a participant, I want a reminder two hours before the event starts, so that I turn up to the thing I signed up for. | Should | The first dated day's start (dates are derived, R-24). An event with no dated day gets none |
 | R-208 | As an admin, I want an announcement that failed to appear where I will see it, so that a quiet channel is not mistaken for a quiet week. | Should | Extends R-110's audit log; `announcement.failed` already exists and is already surfaced on the admin home |
 
+### Random hero draw and random teams (added 2026-10-23)
+
+A Rivals night where nobody picks. Players are sorted into teams at random and each is
+dealt heroes at random, so the match turns on play rather than on who grabbed the
+strongest character or the strongest team-mate first. Both draws happen once and stand.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-209 | As a participant, I want my heroes dealt at random, so that the match is decided by play rather than by who picked fastest. | Should | |
+| R-210 | As a participant, I want three heroes in each role rather than one, so that I can swap during the game without being stuck on a character that is not working. | Should | Nine in total - three Vanguard, three Duelist, three Strategist |
+| R-211 | As a participant, I want to see what I hold in every role before anyone settles who plays what, so that I am not choosing a role blind. | Should | Why the draw covers all three roles rather than one |
+| R-212 | As a participant, I want my draw to happen once and stand, so that nobody rerolls until they are happy. | Must | A reroll is the feature failing, not a convenience |
+| R-213 | As a participant, I want the draw to play out in front of me rather than simply appear, so that it feels like being dealt a hand. | Could | About a second per hero, one click for all nine |
+| R-214 | As an admin, I want the hero list editable, so that a hero released next season does not need a developer. | Should | Pre-loaded with the current roster |
+| R-215 | As an admin, I want to say whether a night is 6v6 or 3v3, so that the site follows the call I have made rather than guessing from a head count. | Should | 6v6 states a 2-2-2 comp, 3v3 a 1-1-1. **Stated, never enforced** - who plays what is the team's conversation |
+| R-216 | As an admin, I want the participants sorted into teams at random, so that nobody picks team-mates and the sides are not arranged in advance. | Should | An alternative to the auction draft (R-64 to R-70), not a replacement for it |
+
+**Constraint to add:** *A hero may belong to more than one role.* Deadpool is playable as
+Vanguard, Duelist **and** Strategist, so a hero carries a set of roles. A schema storing a
+single role per hero is wrong against the roster as it stands.
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -350,6 +371,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - **Nothing on the record is hard-deleted** - events, applications, results and draft lots. (Polls and suggestions may be deleted by an admin; R-95.)
 - **Championship points are worked out from recorded finishing places, never stored as a total.** Correcting a place re-scores the season, the same rule that already makes bracket corrections safe (R-79).
 - **A mention is only ever the admin's own words.** Interpolated data - a display name, an event title - is rendered into the embed, where Discord does not parse mentions at all. The mention line is built solely from the stored template, and `allowed_mentions` names the exact role ids that template used, permitting `everyone` only when the template itself asks for it. A member who renames themselves `@everyone` therefore cannot make the site ping the server, which is the hole `allowed_mentions: { parse: [] }` was closing before any announcement could mention anyone.
+- **A hero may belong to more than one role.** Deadpool is playable as Vanguard, Duelist and Strategist, so the hero catalogue stores a set of roles per hero rather than one. Checked against the live roster on 2026-10-23 rather than recalled: 54 heroes at Season 10.5, which is 14 + 27 + 12 plus Deadpool in all three.
 - **An event belongs to at most one championship**, so a result cannot count twice.
 
 ## Out of scope
