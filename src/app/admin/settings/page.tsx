@@ -16,7 +16,11 @@
 
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
-import AnnouncementSettings, { NOT_POSTED_YET, posted } from "@/components/admin/AnnouncementSettings";
+import AnnouncementSettings from "@/components/admin/AnnouncementSettings";
+// Not from the component: it is a `"use client"` module, so a value imported
+// from it reaches this server page as a client reference and calling it throws
+// at runtime. See `announcement-posting.ts`.
+import { NOT_POSTED_YET, posted } from "@/components/admin/announcement-posting";
 import ServerSettings from "@/components/admin/ServerSettings";
 import { Page, PageHeader, Section, StatTile } from "@/components/ui";
 import { ANNOUNCEMENTS, type AnnouncementKind } from "@/lib/announce";

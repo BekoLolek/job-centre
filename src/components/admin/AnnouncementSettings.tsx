@@ -121,43 +121,18 @@ import {
 /* The kinds nothing posts yet                                        */
 /* ------------------------------------------------------------------ */
 
-/**
- * Kinds whose wording is stored, whose switch works, and which **nothing in
- * the site posts** (R-205, Task 68).
- *
- * All three scheduled kinds are wording, vocabulary and a switch, and no call
- * site: applications opening, closing soon and an event starting are *clock*
- * events, and the site has nothing that wakes up on a clock to post them yet.
- * That is recorded in `./announce`'s own module comment rather than being an
- * oversight, and this screen's job is to not quietly present them as live: an
- * admin who turns one on and waits for a message is an admin who will go
- * looking for a broken webhook.
- *
- * Declared here rather than on `AnnouncementSpec` because it is a fact about
- * the *site*, not about the setting — `ANNOUNCEMENTS` is the vocabulary, and a
- * `wired: false` field on it would be a second thing to forget when the
- * trigger is wired up. `announcement-wording.test.ts` holds the list against
- * the builders `src/lib/discord.ts` actually imports, so wiring one and
- * leaving this behind fails the suite, which is the point of it.
+/*
+ * `NOT_POSTED_YET` and `posted` live in `./announcement-posting` rather than
+ * here, and the move was not tidying: this file is `"use client"`, so every
+ * value it exports is a client reference, and the settings *page* is a server
+ * component that calls `posted`. Importing it from here gave production
+ * "Attempted to call posted() from the server" on every /admin/settings load —
+ * a runtime failure that tsc, next build and the whole suite all pass, because
+ * the tests render this component directly in node where no boundary exists.
  */
-export const NOT_POSTED_YET: readonly AnnouncementKind[] = [];
+import { NOT_POSTED_YET, posted } from "./announcement-posting";
 
-/**
- * Whether anything in the site posts this kind today.
- *
- * The set is an argument with the constant as its default, rather than only the
- * constant, because the screen's job is to *say* what it is told and the fact
- * belongs to the deployment. It also keeps the saying testable when the list
- * happens to be empty: the warning below is the whole reason this exists, and a
- * branch that can only be reached by editing a constant is a branch nobody can
- * prove still works.
- */
-export function posted(
-  kind: AnnouncementKind,
-  notPosted: readonly AnnouncementKind[] = NOT_POSTED_YET
-): boolean {
-  return !notPosted.includes(kind);
-}
+export { NOT_POSTED_YET, posted };
 
 /* ------------------------------------------------------------------ */
 /* Example values for the preview (UC-37 5a)                          */
