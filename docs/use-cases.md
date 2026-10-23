@@ -1449,3 +1449,32 @@ A season of two to four events a month across different games, with one running 
 - **4b.** Fewer participants than one team needs - refused, naming the count and the team size.
 - **5a.** Asked twice - the second shuffle is a fresh one and replaces the first. Unlike the hero draw, this is the admin's tool and re-running it is the point; 3a is what stops it being an accident.
 - **6a.** A participant withdraws after the shuffle - their seat on the team is freed, exactly as a withdrawal already does, and no reshuffle happens on its own.
+
+## UC-42: Set up an event that is not a tournament
+
+**Actor:** Admin
+**Requirements covered:** R-217, R-218, R-219, R-220
+**Trigger:** An admin sets up a night that is not the default shape - solo, or teams with no draft.
+
+**Preconditions**
+1. The admin manages this event.
+
+**Main success path**
+1. Admin opens Setup and the Format panel.
+2. Admin says whether the event has teams.
+3. If it has teams, admin says whether there is a draft, and sizes the teams - either a number of teams or a number of players on one.
+4. System shows the other figure as a consequence: "6 per team, so 3 teams from the 18 accepted".
+5. System shows only the tabs that apply - a solo event loses Draft, Teams, Captains and the bracket.
+6. Admin fills the teams by hand, at random, or lets a draft do it.
+
+**Outcome**
+- The editor is the length of the job, and the teams were settled the way the admin chose.
+
+**Alternate and error flows**
+- **2a.** Turning teams off on an event that already has them - refused until the admin says to discard them, naming how many go.
+- **3a.** Turning the draft off once lots have been awarded - refused outright; the awarded lots are the teams' provenance.
+- **4a.** The accepted count is not settled yet - the consequence is stated as an assumption rather than a number presented as fact.
+- **4b.** The sizing does not divide evenly - the remainder is spread one per team, and which teams are short is said before anything is saved.
+- **5a.** A link names a tab that no longer applies - it lands somewhere real and says why, rather than rendering an empty screen. Those links exist in `/admin`'s action lines and in bookmarks.
+- **5b.** A hidden tab is **not** a forbidden one. The server actions keep their own guards, because a tab the editor stops drawing is still reachable by URL and by anybody who kept the page open.
+- **6a.** Filling at random over hand-built teams - confirmation first, naming what is replaced.

@@ -355,6 +355,19 @@ strongest character or the strongest team-mate first. Both draws happen once and
 Vanguard, Duelist **and** Strategist, so a hero carries a set of roles. A schema storing a
 single role per hero is wrong against the roster as it stands.
 
+### The editor follows the event (added 2026-10-23)
+
+Not every event has teams, and not every event with teams runs a draft. The editor showed
+all nine tabs to all of them, so a jklm.fun night carried a draft, a bracket and a captains
+screen that could never mean anything.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-217 | As an admin, I want to say whether an event has teams and whether it runs a draft, so that the editor matches the night I am actually running. | Should | Per event, not a flag on the game - a Fall Guys night can be solo one week and teams the next |
+| R-218 | As an admin, I want to set either how many teams there are or how many players are on one, so that I size them the way that is settled first. | Should | One mode or the other; the other is shown as its consequence, never stored |
+| R-219 | As an admin, I want the tabs that cannot apply to disappear, so that the editor is the length of the job in front of me. | Should | A non-team event loses Draft, Teams, Captains and the bracket. Schedule and Results stay - a solo event has a running order and a winner |
+| R-220 | As an admin, I want to fill the teams by hand, at random, or from a draft, so that the way sides are settled is mine to choose. | Should | Three routes into one set of teams, not three features sharing a table |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints

@@ -1261,3 +1261,87 @@ Strategists each is what forces duplicates.
   - [ ] Refused once a lot has been awarded, with nothing written
   - [ ] Fewer participants than one team needs is refused, naming both numbers
 - **Depends on:** nothing — it needs no migration and no hero data, so it may run beside Task 73.
+
+## L. The editor follows the event (R-217 to R-220 / UC-42)
+
+Decisions taken with the user on 2026-10-23. The new **Format** panel lives **inside Setup**
+and decides which tabs appear beside it. Team-or-not is **per event**, not a flag on the
+game, so a Fall Guys night can be solo one week and teams the next. Team sizing is **one
+mode or the other** — a number of teams, or players per team — with the other shown as its
+consequence. For a non-team event, **Draft, Teams, Captains and the bracket tab** all go.
+
+**A naming collision this plan has to solve rather than inherit.** There is already a
+*step* called `format` (bracket shape, stages, Swiss/knockout), and `tabFrom` checks the
+Setup aliases **before** the step keys — so adding `format` as a Setup panel would make
+`?tab=format` resolve to Setup and silently break every existing link to the bracket,
+including the action lines on `/admin` that §4 requires to open "the exact screen that
+fixes it". So the panel is **keyed `shape` and labelled "Format"**, and the step is
+**relabelled "Bracket"**, because two tabs both called Format in one editor is worse than
+either. Reversible if the user prefers the other way round.
+
+**Found while planning, and it is what prompted this:** `FormatTab.tsx:174` is
+`useState(() => Math.max(realCount, 8))`, so with no real teams the bracket tab opens on
+**eight placeholder teams** and its own comment says "nothing about them is ever written
+down". The count is a preview that never saves. That is the "stuck on 8 teams" report, and
+Task 82 retires it rather than patching the number.
+
+### Task 79: The Format panel — what kind of event this is
+
+- **Serves:** R-217, R-218 / UC-42 1-4
+- **Files:** `src/components/admin/events/tabs.ts`, a new Setup panel component, `src/lib/events-policy.ts`, `src/app/admin/events/actions.ts`, tests
+- **Do:** a sixth Setup panel, keyed `shape`, holding three decisions: **is this a team event**, **is there a draft**, and **how teams are sized** — either a count of teams or a number of players per team, one mode at a time with the other rendered as its consequence ("6 per team → 3 teams from the 18 accepted"). One source of truth; the derived figure is never stored.
+  Stored in `events.config`, which already holds the schedule settings (`scheduleSettingsFrom`), so **no migration** — Task 78 put the comp format there for the same reason; extend that shape rather than adding a second.
+  `tabs.ts` is a plain module **on purpose**: its own docblock records that exporting a helper from `EventEditor` (`"use client"`) and calling it from the server page fails at request time with "attempted to call tabFrom() from the server". That is the same defect that took `/admin/settings` down today. Keep it plain.
+- **Acceptance criteria:**
+  - [ ] A sixth Setup panel, reachable and persisted, with no migration
+  - [ ] Team sizing is one mode or the other, and the derived figure is never stored
+  - [ ] Changing the accepted count changes the derived figure without a save
+  - [ ] `?tab=format` still opens the bracket step, asserted — the alias order makes this easy to break
+  - [ ] Every refusal is shown on the panel, not swallowed
+- **Depends on:** Task 78 for the config shape.
+
+### Task 80: The editor shows only what applies
+
+- **Serves:** R-219 / UC-42 5, 5a
+- **Files:** `src/components/admin/events/tabs.ts`, `EventEditor.tsx`, `src/app/admin/events/[id]/page.tsx`, tests
+- **Do:** drive tab visibility from the Format panel. **Not a team event** ⇒ no Draft, Teams, Captains or Bracket. **No draft** ⇒ no Draft tab, Teams and Bracket stay. Schedule and Results always stay — a solo event still has a running order and a winner, which is why the user kept them.
+  **Hiding a tab must not strand anybody on it.** A link to `?tab=draft` on a now-solo event has to land somewhere sensible and say why, rather than rendering an empty draft or 404ing — those links exist in `/admin`'s action lines and in bookmarks.
+  **Hiding is not permission.** A hidden tab is a tab that does not apply, not one that is forbidden; the server actions keep their own guards, because a tab the UI stops drawing is still reachable by URL and by anybody who kept the page open.
+- **Acceptance criteria:**
+  - [ ] A non-team event shows no Draft, Teams, Captains or Bracket tab
+  - [ ] A team event with no draft shows Teams and Bracket but no Draft
+  - [ ] Schedule and Results show in every configuration
+  - [ ] A URL naming a hidden tab lands somewhere real and says why
+  - [ ] The server actions still refuse on their own, proven by calling one for a hidden tab
+  - [ ] The sweep reads the tab list off the module rather than a copy, so a seventh tab cannot be forgotten
+- **Depends on:** Task 79.
+
+### Task 81: Teams, filled three ways
+
+- **Serves:** R-220 / UC-42 6
+- **Files:** `src/components/admin/events/TeamsTab.tsx`, `src/lib/draft.ts`, tests
+- **Do:** the Teams tab fills **manually, at random, or from a draft**. Task 78 has built the random shuffle and its refusals — **use it, do not write a second one.** Manual placement already exists (`placeOnRoster`/`removeFromRoster`); this task makes the three routes one coherent screen rather than three features that happen to share a table.
+  **Say which route filled the current teams**, because "fill randomly" over a hand-built roster is the destructive case and the admin needs to know what they are replacing. Task 78's confirmation (naming how many teams would be discarded) is the precedent.
+  A draft that has awarded lots still refuses a reshuffle outright (UC-41 3b) — that rule is Task 78's and does not change here.
+- **Acceptance criteria:**
+  - [ ] All three routes fill the same teams, and the screen says which was used
+  - [ ] Random reuses Task 78's shuffle — asserted by the test, not by inspection
+  - [ ] Replacing hand-built teams needs confirmation naming what goes
+  - [ ] A started draft refuses a reshuffle, nothing written
+  - [ ] The team count follows the Format panel, and disagreeing with it is refused
+  - [ ] Works at 400px
+- **Depends on:** Tasks 78, 79.
+
+### Task 82: Retire the bracket tab's invented team count
+
+- **Serves:** R-218 — the "stuck on 8 teams" report
+- **Files:** `src/components/admin/events/FormatTab.tsx`, tests
+- **Do:** `useState(() => Math.max(realCount, 8))` gives the bracket tab eight placeholder teams whenever there are no real ones, and its own comment admits "nothing about them is ever written down". So the number an admin sets there is a preview that never persists, which is exactly the "stuck on 8" report.
+  **The placeholders themselves were a good idea and should survive** — the docblock's argument is sound: the format is the decision an admin wants to make *first*, before applications close and before anybody knows who is captaining what, so requiring real teams to preview a bracket is backwards. What has to change is where the number comes from: **the Format panel's team count**, which is real and saved, instead of a local `useState` seeded with 8.
+  Where the Format panel says players-per-team and the accepted count is not yet known, the preview falls back to a stated assumption rather than a silent 8.
+- **Acceptance criteria:**
+  - [ ] The bracket preview uses the Format panel's count, and changing it there changes the preview
+  - [ ] No literal 8 survives as a team-count default
+  - [ ] Placeholders still work before any real team exists
+  - [ ] When the count cannot be derived yet, the screen says what it is assuming
+- **Depends on:** Task 79.
