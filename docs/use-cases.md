@@ -1479,3 +1479,33 @@ A season of two to four events a month across different games, with one running 
 - **5a.** A link names a tab that no longer applies - it lands somewhere real and says why, rather than rendering an empty screen. Those links exist in `/admin`'s action lines and in bookmarks.
 - **5b.** A hidden tab is **not** a forbidden one. The server actions keep their own guards, because a tab the editor stops drawing is still reachable by URL and by anybody who kept the page open.
 - **6a.** Filling at random over hand-built teams - confirmation first, naming what is replaced.
+
+## UC-43: Post an announcement by hand
+
+**Actor:** Admin
+**Requirements covered:** R-221, R-222, R-223
+**Trigger:** An announcement did not reach the channel, or an admin wants one sent now.
+
+**Preconditions**
+1. The admin manages this event.
+2. A webhook is configured.
+
+**Main success path**
+1. Admin opens the event and finds its announcements.
+2. System lists the five kinds that take an event, each saying whether it is switched on and whether it has already been posted.
+3. Admin presses post on one.
+4. System builds that kind's message from the event as it stands now, posts it, and takes the once-per-event claim if it is still free.
+5. System records who posted it, by hand, in the audit log.
+
+**Outcome**
+- The announcement is in the channel, and the scheduler will not repeat it.
+
+**Alternate and error flows**
+- **2a.** The kind is switched **off** - it is still offered, and labelled off, because pressing a button is an explicit decision where the switch governs what posts on its own (R-223).
+- **2b.** The event counts towards no championship - `standings_changed` is not offered at all, rather than offered and refused: there is no table for it to be about.
+- **3a.** Already posted - the screen says when, and asks for confirmation before sending again (R-222). It is not refused; Discord eating the first one is the case this exists for.
+- **3b.** No webhook configured - refused, saying so, because nothing would happen and a button that silently does nothing is worse than one that is not there.
+- **4a.** The message cannot be built honestly - a starting-soon post for an event with no dated day, or a closing-soon post for one with no closing time. Refused, naming what is missing, rather than posting a message whose placeholders render as "no closing date".
+- **4b.** The claim is already taken - the post still goes out (3a confirmed it), and no second claim row is written.
+- **4c.** The claim is free - it is taken, so the scheduler does not post the same thing again an hour later.
+- **5a.** Discord refuses the post - recorded as `announcement.failed` against the event, exactly as an automatic one is (R-208, UC-38 5c), and the screen says so rather than reporting success.

@@ -368,6 +368,18 @@ screen that could never mean anything.
 | R-219 | As an admin, I want the tabs that cannot apply to disappear, so that the editor is the length of the job in front of me. | Should | A non-team event loses Draft, Teams, Captains and the bracket. Schedule and Results stay - a solo event has a running order and a winner |
 | R-220 | As an admin, I want to fill the teams by hand, at random, or from a draft, so that the way sides are settled is mine to choose. | Should | Three routes into one set of teams, not three features sharing a table |
 
+### Posting an announcement by hand (added 2026-10-23)
+
+Announcements fire on their own moments, and sometimes the moment passes badly - Discord was
+down, the webhook was wrong, the kind was switched off when it mattered. There was no way to
+say "send that one now" short of editing the database.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-221 | As an admin, I want to post one of an event's announcements by hand, so that a moment Discord missed is not lost. | Should | The five kinds that take an event: published, signups open, closing soon, starting soon, standings. The other five are about one application, lot or match |
+| R-222 | As an admin, I want to be told when an announcement has already gone out, so that I do not post it twice by accident. | Should | Warned and asked to confirm, not refused - the case this exists for is precisely the one where it *did* go out and nobody saw it |
+| R-223 | As an admin, I want a manual post to work even when that kind is switched off, so that a one-off does not mean changing a setting and remembering to change it back. | Should | The switch governs what posts **automatically**; a button is an explicit decision |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints

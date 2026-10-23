@@ -1363,3 +1363,27 @@ Task 82 retires it rather than patching the number.
   - [ ] Placeholders still work before any real team exists
   - [ ] When the count cannot be derived yet, the screen says what it is assuming
 - **Depends on:** Task 79.
+
+### Task 83: Post an announcement by hand (R-221 to R-223 / UC-43)
+
+- **Serves:** R-221, R-222, R-223 / UC-43
+- **Files:** `src/lib/discord.ts`, `src/app/admin/events/actions.ts`, the Publish tab, tests
+- **Do:** five buttons on an event — **`event_published`, `signups_open`, `signups_closing_soon`, `event_starting_soon`, `standings_changed`** — each posting that kind for this event now. Those are the five whose announcer takes an `eventId`; the other five are about one application, one lot or one match and are deliberately out of scope.
+  **On the Publish tab**, which is already the "tell people about it" step. Not a new top-level tab: section L is about to make tab visibility conditional, and adding a tenth tab first would be two changes fighting over the same rail.
+  **Three decisions taken with the user, each of which the obvious implementation gets wrong:**
+  **It posts even when the kind is switched off** (R-223, UC-43 2a), and says the kind is off so that is not a surprise. The switch governs what posts *automatically*; a button is an explicit decision. Refusing would mean switching a setting on for a one-off and remembering to switch it back.
+  **Already posted is a warning, not a refusal** (R-222, UC-43 3a). Say *when* it went, and confirm before sending again. The case this feature exists for is exactly the one where it did go out and nobody saw it — Discord was down, the webhook was wrong. Refusing would close the door on the only reason to build it.
+  **A manual post takes the claim if it is free** (UC-43 4c). Otherwise the scheduler posts the same thing an hour later and the channel gets it twice — the claim is `announcement_claims`, keyed on (kind, event), from Task 68. If the claim is already taken, post without writing a second row (4b).
+  **Refuse when the message cannot be built honestly** (UC-43 4a): a starting-soon post for an event with no dated day, or a closing-soon post for one with no closing time, would render its placeholders as "a time still to be confirmed" and "no closing date" — a true sentence about nothing. Name what is missing instead. `standings_changed` is **not offered at all** for an event in no championship (2b), rather than offered and refused.
+  No webhook means refused and said (3b): a button that silently does nothing is worse than one that is not there. A refusal from Discord is `announcement.failed` against the event, exactly as an automatic one is (5a) — and the screen must not report success.
+- **Acceptance criteria:**
+  - [ ] Each of the five posts that kind for that event, built from the event as it stands now
+  - [ ] A switched-off kind still posts, and the screen says it is off
+  - [ ] An already-posted kind warns with **when**, and posts only after confirmation
+  - [ ] A free claim is taken; an already-taken one is not written twice
+  - [ ] Starting-soon with no dated day, and closing-soon with no closing time, are refused by name
+  - [ ] `standings_changed` is absent for an event in no championship
+  - [ ] No webhook refuses and says so; a Discord refusal is audited and not reported as success
+  - [ ] Every manual post is audited as manual, naming who
+  - [ ] Works at 400px
+- **Depends on:** Tasks 59, 60, 68. Needs no migration — the claim table and the announcers already exist.
