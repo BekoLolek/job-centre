@@ -15,6 +15,7 @@ import {
 } from "@/components/ui";
 import { EventDateRange, EventSeats, EventStatusPill, eventTypeLabel } from "@/components/events";
 import type { ApplicantView, EventDetail } from "@/lib/events";
+import type { ManualAnnouncementPanel } from "@/lib/discord";
 import ApplicantsTab from "./ApplicantsTab";
 import BasicsTab from "./BasicsTab";
 import CaptainsTab from "./CaptainsTab";
@@ -114,6 +115,16 @@ type EventEditorProps = {
   /** Which season this event counts towards, and which it could (UC-32). */
   championship: ChampionshipTabData;
   /**
+   * The five announcements this event can post by hand, as the server read
+   * them (R-221 / UC-43) — the switches, the claims and the refusals.
+   *
+   * Handed down rather than read by the Publish tab, for the reason `maxDays`
+   * is: `manualAnnouncementPanel` lives in `src/lib/discord.ts`, which reaches
+   * Postgres, and a client component importing it would drag Drizzle and PGlite
+   * into the browser bundle.
+   */
+  announcements: ManualAnnouncementPanel;
+  /**
    * `MAX_EVENT_DAYS` / `MAX_EVENT_QUESTIONS`, handed down from the server page.
    * They live in `src/lib/events.ts`, which reaches the database — importing it
    * from a client component would drag Drizzle and PGlite into the browser
@@ -146,6 +157,7 @@ function EditorBody({
   draft,
   format,
   championship,
+  announcements,
   maxDays,
   maxQuestions,
   maxStages,
@@ -318,7 +330,12 @@ function EditorBody({
           <ResultsTab format={format.view} matchIds={format.matchIds} />
         )}
         {tab === "publish" && (
-          <PublishTab event={event} applicants={applicants} queue={queue} />
+          <PublishTab
+            event={event}
+            applicants={applicants}
+            queue={queue}
+            announcements={announcements}
+          />
         )}
 
         {tab === "applicants" && <ApplicantsTab event={event} applicants={applicants} />}

@@ -85,8 +85,15 @@ import {
 import {
   announceApplicationDecision,
   announceEventPublished,
+  announcementPostedAt,
   announceStandings,
+  postAnnouncementByHand,
 } from "@/lib/discord";
+import {
+  MANUAL_REFUSALS,
+  isManualAnnouncementKind,
+  manualPostSummary,
+} from "@/lib/announce-manual";
 import { isFieldType } from "@/lib/profile-fields";
 import {
   eventIdOfApplication,
@@ -367,6 +374,99 @@ export async function publishEventAction(
 
   refresh(eventId);
   return { ok: true, data: { status: result.data.status } };
+}
+
+/* ------------------------------------------------------------------ */
+/* Posting an announcement by hand (R-221 to R-223 / UC-43)           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What came of pressing one of the Publish tab's five buttons.
+ *
+ * Three outcomes rather than the `EventResult` the rest of this file returns,
+ * because "it already went out, say when and ask" is not a refusal (R-222 /
+ * UC-43 3a) and must not be representable as one. A two-case result would make
+ * the confirm an `ok: false` with a sentence in it — and a test asserting on
+ * that sentence would then be satisfied by any *other* refusal that happened to
+ * contain the same words, which is a mutation that has already escaped on this
+ * plan. The three are distinguishable by a tag rather than by prose.
+ */
+export type PostByHandResult =
+  | { outcome: "posted"; name: string; claimed: boolean }
+  /** Already posted. The instant, so the screen can say when in the reader's zone. */
+  | { outcome: "confirm"; postedAt: Date }
+  | { outcome: "refused"; error: string };
+
+/**
+ * Post one of an event's five announcements now (R-221 to R-223 / UC-43).
+ *
+ * Thin like everything else here: `requireEventManager`, then
+ * `postAnnouncementByHand`, then the log. Every decision about *whether* a kind
+ * can be posted is in `src/lib/discord.ts` and `src/lib/announce-manual.ts`,
+ * including the ones the screen also makes — a server action is a public
+ * endpoint (Next's own guidance), so what the button believes about a switch, a
+ * claim or a missing date decides nothing here.
+ *
+ * ## The confirm gate, and why it is here as well as on the screen
+ *
+ * The screen already knows a kind has gone out — the panel is handed
+ * `postedAt` — so an admin normally sees the warning without a round trip. This
+ * is the backstop for the screen that was rendered an hour ago, before somebody
+ * else posted: it answers `confirm` with the instant rather than posting, and
+ * the second call carries `confirmed`.
+ *
+ * Checked before the refusals rather than after, which is UC-43's own order (3a
+ * before 4a) and is only observable to a call the screen cannot make: a row
+ * whose message cannot be built honestly has no enabled button to press. Either
+ * answer is honest; this one costs one read.
+ */
+export async function postAnnouncementByHandAction(
+  eventId: string,
+  kind: string,
+  options: { confirmed?: boolean } = {}
+): Promise<PostByHandResult> {
+  const admin = await requireEventManager(eventId);
+
+  // Arrives from the browser. The other five announcers take an application, a
+  // lot or a match id, so a kind that is not one of the five would be a message
+  // built about nothing (R-221).
+  if (!isManualAnnouncementKind(kind)) {
+    return { outcome: "refused", error: MANUAL_REFUSALS.notManual };
+  }
+
+  if (!options.confirmed) {
+    const postedAt = await announcementPostedAt(kind, eventId);
+    if (postedAt) return { outcome: "confirm", postedAt };
+  }
+
+  const result = await postAnnouncementByHand(kind, eventId);
+  if (!result.ok) return { outcome: "refused", error: result.error };
+
+  /*
+   * Only once it has actually gone out, and audited as *manual* (UC-43 5).
+   * A post Discord refused is already in the log as `announcement.failed`,
+   * written where every other announcement failure is written and in the same
+   * shape (UC-43 5a) — so there is no second line for it here, and nothing in
+   * this log says a post happened that did not.
+   */
+  await recordAudit({
+    action: "announcement.posted_by_hand",
+    actor: admin,
+    eventId,
+    subject: kind,
+    summary: manualPostSummary(
+      kind,
+      result.title,
+      admin.displayName ?? admin.name ?? "A manager"
+    ),
+    // `claimed` false is the post that went out beside a claim somebody else
+    // already held (UC-43 4b) — worth having in the line, because it is the
+    // difference between this post stopping the scheduler and not.
+    detail: { kind, claimed: result.claimed },
+  });
+
+  refresh(eventId);
+  return { outcome: "posted", name: result.name, claimed: result.claimed };
 }
 
 /* ------------------------------------------------------------------ */

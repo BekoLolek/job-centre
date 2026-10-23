@@ -225,6 +225,13 @@
       "when": 1792773290617,
       "tag": "0031_heroes",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792779771225,
+      "tag": "0032_hero_hands",
+      "breakpoints": true
     }
   ]
 }

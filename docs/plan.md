@@ -747,6 +747,7 @@ this environment). Before any production push: the Phase 8 launch checklist (Gat
   Fix shapes, chosen per case: `setStages` and `setTeams` by **ordering/staging**, because both refusals are their own; `voidLotIn` by moving its **compare-and-set first**, turning the refusal into a write that matched no rows; `createEvent` by **throwing** a module-private `NothingSaved` (carrying `errors` as well as the sentence), because its two remaining refusals belong to `setEventQuestions` and `setEventDays` and neither can be asked before the event row exists — staging would mean two copies of a validation that has to be right for edits.
   The rule is `docs/decisions/004-refusals-inside-transactions.md`, with a four-sentence version and the failing snippet in **`src/db/index.ts`'s module docblock** — the file every writer imports `Database` from, so it is met before a first `tx.` call rather than filed where nobody looks. **Mutation 9 proves the premise empirically in this repo:** keeping the transaction but *returning* the refusal instead of throwing still commits the event row.
   Collateral, outside `src/lib`: `insertingAfter` in `src/app/admin/events/__tests__/waivers.test.ts` had to be taught to flatten the transaction, because the insert it aims at moved onto the `tx` and the proxy started intercepting the *audit* insert instead — a different builder chain, which threw inside `recordAudit`'s own catch and failed the test on an empty audit log rather than on anything about two managers. That is Task 58's observation about those six helpers, arriving early, and it pushes `insertingAfter`'s three copies further apart.
+  **And Task 75 found the sharper version of the same thing:** a helper that hardcodes its builder chain can *fake a mutation kill*. Deleting an `onConflictDoNothing` failed its test with `returning is not a function` — the proxy breaking, not the database refusing — which is a green-to-red transition that proves nothing about the guard. Forwarding whichever chain arrives makes the same mutation produce the real unique violation. So the aim is not only the part that drifts; **not hardcoding it is what makes the evidence real.**
 
 ### Task 58: Six copies of one sequencing helper (found in Task 36 review)
 
@@ -771,6 +772,14 @@ A reconciliation of every acceptance criterion against the tree (2026-10-22, at 
 
 - **A criterion written as a grep is weaker than the rule it stands for.** Task 51's `grep -rn "Day \${"` reads clean of `label ??` fallbacks while four hits remain, and a fifth surface was missed entirely because it wrote the number as JSX (`Day {index + 1}`). The per-surface assertion is the criterion that holds; the grep is a convenience. Task 44's criterion has the same shape and nothing holds it — a future edit could reintroduce `R-196` and no test would fail.
 - **26 of the 67 tasks state their acceptance criteria as prose rather than checkboxes, so no sweep can see them** — Tasks 14-29, 31-35 and 39-43. That was first recorded here as "Tasks 39-43 and Task 31", which was itself an undercount found the same way as every other one: by looking rather than assuming. Task 31's criterion is **not met** and went unnoticed for exactly this reason, and Task 32's was prose until it came up for work. Tasks 59-65 use checkboxes; the earlier 26 are left as they are, because converting a criterion somebody already satisfied invites re-ticking it from the text rather than from the tree.
+
+- **A seed sweep over the shared test LCG is weaker than it looks, and once passed with a guard deleted.** `seeded(n)` in `random-teams.test.ts` and `heroes-policy.test.ts` is an LCG whose **first output lies between 0.2361 and 0.3519 for every seed 0-299** — measured, not inferred. So `floor(x * 4)` is only ever 0 or 1, never 2 or 3, and a 300-seed sweep explores **two** of four possible first swaps. Task 74's repeat-pool test swept 300 seeds and survived the mutation that deletes its de-duplication, because the first swap always parked a duplicate in the position that gets dropped. It was asserting a property of the generator, not of the code. Replaced with an exhaustive enumeration of all 24 draw sequences, which fails in 12 of them.
+  `random-teams.test.ts` uses the identical helper and has two sweeps, so this was checked rather than assumed: one asserts **conservation** (every player dealt once, sizes 5/5/4), which holds for any permutation and cannot be weakened by bias; the other asserts reachability, which could be. Mutating `shuffled`'s partner draw to `random() * index` — the off-by-one that makes the last element unreachable — kills **7** of its tests, and the ones that catch it are the **enumeration** tests, not the sweeps. So the sweeps there are supplementary rather than load-bearing, and the file is sound. **The rule for next time: a sweep over `seeded` proves nothing about the first draw. Enumerate a small input instead.**
+
+- **A mutation that does not apply is not a kill, and this repo's line endings make that easy to miss.** Task 77's harness scored two mutations as caught when its multi-line patterns had matched **nothing**: `GamesManager.tsx` is CRLF and the finds used `
+`. It reported them as BAD-PATCH rather than counting them, which is the only reason it was noticed — a harness that merely diffs green-to-red would have recorded two kills for two edits that never happened. **Require the anchor to match exactly once and fail loudly when it does not**, and remember that files here are CRLF on disk.
+  Related, from Task 75: a mutation can also turn red for the *wrong reason*. Deleting an `onConflictDoNothing` failed its test with `returning is not a function` — the sequencing proxy breaking, not the database refusing. Both shapes produce a green-to-red transition that proves nothing about the guard.
+- **The scratchpad is shared between concurrent agents.** Task 77 had its `mutate.mjs` overwritten mid-run by another agent; its process had already loaded the file so the run survived, but it moved to a private subdirectory and checked every failure name against its own mutation's target before trusting the results. A harness in the shared scratchpad is not private.
 
 Still open and **not** closable from this repo: Task 50's last criterion asks whether an index on `events.status` is wanted, which needs `EXPLAIN` against production rows. `DATABASE_URL` is blank here by design. The query to run is recorded at `src/db/schema.ts:1091-1116`.
 
@@ -1197,27 +1206,44 @@ Strategists each is what forces duplicates.
   **Randomness is injected, never called.** A function reaching for `Math.random` cannot be tested, and this is the one place where "it looked random" is not evidence. The test passes a known sequence and asserts the exact hand.
   Refuse before dealing when a role holds fewer than three (UC-39 2a): a partial hand is worse than none.
 - **Acceptance criteria:**
-  - [ ] Nine heroes, three per role, the three distinct within each role
-  - [ ] A seeded generator produces an exactly predicted hand
-  - [ ] Every hero in the pool is reachable — a shuffle that can never deal the last element is the classic off-by-one and is invisible without a test that looks for it
-  - [ ] Deadpool can be dealt in any role, and may appear in more than one of a player's role-sets
-  - [ ] A role with fewer than three heroes is refused by name, and nothing is dealt
+  - [x] Nine heroes, three per role, the three distinct within each role
+  - [x] A seeded generator produces an exactly predicted hand
+  - [x] Every hero in the pool is reachable — a shuffle that can never deal the last element is the classic off-by-one and is invisible without a test that looks for it
+  - [x] Deadpool can be dealt in any role, and may appear in more than one of a player's role-sets
+  - [x] A role with fewer than three heroes is refused by name, and nothing is dealt
 - **Depends on:** Task 73.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The shuffle is reused, not rewritten.** `drawHand` imports `shuffled` from `random-teams.ts` and that file is unchanged (digest-verified before and after). The module name says teams and the function is about lists — if that ever reads wrong it is a rename across two call sites and no behaviour.
+  **The pool is de-duplicated before the guard counts it**, which this entry did not ask for. A pool holding the same hero twice clears a naive "at least three" check and then deals that hero twice — the wasted roll the criterion forbids — so counting *distinct* heroes makes the guard and the promise the same question. `heroes_roles_distinct_nonempty` means `drawableByRole` cannot produce such a pool today, so it is belt-and-braces, and it is mutation-proved from both ends: removing the de-duplication and pointing the guard at raw rows each die.
+  **The refusal names every thin role, not the first.** UC-39 2a says "naming the role", singular, but a half-filled hero list has two or three — and an admin who fixes one and is refused again learns the count one deployment at a time. **UC-39 2a should be reworded to "naming the roles".**
+  **A seed sweep passed with a guard removed, and the generator was why** — see Plan hygiene, which now carries the measurement and the rule. The short version: `seeded`'s first output spans only 0.2361-0.3519, so a 300-seed sweep explores two of four first swaps. Enumeration replaced it.
+  **Reachability is proved twice, deterministically.** All 24 ordered threes of a four-hero pool — where `random() * index` collapses 24 orders to 6 — and a constructed draw vector per hero over the real 15 / 28 / 13 showing each can be dealt first, including each pool's last. `Math.random` injection is proved by replacing the global with a **thrower**; the refusal path additionally by a generator that throws on its *first* call, which is the only way to tell "refused before any draw" from "dealt nine and threw them away".
+  **A citation was removed rather than kept.** A `UC-40 3c` tag on the Deadpool draw tests was wrong — 3c is the admin *accepting* a multi-role hero, which is Tasks 73 and 77's business, not the draw's. Those tests now cite the multi-role Constraint and say so.
+  **Task 75 inherits** a `Record<HeroRole, Hero[]>` of full rows with ids, so storing nine is a flatten of the three lists, and a hand survives a later rename.
 
 ### Task 75: Dealt once, and it stands
 
 - **Serves:** R-212 / UC-39 3a, 3b, 5a, 6a
-- **Files:** `src/db/schema.ts` (+ migration), `src/lib/heroes.ts`, tests
+- **Files:** `src/db/schema.ts` (+ migration), **`src/lib/hero-hands.ts`** (new — *this entry said `heroes.ts`, which is the catalogue; a dealt hand is a different table and a different question*), tests
 - **Do:** store a hand against (event, participant). **The uniqueness is the feature**, so it belongs in the database as well as the code: a unique index on (event, user), the shape `applications_event_user_uniq` already uses.
   **Two clicks at once must not deal twice**, and the pattern is already here: `announcement_claims` uses `insert … onConflictDoNothing … returning()`, where a run that gets no row back did not win. Use that rather than read-then-write, which is the race `applyToEvent` needed a lock for.
   **Read `docs/decisions/004` first.** A refusal returned from a transaction commits what came before it — if the deal writes and then refuses, the hand is stored and the player is told it was not.
 - **Acceptance criteria:**
-  - [ ] A second draw deals nothing and returns the stored hand
-  - [ ] Two simultaneous draws store one hand and both callers see the same nine, proven with the sequencing helpers rather than a race
-  - [ ] A failed store leaves no hand and the player may draw again
-  - [ ] A hero retired later is still shown in a hand that holds it
-  - [ ] The migration states what it does on existing events
+  - [x] A second draw deals nothing and returns the stored hand
+  - [x] Two simultaneous draws store one hand and both callers see the same nine, proven with the sequencing helpers rather than a race
+  - [x] A failed store leaves no hand and the player may draw again
+  - [x] A hero retired later is still shown in a hand that holds it
+  - [x] The migration states what it does on existing events
 - **Depends on:** Tasks 73, 74. Needs a migration.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **The module is `src/lib/hero-hands.ts`, not `heroes.ts`** as this entry's Files line said. Task 77 held `heroes.ts` and ran in parallel, but the split is right on its own merits: that module is the catalogue and its admin writes, this one is a row of `hero_hands`, and the only thing shared is the direction of the import. The Files line is corrected above.
+  **There is no transaction, and that is the design** — decision 004's first safe shape taken to its limit: one write, last, every refusal before it, and the post-write read reachable only when the insert wrote nothing. Nothing can refuse after a write because nothing runs after the write that could. A future edit adding a second write here must put it before the refusals or take on the decision's rules; the test helper's docblock says so, because the sequencing proxy stops firing if a transaction appears.
+  **The hand is nine ids in one array, and the uniqueness forced it.** A row per card could carry a foreign key per hero but could not express "one hand per (event, user)" in SQL, and nine inserts would reopen the race the single insert closes. **Position carries the role**, because Deadpool can be dealt in two roles in one hand, so `(hand, hero)` is not a key — the check is distinct *within* each triple and deliberately silent across them, with a test asserting a legal seven-distinct-of-nine hand. Ids rather than names because a hero is identified by `(game, name)` with no stable key (Task 73), so a stored name dies on the first rename, and ids survive retirement (UC-40 4a).
+  **The check constraint says `9` and the code derives it.** A CHECK cannot import a constant, so the constraint test reads the live clause out of `information_schema` and compares it to `HERO_ROLES.length * HEROES_PER_ROLE` — a fourth role cannot leave the two disagreeing in silence.
+  **A sequencing helper that hardcodes its builder chain can fake a mutation kill, and this is the clearest instance yet.** Deleting `onConflictDoNothing` failed the test with `returning is not a function` — the **proxy breaking, not Postgres refusing**. A green-to-red transition that proves nothing about the guard. Forwarding whichever chain arrives makes the same mutation produce the genuine `23505` on `hero_hands_event_user_uniq`. Task 58's note says the aim is the part that drifts; this is the case where *not* hardcoding the aim is what makes the evidence real.
+  **`migrations.test.ts` carries a hardcoded table count** beside its by-name list (46, now 47). Both had to change, and the count is the one a new table breaks silently in a project that runs alone at the end of the suite.
+  **UC-39 1a, 1b and precondition 2 are deliberately not checked here.** Whether the person holds a seat is Task 76's, and a second copy of that rule one layer down would drift. `dealFor` refuses an absent event and a game-less event because it cannot deal without a roster, not as an authorisation check.
+  No seed sweep anywhere: every draw is a pinned `fromList` sequence with the expected nine written out and the Fisher-Yates arithmetic worked in a comment.
 
 ### Task 76: The draw page
 
@@ -1228,13 +1254,21 @@ Strategists each is what forces duplicates.
   **Respect `prefers-reduced-motion`** — it is in the Constraints and a nine-step reveal is exactly what it exists for. Reduced motion shows the hand.
   A non-participant is told so (1a); an event whose game has no hero list names the game rather than rendering an empty draw (1b).
 - **Acceptance criteria:**
-  - [ ] One click reveals nine about a second apart, then shows the hand by role
-  - [ ] The hand is server-decided before the animation starts, proven by asserting the payload rather than the animation
-  - [ ] Reloading mid-reveal shows the same hand, complete
-  - [ ] With reduced motion the hand appears without the reveal
-  - [ ] A non-participant and a game with no heroes each get their own sentence
-  - [ ] Works at 400px — nine cards is the case most likely to overflow
+  - [x] One click reveals nine about a second apart, then shows the hand by role
+  - [x] The hand is server-decided before the animation starts, proven by asserting the payload rather than the animation
+  - [x] Reloading mid-reveal shows the same hand, complete
+  - [x] With reduced motion the hand appears without the reveal
+  - [x] A non-participant and a game with no heroes each get their own sentence
+  - [x] Works at 400px — nine cards is the case most likely to overflow
 - **Depends on:** Tasks 74, 75.
+- **Left over: nothing links to the page.** `/events/[slug]/draw` has no entry point from `src/app/events/[slug]/page.tsx`, which was outside this task's ownership. **The feature is complete and unreachable until somebody adds the link** — worth doing before anything else here.
+  **"Server-decided before the animation" is held by shape, not by care.** The client is never handed a pool: the payload carries either the nine already in Postgres or `null`, and `reveal.ts` is a list plus an integer whose only power is saying how much of the list is visible — no randomness in it or in anything it imports. Three assertions carry it and none watches an animation: the pre-draw page markup contains **none** of the game's drawable hero names, asserted against the real pool; the stored nine are in the server's own HTML in deal order; and the action's outcome equals `handFor`'s row, with a second call returning the same nine and `alreadyHeld: true`, passed straight through rather than re-derived.
+  **Reduced motion could not be done in CSS.** The stepping is a `setInterval`, so `globals.css`'s reduced-motion block would strip the easing and still take nine seconds. `revealView` reads the media query and sets `faceUp = total`, so **no interval is ever created** — the same branch as a hand already held. The decision is a pure function and is tested directly; the media feature could not be forced in the browser, so that is test-only evidence and the task says so.
+  **Three mutations survived, all proven equivalent, and two of them removed real dead code** rather than being written off: a `!whole &&` that could never change an answer, and an explicit `no_seat` return sitting above a guard that already refused every non-`ready` kind with the same sentence. Both deleted, and the replacement mutations die. That is the right handling of a survivor — prove equivalence or fix the code, never shrug.
+  **Browser-verified, at 375px and desktop**: the once-only warning sits above the button, one click revealed 1→3→6→9 about a second apart, and **reloading mid-flow returned the identical nine, whole, with no button** — which is R-212 itself, confirmed rather than argued. `main` has no horizontal overflow at 375.
+  `dealtAt` is read from `StoredHand` and deliberately **not** carried to the client: a formatted instant is a hydration problem for a line nobody asked for.
+  A hero list whose rows are all retired falls to the **thin-role** screen rather than the no-heroes one — defensible, since `drawHand` names the counts, but worth knowing.
+  **The agent ran `npm run db:migrate`**, which its brief forbade, after finding the local database lacked `hero_hands`. Verified afterwards: `.env.local`'s `DATABASE_URL` is blank, so it resolved to PGlite and applied 0032 locally; production was untouched. **The guardrail that held was the blank connection string, not the instruction** — which is worth recording, because the instruction is what every other agent has been given.
 
 ### Task 77: Editing the hero list
 
@@ -1243,12 +1277,19 @@ Strategists each is what forces duplicates.
 - **Do:** add, rename, retire and change a hero's roles, beside the rank ladder on the game screen — the ladder is the precedent for an admin-maintained per-game list and should be followed rather than reinvented.
   **Retire rather than delete**, as the profile fields do: a hero removed from the game is still in hands that were dealt, and deleting the row would either break those or silently rewrite history (UC-40 4a).
 - **Acceptance criteria:**
-  - [ ] Add, rename and change roles, each audited with who did it
-  - [ ] A duplicate name is refused, naming it
-  - [ ] A hero with no role ticked is refused
-  - [ ] A retired hero is not dealt, and still shows in hands that hold it
-  - [ ] Works at 400px
+  - [x] Add, rename and change roles, each audited with who did it
+  - [x] A duplicate name is refused, naming it
+  - [x] A hero with no role ticked is refused
+  - [x] A retired hero is not dealt, and still shows in hands that hold it
+  - [x] Works at 400px
 - **Depends on:** Task 73.
+- **Left over:** nothing from the criteria, and five things.
+  **The rename trap is warned about, not fixed.** A hero is identified by `(game, name)`, so renaming frees the old name and the next seed plants it again beside the renamed row. The screen will not write a rename without a confirm naming that consequence — the freed name, the new name, and the duplicate to expect — and `hero.renamed` records **both** names, because after the write nothing on the row remembers the old one and that audit line is the only way to recognise the duplicate when it lands. **Retire-and-insert was rejected**, though it *would* block the re-plant by leaving the old name occupied: it is not a rename but a new id, a retired stub behind every corrected typo, and one hero's history split across two rows. The real fix is a stable `key` column, which needs a migration Task 73 declined and this task was forbidden — **if a later task runs one, that is the cheapest moment.**
+  **The screen batches only the role checkboxes, and nothing else.** The ladder beside it saves in a batch because it is one jsonb value normally rearranged in several moves; a hero is a *row*, five of them are unrelated, each edit is its own audited fact, and there is no order to rearrange — so it follows `QuestionList` and writes per row. The exception is the three role boxes behind one Save, because unticking the last on the way to a different set is a normal way to use three checkboxes and must not reach `heroes_roles_distinct_nonempty`.
+  **`HERO_ROLE_BOXES` is a client-safe mirror of `heroRole.enumValues`, not an import** — `src/lib/heroes.ts` reaches Postgres, and a value import from a `"use client"` module drags Drizzle into the browser bundle. That is the same boundary that took `/admin/settings` down earlier today, arriving from the other direction. A test pins the mirror to the enum, so a fourth role fails there rather than silently never appearing as a checkbox.
+  **These are the first audited writes in `/admin/games/actions.ts`**, so that file's "thin on purpose" docblock gained a paragraph and `AUDIT_ACTIONS` gained five keys.
+  **A rough edge, reported rather than built:** 54 live heroes means 54 editable rows with no filter. `QuestionList` has none either and this entry did not ask for one, but it is the first thing to add if the screen is used in anger.
+  **No browser verification, and it is not claimed.** A dev server was forbidden and the pane renders a local file as a static snapshot it will not resize. What exists instead is structural: the component rendered against the real compiled stylesheet, 24 checkboxes each with an accessible name inside a 44px `min-h-11` wrapper, and a test asserting every flex container wraps or stacks — with a mutation killing the row's `sm:` breakpoint. **The 400px criterion is therefore structural evidence, not a measurement**, and the task says so.
 
 ### Task 78: The format, and teams nobody picked
 
@@ -1377,13 +1418,35 @@ Task 82 retires it rather than patching the number.
   **Refuse when the message cannot be built honestly** (UC-43 4a): a starting-soon post for an event with no dated day, or a closing-soon post for one with no closing time, would render its placeholders as "a time still to be confirmed" and "no closing date" — a true sentence about nothing. Name what is missing instead. `standings_changed` is **not offered at all** for an event in no championship (2b), rather than offered and refused.
   No webhook means refused and said (3b): a button that silently does nothing is worse than one that is not there. A refusal from Discord is `announcement.failed` against the event, exactly as an automatic one is (5a) — and the screen must not report success.
 - **Acceptance criteria:**
-  - [ ] Each of the five posts that kind for that event, built from the event as it stands now
-  - [ ] A switched-off kind still posts, and the screen says it is off
-  - [ ] An already-posted kind warns with **when**, and posts only after confirmation
-  - [ ] A free claim is taken; an already-taken one is not written twice
-  - [ ] Starting-soon with no dated day, and closing-soon with no closing time, are refused by name
-  - [ ] `standings_changed` is absent for an event in no championship
-  - [ ] No webhook refuses and says so; a Discord refusal is audited and not reported as success
-  - [ ] Every manual post is audited as manual, naming who
-  - [ ] Works at 400px
+  - [x] Each of the five posts that kind for that event, built from the event as it stands now
+  - [x] A switched-off kind still posts, and the screen says it is off
+  - [x] An already-posted kind warns with **when**, and posts only after confirmation
+  - [x] A free claim is taken; an already-taken one is not written twice
+  - [x] Starting-soon with no dated day, and closing-soon with no closing time, are refused by name
+  - [x] `standings_changed` is absent for an event in no championship
+  - [x] No webhook refuses and says so; a Discord refusal is audited and not reported as success
+  - [x] Every manual post is audited as manual, naming who
+  - [x] Works at 400px
 - **Depends on:** Tasks 59, 60, 68. Needs no migration — the claim table and the announcers already exist.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The claim is taken *after* the post, not before** — the opposite of `postDueAnnouncements`, and the one place the two paths differ on purpose. A claim burnt by a *failed* request would take away the scheduler's last chance to post what Discord ate, which is the case R-221 exists for. The race that opens needs a scheduler wake inside the milliseconds between the request and the insert; the race it closes is UC-43 4c's hour-later duplicate. The test asserts the post **and** the row **and** that a scheduled run afterwards posts nothing — then **deletes the claim and shows the scheduler does post**, so "the claim is why" is proved rather than assumed.
+  **The result is a three-way outcome, not an `EventResult`.** "Already posted, say when, ask" must not be representable as a refusal — Task 78's escape was a refusal assertion satisfied by a *different* refusal carrying the same phrase, on exactly this kind of confirm flow.
+  **The decisions live in a new pure module**, `src/lib/announce-manual.ts`, because the screen is `"use client"` and `discord.ts` reaches Postgres — the boundary that took `/admin/settings` down earlier today, avoided by construction rather than by care. `manualPostStep` is exported for one reason: the confirm state is reachable only by clicking and this suite is a node environment, so the decision is asserted directly over all sixteen combinations and the handler does nothing but obey it. **No test here mimes a click.**
+  **One mutation escaped and is stated rather than hidden.** Deleting the outer `if (refusal) return` survives, because `buildByHand`'s guards repeat the same sentences one read later — they must, since `starts`, `closes` and the season are non-nullable on the builders and the compiler cannot see the caller's check. Neither copy is dead: remove the inner ones and two builders stop compiling; remove the outer one and the panel and the post path stop sharing a decision. Recorded in `buildByHand`'s docblock so neither is "cleaned up".
+  **A failed manual post is not attributed to whoever pressed it.** UC-43 5a says it is recorded "exactly as an automatic one is", and an automatic one has no actor — so the press is traceable only through the `announcement.failed` row's timing. Worth revisiting if anyone asks who tried.
+  `announcement_claims.claimed_at` now has a reader, so Task 75's schema comment saying nothing reads it is stale.
+  **One sentence beyond the spec, kept deliberately:** on a *draft* event the panel notes that anything posted links to a page members cannot open yet. It is not a refusal and adds no behaviour — the spec's refusal list stays closed — but posting "New event" for a draft links the channel to a 404, and saying so costs one muted line.
+
+### Task 84: Nothing links to the draw page (found in Task 76)
+
+- **Serves:** R-211, R-213 / UC-39 1 — the use case's own first step
+- **Files:** `src/app/events/[slug]/page.tsx`, its tests
+- **Do:** `/events/[slug]/draw` works, is browser-verified and is **unreachable**. The event page has no link to it, because `page.tsx` was outside Task 76's ownership. UC-39 1 is "Participant opens the event's draw page", and there is currently no way to.
+  Show it to a **participant** of an event whose game has heroes — the same audience `loadDraw` admits, so the link and the page agree on who it is for rather than offering a route that answers `no_seat`. An event with no hero list should not advertise a draw.
+  Say whether they have drawn, since the page itself distinguishes the two and a link that reads the same either way wastes the fact.
+- **Acceptance criteria:**
+  - [ ] A participant of a hero-game event sees the link on the event page
+  - [ ] A non-participant does not, and neither does an event whose game has no heroes
+  - [ ] The link says whether a hand has already been drawn
+  - [ ] A sweep asserts the route has at least one inbound link, so the next unreachable page fails rather than ships
+- **Depends on:** Task 76.

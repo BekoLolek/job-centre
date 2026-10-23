@@ -246,6 +246,21 @@ const CLASSIFIED: Record<string, Bucket[]> = {
     "standing",
     "standing",
   ],
+  /*
+   * The draw's only Alert, and it is the one UC-39 5a is about: the store
+   * failed, so nothing was dealt and the button has come back. It exists purely
+   * because the player clicked, a moment after they clicked, and nothing else
+   * on the screen will tell them the click did not take — so it announces.
+   *
+   * The draw page's own four refusals — no seat, no game, an empty hero list, a
+   * list too thin to deal from — are deliberately **not** Alerts. Each is the
+   * whole screen rather than a bar above one, decided from server data before
+   * anything renders, so each is a `Panel` with its own heading, the shape the
+   * apply page uses for the same job. An Alert there would have been standing
+   * content by this file's own rule, and a tinted bar is the wrong element for
+   * a page whose entire answer is "not this one, and here is where to go".
+   */
+  "src/app/events/[slug]/draw/HandReveal.tsx": ["announced"],
   "src/app/events/[slug]/page.tsx": ["standing"],
   "src/app/me/events/page.tsx": ["standing"],
   "src/app/me/profile/page.tsx": ["standing"],
@@ -263,6 +278,21 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   ],
   "src/components/admin/ChampionshipEditor.tsx": ["announced", "announced", "standing"],
   "src/components/admin/GamesManager.tsx": ["announced"],
+  /*
+   * Both announced, and neither is a close call.
+   *
+   * The first is `error`, which is handler state: it is set by `run` when an
+   * action comes back refused, so it cannot be in the markup on arrival. It
+   * carries UC-40 3a and 3b — the duplicate name and the hero with no role —
+   * which is the content that most has to reach somebody who cannot see it.
+   *
+   * The second is the rename confirm, which exists only because the admin
+   * clicked Rename on a row. `renaming` starts null, so the same argument
+   * holds, and it is the sentence that tells them a rename will plant a second
+   * hero on the next seed. Announcing it is the point: it appears in place of
+   * the write they just asked for.
+   */
+  "src/components/admin/HeroEditor.tsx": ["announced", "announced"],
   "src/components/admin/HostQueue.tsx": ["announced"],
   "src/components/admin/LadderEditor.tsx": ["announced", "announced"],
   "src/components/admin/QuestionDialog.tsx": ["announced", "announced"],
@@ -307,7 +337,28 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   "src/components/admin/events/EventsManager.tsx": ["announced"],
   "src/components/admin/events/FormatTab.tsx": ["announced", "announced", "announced"],
   "src/components/admin/events/PlacementEditor.tsx": ["announced"],
-  "src/components/admin/events/PublishTab.tsx": ["announced", "announced"],
+  /*
+   * Five, three of them Task 83's (R-221 to R-223 / UC-43).
+   *
+   * In source order: the publish error; "Published."; the no-webhook notice;
+   * the result of a press; and the already-posted confirmation.
+   *
+   * The third is `standing` and the only one of the three that is: it is
+   * `announcements.webhook`, which is server data on the props, so it is in the
+   * markup the moment the tab arrives and must not interrupt an admin who came
+   * to read the readiness checklist. The other two are handler state —
+   * `notice` and `confirming` both start null — so each exists only because
+   * somebody pressed Post, and the confirm one is the sentence that appears
+   * *in place of* the post they asked for, which is exactly the content that
+   * has to reach somebody who cannot see it.
+   */
+  "src/components/admin/events/PublishTab.tsx": [
+    "announced",
+    "announced",
+    "standing",
+    "announced",
+    "announced",
+  ],
   "src/components/admin/events/QuestionsTab.tsx": [
     "announced",
     "announced",

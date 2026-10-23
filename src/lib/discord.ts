@@ -73,18 +73,30 @@ import {
   mentionLine,
   signupsClosingSoonMessage,
   signupsOpenMessage,
+  stamp,
   standingsMessage,
   type AnnounceEnv,
   resolveSiteOrigin,
   resolveWebhookUrl,
   siteOrigin,
 } from "./announce";
+import {
+  MANUAL_ANNOUNCEMENT_NAMES,
+  MANUAL_REFUSALS,
+  type ManualAnnouncementFacts,
+  type ManualAnnouncementKind,
+  failedNote,
+  manualAnnouncementDetail,
+  manualPostRefusal,
+  offeredManualKinds,
+} from "./announce-manual";
 import { dueScheduledAnnouncements } from "./announce-schedule";
 import { type Movement, topOfTheTable } from "./championship-policy";
 import { seasonOfEvent, seasonPage } from "./championship-season";
 import { recordAudit } from "./audit";
 import { eventIdOfApplication, eventIdOfMatch } from "./event-scope";
 import { readDatesFor } from "./events";
+import { capacityState } from "./events-policy";
 import { formatFor } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -629,6 +641,29 @@ async function deliver(
   const enabled = await getAnnouncementSettings();
   if (!enabled[kind]) return;
 
+  const sent = await sendToDiscord(url, message);
+  if (!sent.ok) await noteFailure(kind, context, sent.reason, sent.detail, startedAt);
+}
+
+/**
+ * What came of one request to the webhook. Never throws.
+ *
+ * The request itself, separated from what is done about it, because there are
+ * now two callers that want the same request and *different* answers to it:
+ * {@link deliver} swallows the outcome into an audit row, because nobody is
+ * waiting for it, and {@link postAnnouncementByHand} has an admin watching who
+ * must not be told it worked (UC-43 5a). A single function that did both would
+ * have to decide that for its callers.
+ *
+ * Both failure sentences are the ones `deliver` has always written, moved rather
+ * than reworded: they are what `/admin/audit` reads, and the admin home filters
+ * on the rows they are in.
+ */
+type Delivery =
+  | { ok: true }
+  | { ok: false; reason: string; detail: Record<string, string | number> };
+
+async function sendToDiscord(url: string, message: DiscordMessage): Promise<Delivery> {
   try {
     const response = await fetch(url, {
       method: "POST",
@@ -640,24 +675,45 @@ async function deliver(
       cache: "no-store",
     });
 
-    if (!response.ok) {
-      await noteFailure(
-        kind,
-        context,
-        `Discord answered ${response.status}.`,
-        { status: response.status },
-        startedAt
-      );
-    }
+    if (response.ok) return { ok: true };
+    return {
+      ok: false,
+      reason: `Discord answered ${response.status}.`,
+      detail: { status: response.status },
+    };
   } catch (error) {
-    await noteFailure(
-      kind,
-      context,
-      error instanceof Error ? error.message : "The request did not complete.",
-      {},
-      startedAt
-    );
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : "The request did not complete.",
+      detail: {},
+    };
   }
+}
+
+/**
+ * Take the once-per-event claim for one (kind, event), and say whether **this**
+ * call got it.
+ *
+ * `announcement_claims` is keyed `(kind, event_id)`, the insert does nothing on
+ * a conflict, and the row that comes back is the whole of the answer: a caller
+ * that gets no row did not win, and must not post on the strength of having
+ * tried. Shared by the scheduler and by the by-hand path rather than written
+ * twice, because "did I get it" is exactly the question two copies would
+ * eventually answer differently.
+ */
+async function claimAnnouncement(
+  kind: AnnouncementKind,
+  eventId: string,
+  database: Database
+): Promise<boolean> {
+  const rows = await database
+    .insert(announcementClaims)
+    .values({ kind, eventId })
+    .onConflictDoNothing({
+      target: [announcementClaims.kind, announcementClaims.eventId],
+    })
+    .returning({ kind: announcementClaims.kind });
+  return rows.length === 1;
 }
 
 /**
@@ -1111,18 +1167,6 @@ export async function postDueAnnouncements(
 
   const due = await dueScheduledAnnouncements(now, database);
 
-  /** Claim this (kind, event), and say whether this run is the one that got it. */
-  const claim = async (kind: AnnouncementKind, eventId: string): Promise<boolean> => {
-    const rows = await database
-      .insert(announcementClaims)
-      .values({ kind, eventId })
-      .onConflictDoNothing({
-        target: [announcementClaims.kind, announcementClaims.eventId],
-      })
-      .returning({ kind: announcementClaims.kind });
-    return rows.length === 1;
-  };
-
   /**
    * One candidate: switched on, not already claimed, then built and posted.
    *
@@ -1137,7 +1181,7 @@ export async function postDueAnnouncements(
     build: (template: AnnouncementTemplate) => DiscordMessage
   ): Promise<void> => {
     if (!enabled[kind]) return;
-    if (!(await claim(kind, eventId))) return;
+    if (!(await claimAnnouncement(kind, eventId, database))) return;
     await deliver(kind, build(await wordingFor(kind, database)), { eventId });
     posted.push({ kind, eventId });
   };
@@ -1186,4 +1230,404 @@ export async function postDueAnnouncements(
   }
 
   return { posted };
+}
+
+/* ------------------------------------------------------------------ */
+/* The five, posted by hand (R-221 to R-223 / UC-43)                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One kind on one event, as the Publish tab shows it.
+ *
+ * `enabled` is the automatic switch and is shown rather than obeyed: the button
+ * posts either way (R-223 / UC-43 2a), and saying it is off is what keeps that
+ * from being a surprise. `postedAt` is the claim row's `claimed_at` — which
+ * until now nothing read, and which is the only record of when an announcement
+ * went out (see the column's comment in `src/db/schema.ts`).
+ */
+export type ManualAnnouncementRow = {
+  kind: ManualAnnouncementKind;
+  /** The button's word, and the footer the channel will show. */
+  name: string;
+  /** What that post would contain, from `ANNOUNCEMENTS`. */
+  detail: string;
+  enabled: boolean;
+  postedAt: Date | null;
+  /** Why it cannot be posted for this event, or null (UC-43 4a). */
+  refusal: string | null;
+};
+
+/**
+ * The whole panel: whether there is anywhere to post, and the kinds offered.
+ *
+ * `webhook` is a fact about the install rather than about the event, so it is
+ * here rather than repeated as a refusal on all five rows — the screen says it
+ * once (UC-43 3b).
+ */
+export type ManualAnnouncementPanel = {
+  webhook: boolean;
+  rows: ManualAnnouncementRow[];
+};
+
+/**
+ * Read everything the Publish tab's announcement panel shows.
+ *
+ * One function rather than five reads in a page, because every row needs the
+ * same four answers and `offeredManualKinds` needs the season before it knows
+ * how many rows there are. It is read on the server and handed down as props:
+ * everything in this module reaches Postgres, so a client component that called
+ * into it would drag Drizzle and PGlite into the browser bundle — the pure half
+ * the screen also needs is in `./announce-manual`.
+ */
+export async function manualAnnouncementPanel(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<ManualAnnouncementPanel> {
+  const [[event], enabled, config, claims, dates, season] = await Promise.all([
+    database
+      .select({ signupClosesAt: events.signupClosesAt })
+      .from(events)
+      .where(eq(events.id, eventId))
+      .limit(1),
+    getAnnouncementSettings(database),
+    getIntegrationConfig(database),
+    database
+      .select({ kind: announcementClaims.kind, claimedAt: announcementClaims.claimedAt })
+      .from(announcementClaims)
+      .where(eq(announcementClaims.eventId, eventId)),
+    readDatesFor(database, [eventId]),
+    seasonOfEvent(eventId, database),
+  ]);
+
+  const facts: ManualAnnouncementFacts = {
+    // The derived start, not a column — see `ManualAnnouncementFacts`.
+    startsAt: dates.get(eventId)?.startsAt ?? null,
+    signupClosesAt: event?.signupClosesAt ?? null,
+    inChampionship: season !== null,
+  };
+
+  const postedAt = new Map(claims.map((row) => [row.kind, row.claimedAt]));
+
+  return {
+    webhook: config.webhook !== null,
+    rows: offeredManualKinds(facts).map((kind) => ({
+      kind,
+      name: MANUAL_ANNOUNCEMENT_NAMES[kind],
+      detail: manualAnnouncementDetail(kind),
+      enabled: enabled[kind],
+      postedAt: postedAt.get(kind) ?? null,
+      refusal: manualPostRefusal(kind, facts),
+    })),
+  };
+}
+
+/**
+ * When this kind last went out for this event, or null (R-222 / UC-43 3a).
+ *
+ * The claim row's own timestamp. Its own reader rather than a second query in
+ * the action, because the action layer owns no SQL — and because the panel's
+ * `postedAt` and this are the same fact: a screen rendered before somebody else
+ * posted is exactly the stale answer the confirm gate is a backstop for.
+ */
+export async function announcementPostedAt(
+  kind: AnnouncementKind,
+  eventId: string,
+  database: Database = defaultDb
+): Promise<Date | null> {
+  const [row] = await database
+    .select({ claimedAt: announcementClaims.claimedAt })
+    .from(announcementClaims)
+    .where(and(eq(announcementClaims.kind, kind), eq(announcementClaims.eventId, eventId)))
+    .limit(1);
+  return row?.claimedAt ?? null;
+}
+
+export type ManualPostResult =
+  | {
+      ok: true;
+      /** Whether this post took the once-per-event claim (UC-43 4b, 4c). */
+      claimed: boolean;
+      name: string;
+      title: string;
+    }
+  | { ok: false; error: string };
+
+/** The event as the five messages are built from it, read once. */
+type ManualEvent = {
+  id: string;
+  title: string;
+  slug: string;
+  type: string | null;
+  description: string | null;
+  capacity: number | null;
+  signupOpensAt: Date | null;
+  signupClosesAt: Date | null;
+};
+
+/**
+ * Post one of the five now, for this event, and say what happened
+ * (R-221 to R-223 / UC-43).
+ *
+ * ## Awaited, unlike every other announcer in this file
+ *
+ * The five above return `void` and hand their work to `after()`, because each is
+ * called from inside an action a member is waiting on and a webhook that is
+ * down must not fail the thing that triggered it. Here the announcement **is**
+ * the thing that was asked for: an admin pressed a button to post it, and the
+ * only report they will ever get is this return value. `postDueAnnouncements`
+ * makes the same trade for the same reason.
+ *
+ * ## The switch is read nowhere in here
+ *
+ * Deliberately, and it is the one line somebody will add back. `deliver` checks
+ * `enabled[kind]` and returns silently when a kind is off, which is correct for
+ * everything that posts on its own — so this path does not go through it. The
+ * switch governs what posts *automatically*; a button is an explicit decision
+ * (R-223 / UC-43 2a), and the screen says the kind is off beside the button it
+ * is offering.
+ *
+ * ## Post, then claim — in that order, unlike the scheduler
+ *
+ * `postDueAnnouncements` claims first, because a window a day wide is one the
+ * scheduler wakes inside ninety times and the claim is the only thing stopping
+ * ninety posts; it pays for that with a post that fails after its claim never
+ * being retried. Here the opposite order is right, and for the reason this
+ * feature exists at all: the case it was built for is Discord having eaten the
+ * first post. A claim taken before a failed request would burn the scheduler's
+ * remaining chance to post something that never reached the channel — so the
+ * claim is taken only once Discord has accepted it (UC-43 4c), and a refusal
+ * leaves the claim free. The race that order opens is two posts in the
+ * milliseconds between the request and the insert, which needs a scheduler wake
+ * inside that gap on the one event an admin is posting by hand; the race it
+ * closes is the hour-later duplicate the use case actually names.
+ *
+ * An already-taken claim writes nothing (UC-43 4b): the insert does nothing on
+ * conflict, so `claimed` comes back false and the post still went out.
+ */
+export async function postAnnouncementByHand(
+  kind: ManualAnnouncementKind,
+  eventId: string,
+  database: Database = defaultDb
+): Promise<ManualPostResult> {
+  /*
+   * Taken before the webhook is read and used as a failure's timestamp, for the
+   * reason `deliver` takes one: the admin home stops listing failures older
+   * than the latest webhook save.
+   */
+  const startedAt = new Date();
+
+  const [event] = await database
+    .select({
+      id: events.id,
+      title: events.title,
+      slug: events.slug,
+      type: events.type,
+      description: events.description,
+      capacity: events.capacity,
+      signupOpensAt: events.signupOpensAt,
+      signupClosesAt: events.signupClosesAt,
+    })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  if (!event) return { ok: false, error: MANUAL_REFUSALS.noEvent };
+
+  // The caller's database for both, not the default handle: the links in this
+  // message must point at the same install the event came out of.
+  const { webhook: url, origin } = await getIntegrationConfig(database);
+  if (!url) return { ok: false, error: MANUAL_REFUSALS.noWebhook };
+
+  const [dates, season] = await Promise.all([
+    readDatesFor(database, [eventId]),
+    seasonOfEvent(eventId, database),
+  ]);
+  const startsAt = dates.get(eventId)?.startsAt ?? null;
+
+  const refusal = manualPostRefusal(kind, {
+    startsAt,
+    signupClosesAt: event.signupClosesAt,
+    inChampionship: season !== null,
+  });
+  if (refusal) return { ok: false, error: refusal };
+
+  const built = await buildByHand(kind, event, { startsAt, season, origin }, database);
+  if (!built.ok) return built;
+
+  const sent = await sendToDiscord(url, built.message);
+  if (!sent.ok) {
+    /*
+     * Exactly as an automatic one is (UC-43 5a): the same action, the same
+     * sentence, filed against the same event, so `/admin/audit` and the admin
+     * home's failure list cannot tell a by-hand failure from a scheduled one —
+     * which is the point, because what an operator needs to know is that the
+     * webhook is broken.
+     */
+    await noteFailure(kind, { eventId }, sent.reason, sent.detail, startedAt);
+    return { ok: false, error: failedNote(sent.reason) };
+  }
+
+  return {
+    ok: true,
+    claimed: await claimAnnouncement(kind, eventId, database),
+    name: MANUAL_ANNOUNCEMENT_NAMES[kind],
+    title: event.title,
+  };
+}
+
+/**
+ * Build one of the five from the event as it stands now, or refuse by name.
+ *
+ * The wording is read per kind at build time, exactly as every other announcer
+ * reads it ({@link wordingFor}) — an admin who fixes a typo seconds before
+ * pressing the button gets the fixed sentence.
+ *
+ * The three standings refusals are here rather than in `./announce-manual`
+ * because they are only knowable once the season has been read, and reading it
+ * is what the panel deliberately does not do for every event editor page load.
+ * They are `announceStandings`' own three conditions, said out loud instead of
+ * returning null: an automatic announcement that declines to post is right to do
+ * so silently, and a button that did the same would be the button that silently
+ * does nothing.
+ *
+ * ## Three of its guards repeat `manualPostRefusal`, on purpose
+ *
+ * `starts`, `closes` and the season are **non-nullable** on the builders that
+ * take them, and the compiler cannot see that the caller's `manualPostRefusal`
+ * has already refused a null one — so the narrowing has to happen here as well.
+ * They answer with the same `MANUAL_REFUSALS` sentence rather than a second
+ * wording, which is what keeps the duplication harmless: whichever of the two
+ * refuses, the admin reads the same thing.
+ *
+ * It is also a duplication with a known cost, recorded rather than hidden:
+ * deleting the caller's `if (refusal)` line is a mutation this suite cannot
+ * kill, because these three say the same thing one read later. Neither copy is
+ * dead code — delete *these* and the two builders stop compiling; delete that
+ * one and the panel and the post path stop sharing a decision.
+ */
+async function buildByHand(
+  kind: ManualAnnouncementKind,
+  event: ManualEvent,
+  context: { startsAt: Date | null; season: Awaited<ReturnType<typeof seasonOfEvent>>; origin: string | null },
+  database: Database
+): Promise<{ ok: true; message: DiscordMessage } | { ok: false; error: string }> {
+  const { startsAt, season, origin } = context;
+  const wording = await wordingFor(kind, database);
+
+  if (kind === "event_published") {
+    return {
+      ok: true,
+      message: eventPublishedMessage(
+        {
+          title: event.title,
+          slug: event.slug,
+          type: event.type,
+          description: event.description,
+          capacity: event.capacity,
+          startsAt,
+          signupOpensAt: event.signupOpensAt,
+          /*
+           * Now, which is what this publication *is* from the reader's point of
+           * view: a post going out at this instant. It decides which of the two
+           * sentences `eventPublishedMessage` has — "applications are open" or
+           * "applications open <when>" — and judging that against now is the
+           * only honest answer for a post being made now.
+           */
+          publishedAt: new Date(),
+          signupClosesAt: event.signupClosesAt,
+          origin,
+        },
+        wording
+      ),
+    };
+  }
+
+  if (kind === "signups_open") {
+    return {
+      ok: true,
+      message: signupsOpenMessage(
+        {
+          title: event.title,
+          slug: event.slug,
+          capacity: event.capacity,
+          startsAt,
+          signupClosesAt: event.signupClosesAt,
+          origin,
+        },
+        wording
+      ),
+    };
+  }
+
+  if (kind === "signups_closing_soon") {
+    // `manualPostRefusal` has already refused an event with no closing time,
+    // which is what makes this non-null — `closes` is a required string on the
+    // builder, so the compiler holds the claim rather than a fallback.
+    const closesAt = event.signupClosesAt;
+    if (!closesAt) return { ok: false, error: MANUAL_REFUSALS.noClosingTime };
+
+    const seats = await database
+      .select({ status: applications.status })
+      .from(applications)
+      .where(eq(applications.eventId, event.id));
+
+    return {
+      ok: true,
+      message: signupsClosingSoonMessage(
+        {
+          title: event.title,
+          slug: event.slug,
+          // A countdown, as markup — no instant is formatted on the server.
+          closes: stamp(closesAt, "R"),
+          capacity: event.capacity,
+          // UC-38 4c's sentence: a full event still gets this, and says so.
+          full: capacityState({ capacity: event.capacity }, seats).full,
+          origin,
+        },
+        wording
+      ),
+    };
+  }
+
+  if (kind === "event_starting_soon") {
+    if (!startsAt) return { ok: false, error: MANUAL_REFUSALS.noDatedDay };
+    return {
+      ok: true,
+      message: eventStartingSoonMessage(
+        { title: event.title, slug: event.slug, starts: stamp(startsAt, "F"), origin },
+        wording
+      ),
+    };
+  }
+
+  // `standings_changed`, the only one left and the only one with reads of its
+  // own. An event in no championship was refused before this was called.
+  if (!season) return { ok: false, error: MANUAL_REFUSALS.noChampionship };
+  if (season.status !== "published") {
+    return { ok: false, error: MANUAL_REFUSALS.seasonNotPublished };
+  }
+
+  const page = await seasonPage(season, database);
+  const scored = page.counted.find((counted) => counted.eventId === event.id);
+  if (!scored) return { ok: false, error: MANUAL_REFUSALS.noFinishingOrder };
+  if (page.standings.length === 0) return { ok: false, error: MANUAL_REFUSALS.noStandings };
+
+  // `announceStandings`' rule, unchanged: the movement figures are measured at
+  // the last event played, so they say something about *this* event only when
+  // this is it.
+  const movement: Movement =
+    page.movedAt === null ? "none" : page.movedAt.eventId === event.id ? "here" : "elsewhere";
+
+  return {
+    ok: true,
+    message: standingsMessage(
+      {
+        seasonName: season.name,
+        slug: season.slug,
+        eventTitle: scored.title,
+        top: topOfTheTable(page.standings, { movement }),
+        origin,
+      },
+      wording
+    ),
+  };
 }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import HeroEditor from "./HeroEditor";
 import LadderEditor from "./LadderEditor";
 import QuestionList from "./QuestionList";
 import {
@@ -15,6 +16,7 @@ import {
   Tabs,
   plural,
 } from "@/components/ui";
+import type { Hero } from "@/db";
 import type { AdminGameView, AdminGamesView } from "@/lib/admin-games";
 import {
   createGameAction,
@@ -55,7 +57,22 @@ import {
  * `fields` (still asked) and `retired` (not asked, answers kept).
  */
 
-export default function GamesManager({ view }: { view: AdminGamesView }) {
+export type GamesManagerProps = {
+  view: AdminGamesView;
+  /**
+   * Every game's heroes, keyed by game id (R-214 / UC-40).
+   *
+   * Loaded by the page beside `loadAdminGames` and handed down rather than
+   * fetched here — this is a client component, and the hero rows are server
+   * data like everything else on this screen. A game with no heroes is simply
+   * absent from the map, which is the shape `listHeroesByGame` returns; the
+   * `?? []` at the call site below is where that becomes "no heroes" rather
+   * than a crash, and `HeroEditor` has its own sentence for it.
+   */
+  heroesByGame?: Record<string, Hero[]>;
+};
+
+export default function GamesManager({ view, heroesByGame = {} }: GamesManagerProps) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -164,6 +181,7 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
               <GameCard
                 key={game.id}
                 game={game}
+                heroes={heroesByGame[game.id] ?? []}
                 first={index === 0}
                 last={index === view.games.length - 1}
                 open={openGameId === game.id}
@@ -188,6 +206,7 @@ export default function GamesManager({ view }: { view: AdminGamesView }) {
 
 function GameCard({
   game,
+  heroes,
   first,
   last,
   open,
@@ -199,6 +218,7 @@ function GameCard({
   onChanged,
 }: {
   game: AdminGameView;
+  heroes: readonly Hero[];
   first: boolean;
   last: boolean;
   open: boolean;
@@ -209,7 +229,7 @@ function GameCard({
   onSetActive: (active: boolean) => void;
   onChanged: () => void;
 }) {
-  const [tab, setTab] = useState<"questions" | "ranks" | "settings">("questions");
+  const [tab, setTab] = useState<"questions" | "ranks" | "heroes" | "settings">("questions");
 
   return (
     <article className="py-5">
@@ -268,6 +288,17 @@ function GameCard({
             items={[
               { value: "questions", label: "Questions", count: game.fields.length },
               { value: "ranks", label: "Rank ladder", count: game.rankLadder.length },
+              /*
+               * Beside the rank ladder, which is the precedent this follows: an
+               * admin-maintained per-game list that a draw or an entry rule
+               * reads. The count is the drawable ones, so retiring a hero makes
+               * the number on the tab go down — which is what retiring means.
+               */
+              {
+                value: "heroes",
+                label: "Heroes",
+                count: heroes.filter((hero) => hero.retiredAt === null).length,
+              },
               { value: "settings", label: "Settings" },
             ]}
             value={tab}
@@ -291,6 +322,16 @@ function GameCard({
               gameId={game.id}
               gameName={game.name}
               ladder={game.rankLadder}
+              onChanged={onChanged}
+            />
+          )}
+
+          {tab === "heroes" && (
+            <HeroEditor
+              gameId={game.id}
+              gameName={game.name}
+              heroes={heroes}
+              busy={busy}
               onChanged={onChanged}
             />
           )}

@@ -364,6 +364,139 @@ export const heroes = pgTable(
   ]
 );
 
+/**
+ * The nine heroes one participant was dealt for one event — dealt once, and it
+ * stands (R-212 / UC-39 3a, 3b, 5a, 6a).
+ *
+ * `events` and `users` are declared further down this file; the references are
+ * thunks, so the forward look is resolved lazily and `announcement_claims`
+ * already does the same thing. The table lives here because a reader asking
+ * "where does a hand live" looks beside `heroes`.
+ *
+ * ## One row per (event, participant), and that is the feature
+ *
+ * `hero_hands_event_user_uniq` is not an optimisation and not hygiene: **it is
+ * R-212.** "My draw happens once and stands" is a uniqueness claim, so it is
+ * held where uniqueness can actually be held — a second deal is refused by
+ * Postgres whatever code asks for it, and `dealFor` in `src/lib/hero-hands.ts`
+ * reads that refusal as its answer rather than guarding ahead of it. Two
+ * devices clicking in the same instant (UC-39 3b) is the case: one
+ * `insert … on conflict do nothing … returning()` wins, the other comes back
+ * with no row and shows the winner's hand. A read-then-write would need the
+ * lock `applyToEvent` needed, and would still be a race with no index under it.
+ *
+ * `applications_event_user_uniq` is the shape this follows deliberately — one
+ * application per member per event is the same sentence about the same pair.
+ *
+ * ## Why nine ids in one array, and not nine rows
+ *
+ * Because the uniqueness above demands one row. A row per card could carry a
+ * foreign key per hero, but nothing could then say "one hand per pair" in SQL,
+ * and the nine inserts would reopen the race the single insert closes: the
+ * claim and the data have to be the *same* write, or there is a window in which
+ * a hand exists and is empty.
+ *
+ * **Ids, not names.** A hero is identified by `(game, name)` and nothing else —
+ * Task 73 declined a stable `key` column and `renameHero` documents the
+ * consequence at length — so a stored *name* would stop matching the roster the
+ * first time an admin corrected a spelling, and the hand would quietly lose a
+ * hero. The id survives every rename, which is the only reason a hand dealt in
+ * October still reads correctly in November.
+ *
+ * It also survives a **retirement**, which is UC-40 4a: `retireHero` writes
+ * `retired_at` and deletes nothing, `drawableByRole` stops offering the row, and
+ * this array still points at it. What was dealt stays dealt.
+ *
+ * ## Position carries the role
+ *
+ * The array is the three role lists flattened in `HERO_ROLES` order, three to a
+ * role: positions 1-3 Vanguard, 4-6 Duelist, 7-9 Strategist. A `role` column
+ * would be wrong rather than redundant — **Deadpool is playable in all three**,
+ * so the same id legitimately appears twice in one hand, and the pair
+ * `(hand, hero)` is not a key. Position is what distinguishes "Deadpool as my
+ * Vanguard" from "Deadpool as my Duelist".
+ *
+ * `src/lib/hero-hands.ts` derives the positions from `HERO_ROLES` and
+ * `HEROES_PER_ROLE` rather than writing 3 and 9 again, and a test asserts the
+ * cardinality below is `HERO_ROLES.length * HEROES_PER_ROLE`, so a fourth role
+ * cannot leave the code and the constraint disagreeing silently.
+ *
+ * ## No foreign key on the elements, and what that costs
+ *
+ * Postgres cannot reference a table from an array element, so these ids are not
+ * foreign keys. The exposure is exactly one statement — a hard `delete` of a
+ * `games` row, which cascades to `heroes` — and the site has no such path:
+ * games are switched off with `is_active`, heroes are retired, and the only
+ * `delete(games)` calls in the repo are in test teardown. If one ever happened,
+ * `handFor` throws naming the missing id rather than returning a hand of eight;
+ * a short hand presented as whole is the failure worth avoiding, and silence is
+ * how it would arrive.
+ */
+export const heroHands = pgTable(
+  "hero_hands",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /**
+     * Nine hero ids: three Vanguard, three Duelist, three Strategist, in that
+     * order. See the position note above — and the check below, which is what
+     * makes "nine, three distinct per role" true of rows written by anything at
+     * all rather than only of rows written by `dealFor`.
+     */
+    heroIds: uuid("hero_ids").array().notNull(),
+    dealtAt: instant("dealt_at").notNull().defaultNow(),
+  },
+  (table) => [
+    /*
+     * R-212, in the database. One hand per participant per event; a second deal
+     * is a conflict, not a decision taken in code.
+     */
+    unique("hero_hands_event_user_uniq").on(table.eventId, table.userId),
+    /*
+     * Nine ids, no NULL among them, and the three inside each role distinct
+     * from each other (R-210 / UC-39 4a).
+     *
+     * `array_position(..., null) is null` is the separate half for the reason
+     * `heroes_roles_distinct_nonempty` gives one table up: `null <> null` is
+     * NULL, and a CHECK counts NULL as satisfied, so a NULL element would sail
+     * past every inequality below.
+     *
+     * The distinctness is written out per role rather than with a `distinct
+     * unnest`, which a CHECK may not contain, and it is **within** each triple
+     * only. Across them it must not hold: Deadpool in two roles is correct, and
+     * a constraint forbidding a repeated id anywhere in the array would refuse
+     * a legal hand.
+     *
+     * Belt and braces — `drawHand` de-duplicates each pool before it counts it,
+     * and that is mutation-proved in `heroes-policy.test.ts`. This is the half
+     * that holds for a row written by a seed, a script or a future caller.
+     */
+    check(
+      "hero_hands_nine_distinct_per_role",
+      sql`array_position(${table.heroIds}, null) is null
+        and cardinality(${table.heroIds}) = 9
+        and ${table.heroIds}[1] <> ${table.heroIds}[2]
+        and ${table.heroIds}[1] <> ${table.heroIds}[3]
+        and ${table.heroIds}[2] <> ${table.heroIds}[3]
+        and ${table.heroIds}[4] <> ${table.heroIds}[5]
+        and ${table.heroIds}[4] <> ${table.heroIds}[6]
+        and ${table.heroIds}[5] <> ${table.heroIds}[6]
+        and ${table.heroIds}[7] <> ${table.heroIds}[8]
+        and ${table.heroIds}[7] <> ${table.heroIds}[9]
+        and ${table.heroIds}[8] <> ${table.heroIds}[9]`
+    ),
+    // The draw page's read is "my hand for this event", which the unique
+    // constraint above already indexes. This one is the admin-shaped read —
+    // every hand dealt at one event — and UC-39 7 is players comparing hands.
+    index("hero_hands_event_idx").on(table.eventId),
+  ]
+);
+
 /* ------------------------------------------------------------------ */
 /* Profiles (§7, §14)                                                 */
 /* ------------------------------------------------------------------ */
@@ -2823,6 +2956,8 @@ export type Game = typeof games.$inferSelect;
 export type NewGame = typeof games.$inferInsert;
 export type Hero = typeof heroes.$inferSelect;
 export type NewHero = typeof heroes.$inferInsert;
+export type HeroHandRow = typeof heroHands.$inferSelect;
+export type NewHeroHandRow = typeof heroHands.$inferInsert;
 export type ProfileField = typeof profileFields.$inferSelect;
 export type NewProfileField = typeof profileFields.$inferInsert;
 export type ProfileValueRow = typeof profileValues.$inferSelect;

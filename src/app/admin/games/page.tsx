@@ -18,6 +18,7 @@ import AdminNav from "@/components/admin/AdminNav";
 import GamesManager from "@/components/admin/GamesManager";
 import { Page, PageHeader, StatTile } from "@/components/ui";
 import { loadAdminGames } from "@/lib/admin-games";
+import { listHeroesByGame } from "@/lib/heroes";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -28,7 +29,14 @@ export const metadata = {
 
 export default async function AdminGamesPage() {
   await requireAdmin();
-  const view = await loadAdminGames();
+  /*
+   * Two reads, in parallel. The hero rows are a second table rather than part
+   * of `AdminGamesView` because `loadAdminGames` belongs to the questions half
+   * of this screen and the heroes belong to the draw (R-214 / UC-40); keeping
+   * them apart means the hero screen can be read and tested without the answer
+   * counts, and neither loader grew a column for the other.
+   */
+  const [view, heroesByGame] = await Promise.all([loadAdminGames(), listHeroesByGame()]);
 
   const questions =
     view.globalFields.length +
@@ -74,7 +82,7 @@ export default async function AdminGamesPage() {
           }
         />
 
-        <GamesManager view={view} />
+        <GamesManager view={view} heroesByGame={heroesByGame} />
 
         <p className="pb-4 text-center text-12 text-muted">
           Reordering here reorders the member&apos;s profile. Deactivating hides a game

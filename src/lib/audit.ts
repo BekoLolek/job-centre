@@ -97,6 +97,17 @@ export const AUDIT_ACTIONS = {
   "announcement.failed": "Announcement failed",
   "announcement.wording_changed": "Announcement wording changed",
   "announcement.pings_everyone": "Announcement set to ping everyone",
+  /*
+   * An announcement an admin pressed a button to send (R-221 / UC-43 5).
+   *
+   * Its own action rather than a flag in a detail blob, for the reason
+   * `announcement.pings_everyone` is one: "who posted that by hand" is a
+   * question somebody asks of the log by scanning it, and a `byHand: true`
+   * inside a detail object is not something a scan finds. It also tells the two
+   * writers of an announcement apart — everything else in this list that posts
+   * is something the site did on its own.
+   */
+  "announcement.posted_by_hand": "Announcement posted by hand",
   "user.admin.granted": "Admin granted",
   "user.admin.revoked": "Admin revoked",
   "user.sessions.ended": "Sessions ended",
@@ -117,6 +128,15 @@ export const AUDIT_ACTIONS = {
   "championship.event.changed": "Counting event changed",
   "championship.event.removed": "Event stopped counting",
   "championship.result": "Championship result recorded",
+  // The hero catalogue (R-214 / UC-40 4). `hero.renamed` is the one that has to
+  // be here: after the write nothing on the row says the hero was ever called
+  // anything else, so this line is the only record of the old name — and the
+  // only way to recognise the duplicate a later re-seed plants under it.
+  "hero.added": "Hero added",
+  "hero.renamed": "Hero renamed",
+  "hero.roles": "Hero roles changed",
+  "hero.retired": "Hero retired",
+  "hero.restored": "Hero brought back",
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;

@@ -84,6 +84,12 @@ describe("migrations", () => {
       "event_templates",
       "events",
       "games",
+      // R-212 / UC-39 3a, 3b, 5a, 6a: the nine heroes one participant was
+      // dealt for one event. drizzle/0032 — one row per (event, user), and the
+      // unique constraint on that pair *is* "dealt once and it stands" rather
+      // than an index for speed. Empty on every install: nothing has ever dealt
+      // a hand, so a backfill could only invent them.
+      "hero_hands",
       // R-214 / UC-40: one game's heroes and the roles each may be played in.
       // drizzle/0031 — and it starts empty on every install, because the 54 are
       // the seed's to plant and an admin's to correct, not a migration's.
@@ -286,7 +292,11 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    expect(await tableNames(ctx.client)).toHaveLength(46);
+    // 47 since drizzle/0032 added `hero_hands`. The list itself is asserted by
+    // name in the first test in this file, which is the one to read on a
+    // mismatch; this count is here so a second pass that *created* something
+    // cannot hide behind a list that was updated to expect it.
+    expect(await tableNames(ctx.client)).toHaveLength(47);
   });
 
   it("ships the default points table a new championship starts with", async () => {

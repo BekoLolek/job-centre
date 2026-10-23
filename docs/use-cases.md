@@ -1387,7 +1387,7 @@ A season of two to four events a month across different games, with one running 
 **Alternate and error flows**
 - **1a.** Not a participant - the page is not theirs; they are told so rather than shown an empty draw.
 - **1b.** The event's game has no hero list - nothing to draw from; the page names the game.
-- **2a.** Fewer than three heroes in a role - refused before any draw, naming the role, because a partial hand is worse than none.
+- **2a.** Fewer than three heroes in a role - refused before any draw, naming **every** thin role, because a half-filled hero list has two or three and an admin who fixes one and is refused again learns the count one deployment at a time. A partial hand is worse than none.
 - **3a.** Clicked twice, or reloaded mid-reveal - the second click draws nothing and the stored hand is shown.
 - **3b.** Two devices click at the same instant - one hand is stored and both see it.
 - **4a.** A player's three in a role are distinct from each other; across players they may repeat, which the pool sizes force (13 Strategists against six players needing three each).

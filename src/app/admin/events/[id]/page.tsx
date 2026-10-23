@@ -26,6 +26,7 @@ import type {
   FormatTabData,
 } from "@/components/admin/events/types";
 import { loadAdminGames } from "@/lib/admin-games";
+import { manualAnnouncementPanel } from "@/lib/discord";
 import { championshipOfEvent, championshipsToAddTo } from "@/lib/championships";
 import { eventParticipants, listPlacements } from "@/lib/championship-results";
 import {
@@ -88,6 +89,7 @@ export default async function AdminEventPage({
     matchIds,
     counting,
     seasons,
+    announcements,
   ] = await Promise.all([
     getApplicationsForEvent(event.id),
     loadAdminGames(),
@@ -108,6 +110,13 @@ export default async function AdminEventPage({
      * has to be able to say what it is in.
      */
     championshipsToAddTo(manager),
+    /*
+     * UC-43 2. The five kinds that take an event, each with its switch, its
+     * claim and whatever stops it being posted — read here because
+     * `manualAnnouncementPanel` reaches Postgres and the Publish tab is a
+     * client component (see `EventEditorProps.announcements`).
+     */
+    manualAnnouncementPanel(event.id),
   ]);
 
   /*
@@ -253,6 +262,7 @@ export default async function AdminEventPage({
           draft={draft}
           format={format}
           championship={championship}
+          announcements={announcements}
           maxDays={MAX_EVENT_DAYS}
           maxQuestions={MAX_EVENT_QUESTIONS}
           maxStages={MAX_STAGES}

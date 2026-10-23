@@ -12,12 +12,21 @@ import {
 } from "@/components/events";
 import type { ApplicantView, EventDetail } from "@/lib/events";
 import { entryMode } from "@/lib/events-policy";
-import { publishEventAction } from "@/app/admin/events/actions";
+import {
+  MANUAL_REFUSALS,
+  type ManualAnnouncementKind,
+  alreadyPostedWarning,
+  manualPostStep,
+  postedNote,
+  switchedOffNote,
+} from "@/lib/announce-manual";
+import type { ManualAnnouncementPanel, ManualAnnouncementRow } from "@/lib/discord";
+import { postAnnouncementByHandAction, publishEventAction } from "@/app/admin/events/actions";
 import EventStatusControls from "./EventStatusControls";
 import { blockers, gaps as gapsIn, readiness } from "./readiness";
 
 /**
- * Publish — the readiness checklist, then the button (§6.3).
+ * Publish — the readiness checklist, the button, then telling people (§6.3).
  *
  * ## Three refusals, the rest advice
  *
@@ -29,21 +38,59 @@ import { blockers, gaps as gapsIn, readiness } from "./readiness";
  * than a hope.
  *
  * Once it is published, the button gives way to the one status control.
+ *
+ * ## Why the announcements are on this tab (R-221 / UC-43)
+ *
+ * This is already the "tell people about it" step, and the five buttons are the
+ * same job by hand. They are not a tenth top-level tab on purpose: section L is
+ * about to make tab visibility conditional, and two changes to the same rail at
+ * once is how one of them ends up wrong.
+ *
+ * Everything the panel *decides* is in `@/lib/announce-manual`, which is pure
+ * and has no database in it — this file renders rows the server read and asks
+ * that module what a press means. Nothing here re-derives whether a kind may be
+ * posted: the action refuses on its own evidence, because a server action is a
+ * public endpoint and a disabled button is not a guard.
  */
 
 export default function PublishTab({
   event,
   applicants,
   queue,
+  announcements,
 }: {
   event: EventDetail;
   applicants: ApplicantView[];
   queue: number;
+  /** The five kinds this event can post by hand, as the server read them. */
+  announcements: ManualAnnouncementPanel;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
+  /** Which kind is in flight, so one press cannot become two posts. */
+  const [posting, setPosting] = useState<ManualAnnouncementKind | null>(null);
+  /**
+   * The kind awaiting confirmation, with the instant it went out
+   * (R-222 / UC-43 3a).
+   *
+   * The instant is carried rather than read back off the row, because the
+   * server may be the one that supplied it: a page rendered before somebody
+   * else posted has `postedAt` null on the row, and the action answers
+   * `confirm` with the real instant.
+   */
+  const [confirming, setConfirming] = useState<{
+    kind: ManualAnnouncementKind;
+    postedAt: Date;
+  } | null>(null);
+  /** What happened to the last press, shown against the row it was about. */
+  const [notice, setNotice] = useState<{
+    kind: ManualAnnouncementKind;
+    tone: "success" | "flare";
+    text: string;
+  } | null>(null);
 
   const checks = readiness(event);
   const blocked = blockers(checks);
@@ -63,6 +110,58 @@ export default function PublishTab({
       setError("Could not reach the server. Nothing was published.");
     } finally {
       setBusy(false);
+    }
+  };
+
+  /**
+   * One press of one kind's button (UC-43 3, 3a, 4a).
+   *
+   * The branch is {@link manualPostStep}'s, not this handler's. That is the
+   * whole of what makes the confirm flow testable: the suite renders to static
+   * markup in a node environment with nothing to click, so the decision lives
+   * in a pure function that a test can call and this does nothing but obey it.
+   */
+  const post = async (row: ManualAnnouncementRow, confirmed: boolean) => {
+    const step = manualPostStep(row, { webhook: announcements.webhook, confirmed });
+
+    if (step === "refused") {
+      setNotice({
+        kind: row.kind,
+        tone: "flare",
+        text: row.refusal ?? MANUAL_REFUSALS.noWebhook,
+      });
+      return;
+    }
+    if (step === "confirm") {
+      // Non-null by the step: `postedAt` is what made it a confirm.
+      setConfirming({ kind: row.kind, postedAt: row.postedAt ?? new Date() });
+      setNotice(null);
+      return;
+    }
+
+    setPosting(row.kind);
+    setNotice(null);
+    try {
+      const result = await postAnnouncementByHandAction(event.id, row.kind, { confirmed });
+      if (result.outcome === "posted") {
+        setConfirming(null);
+        setNotice({ kind: row.kind, tone: "success", text: postedNote(row.kind, result.claimed) });
+        // So the row's "last posted" line and its claim catch up.
+        router.refresh();
+      } else if (result.outcome === "confirm") {
+        // This screen did not know it had gone out — somebody else posted it.
+        setConfirming({ kind: row.kind, postedAt: result.postedAt });
+      } else {
+        setNotice({ kind: row.kind, tone: "flare", text: result.error });
+      }
+    } catch {
+      setNotice({
+        kind: row.kind,
+        tone: "flare",
+        text: "Could not reach the server. Nothing was posted.",
+      });
+    } finally {
+      setPosting(null);
     }
   };
 
@@ -200,6 +299,95 @@ export default function PublishTab({
             )}
           </div>
         )}
+      </Panel>
+
+      {/* --- Telling people, by hand (R-221 to R-223 / UC-43) -------- */}
+      <Panel as="section" padding="none" className="space-y-4 border-t border-hair pt-12 first:border-t-0 first:pt-0">
+        <Eyebrow>Announcements</Eyebrow>
+
+        <p className="text-14 leading-relaxed text-muted">
+          Each of these posts to Discord <span className="text-chalk/80">now</span>, built from
+          the event as it stands. The switches on the Settings screen decide what posts on its
+          own; these are for a moment the channel missed.
+        </p>
+
+        {event.status === "draft" && (
+          <p className="text-12 leading-relaxed text-union">
+            This event is still a draft, so anything posted about it links to a page members
+            cannot open yet.
+          </p>
+        )}
+
+        {!announcements.webhook && <Alert standing tone="union">{MANUAL_REFUSALS.noWebhook}</Alert>}
+
+        <ul className="divide-y divide-hair/60 border-y border-hair">
+          {announcements.rows.map((row) => (
+            <li key={row.kind} className="space-y-2 py-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="font-display text-16 leading-none">{row.name}</h3>
+                {!row.enabled && <Badge tone="union">Off</Badge>}
+                {row.postedAt && <Badge tone="success">Posted</Badge>}
+              </div>
+
+              <p className="text-12 leading-relaxed text-muted">{row.detail}</p>
+
+              {/*
+                R-223 / UC-43 2a. Said beside the button that will post it
+                anyway, which is the whole of why the button is not refused.
+              */}
+              {!row.enabled && (
+                <p className="text-12 leading-relaxed text-union">{switchedOffNote(row.kind)}</p>
+              )}
+
+              {row.postedAt && (
+                <p suppressHydrationWarning className="text-12 text-muted">
+                  Last posted {whenText(row.postedAt)}.
+                </p>
+              )}
+
+              {notice?.kind === row.kind && <Alert tone={notice.tone}>{notice.text}</Alert>}
+
+              {row.refusal ? (
+                /* UC-43 4a. Named, rather than a button that would post a true
+                   sentence about nothing. */
+                <p className="text-12 leading-relaxed text-flare">{row.refusal}</p>
+              ) : confirming?.kind === row.kind ? (
+                <div className="space-y-2">
+                  <Alert tone="union">
+                    <span suppressHydrationWarning>
+                      {alreadyPostedWarning(row.kind, whenText(confirming.postedAt) ?? "")}
+                    </span>
+                  </Alert>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="union"
+                      size="sm"
+                      disabled={posting !== null}
+                      onClick={() => void post(row, true)}
+                    >
+                      {posting === row.kind ? "Posting…" : "Post it again"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={posting !== null}
+                      onClick={() => setConfirming(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  size="sm"
+                  disabled={posting !== null || !announcements.webhook}
+                  onClick={() => void post(row, false)}
+                >
+                  {posting === row.kind ? "Posting…" : row.postedAt ? "Post again" : "Post now"}
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
       </Panel>
     </div>
   );
