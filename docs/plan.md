@@ -854,6 +854,23 @@ Still open and **not** closable from this repo: Task 50's last criterion asks wh
   **A grep finds the 11 but cannot find the call sites that compute their class**, and 8 of the 258 do. Two of those 8 are written on tags spread over three lines, where `<Eyebrow[^>]*className=\{` sees nothing at all — `ScheduleTab`'s "Up next" tone and `ProfileSection`'s completeness tone. Both happen to be tones that already won, so nothing was hiding there; the sweep walks the source with a brace-and-quote counter anyway and records every branch of all 8, because a sweep that silently misses a call site is worth nothing whichever way that call site goes. Same lesson as Task 32's own `cx("eyebrow block", note.tone)` miss, one layer further in.
   **`!important` cannot be measured off the compiled stylesheet, and that near-miss is worth recording.** The obvious guard — "no `!important` in the emitted CSS" — fails today, and not because anybody wrote one: Tailwind's content scanner reads `src/**` as text, so a TypeScript negation is a class candidate, and `!field`, `!hidden` and `!stage` have produced `.\!field`, `.\!hidden` and `.\!stage` in the output — about twenty `!important` declarations on three rules no element in the repo wears. Harmless, since nothing matches them, but it means the criterion has to be measured on the source literals instead, which is what the guard does. A guard that fails for a reason unrelated to its criterion is a guard somebody deletes.
 
+### Task 70: Every refusal on the site is silent to a screen reader (found in the browser sweep)
+
+- **Serves:** the "readable contrast (WCAG AA)" Constraint in `docs/requirements.md`, and every use case with a refusal flow — UC-28 4a, UC-37 3a/3b/3c/7a, UC-08 10c, UC-12, UC-13 among them
+- **Files:** `src/components/ui/Alert.tsx`, its 51 call sites, `src/components/ui/__tests__/`
+- **Do:** **`src/components/ui/Alert.tsx` has no `role` and no `aria-*` attribute of any kind.** It is 22 lines: a `<div>`, three tone classes, and `children`. Its own docblock says what it is for — *"the inline tinted message bar that **reports a failed save** or a warning"* — which is precisely the content that has to reach somebody who cannot see it.
+  Found by driving the real thing: submitting a duplicate template name at `/admin/templates` is refused correctly at the data layer, shows the right sentence (*"A template is already called …. Pick another name."*), writes no row — and announces nothing. Measured on the live page: `role` null, `aria-live` null, the parent likewise, and the input beside it carries neither `aria-invalid` nor `aria-describedby`. A screen-reader user submits the form, hears silence, and has no way to know it failed. **51 files render `<Alert`**, so this is one component between every refusal on the site and the people who most need to be told.
+  **Do not simply add `role="alert"` to the component.** That is the trap: `role="alert"` is assertive and interrupts, which is right for a message that appears *because the user just did something* and wrong for one that is part of the page on arrival — `AnnouncementSettings`' standing *"No webhook — nothing will post"* would then interrupt on every visit to Settings. The two kinds need telling apart, and with 51 call sites that is a decision per site, the same shape as Task 69's eyebrow colours.
+  The useful rule: an Alert whose content comes from **action state** is dynamic and must be announced; one that is **always rendered** is read as ordinary document content and must not be. Pick the default from the docblock's stated purpose (reporting a failed save) and make the other case explicit, rather than the reverse.
+  While in there: an input whose value a refusal is about should carry `aria-invalid` and `aria-describedby` pointing at it. That is a smaller, separate win and need not be done for all 51.
+- **Acceptance criteria:**
+  - [ ] A refusal produced by submitting a form is announced, proven on at least three different screens
+  - [ ] A standing informational Alert does **not** interrupt on page load
+  - [ ] Every one of the 51 call sites is classified, with the list in the report
+  - [ ] The input a refusal is about carries `aria-invalid` and `aria-describedby` on at least the template, wording and apply forms
+  - [ ] A sweep asserts no `<Alert` is left unclassified, reading the call sites off disk rather than off the ones already fixed
+- **Depends on:** nothing, but it edits many components, so not beside Task 69.
+
 ## J. Discord announcements, editable (R-201 to R-208 / UC-37, UC-38)
 
 Decisions taken with the user on 2026-10-22, recorded here because each one closed a question
@@ -1070,3 +1087,17 @@ fire a two-hour reminder, and `docs/requirements.md` already carried that as a c
   **The criterion both Tasks 62 and 63 flagged as the unmet one is held, and held in the right shape.** Verified by mutation rather than by reading: making the claim always succeed kills **seven** tests, among them `posts signups_closing_soon once per event, and the next run posts nothing`, the same for `event_starting_soon`, and `posts exactly once across a window of wakes slipped by 0 / 5 / 10 / 15 minutes` — the slip sweep Task 63 asked for, because a slip of exactly 15 minutes reproduces the same grid of wakes and proves nothing on its own.
   A new table rather than a column, as Task 63 established: `notification_dm_claims` is keyed on a NOT NULL `user_id` and a channel announcement has no recipient. `drizzle/0030_announcement_claims` writes no rows, and the migration says so rather than leaving it inferred.
   Also covered, each with its own test: no closing time and no dated day get nothing, a cancelled event gets no starting-soon reminder, a full event still gets the closing reminder **and says it is full**, a slept-through window is not posted late, no instant is formatted on the server across all three kinds at once, and `signups_open` fires when the window opens while an event already open at publish never gets it. Two further guards worth naming: a claim is **not** taken while the kind is switched off or while there is no webhook — an unreleasable claim would mean an admin switching a kind on inside the same window never sees the announcement at all.
+
+### Task 71: A host is told only admins can see their own event (found in the browser sweep)
+
+- **Serves:** R-32 / UC-08 2 — the requirement Task 2 built
+- **Files:** `src/components/events/labels.ts`, `src/components/events/__tests__/labels.test.ts`
+- **Do:** `STATUS_MEANING.draft` is **"Only admins can see this. Nobody can apply."**, and it is shown on the public event page of an unpublished event. Task 2 established that a **host** reaches their own unpublished event (R-32, UC-08 2), and the browser sweep confirmed they do — so the host of a draft event reads a banner telling them that only admins can see the page they are looking at.
+  Small, but it misleads exactly the user least sure of their own permissions, and it contradicts a requirement the site deliberately implements. The second half ("Nobody can apply") is true and should stay.
+  **No test asserts this string**, which is why it survived Task 2. `labels.test.ts` already asserts `applicationStatusLabel("pending")`, so the shape to copy is there.
+  The wording needs to cover both readers without naming a role the reader may not have: an admin and the event's host both see it, nobody else does.
+- **Acceptance criteria:**
+  - [ ] The draft meaning is true for a host as well as an admin
+  - [ ] "Nobody can apply" is preserved
+  - [ ] A test asserts the string, so the next person to widen who may see a draft has to come back here
+- **Depends on:** nothing.
