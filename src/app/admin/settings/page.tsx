@@ -27,6 +27,7 @@ import {
   getAnnouncementTemplates,
   getIntegrationConfig,
 } from "@/lib/discord";
+import { getGuildRoles } from "@/lib/discord-roles";
 import { requireAdmin } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,24 @@ export default async function AdminSettingsPage({
   const gate = await getGateConfig();
   const integrations = await getIntegrationConfig();
   const configured = Boolean(integrations.webhook);
+  /*
+   * The server's roles for the mention picker (R-203 / UC-37 4a, 4b).
+   *
+   * **`gate.guildId`, not `DISCORD_GUILD_ID` and not the settings row.**
+   * `getGateConfig` has already resolved the two in the right order — the stored
+   * setting first, the environment variable second — so this is the one value
+   * that is right for both kinds of deployment. Reading the row directly would
+   * make an install configured purely by `DISCORD_GUILD_ID` look to this feature
+   * like no server had been set at all, and a new variable would be a third
+   * place to keep in step with the sign-in gate.
+   *
+   * Cached in `@/lib/discord-roles` for a few minutes, so this is not a request
+   * to Discord per page view, and it answers `{ roles: null, problem }` rather
+   * than throwing on an install with no bot token — which is most of them. The
+   * token itself stays in that module: what crosses to the browser below is an
+   * id, a name and a position per role.
+   */
+  const roles = await getGuildRoles(gate.guildId);
   /*
    * Counted over the kinds something actually posts. A tile reading
    * "Announcing 5/8" that includes a kind with no trigger is the page telling
@@ -119,6 +138,12 @@ export default async function AdminSettingsPage({
              * trigger is the one place that reads it for the tile above.
              */
             notPosted={NOT_POSTED_YET}
+            /*
+             * The role list, or why there is none. Not the bot token, which
+             * never leaves `@/lib/discord-roles` — the same rule the webhook
+             * above follows, and the Constraint both answer to.
+             */
+            roles={roles}
           />
 
           <Section

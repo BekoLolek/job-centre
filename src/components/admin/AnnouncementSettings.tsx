@@ -88,6 +88,16 @@ import {
 // Type only. `@/lib/discord` reaches for `next/server`, and nothing in it runs
 // in a browser; the shape of a stored row is all this screen needs from it.
 import type { StoredAnnouncementTemplate } from "@/lib/discord";
+/*
+ * `@/lib/discord-roles` is where the bot token is read, so what crosses to the
+ * browser from it is worth being deliberate about. The types are erased. The one
+ * value imported is `deadRoles`, which is **pure** — it compares two lists and
+ * reads no environment at all. The token lives inside `fetchGuildRoles`, which
+ * is not imported here, is not reachable from `deadRoles`, and is asserted
+ * unreachable from this screen by `announcement-roles.test.ts`.
+ */
+import { deadRoles } from "@/lib/discord-roles";
+import type { DiscordRole, RoleListing, RoleListingProblem } from "@/lib/discord-roles";
 import {
   Alert,
   Badge,
@@ -98,6 +108,7 @@ import {
   Field,
   Panel,
   Section,
+  Select,
   Textarea,
   Toggle,
 } from "@/components/ui";
@@ -425,7 +436,29 @@ export type AnnouncementSettingsProps = {
    * that must keep working while the list it usually reads is empty.
    */
   notPosted?: readonly AnnouncementKind[];
+  /**
+   * The server's roles, or why they could not be read (R-203 / UC-37 4a, 4b).
+   *
+   * `getGuildRoles`'s answer, resolved on the server. **Never the token** — the
+   * listing is three scalar fields per role and the credential that fetched it
+   * stays in `@/lib/discord-roles`.
+   *
+   * Defaulted to {@link NO_ROLE_LIST} rather than required, because an install
+   * with no bot token is the supported install this screen was built for and
+   * "no list" is its ordinary state, not a missing argument.
+   */
+  roles?: RoleListing;
 };
+
+/**
+ * No list, because nothing is configured for one.
+ *
+ * The default for the `roles` prop, and the state every install is in until
+ * somebody sets a bot token. `neither` rather than a null problem: the two
+ * fields of a {@link RoleListing} are never both null, and a screen handed
+ * "no roles and no reason" could not say anything useful (UC-37 4a).
+ */
+export const NO_ROLE_LIST: RoleListing = { roles: null, problem: "neither" };
 
 export default function AnnouncementSettings({
   specs,
@@ -435,6 +468,7 @@ export default function AnnouncementSettings({
   origin,
   openKind = null,
   notPosted = NOT_POSTED_YET,
+  roles = NO_ROLE_LIST,
 }: AnnouncementSettingsProps) {
   const [value, setValue] = useState<Settings>(saved);
   const [pending, start] = useTransition();
@@ -520,6 +554,7 @@ export default function AnnouncementSettings({
               on={value[spec.kind]}
               configured={configured}
               posts={posted(spec.kind, notPosted)}
+              roles={roles}
             />
           </Disclosure>
         ))}
@@ -609,6 +644,8 @@ export type AnnouncementEditorProps = {
   configured: boolean;
   /** Whether anything in the site posts this kind yet — `posted`'s answer. */
   posts: boolean;
+  /** The server's roles, or why not. Handed straight to the mention picker. */
+  roles?: RoleListing;
 };
 
 /**
@@ -630,6 +667,7 @@ export function AnnouncementEditor({
   on,
   configured,
   posts,
+  roles = NO_ROLE_LIST,
 }: AnnouncementEditorProps) {
   const [saved, setSaved] = useState<StoredAnnouncementTemplate>(stored);
   const [body, setBody] = useState<string>(stored.body ?? "");
@@ -765,7 +803,13 @@ export function AnnouncementEditor({
 
       {/* ---------------- the mention picker ---------------- */}
 
-      <RoleMention kind={spec.kind} mention={mention} onChange={setMention} disabled={pending} />
+      <RoleMention
+        kind={spec.kind}
+        mention={mention}
+        onChange={setMention}
+        disabled={pending}
+        roles={roles}
+      />
 
       {/* ---------------- refusals ---------------- */}
 
@@ -813,20 +857,29 @@ export function AnnouncementEditor({
 /* ------------------------------------------------------------------ */
 
 /**
- * The mention picker: `@everyone`, and roles by id.
+ * The mention picker: `@everyone`, a dropdown of the server's roles, and roles
+ * by id (R-202, R-203 / UC-37 4, 4a, 4b, 4c).
  *
- * **Why there is no dropdown of your server's roles.** That is R-203, it is a
- * *Could*, and it needs a bot token and a guild id this install does not have.
- * `@RoleName` is inert on Discord — a role ping is `<@&id>` — so the honest
- * control until then is a field that takes the id and refuses anything else by
- * name, with the screen saying why rather than looking broken (UC-37 4a).
+ * **The dropdown is R-203 and it is not a capability.** With a bot token and a
+ * guild id, `@/lib/discord-roles` reads the server's roles in one outbound
+ * request and they are offered by name. Without either, the list cannot be read
+ * and the screen says which half is missing. Nothing else changes: the id is
+ * what Discord pings either way, and picking a name only saves finding it.
  *
- * **The seam for Task 61.** Everything about a role mention is in this
- * component and nowhere else: the paste field, the validation, the chips and
- * the explanation. Filling R-203 means giving it the list — a `roles` prop and
- * a `Select` above the paste field — and changing nothing else on the screen.
- * The paste field stays whatever happens: an install with no token is still a
- * supported install, and that is the case this control exists for.
+ * **The paste field stays, whatever happens.** An install with no bot token is
+ * still a supported install, which is the whole reason R-203 is a *Could*:
+ * `@everyone` carries no id, and a role ping needs only the numeric `<@&id>`,
+ * which an admin can copy out of Discord by hand. The token buys a dropdown
+ * rather than a capability, so the control that works without it is the one
+ * that must never go away.
+ *
+ * **One decision, reached two ways.** Picking a role from the dropdown fills
+ * the paste field with its id, and the single Add button then runs the single
+ * {@link withRole}. That is deliberate rather than lazy: a dropdown with an
+ * adder of its own would be a second path to the same mention, with a second
+ * place for the refusal rules to drift, and the duplicate check and the
+ * snowflake check would have to agree across both. It also shows an admin the
+ * id a name resolves to, which is the thing Discord actually pings.
  *
  * `@everyone` is independent of all of it. It needs no id, so it works on every
  * install with or without a token, and it is the control most of this community
@@ -871,18 +924,48 @@ export function withRole(
   };
 }
 
+/**
+ * Which half of R-203 this install is missing, in words an admin can act on.
+ *
+ * Four sentences rather than one, because "set a bot token" and "point sign-in
+ * at your server first" are different jobs and a screen that said only "no role
+ * list" would send an admin to look for the wrong one (UC-37 4a). Exported and
+ * pure so each case is a test rather than a state nobody can reach — three of
+ * the four need an install this repo's test suite cannot create.
+ */
+export function noListReason(problem: RoleListingProblem): string {
+  switch (problem) {
+    case "neither":
+      return "reading the list needs a bot token and a server id, which this install does not have";
+    case "no_token":
+      return "reading the list needs a bot token, and DISCORD_BOT_TOKEN is not set on this deployment";
+    case "no_guild":
+      return "a bot token is set, but nothing says which server to read — set the server id under Who may sign in below";
+    case "unreachable":
+      return "Discord would not answer when the list was last asked for, which usually means the token has been revoked or the bot is not in the server";
+  }
+}
+
+/** A role's name, when the list is readable and still has it. */
+function roleNameOf(roles: RoleListing, id: string): string | null {
+  return roles.roles?.find((role: DiscordRole) => role.id === id)?.name ?? null;
+}
+
 export function RoleMention({
   kind,
   mention,
   onChange,
   disabled,
+  roles = NO_ROLE_LIST,
 }: {
   kind: AnnouncementKind;
   mention: AnnouncementMention;
   onChange: (next: AnnouncementMention) => void;
   disabled?: boolean;
+  roles?: RoleListing;
 }) {
   const [pasted, setPasted] = useState("");
+  const [picked, setPicked] = useState("");
   const [refused, setRefused] = useState<string | null>(null);
 
   const add = () => {
@@ -891,9 +974,32 @@ export function RoleMention({
     if (next.refused !== null || next.mention === mention) return;
     onChange(next.mention);
     setPasted("");
+    setPicked("");
+  };
+
+  /*
+   * Choosing from the dropdown. Named rather than inlined for the reason `add`
+   * is: it is the one link between the list and the mention, there is no pointer
+   * in this repo's test environment to exercise it with, and a handler that set
+   * only its own dropdown state would leave a picked role un-addable while every
+   * assertion about the options still passed. `announcement-roles.test.ts` reads
+   * this handler the way `checkbox-hit-area.test.ts` reads `const box`.
+   */
+  const pick = (id: string) => {
+    setPicked(id);
+    setPasted(id);
+    setRefused(null);
   };
 
   const line = mentionLine(mention);
+  /*
+   * UC-37 4b. Computed from the mention as it stands rather than only from the
+   * stored row, so an id pasted by hand that no server role answers to is
+   * flagged as it is added rather than after a save and a reload. `deadRoles`
+   * returns nothing when there is no list, which is the case that matters: not
+   * knowing whether a role exists is not the same as knowing it is gone.
+   */
+  const dead = deadRoles(mention.roleIds, roles);
 
   return (
     <div className="space-y-3">
@@ -914,6 +1020,34 @@ export function RoleMention({
         }
       />
 
+      {/* ---------------- the dropdown, when there is a list (R-203) ---------------- */}
+
+      {roles.roles !== null &&
+        (roles.roles.length === 0 ? (
+          <p className="max-w-[62ch] text-12 leading-relaxed text-muted">
+            Your server&rsquo;s role list was read and it has no roles in it beyond{" "}
+            <strong>@everyone</strong>, which is the checkbox above rather than a role to
+            pick. Make a role in Discord and it will appear here; the field below still
+            takes an id in the meantime.
+          </p>
+        ) : (
+          <Select
+            label="Pick a role"
+            hint="Read from your server. Choosing one fills the id below — that id is what Discord pings, and a role name on its own does nothing."
+            value={picked}
+            disabled={disabled}
+            wrapperClassName="w-full sm:w-[22rem]"
+            onChange={(event) => pick(event.target.value)}
+          >
+            <option value="">Choose a role…</option>
+            {roles.roles.map((role) => (
+              <option key={role.id} value={role.id}>
+                {role.name}
+              </option>
+            ))}
+          </Select>
+        ))}
+
       <div className="flex flex-wrap items-end gap-3">
         <Field
           label="Add a role by id"
@@ -930,15 +1064,24 @@ export function RoleMention({
         </Button>
       </div>
 
-      <p className="max-w-[62ch] text-12 leading-relaxed text-muted">
-        There is no list of your server&rsquo;s roles to pick from, and that is a missing
-        capability rather than a missing screen: reading the list needs a bot token and a
-        server id, which this install does not have. Until it does, paste the id — in
-        Discord, turn on Developer Mode, then <strong>Server Settings → Roles</strong>,
-        right-click the role and <strong>Copy Role ID</strong>. A role <em>name</em> does
-        nothing on Discord, so a name pasted here is refused rather than quietly notifying
-        nobody.
-      </p>
+      {roles.problem === null ? (
+        <p className="max-w-[62ch] text-12 leading-relaxed text-muted">
+          The field above takes an id directly, and keeps working whatever the dropdown
+          says — a role made in Discord a moment ago may not be in the list yet, because
+          the list is cached for a few minutes rather than fetched on every page view. In
+          Discord, turn on Developer Mode, then <strong>Server Settings → Roles</strong>,
+          right-click the role and <strong>Copy Role ID</strong>.
+        </p>
+      ) : (
+        <p className="max-w-[62ch] text-12 leading-relaxed text-muted">
+          There is no list of your server&rsquo;s roles to pick from, and that is a missing
+          capability rather than a missing screen: {noListReason(roles.problem)}. Paste the
+          id instead — in Discord, turn on Developer Mode, then{" "}
+          <strong>Server Settings → Roles</strong>, right-click the role and{" "}
+          <strong>Copy Role ID</strong>. A role <em>name</em> does nothing on Discord, so a
+          name pasted here is refused rather than quietly notifying nobody.
+        </p>
+      )}
 
       {mention.roleIds.length > 0 && (
         /*
@@ -949,23 +1092,59 @@ export function RoleMention({
          * same mistake `Checkbox` exists to have fixed once.
          */
         <ul className="divide-y divide-hair/60">
-          {mention.roleIds.map((id) => (
-            <li key={id} className="flex flex-wrap items-center justify-between gap-3 py-2">
-              <span className="text-13 text-chalk">{`<@&${id}>`}</span>
-              <Button
-                onClick={() =>
-                  onChange({
-                    ...mention,
-                    roleIds: mention.roleIds.filter((other) => other !== id),
-                  })
-                }
-                disabled={disabled}
+          {mention.roleIds.map((id) => {
+            const name = roleNameOf(roles, id);
+            return (
+              <li
+                key={id}
+                className="flex flex-wrap items-center justify-between gap-3 py-2"
               >
-                Remove
-              </Button>
-            </li>
-          ))}
+                <span className="min-w-0">
+                  <span className="block text-13 text-chalk">{`<@&${id}>`}</span>
+                  {name !== null && (
+                    <span className="mt-0.5 block text-12 text-muted">{name}</span>
+                  )}
+                  {dead.includes(id) && (
+                    <Badge tone="flare" className="mt-1">
+                      No longer in the server
+                    </Badge>
+                  )}
+                </span>
+                <Button
+                  onClick={() =>
+                    onChange({
+                      ...mention,
+                      roleIds: mention.roleIds.filter((other) => other !== id),
+                    })
+                  }
+                  disabled={disabled}
+                >
+                  Remove
+                </Button>
+              </li>
+            );
+          })}
         </ul>
+      )}
+
+      {/* ---------------- a role that has been deleted (UC-37 4b) ---------------- */}
+
+      {dead.length > 0 && (
+        <Alert tone="union">
+          <span className="block font-medium">
+            {dead.length === 1
+              ? "This announcement mentions a role your server no longer has"
+              : `This announcement mentions ${dead.length} roles your server no longer has`}
+          </span>
+          <span className="mt-1 block">
+            It still posts, and Discord renders a mention of a deleted role as plain text
+            rather than pinging anybody — so nothing is broken and nothing is going out to
+            the wrong people. <strong>Nothing has been changed for you.</strong> Removing
+            the mention is a decision about your own wording, and a site that quietly
+            rewrote it would be a site that edited an announcement you had approved. Use
+            Remove above if you want it gone.
+          </span>
+        </Alert>
       )}
 
       {refused && <Alert tone="flare">{refused}</Alert>}
