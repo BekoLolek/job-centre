@@ -876,6 +876,96 @@ export function teamsInTheWayRefusal(count: number): string {
 export const DRAFT_AWARDED_REFUSAL =
   "Lots have already been awarded in this event's draft, and the teams' rosters came from them. Void the awards on the Draft tab before turning the draft off.";
 
+/* ------------------------------------------------------------------ */
+/* The sides the Format panel implies (R-220 / UC-42 6)               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The plan a random fill writes, from whichever figure the panel holds — the
+ * one place both readings of {@link TeamSizing} become a `TeamPlan`.
+ *
+ * **Players per team is Task 78's `planTeams`, called and not copied**: the
+ * remainder rounds *up* into one more side, short, rather than being dropped,
+ * and the refusals are its refusals (UC-41 4b, 4c). **A count of teams** deals
+ * the accepted players into exactly that many sides with {@link dealSizes} —
+ * the remainder one per side, as UC-42 4b says — and refuses fewer people than
+ * sides, naming both numbers, because a side with nobody on it is not a side.
+ *
+ * This is what `assignRandomTeams` plans with and what the Teams tab prints
+ * before asking, so the two cannot disagree about how many teams a shuffle
+ * makes. `sizingConsequence` above prints the Format panel's own sentence from
+ * the same arithmetic; `teams-three-ways.test.ts` holds the two against each
+ * other over every legal count.
+ */
+export function planSides(sizing: TeamSizing, people: number): TeamPlanResult {
+  if (sizing.mode === "perTeam") return planTeams(people, sizing.value);
+
+  const sides = sizing.value;
+  const count = Number.isInteger(people) && people > 0 ? people : 0;
+  if (count < sides) {
+    return {
+      ok: false,
+      error: `Only ${count} ${count === 1 ? "player is" : "players are"} accepted, and ${sides} teams need at least one player each. Accept more on the Applicants tab, or lower the team count in Setup → Format.`,
+    };
+  }
+
+  const sizes = dealSizes(count, sides);
+  const biggest = sizes[0] ?? 0;
+  return {
+    ok: true,
+    plan: {
+      teams: sides,
+      sizes,
+      short: sizes.flatMap((size, index) => (size < biggest ? [index + 1] : [])),
+    },
+  };
+}
+
+/**
+ * How many teams the Format panel says this event has — or `null` when it
+ * cannot say yet.
+ *
+ * This is the figure "the team count follows" (Task 81), and the two modes
+ * answer it differently on purpose. **A count of teams is the admin's own
+ * number** and stands whoever is accepted — three teams with nobody accepted
+ * is still three teams. **Players per team** yields a count only once the
+ * accepted players make two or more sides; it is `planTeams`'s count, so a
+ * fractional team rounds **up** into a short side rather than being dropped
+ * (UC-41 4a). With nobody accepted, too few, or exactly one team's worth,
+ * there is no count — UC-42 4a's "an assumption rather than a number" — and
+ * the caller treats the count as free.
+ *
+ * A solo event has no count at all. That is deliberately not a refusal here:
+ * a hidden Teams tab is not a forbidden one (UC-42 5b), and `setTeamCount`
+ * stays callable on a solo event exactly as `event-shape.test.ts` proves.
+ */
+export function teamCountFrom(shape: EventShape, accepted: number): number | null {
+  if (!shape.teamEvent) return null;
+  if (shape.sizing.mode === "teams") return shape.sizing.value;
+  const plan = planTeams(accepted, shape.sizing.value);
+  return plan.ok ? plan.plan.teams : null;
+}
+
+/**
+ * Why a team count that disagrees with the Format panel is refused — the
+ * sentence `setTeamCount` answers with and the Teams tab shows beside the
+ * control, so the admin reads the same words before and after the round trip.
+ *
+ * Both halves name where to settle it: the count is the panel's decision, and
+ * the Teams tab is where it is carried out, not where it is argued.
+ */
+export function countFollowsFormatRefusal(
+  shape: EventShape,
+  accepted: number,
+  expected: number,
+  asked: number
+): string {
+  if (shape.sizing.mode === "teams") {
+    return `Setup → Format says this event has ${expected} teams, so it cannot be set to ${asked} here. Change it there, or make it ${expected}.`;
+  }
+  return `Setup → Format sizes the teams at ${shape.sizing.value} a side, which makes ${expected} teams from the ${accepted} accepted — so it cannot be set to ${asked} here. Change the sizing there, or make it ${expected}.`;
+}
+
 /**
  * Whether this event is taking applications at `now`, and if not, why not.
  *

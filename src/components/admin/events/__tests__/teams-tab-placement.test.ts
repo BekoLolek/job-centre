@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MemberLike, TeamLike } from "@/components/draft";
 import { DEFAULT_DRAFT_CONFIG, rosterState } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
-import { teamFormatFrom } from "@/lib/events-policy";
+import { eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
 import { applicant } from "./applicants-fixture";
 import type { DraftTabData } from "../types";
 
@@ -101,14 +101,18 @@ function tabData(teams: TeamLike[], over: Partial<DraftTabData> = {}): DraftTabD
     // real `rosterState`: a hand-written format is what lets this screen and
     // the rule it prints drift apart.
     teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
+    fill: { route: "empty" },
     ...over,
   };
 }
 
+/** The shape an event that never saw the Format panel has — the real reader over nothing. */
+const SHAPE = eventShapeFrom({});
+
 /** The tab as a manager reads it: no tags, no entities. */
 function render(applicants: ApplicantView[], data: DraftTabData): string {
   return renderToStaticMarkup(
-    createElement(TeamsTab, { eventId: "event-1", applicants, data })
+    createElement(TeamsTab, { eventId: "event-1", applicants, data, shape: SHAPE })
   )
     .replace(/<[^>]*>/g, " ")
     .replace(/&#x27;|&#39;/g, "'")
@@ -238,6 +242,7 @@ describe("the teams the tab offers as a destination", () => {
         eventId: "event-1",
         applicants: [who("free", "accepted", "Free Agent")],
         data,
+        shape: SHAPE,
       })
     );
 
@@ -263,7 +268,12 @@ describe("the team-count control", () => {
     // able to fail this, and a control that let somebody submit nine should
     // not be able to pass it.
     const markup = renderToStaticMarkup(
-      createElement(TeamsTab, { eventId: "event-1", applicants: [], data: tabData([]) })
+      createElement(TeamsTab, {
+        eventId: "event-1",
+        applicants: [],
+        data: tabData([]),
+        shape: SHAPE,
+      })
     );
 
     const field = markup.match(/<input[^>]*aria-label="Number of teams"[^>]*>/)?.[0];

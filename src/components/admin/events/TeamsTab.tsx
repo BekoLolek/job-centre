@@ -18,16 +18,28 @@ import {
   plural,
 } from "@/components/ui";
 import { Money, PlayerChip, playerName } from "@/components/draft";
+// A type only: `src/lib/draft.ts` reaches Postgres, and a value import here
+// would drag Drizzle and PGlite into the browser bundle.
+import type { TeamsFill } from "@/lib/draft";
 import { MAX_TEAMS, MIN_TEAMS } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
-import { NIGHT_FORMATS, type NightFormat, teamFormatFrom } from "@/lib/events-policy";
 // The pure half, for the reason `EventEditor` imports `admin-templates-policy`
-// rather than `admin-templates`: `planTeams` is arithmetic over two numbers and
-// carries no database handle, so the screen can answer UC-41 4 — how many teams
-// and which are short — without a round trip, using the *same* function the
-// write uses. A second copy here is how a screen and its server start
-// disagreeing about what is about to be saved.
-import { planTeams } from "@/lib/random-teams";
+// rather than `admin-templates`: `planSides` and `teamCountFrom` are arithmetic
+// over the Format panel's figure and a head count, with no database handle, so
+// the screen can answer UC-41 4 — how many teams and which are short — without
+// a round trip, using the *same* functions the writes use. A second copy here
+// is how a screen and its server start disagreeing about what is about to be
+// saved.
+import {
+  type EventShape,
+  NIGHT_FORMATS,
+  type NightFormat,
+  planSides,
+  sizingConsequence,
+  teamCountFrom,
+  teamFormatFrom,
+} from "@/lib/events-policy";
+import type { TeamPlanResult } from "@/lib/random-teams";
 import {
   type RosterMove,
   type TeamFields,
@@ -105,16 +117,43 @@ import type { DraftTabData } from "./types";
  * "Make random teams" (R-216) is the alternative to naming teams by hand, and
  * three things about it are rules rather than polish. It **says what it will
  * do before it does it** — how many teams, which come out short, how many
- * existing teams get discarded (UC-41 3a, 4a) — using the same `planTeams`
+ * existing teams get discarded (UC-41 3a, 4a) — using the same `planSides`
  * the server uses, so the dialog and the write cannot disagree. It is
  * **refused outright once a lot has been awarded** (3b) rather than offered
  * and then rejected, which is why `data.started` disables the button *and*
  * explains itself. And **re-running is expected** (5a): the dialog is what
  * stops a reshuffle being an accident, not a limit on how many are allowed.
  *
- * The button is also disabled while the format chip differs from what is
- * stored. The write reads the stored format, so shuffling on an unsaved chip
- * would make teams of a size the admin had not saved.
+ * ## Three routes into one set of teams (R-220 / UC-42 6, 6a)
+ *
+ * By hand (the rosters at the bottom), at random (the shuffle), or from the
+ * draft (the Draft tab, when the Format panel says there is one). They are
+ * not three features sharing a table: the first panel says so, and says
+ * **which of them filled the teams that exist now** — `data.fill`, read on the
+ * server off the rows and the mark the shuffle leaves — because "fill randomly"
+ * over a hand-built roster is the destructive case and the admin has to know
+ * what they are replacing before they are asked (6a). The same sentence is on
+ * the panel and in the confirm, from one function, so the two cannot differ.
+ *
+ * ## The count follows the Format panel (R-218)
+ *
+ * The Format panel is where the sizing is decided — a count of teams, or
+ * players per team — and this tab carries it out rather than arguing with it.
+ * Once `teamCountFrom` can say how many teams that makes, the count control is
+ * locked to the figure and says where to change it; the shuffle plans with
+ * `planSides` from the same figure; and `setTeamCount` refuses anything else.
+ * The night's 6v6/3v3 chip is left to do the one thing R-215 asks of it: state
+ * the comp. It no longer sizes anything, which is why the shuffle no longer
+ * waits for an unsaved chip to be saved.
+ *
+ * ## The decisions are functions, and the handlers obey them
+ *
+ * `shuffleGate`, `countControl`, `fillSentence` and `replacingSentence` are
+ * exported pure functions for the reason Task 83's `manualPostStep` and Task
+ * 80's `standingOn` are: the confirm state is reachable only by clicking, and
+ * the suite is a node environment with nothing to click. Decided over plain
+ * data they are asserted over every combination; inline in a handler they
+ * would be guards no test could kill.
  */
 
 type DraftTeam = {
@@ -190,6 +229,139 @@ export function acceptedCount(applicants: readonly ApplicantView[]): number {
   return applicants.filter((row) => row.status === "accepted").length;
 }
 
+/* ------------------------------------------------------------------ */
+/* The decisions the handlers obey (R-220 / UC-42 6, 6a)              */
+/* ------------------------------------------------------------------ */
+
+/** "23 Oct", in the reader's locale. */
+function onDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
+
+/**
+ * Which route filled the current teams, in one sentence (UC-42 6).
+ *
+ * Captains are left out of every count, because choosing one is not a way of
+ * filling a team; the empty case says so rather than reporting a captain-only
+ * roster as "filled".
+ */
+export function fillSentence(fill: TeamsFill): string {
+  switch (fill.route) {
+    case "empty":
+      return "Nobody has been placed on a team yet — captains aside, who are chosen on the Captains tab.";
+    case "hand":
+      return `Filled by hand — ${plural(fill.placed, "roster place")}, one at a time.`;
+    case "random":
+      return `Filled at random on ${onDate(fill.at)} — ${fill.dealt} dealt${
+        fill.byHandSince > 0 ? `, ${fill.byHandSince} placed by hand since` : ""
+      }.`;
+    case "draft":
+      return `Filled by the draft — ${fill.won} won in the room${
+        fill.byHand > 0 ? `, ${fill.byHand} placed by hand` : ""
+      }.`;
+  }
+}
+
+/**
+ * What a reshuffle would throw away, named before it is asked for (UC-41 3a,
+ * UC-42 6a). The count is what the server last said exists — `data.teams` —
+ * because that is what the write will actually discard.
+ */
+export function replacingSentence(fill: TeamsFill, teams: number, rosterPlaces: number): string {
+  const head = `Shuffling discards the ${plural(teams, "team")} that already exist, with their names, seeds and ${plural(rosterPlaces, "roster place")}`;
+  switch (fill.route) {
+    case "empty":
+      return `${head} — nobody is on them yet.`;
+    case "hand":
+      return `${head} — every one of them placed by hand.`;
+    case "random":
+      return `${head} — dealt at random on ${onDate(fill.at)}${
+        fill.byHandSince > 0 ? `, with ${fill.byHandSince} placed by hand since` : ""
+      }.`;
+    case "draft":
+      return `${head} — won in the draft.`;
+  }
+}
+
+/** UC-41 3b, in the screen's words. Refused, not confirmed. */
+const STARTED_REFUSAL =
+  "The draft has already awarded lots. Random teams would replace the teams those lots were awarded against, so it is refused. Void the lots in the draft room first.";
+
+export type ShuffleGate = {
+  /** May the button be pressed at all? */
+  allowed: boolean;
+  /** Why not, when it may not. */
+  refusal: string | null;
+  /** What goes if it is — null for a first fill with nothing to replace. */
+  replacing: string | null;
+};
+
+/**
+ * Whether the shuffle is offered, and what its confirmation has to name — the
+ * whole of UC-41 3a/3b and UC-42 6a as one decision over plain data.
+ *
+ * Refusals first, and 3b ahead of the numbers: awarded lots are not a
+ * confirmation question. Then the plan, whose refusal is the planner's own
+ * sentence (4b, 4c). Only then is it allowed, carrying the replacement
+ * sentence when there is anything to replace.
+ */
+export function shuffleGate(input: {
+  started: boolean;
+  planned: TeamPlanResult;
+  fill: TeamsFill;
+  teams: number;
+  rosterPlaces: number;
+}): ShuffleGate {
+  if (input.started) return { allowed: false, refusal: STARTED_REFUSAL, replacing: null };
+  if (!input.planned.ok) return { allowed: false, refusal: input.planned.error, replacing: null };
+  return {
+    allowed: true,
+    refusal: null,
+    replacing:
+      input.teams > 0 ? replacingSentence(input.fill, input.teams, input.rosterPlaces) : null,
+  };
+}
+
+export type CountControl = {
+  /** The count the Format panel settles, or null while the control is the admin's. */
+  fixed: number | null;
+  /** Beside the control: where the figure comes from, or why it is still free. */
+  note: string;
+};
+
+/**
+ * Whether the count control is locked to the Format panel, and what it says
+ * about that (R-218 / UC-42 6).
+ *
+ * The same `teamCountFrom` the write checks, so a locked control never offers
+ * a figure `setTeamCount` would refuse, and a free one is free for the reason
+ * the write leaves it free: the panel cannot yet say how many teams there are.
+ */
+export function countControl(shape: EventShape, accepted: number): CountControl {
+  const fixed = teamCountFrom(shape, accepted);
+  if (shape.sizing.mode === "teams") {
+    return { fixed, note: `Setup → Format says ${shape.sizing.value} teams. Change it there.` };
+  }
+  const side = `Setup → Format sizes the teams at ${shape.sizing.value} a side`;
+  if (fixed !== null) {
+    return {
+      fixed,
+      note: `${side} — ${plural(fixed, "team")} from the ${accepted} accepted. Change the sizing there.`,
+    };
+  }
+  if (accepted === 0) {
+    return {
+      fixed: null,
+      note: `${side}, and nobody is accepted yet — so the count is yours until there are enough to settle it.`,
+    };
+  }
+  const planned = planSides(shape.sizing, accepted);
+  return {
+    fixed: null,
+    note: `${side}. ${planned.ok ? "" : `${planned.error} `}Until then the count is yours.`,
+  };
+}
+
 let counter = 0;
 const nextKey = () => `new-${(counter += 1)}`;
 
@@ -197,10 +369,13 @@ export default function TeamsTab({
   eventId,
   applicants,
   data,
+  shape,
 }: {
   eventId: string;
   applicants: ApplicantView[];
   data: DraftTabData;
+  /** The Format panel's three answers, as stored — `eventShapeFrom(event.config)`. */
+  shape: EventShape;
 }) {
   const router = useRouter();
   const { config, players } = data;
@@ -310,19 +485,19 @@ export default function TeamsTab({
   /* --- Writing the count ----------------------------------------- */
 
   const attemptCount = async () => {
-    if (count === null) return;
+    if (wanted === null) return;
     setCountBusy(true);
     setCountError(null);
     try {
-      if (count < teams.length) {
-        const preview = await previewTeamCountAction(eventId, count);
+      if (wanted < teams.length) {
+        const preview = await previewTeamCountAction(eventId, wanted);
         if (preview.removed.length > 0) {
           setImpact(preview);
-          setPendingCount(count);
+          setPendingCount(wanted);
           return;
         }
       }
-      await commitCount(count);
+      await commitCount(wanted);
     } catch {
       setCountError("Could not reach the server. Nothing was saved.");
     } finally {
@@ -400,7 +575,7 @@ export default function TeamsTab({
       setShuffleNote(
         `Shuffled into ${plural(result.data.teams.length, "team")}${
           result.data.short.length > 0
-            ? ` · ${plural(result.data.short.length, "team")} short of ${data.teamFormat.teamSize}`
+            ? ` · ${plural(result.data.short.length, "team")} ${shortOf}`
             : ""
         }`
       );
@@ -505,19 +680,31 @@ export default function TeamsTab({
   const placeable = unplacedAccepted(applicants, rosters);
 
   /*
-   * UC-41 4, worked out with the same function the write uses.
+   * UC-41 4 and UC-42 6, worked out with the same functions the writes use.
    *
-   * **Sized from the stored format, and from nothing else.** That is what
-   * `assignRandomTeams` reads, so a plan drawn from the chip the admin has
-   * clicked but not saved would promise teams of three and then save teams of
-   * six. There is deliberately no second size in scope for this to be
-   * confused with: the comp each format implies is printed on the chips
-   * themselves, through the real `teamFormatFrom`, rather than held in a
-   * `chosen` variable sitting beside `data.teamFormat` waiting to be picked by
-   * mistake.
+   * **Sized from the Format panel as stored, and from nothing else.** That is
+   * what `assignRandomTeams` and `setTeamCount` read, so a plan drawn from
+   * anything else would promise one shape and save another. The night's comp
+   * chip is printed through the real `teamFormatFrom` and sizes nothing.
    */
   const accepted = acceptedCount(applicants);
-  const planned = planTeams(accepted, data.teamFormat.teamSize);
+  const planned = planSides(shape.sizing, accepted);
+  const stated = sizingConsequence(shape.sizing, accepted).stated;
+  const control = countControl(shape, accepted);
+  /** The count the next write would carry: the panel's, or the admin's. */
+  const wanted = control.fixed ?? count;
+  const gate = shuffleGate({
+    started: data.started,
+    planned,
+    fill: data.fill,
+    teams: data.teams.length,
+    rosterPlaces: rosters.length,
+  });
+  // What a short side is short *of*: the stated side under players per team,
+  // the biggest side under a count of teams, where the gap is always one.
+  const biggest = planned.ok ? Math.max(...planned.plan.sizes) : 0;
+  const shortOf =
+    shape.sizing.mode === "perTeam" ? `short of ${shape.sizing.value}` : "one light";
   const unsavedFormat = format !== data.teamFormat.format;
   const sized = teams.filter((team): team is DraftTeam & { id: string } =>
     team.id !== undefined
@@ -526,6 +713,60 @@ export default function TeamsTab({
   return (
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
+
+      {/* --- Three routes, one set of teams (R-220 / UC-42 6, 6a) --- */}
+      <Panel as="section" padding="none" className="space-y-4">
+        <div className="flex flex-wrap items-baseline gap-3">
+          <Eyebrow>How the teams get filled</Eyebrow>
+          <Badge tone={data.fill.route === "empty" ? "default" : "union"}>
+            {data.fill.route === "empty"
+              ? "Not filled yet"
+              : data.fill.route === "hand"
+                ? "By hand"
+                : data.fill.route === "random"
+                  ? "At random"
+                  : "From the draft"}
+          </Badge>
+        </div>
+
+        {/*
+          Which route filled the teams that exist now. Standing, because it is
+          derived from props alone and is on the page as it arrives; it is the
+          sentence the shuffle's confirmation repeats, so the admin has read it
+          before they are asked (UC-42 6a).
+        */}
+        <Alert tone={data.fill.route === "empty" ? "union" : "success"} standing>
+          {fillSentence(data.fill)}
+        </Alert>
+
+        <ul className="max-w-prose space-y-1.5 text-13 leading-relaxed text-muted">
+          <li>
+            <span className="text-chalk">By hand</span> — place accepted players on the
+            rosters below, one at a time.
+          </li>
+          <li>
+            <span className="text-chalk">At random</span> — deal everybody accepted into sides
+            the Format panel sizes, under Random teams below.
+          </li>
+          <li>
+            {shape.draft ? (
+              <>
+                <span className="text-chalk">From the draft</span> — captains bid for players in
+                the draft room.
+              </>
+            ) : (
+              <>
+                No draft on this event, so the teams are filled here. Setup → Format is where
+                that is decided.
+              </>
+            )}
+          </li>
+        </ul>
+        <p className="max-w-prose text-12 text-dim">
+          Whichever way, it is the same teams: the rosters below are what the draft bids into
+          and what a shuffle replaces.
+        </p>
+      </Panel>
 
       {/* --- The format, and teams nobody picked (UC-41) ----------- */}
       <Panel as="section" padding="none" className="space-y-5">
@@ -561,9 +802,9 @@ export default function TeamsTab({
         </ChoiceRow>
 
         <p className="max-w-prose text-12 text-muted">
-          {data.teamFormat.format} states a {data.teamFormat.comp} comp and makes teams of{" "}
-          {data.teamFormat.teamSize}. The comp is stated, never enforced — nobody is
-          assigned a role, and a team that fields three Duelists is not refused.
+          {data.teamFormat.format} states a {data.teamFormat.comp} comp. The comp is stated,
+          never enforced — nobody is assigned a role, and a team that fields three Duelists is
+          not refused. Teams are sized in Setup → Format, not here.
         </p>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -586,57 +827,46 @@ export default function TeamsTab({
 
           {shuffleError && <Alert tone="flare">{shuffleError}</Alert>}
 
-          {data.started ? (
-            // UC-41 3b. Refused outright rather than confirmed: the lots were
-            // awarded against the teams that exist, so replacing them would
-            // leave the prices paid attached to nothing.
+          {gate.refusal !== null ? (
+            // UC-41 3b and 4b/4c, refused outright rather than confirmed —
+            // `shuffleGate`'s call, not this component's. `standing`, by
+            // `alert-announcement.test.ts`'s rule: derived from props alone, it
+            // is already in the markup when the page arrives, and announcing
+            // it would interrupt every admin opening the tab on an event that
+            // has not filled up yet.
             <Alert tone="union" standing>
-              <span className="block font-medium">
-                The draft has already awarded lots
-              </span>
-              <span className="mt-1 block opacity-90">
-                Random teams would replace the teams those lots were awarded against, so
-                it is refused. Void the lots in the draft room first.
-              </span>
+              {gate.refusal}
             </Alert>
-          ) : planned.ok ? (
-            <p className="max-w-prose text-12 text-muted">
-              {plural(accepted, "accepted player")} make{" "}
-              {plural(planned.plan.teams, "team")} of {planned.plan.sizes.join(", ")}.{" "}
-              {planned.plan.short.length === 0
-                ? `Every team is a full ${data.teamFormat.teamSize}.`
-                : `${planned.plan.short.length === 1 ? "Team" : "Teams"} ${planned.plan.short.join(", ")} ${planned.plan.short.length === 1 ? "is" : "are"} short of ${data.teamFormat.teamSize} — the remainder is spread one per team rather than left on one short team.`}
-            </p>
           ) : (
-            // `standing`, by `alert-announcement.test.ts`'s rule: this is
-            // derived from the applicants and the stored format alone, so it is
-            // already in the markup when the page arrives. Announcing it would
-            // interrupt every admin who opens the tab on an event that has not
-            // filled up yet.
-            <Alert tone="union" standing>
-              {planned.error}
-            </Alert>
+            planned.ok && (
+              <p className="max-w-prose text-12 text-muted">
+                {plural(accepted, "accepted player")} make{" "}
+                {plural(planned.plan.teams, "team")} of {planned.plan.sizes.join(", ")} — sized
+                by {stated} in Setup → Format.{" "}
+                {planned.plan.short.length === 0
+                  ? shape.sizing.mode === "perTeam"
+                    ? `Every team is a full ${shape.sizing.value}.`
+                    : "Every team is the same size."
+                  : `${planned.plan.short.length === 1 ? "Team" : "Teams"} ${planned.plan.short.join(", ")} ${planned.plan.short.length === 1 ? "is" : "are"} ${shortOf} — the remainder is spread one per team rather than left on one short team.`}
+              </p>
+            )
           )}
 
           {/*
-            UC-41 3a, said on the panel rather than only in the dialog.
-            `Modal` renders nothing while it is closed, so a count that lives
-            only inside it is a count no test can read — and step 4 is meant to
-            say what the shuffle costs *before* step 5 asks.
+            UC-41 3a and UC-42 6a, said on the panel rather than only in the
+            dialog. `Modal` renders nothing while it is closed, so a sentence
+            that lives only inside it is one no test can read — and step 4 is
+            meant to say what the shuffle costs *before* step 5 asks.
           */}
-          {!data.started && planned.ok && data.teams.length > 0 && (
-            <p className="max-w-prose text-12 text-union">
-              Shuffling discards the {plural(data.teams.length, "team")} that already
-              exist, with their names, seeds and{" "}
-              {plural(rosters.length, "roster place")}.
-            </p>
+          {gate.replacing !== null && (
+            <p className="max-w-prose text-12 text-union">{gate.replacing}</p>
           )}
 
           <div className="flex flex-wrap items-center gap-3">
             <Button
               size="sm"
               variant="union"
-              disabled={shuffleBusy || data.started || !planned.ok || unsavedFormat}
+              disabled={shuffleBusy || !gate.allowed}
               onClick={() => {
                 setShuffleError(null);
                 setShuffleNote(null);
@@ -646,11 +876,6 @@ export default function TeamsTab({
               {shuffleBusy ? "Shuffling…" : "Make random teams"}
             </Button>
             {shuffleNote && <span className="text-12 text-muted">{shuffleNote}</span>}
-            {unsavedFormat && (
-              <span className="text-12 text-union">
-                Save the format first — the shuffle uses what is stored.
-              </span>
-            )}
           </div>
 
           <p className="max-w-prose text-12 text-dim">
@@ -671,15 +896,22 @@ export default function TeamsTab({
 
         {countError && <Alert>{countError}</Alert>}
 
+        {/*
+          R-218 / UC-42 6: the count follows the Format panel. Locked to its
+          figure once `countControl` has one — the write would refuse anything
+          else — and the admin's own only while the panel cannot say yet.
+        */}
+        <p className="max-w-prose text-12 text-muted">{control.note}</p>
+
         <div className="flex flex-wrap items-end gap-3">
           <label className="min-w-[11rem]">
             <Eyebrow as="span" className="mb-1 block text-inherit">Teams</Eyebrow>
             <Stepper
-              value={count}
+              value={wanted}
               min={MIN_TEAMS}
               max={MAX_TEAMS}
               aria-label="Number of teams"
-              disabled={countBusy}
+              disabled={countBusy || control.fixed !== null}
               onChange={(value) => {
                 setCount(value);
                 setCountError(null);
@@ -689,7 +921,7 @@ export default function TeamsTab({
           <Button
             size="sm"
             variant="union"
-            disabled={countBusy || count === null || count === teams.length}
+            disabled={countBusy || wanted === null || wanted === teams.length}
             onClick={() => void attemptCount()}
           >
             {countBusy ? "Saving…" : "Set team count"}
@@ -1027,20 +1259,17 @@ export default function TeamsTab({
         }
       >
         {/*
-          UC-41 3a: how many teams go, named before anything is written. The
-          count is `data.teams.length` — what the server last told this screen
-          exists — rather than the local edit list, because that is what the
-          write will actually discard.
+          UC-41 3a and UC-42 6a: what goes, named before anything is written,
+          in `shuffleGate`'s own words — the sentence the panel already showed.
+          The count is `data.teams.length`, what the server last told this
+          screen exists, because that is what the write will actually discard.
         */}
-        {data.teams.length > 0 && (
+        {gate.replacing !== null && (
           <Alert tone="flare">
-            <span className="block font-medium">
-              {plural(data.teams.length, "team")} discarded, with{" "}
-              {plural(rosters.length, "roster place")}
-            </span>
+            <span className="block font-medium">{gate.replacing}</span>
             <span className="mt-1 block opacity-90">
-              Their names, seeds and rosters go. Everybody accepted is dealt out again
-              from scratch. Nothing has been changed yet.
+              Everybody accepted is dealt out again from scratch. Nothing has been changed
+              yet.
             </span>
           </Alert>
         )}
@@ -1049,9 +1278,9 @@ export default function TeamsTab({
           <div className="space-y-2">
             <p className="text-14">
               {plural(accepted, "accepted player")} into{" "}
-              {plural(planned.plan.teams, "team")} of {data.teamFormat.teamSize} —{" "}
-              {data.teamFormat.format}, a {data.teamFormat.comp} comp that is stated and
-              not enforced.
+              {plural(planned.plan.teams, "team")} — sized by {stated} in Setup → Format.{" "}
+              {data.teamFormat.format} states a {data.teamFormat.comp} comp, which is not
+              enforced.
             </p>
             <ul className="rounded-lg border border-hair">
               {planned.plan.sizes.map((size, index) => (
@@ -1062,11 +1291,12 @@ export default function TeamsTab({
                   <span className="text-14">Team {index + 1}</span>
                   <span className="flex items-baseline gap-2">
                     <span className="num text-12 text-muted">
-                      {size}/{data.teamFormat.teamSize}
+                      {size}/{shape.sizing.mode === "perTeam" ? shape.sizing.value : biggest}
                     </span>
-                    {size < data.teamFormat.teamSize && (
+                    {planned.plan.short.includes(index + 1) && (
                       <Badge tone="union">
-                        Short by {data.teamFormat.teamSize - size}
+                        Short by{" "}
+                        {(shape.sizing.mode === "perTeam" ? shape.sizing.value : biggest) - size}
                       </Badge>
                     )}
                   </span>

@@ -52,6 +52,8 @@ import {
 // Type-only: `src/lib/format.ts` reaches Postgres, and a value import here
 // would drag Drizzle and PGlite into the browser bundle.
 import type { FormatView, StageClearing, SyncResult } from "@/lib/format";
+// Pure: `ShapeTab` imports the same two from the same client-safe module.
+import { type EventShape, sizingConsequence } from "@/lib/events-policy";
 import { resolveMatches } from "@/lib/format-resolve";
 import { formatWhen } from "@/lib/time";
 import {
@@ -115,9 +117,11 @@ import SaveRow, { type SaveState } from "./SaveRow";
  *
  * ## The team count is not editable here
  *
- * It follows from the Teams tab and nothing on this screen may contradict it.
- * `generateStage` clamps to 2–8 itself, so this shows the number, says where it
- * comes from, and links there.
+ * It follows from the Teams tab once the teams exist, and before then from the
+ * Format panel on Setup (R-218) — the one place the number is *saved*. Nothing
+ * on this screen may contradict either, so it shows the number, says where it
+ * comes from, and names the panel that changes it. See {@link placeholderPlan}
+ * for what it does when the Format panel cannot settle a count yet.
  */
 
 type DraftStage = {
@@ -139,6 +143,9 @@ export default function FormatTab({
   format,
   matchIds,
   maxStages,
+  shape,
+  accepted,
+  capacity,
 }: {
   eventId: string;
   format: FormatView;
@@ -153,6 +160,12 @@ export default function FormatTab({
   matchIds: Record<string, string>;
   /** `MAX_STAGES`, handed down from the server page. */
   maxStages: number;
+  /** The Format panel's answer, `eventShapeFrom(event.config)` — see {@link placeholderPlan}. */
+  shape: EventShape;
+  /** How many applicants are accepted, which is what a players-per-team figure divides. */
+  accepted: number;
+  /** The seat cap, or null when uncapped — what the preview assumes fills when nothing else settles a count. */
+  capacity: number | null;
 }) {
   const router = useRouter();
   const realTeams = format.teams;
@@ -171,19 +184,27 @@ export default function FormatTab({
    * Team 1 to Team N, seeded in order. Everything works — the shapes, the
    * previews, the match counts, the schedule length. They are replaced the
    * moment real teams exist, and nothing about them is ever written down.
+   *
+   * **How many of them is not this screen's to say** (R-218). It used to hold
+   * the number in a `useState` of its own, which is exactly what made it a
+   * preview that never persisted: the admin set a count here, nothing saved
+   * it, and the next load was back where it started. The count is the Format
+   * panel's, which is saved — this reads it and says so.
    */
-  const [previewSize, setPreviewSize] = useState(() => Math.max(realCount, 8));
   const usingPlaceholders = realCount < MIN_TEAMS;
+  // Not memoised: `shape` is rebuilt by the editor on every render, and the
+  // arithmetic is cheaper than the comparison would be.
+  const placeholders = placeholderPlan(shape, accepted, capacity);
   const teams = useMemo(
     () =>
       usingPlaceholders
-        ? Array.from({ length: previewSize }, (_unused, index) => ({
+        ? Array.from({ length: placeholders.count }, (_unused, index) => ({
             id: `placeholder-${index + 1}`,
             name: `Team ${index + 1}`,
             seed: index + 1,
           }))
         : realTeams,
-    [usingPlaceholders, previewSize, realTeams]
+    [usingPlaceholders, placeholders.count, realTeams]
   );
   const teamCount = teams.length;
 
@@ -415,28 +436,7 @@ export default function FormatTab({
         </Badge>
 
         {usingPlaceholders ? (
-          <>
-            <span className="text-12 text-muted">
-              Placeholders. Build the shape now with{" "}
-              <label className="inline-flex items-center gap-1.5">
-                <select
-                  className="field w-auto py-1 text-12"
-                  value={previewSize}
-                  onChange={(input) => setPreviewSize(Number(input.target.value))}
-                >
-                  {Array.from({ length: MAX_TEAMS - MIN_TEAMS + 1 }, (_u, i) => MIN_TEAMS + i).map(
-                    (n) => (
-                      <option key={n} value={n}>
-                        {n} teams
-                      </option>
-                    )
-                  )}
-                </select>
-              </label>{" "}
-              and the real ones take their places as they are formed. Nothing here is written
-              down until the teams exist.
-            </span>
-          </>
+          <span className="text-12 text-muted">Placeholders. {placeholders.sentence}</span>
         ) : (
           <span className="text-12 text-muted">
             From the Teams tab. Every bracket below is built for exactly that many, byes
@@ -1402,6 +1402,68 @@ export function shadowedRounds(spec: GeneratedStage): number[] {
       );
     })
     .sort((x, y) => x - y);
+}
+
+/**
+ * **How many placeholder teams to draw, and the sentence that says why**
+ * (R-218 — the "stuck on 8 teams" report).
+ *
+ * The count is the Format panel's, read through the same `sizingConsequence`
+ * the panel itself prints, so the two screens cannot disagree: a count of teams
+ * is settled the moment it is typed, and players-per-team is settled by the
+ * accepted applicants. Nothing here is stored and nothing here can store — the
+ * panel owns the number, this only reads it.
+ *
+ * ## When the panel cannot settle one yet
+ *
+ * Players-per-team with nobody accepted (UC-42 4a) has nothing to divide, and
+ * the old answer was to draw eight teams and say nothing. The preview still
+ * needs *a* number, so it takes the one assumption an admin sizing a bracket
+ * before applications close actually makes — **every seat fills** — and runs
+ * the same arithmetic over the seat cap, saying that it did. Only when there is
+ * no cap, or a full house would not fit the site's bounds, does it fall to the
+ * smallest event there is, {@link MIN_TEAMS}, and it says that too. The sentence
+ * names what would make the assumption unnecessary, because an assumption the
+ * reader cannot act on is a guess with better manners.
+ *
+ * Exported for its test; pure, so the test is a table.
+ */
+export function placeholderPlan(
+  shape: EventShape,
+  accepted: number,
+  capacity: number | null
+): { count: number; sentence: string } {
+  const settled = sizingConsequence(shape.sizing, accepted);
+  if (settled.teams !== null) {
+    const figure =
+      shape.sizing.mode === "teams"
+        ? settled.stated
+        : `${settled.stated}, which is ${settled.consequence}`;
+    return {
+      count: settled.teams,
+      sentence: `The count is the Format panel’s — ${figure} — and every shape below is built for that many, byes included. The real teams take their places as they are formed, and nothing here is written down until they exist. Setup → Format is where the number changes.`,
+    };
+  }
+
+  // Only players-per-team gets here: a count of teams is settled by being typed.
+  const why = settled.problem ?? "nobody is accepted, so there is nothing to divide.";
+  const lead = `${settled.stated} on Setup → Format does not settle a count yet: ${why} Until it does, this preview`;
+
+  const fullHouse = capacity === null ? null : sizingConsequence(shape.sizing, capacity);
+  if (fullHouse?.teams) {
+    return {
+      count: fullHouse.teams,
+      sentence: `${lead} assumes every one of the ${capacity} seats fills — ${plural(fullHouse.teams, "team")}. Accept applicants and the real count takes over, or set a number of teams there and the assumption goes.`,
+    };
+  }
+
+  const because = fullHouse?.problem
+    ? `a full house would not do: ${fullHouse.problem}`
+    : "there is no seat cap to assume fills.";
+  return {
+    count: MIN_TEAMS,
+    sentence: `${lead} is drawn for the smallest event there is — ${plural(MIN_TEAMS, "team")} — because ${because} Set a number of teams there and it is drawn for that instead.`,
+  };
 }
 
 /** Set or clear one entry of a by-key series map, without mutating it. */

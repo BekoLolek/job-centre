@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { generateStage } from "@/lib/bracket";
+import { eventShapeFrom } from "@/lib/events-policy";
 import type { FormatView, StageView } from "@/lib/format";
 import { DEFAULT_FORMAT_TIMING, normaliseStageConfig } from "@/lib/format-policy";
 import { dayMinutes, planBlocks } from "@/lib/format-schedule";
@@ -111,6 +112,12 @@ function allIds(view: FormatView): Record<string, string> {
   );
 }
 
+/**
+ * The Format panel's answer and the counts it divides. Irrelevant here — every
+ * view in this file has four real teams, and real teams win — so the defaults.
+ */
+const SHAPE = { shape: eventShapeFrom({}), accepted: TEAMS.length * 6, capacity: null };
+
 function renderFormat(stage: StageView): string {
   const view = formatView(stage);
   return renderToStaticMarkup(
@@ -119,6 +126,7 @@ function renderFormat(stage: StageView): string {
       format: view,
       matchIds: allIds(view),
       maxStages: 4,
+      ...SHAPE,
     })
   );
 }
@@ -183,6 +191,7 @@ describe("FormatTab reports what the server decided (UC-18 9a)", () => {
         // No rows at all.
         matchIds: {},
         maxStages: 4,
+        ...SHAPE,
       })
     );
 

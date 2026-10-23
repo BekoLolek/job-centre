@@ -54,6 +54,7 @@ import {
   type DraftPoolEntry,
   type DraftPoolKind,
   type DraftSpin,
+  type EventConfig,
   type EventRow,
   type Team,
   type TeamMember,
@@ -104,12 +105,22 @@ import {
   rosterState,
 } from "./draft-policy";
 import { lockRefusal } from "./archive-policy";
-// The arithmetic and the shuffle, with no database handle of their own — and no
-// `Math.random` anywhere in either (R-216; see `assignRandomTeams`).
-import { dealTeams, planTeams } from "./random-teams";
+// The shuffle, with no database handle of its own — and no `Math.random`
+// anywhere in it (R-216; see `assignRandomTeams`).
+import { dealTeams } from "./random-teams";
+// How the Format panel sizes the teams (R-218), read here so that the random
+// fill, the hand-built count and the screen all plan from one function.
+import {
+  countFollowsFormatRefusal,
+  eventShapeFrom,
+  planSides,
+  teamCountFrom,
+} from "./events-policy";
 // `gatesFor` rather than a second ladder-and-ranks read of its own: the captain
 // rule here has to give the same answer as the applicant list and the apply page.
-import { type EventResult, gatesFor } from "./events";
+// `updateEvent` is the event's one write path, which is how the shuffle leaves
+// its mark on `events.config` without a second way of writing that row.
+import { type EventResult, gatesFor, updateEvent } from "./events";
 
 /* ------------------------------------------------------------------ */
 /* Results                                                            */
@@ -231,6 +242,26 @@ async function acceptedAmong(
       )
     );
   return new Set(rows.map((row) => row.userId));
+}
+
+/**
+ * Everybody holding an accepted place at the event, in application order — the
+ * "accepted participants" UC-41 deals out, counted the same way the Format
+ * panel counts them for its consequence (UC-42 4).
+ *
+ * One read for both `assignRandomTeams` and `setTeamCount`, because the two
+ * have to agree about how many teams the panel implies: the shuffle asks it to
+ * plan, and the count write asks it to check, and a second query phrased even
+ * slightly differently is how the shuffle's own `setTeamCount` could come to
+ * refuse the shuffle.
+ */
+async function acceptedUserIds(database: Database, eventId: string): Promise<string[]> {
+  const rows = await database
+    .select({ userId: applications.userId })
+    .from(applications)
+    .where(and(eq(applications.eventId, eventId), eq(applications.status, "accepted")))
+    .orderBy(asc(applications.submittedAt));
+  return rows.map((row) => row.userId);
 }
 
 /**
@@ -836,6 +867,18 @@ function nextPlaceholderName(taken: Set<string>, from: number): string {
  * transaction, immediately before the delete, and its refusal rolls the whole
  * call back. {@link BeforeRemoval} has the reason it is a parameter here rather
  * than something the action does on its way in.
+ *
+ * ## The count follows the Format panel (R-218, R-220 / UC-42 6)
+ *
+ * Once the panel can say how many teams this event has — `teamCountFrom` — a
+ * different number here is refused rather than written, with the sentence
+ * naming where to change it. The two readings differ on purpose: a stated
+ * count of teams stands whoever is accepted, while players-per-team yields a
+ * count only once the accepted players make two or more sides, rounded up into
+ * a short side rather than dropped. Until then the count is free within 2–8,
+ * so teams can be named before applications close, and a solo event's hidden
+ * tab stays callable (UC-42 5b). Decided **before the first write**, like every
+ * other refusal in here (docs/decisions/004).
  */
 export async function setTeamCount(
   eventId: string,
@@ -858,6 +901,15 @@ export async function setTeamCount(
 
       const locked = lockRefusal(event);
       if (locked) return fail(locked);
+
+      // Ahead of the no-op below, so re-submitting a count the panel has since
+      // contradicted is answered rather than silently accepted.
+      const shape = eventShapeFrom(event.config);
+      const accepted = await acceptedUserIds(tx, eventId);
+      const expected = teamCountFrom(shape, accepted.length);
+      if (expected !== null && count !== expected) {
+        return fail(countFollowsFormatRefusal(shape, accepted.length, expected, count));
+      }
 
       const config = await readConfig(tx, eventId);
       const existing = await readTeams(tx, eventId);
@@ -910,8 +962,6 @@ export async function setTeamCount(
 /* ------------------------------------------------------------------ */
 
 export type RandomTeamsInput = {
-  /** From the stored format: six for 6v6, three for 3v3 (`teamFormatFrom`). */
-  teamSize: number;
   /**
    * The source of randomness, **passed in**. Nothing in this module or in
    * `./random-teams` calls `Math.random`; the action layer is the one place
@@ -940,7 +990,7 @@ export type RandomTeamsResult = {
   teams: Team[];
   /** Who went where, in team order. */
   rosters: Array<{ teamId: string; userIds: string[] }>;
-  /** 1-based positions of the teams that came out short of `teamSize`. */
+  /** 1-based positions of the teams that came out short of the side size the plan was made for. */
   short: number[];
   /** Teams this replaced. */
   discarded: number;
@@ -1021,6 +1071,34 @@ class NothingShuffled extends Error {
  * of the right *size*. It does not assign roles, does not read a hero draw and
  * will not refuse a team fielding three Duelists (R-215 / UC-41 2). Who plays
  * what is the team's conversation.
+ *
+ * ## Sized by the Format panel, read inside the lock (R-218 / UC-42 6)
+ *
+ * There is no `teamSize` input any more. The size used to be the night's comp
+ * — six for 6v6 — handed in by the action; since Task 79 the Format panel
+ * holds the sizing (`eventShape`, a count of teams *or* players per team) and
+ * this reads it off the locked event row through `eventShapeFrom`, whose
+ * default for an event that never saw the panel *is* the comp's size, so
+ * nothing stored before the panel existed shuffles differently. The plan is
+ * `planSides`'s, which is what the Teams tab prints before asking, and the
+ * `setTeamCount` it then calls checks the same figure through the same
+ * function — so the shuffle cannot be refused by the rule it satisfies by
+ * construction.
+ *
+ * ## It leaves a mark saying it was here
+ *
+ * A dealt roster row and a hand-placed one are the same row — price nought,
+ * no lot, not a captain — so nothing on the rows can say afterwards which
+ * route filled them, and the Teams tab has to (UC-42 6a: "fill randomly" over
+ * a hand-built roster is the destructive case). So the shuffle writes
+ * `config.randomFill = { at, teamIds }` through `updateEvent` on this
+ * transaction: the moment, and **the teams it made**. Naming the teams rather
+ * than setting a flag is what lets the marker go inert on its own — discard
+ * those teams and build new ones by hand, and `teamsFillOf` reads "by hand"
+ * because none of the live teams is one the shuffle made. Nothing clears it.
+ * The write comes after the roster rows, so its refusal is thrown rather than
+ * returned (docs/decisions/004, the fourth shape), though every gate that can
+ * actually refuse it has already been passed above.
  */
 export async function assignRandomTeams(
   eventId: string,
@@ -1038,9 +1116,18 @@ export async function assignRandomTeams(
       const locked = lockRefusal(event);
       if (locked) return fail(locked);
 
-      // UC-41 3b, asked first because it is the one refusal that is not about
-      // numbers. `awarded` is the status that matters: an open lot has settled
-      // nothing, and a voided one has been undone.
+      // Sized by the Format panel — see the docblock. A solo event has no
+      // sides to deal into, and the sentence says where that was decided.
+      const shape = eventShapeFrom(event.config);
+      if (!shape.teamEvent) {
+        return fail(
+          "This event has no teams, so there is nothing to shuffle people into. Setup → Format is where that is decided."
+        );
+      }
+
+      // UC-41 3b, asked first among the numbers because it is the one refusal
+      // that is not about them. `awarded` is the status that matters: an open
+      // lot has settled nothing, and a voided one has been undone.
       const awarded = await tx
         .select({ id: draftLots.id })
         .from(draftLots)
@@ -1059,17 +1146,12 @@ export async function assignRandomTeams(
         );
       }
 
-      // The accepted applicants, in application order — the same read
-      // `getUnpooledApplicants` uses, and read inside the lock so it is still
-      // true when the rows land.
-      const accepted = await tx
-        .select({ userId: applications.userId })
-        .from(applications)
-        .where(and(eq(applications.eventId, eventId), eq(applications.status, "accepted")))
-        .orderBy(asc(applications.submittedAt));
-      const userIds = accepted.map((row) => row.userId);
+      // The accepted applicants, in application order, read inside the lock so
+      // it is still true when the rows land — and the same read `setTeamCount`
+      // below checks the count against.
+      const userIds = await acceptedUserIds(tx, eventId);
 
-      const planned = planTeams(userIds.length, input.teamSize);
+      const planned = planSides(shape.sizing, userIds.length);
       if (!planned.ok) return fail(planned.error);
 
       // Everything above decided; the first write is below this line.
@@ -1112,6 +1194,20 @@ export async function assignRandomTeams(
         rosters.push({ teamId: team.id, userIds: squad });
       }
 
+      // The mark — see the docblock. `at` is the same instant the rows above
+      // carry as `acquiredAt`, which is what lets `teamsFillOf` tell a row
+      // dealt here from one placed by hand afterwards.
+      const marked = await updateEvent(
+        eventId,
+        {
+          config: {
+            randomFill: { at: now.toISOString(), teamIds: made.data.teams.map((team) => team.id) },
+          },
+        },
+        tx
+      );
+      if (!marked.ok) throw new NothingShuffled(marked.error);
+
       return withData({
         teams: made.data.teams,
         rosters,
@@ -1123,6 +1219,81 @@ export async function assignRandomTeams(
     if (error instanceof NothingShuffled) return fail(error.refusal);
     throw error;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Which route filled the teams (R-220 / UC-42 6, 6a)                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How the current rosters came to be filled — what the Teams tab says above
+ * its three routes, and what the random fill's confirmation names as the thing
+ * about to be replaced.
+ *
+ * Captains are left out of every count: they are chosen on the Captains tab
+ * and are not a way of filling a team.
+ */
+export type TeamsFill =
+  /** Nobody placed yet, captains aside. */
+  | { route: "empty" }
+  /** Every place was given by hand, one at a time (UC-15 5). */
+  | { route: "hand"; placed: number }
+  /** Dealt by `assignRandomTeams` at `at`; `byHandSince` were placed after it. */
+  | { route: "random"; at: string; dealt: number; byHandSince: number }
+  /** At least one place was won in the draft (UC-16); the rest were by hand. */
+  | { route: "draft"; won: number; byHand: number };
+
+/** The mark `assignRandomTeams` leaves, read back — or null when there is none worth reading. */
+function randomFillFrom(config: EventConfig | null | undefined): { at: Date; teamIds: string[] } | null {
+  const raw = config?.randomFill;
+  if (raw === null || raw === undefined || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const at = typeof raw.at === "string" ? new Date(raw.at) : null;
+  if (!at || Number.isNaN(at.getTime())) return null;
+  const teamIds = Array.isArray(raw.teamIds)
+    ? raw.teamIds.filter((id): id is string => typeof id === "string")
+    : [];
+  return { at, teamIds };
+}
+
+/**
+ * Which route filled these rosters — read off the rows, plus the one fact the
+ * rows cannot carry.
+ *
+ * **The draft first**, because a lot is the strongest provenance a place has:
+ * a row with a `lotId` or a price was won in the room, and once one exists
+ * the teams are the draft's (and a reshuffle is refused anyway, UC-41 3b).
+ * **Then the shuffle**, if its mark names a team that still exists — a row
+ * dealt then is one acquired at the mark's instant, and anything acquired
+ * later was placed by hand on top. **Otherwise by hand**: price nought, no
+ * lot, no mark, is what `placeOnRoster` writes and nothing else does.
+ *
+ * Pure over the rows the page already reads (`getTeams`) and the config it
+ * already holds, so the screen gets it as data and no second read is spent.
+ */
+export function teamsFillOf(
+  teams: readonly Pick<TeamWithRoster, "id" | "members">[],
+  config: EventConfig | null | undefined
+): TeamsFill {
+  const placed = teams.flatMap((team) => team.members).filter((member) => !member.isCaptain);
+  if (placed.length === 0) return { route: "empty" };
+
+  const won = placed.filter((member) => member.lotId !== null || member.price > 0).length;
+  if (won > 0) return { route: "draft", won, byHand: placed.length - won };
+
+  const mark = randomFillFrom(config);
+  if (mark && teams.some((team) => mark.teamIds.includes(team.id))) {
+    const byHandSince = placed.filter(
+      (member) => member.acquiredAt.getTime() > mark.at.getTime()
+    ).length;
+    return {
+      route: "random",
+      at: mark.at.toISOString(),
+      dealt: placed.length - byHandSince,
+      byHandSince,
+    };
+  }
+
+  return { route: "hand", placed: placed.length };
 }
 
 export type CaptainInput = {

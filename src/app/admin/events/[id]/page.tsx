@@ -36,6 +36,7 @@ import {
   getDraftPool,
   getTeams,
   getUnpooledApplicants,
+  teamsFillOf,
 } from "@/lib/draft";
 import {
   MAX_EVENT_DAYS,
@@ -210,6 +211,8 @@ export default async function AdminEventPage({
     // R-215's stored choice. On `events.config` beside the schedule settings,
     // which is why Task 78 needed no migration — see `teamFormatFrom`.
     teamFormat: teamFormatFrom(event.config),
+    // R-220 / UC-42 6a: over the rows already read above, so no extra query.
+    fill: teamsFillOf(teams, event.config),
   };
 
   // One `formatFor` for all three format tabs. It cannot be null here — the

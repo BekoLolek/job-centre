@@ -49,6 +49,17 @@ describe("the vocabulary", () => {
     }
   });
 
+  it("tells the bracket apart from the event's format", () => {
+    /*
+     * Two rows a reader scans for by heading. `event.shape` is the Setup panel
+     * called Format (teams or not, draft or not, how sides are sized), and
+     * `format.stages` is the bracket — so the stages row must not be the one
+     * labelled "Format changed".
+     */
+    expect(actionLabel("format.stages")).toBe("Bracket changed");
+    expect(actionLabel("format.stages")).not.toBe(actionLabel("event.shape"));
+  });
+
   it("renders an action it does not know rather than hiding the row", () => {
     // A log that drops lines it cannot label is worse than one with an ugly
     // line in it — the missing row is exactly the one somebody is looking for.

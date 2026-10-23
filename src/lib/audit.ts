@@ -92,7 +92,9 @@ export const AUDIT_ACTIONS = {
   "result.override": "Winner overturned",
   "match.reflip": "Coin re-flipped",
   "schedule.applied": "Schedule rebuilt",
-  "format.stages": "Format changed",
+  // "Bracket", not "Format": the Setup panel called Format is `event.shape`
+  // above, and this row is the stages — the thing the Bracket step edits.
+  "format.stages": "Bracket changed",
   "format.generated": "Bracket generated",
   "settings.announcements": "Announcements changed",
   "settings.guild_gate": "Sign-in gate changed",

@@ -490,9 +490,10 @@ type CallSite = { where: string; what: string; classes: string[]; written: strin
  *
  * Both forms, and not the component alone, for the reason Task 31 recorded in
  * its own `Left over` note: a sweep keyed to the fixed form cannot report the
- * unfixed one. Four controls wear `.field` by hand rather than through the kit
- * — two in `AvailabilityGrid`, one in `FormatTab`, one in `Stepper` — and all
- * four carry a `w-*` or a `text-*` that `.field` was eating. A sweep matching
+ * unfixed one. Three controls wear `.field` by hand rather than through the kit
+ * — two in `AvailabilityGrid`, one in `Stepper`; `FormatTab`'s went with its
+ * invented team count in Task 82 — and all three carry a `w-*` or a `text-*`
+ * that `.field` was eating. A sweep matching
  * `<Field|Select|Textarea` would have reported the components fixed and said
  * nothing at all about those.
  *
@@ -683,9 +684,9 @@ describe("every field on the site", () => {
     const sites = callSites();
 
     // A floor rather than an equality: adding a field is not a failure. The
-    // numbers are what the site has — 103 kit call sites and 4 hand-rolled.
+    // numbers are what the site has — 103 kit call sites and 3 hand-rolled.
     expect(sites.filter((site) => site.what !== RAW).length).toBeGreaterThanOrEqual(100);
-    expect(sites.filter((site) => site.what === RAW).length).toBeGreaterThanOrEqual(4);
+    expect(sites.filter((site) => site.what === RAW).length).toBeGreaterThanOrEqual(3);
 
     /*
      * And the sweep sees every opening tag there is. `attributesAt` walks the
@@ -773,16 +774,17 @@ describe("every field on the site", () => {
       (site) => JSON.stringify(resolve(BEFORE, site.classes)) !== JSON.stringify(resolve(AFTER, site.classes))
     );
     /*
-     * Nineteen call sites had a utility eaten. Twenty-eight write a `className`
-     * on a field at all; the other nine write only things `.field` never
-     * claimed (`h-32`, `mt-3 max-w-xs`, `min-w-0 flex-1 text-center`) and were
-     * never affected either way. The remaining seventy-nine write nothing and
-     * are the `quiet` set above.
+     * Eighteen call sites had a utility eaten (nineteen before Task 82 took
+     * the bracket tab's team-count `<select>` away). Twenty-seven write a
+     * `className` on a field at all; the other nine write only things `.field`
+     * never claimed (`h-32`, `mt-3 max-w-xs`, `min-w-0 flex-1 text-center`) and
+     * were never affected either way. The remaining seventy-nine write nothing
+     * and are the `quiet` set above.
      *
      * A floor, not an equality: adding a field is not a failure.
      */
     expect(loud.length, "no call site writes a utility that used to be eaten").toBeGreaterThanOrEqual(
-      19
+      18
     );
 
     for (const site of loud) {

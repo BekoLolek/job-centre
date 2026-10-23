@@ -779,6 +779,9 @@ A reconciliation of every acceptance criterion against the tree (2026-10-22, at 
 - **A mutation that does not apply is not a kill, and this repo's line endings make that easy to miss.** Task 77's harness scored two mutations as caught when its multi-line patterns had matched **nothing**: `GamesManager.tsx` is CRLF and the finds used `
 `. It reported them as BAD-PATCH rather than counting them, which is the only reason it was noticed — a harness that merely diffs green-to-red would have recorded two kills for two edits that never happened. **Require the anchor to match exactly once and fail loudly when it does not**, and remember that files here are CRLF on disk.
   Related, from Task 75: a mutation can also turn red for the *wrong reason*. Deleting an `onConflictDoNothing` failed its test with `returning is not a function` — the sequencing proxy breaking, not the database refusing. Both shapes produce a green-to-red transition that proves nothing about the guard.
+- **A new rule breaking an old fixture is a question about the fixture, not licence to weaken the rule.** Task 81 made `setTeamCount` refuse a count the Format panel contradicts, and that refusal fired on a Task 79 fixture which built four teams on a default six-a-side event with twelve accepted. Two ways out: narrow the refusal, or make the fixture state the shape it meant. The fixture gave way, and the test is better for it — it was *about* the discard confirmation, and it now arrives there through a premise it states out loud instead of one it got away with. The tell that this is the right direction: nothing about the assertion changed, only the setup.
+  The same question arrived in reverse through a **floor**. Task 82 removed one of the four hand-rolled `.field` controls Task 31 found, so `field-ordering.test.ts`'s floors dropped 4 → 3 and 19 → 18. A lowered floor looks exactly like a weakened guard, so the docblock now names which control went and in which task. **A floor that is lowered without saying what left stops being evidence of anything.**
+
 - **The scratchpad is shared between concurrent agents.** Task 77 had its `mutate.mjs` overwritten mid-run by another agent; its process had already loaded the file so the run survived, but it moved to a private subdirectory and checked every failure name against its own mutation's target before trusting the results. A harness in the shared scratchpad is not private.
 
 - **A test file can vouch for the route it tests.** Task 84's inbound-link sweep matches `href` literals across `src`, and its own helper spelled out `href="/events/${slug}/draw"` — so the sweep read the **test** as an inbound link and passed with the real link deleted. Found by mutation (disabling the `__tests__` exclusion), and fixed twice over: `__tests__` is excluded as a link source, and the attribute name is now joined to the path only at runtime so the adjacency does not exist in the file at all.
@@ -1402,13 +1405,22 @@ Task 82 retires it rather than patching the number.
   **Say which route filled the current teams**, because "fill randomly" over a hand-built roster is the destructive case and the admin needs to know what they are replacing. Task 78's confirmation (naming how many teams would be discarded) is the precedent.
   A draft that has awarded lots still refuses a reshuffle outright (UC-41 3b) — that rule is Task 78's and does not change here.
 - **Acceptance criteria:**
-  - [ ] All three routes fill the same teams, and the screen says which was used
-  - [ ] Random reuses Task 78's shuffle — asserted by the test, not by inspection
-  - [ ] Replacing hand-built teams needs confirmation naming what goes
-  - [ ] A started draft refuses a reshuffle, nothing written
-  - [ ] The team count follows the Format panel, and disagreeing with it is refused
-  - [ ] Works at 400px
+  - [x] All three routes fill the same teams, and the screen says which was used
+  - [x] Random reuses Task 78's shuffle — asserted by the test, not by inspection
+  - [x] Replacing hand-built teams needs confirmation naming what goes
+  - [x] A started draft refuses a reshuffle, nothing written
+  - [x] The team count follows the Format panel, and disagreeing with it is refused
+  - [x] Works at 400px — structural evidence only, stated below
 - **Depends on:** Tasks 78, 79.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **The route is recorded by a mark, not inferred from the rows.** A dealt row and a hand-placed row are identical — price 0, no lot, not captain — so there is nothing to read. The shuffle writes top-level `events.config.randomFill = { at, teamIds }`, **naming the teams it made** rather than setting a flag, which is why it needs no clearing: discard those teams and it goes inert and the screen reads "by hand" again. Hand placements after a shuffle are counted by `acquiredAt > at` (the shuffle stamps every row with one `now`); a hand *move* of a dealt player is **not** counted, which is accepted rather than overlooked. No migration — `EventConfig`'s index signature, `drizzle/` untouched. Rejected: deriving the route from the audit log (brittle, and the log is not domain state) and a `team_members.source` column (a migration, and files outside this task).
+  **The Format panel now sizes the shuffle, and the 6v6/3v3 chip only states the comp.** `RandomTeamsInput.teamSize` is gone and the library reads `eventShapeFrom` inside the lock, so the size cannot be chosen by the caller. Backward compatibility is not argued but shown: default sizing for an event that never saw the panel *is* the comp's size, and `random-teams-actions.test.ts`'s "4 teams at 3v3" passes unchanged. The old "save the format first" guard on the shuffle was removed as obsolete.
+  **The count refusal is about the number of teams, and it fires only when the panel actually has a count.** Teams mode: the panel's number stands whoever is accepted. Per-team mode: the count is `planTeams`'s, so a fractional team rounds **up** into a short side (Task 78's rule, with the direction mutation-proved). With nobody accepted, too few, or exactly one team's worth there is no count and the 2–8 bound is the only rule — which is what keeps pre-acceptance team building and UC-42 5b's "hiding is not forbidding" both working. The refusal sits **ahead of the no-op return**, so re-submitting a contradicted count is answered rather than silently accepted.
+  **It landed on Task 79's own fixture, and the fixture gave way rather than the rule.** `shape-panel.test.ts` built four teams on a default six-a-side event with twelve accepted, which the new refusal correctly rejects as two. The fixture now states the shape first — a strictly better test, because it exercises the agreement rule on the way to the discard confirmation it was actually about.
+  **`planSides` sits beside `sizingConsequence` rather than inside it**, and the two are held against each other over 700+ combinations. The consequence is that the panel's teams-mode sentence still prints "1, 1, 1, 0 from the 3 accepted" where `planSides` refuses — **folding that refusal into Task 79's panel copy is a one-line follow-up that was deliberately not taken** here, to keep one task from rewriting another's wording.
+  **`events-policy.ts` is the shared home because `TeamsTab` is `"use client"`** and may not import values from `draft.ts`, which reaches Postgres. `TeamsFill` crosses as a **type only**. That is the `/admin/settings` boundary again, arriving from a third direction.
+  **Two survivors, both by construction and both stated.** The confirm dialog's sentence cannot be mutated out of the markup because `Modal` renders null while closed and the dialog reads the same `gate.replacing` the panel prints. And returning the mark's refusal instead of throwing commits nothing either way, because `updateEvent` cannot refuse at that point — the lock and the status have already passed; the throw is kept as the invariant, exactly as Task 78 kept `releaseTeamsFromMatches`'s. Decision 004 shape 4 for that write, shape 1 for every other refusal in the function.
+  **400px is structural, not a measurement** — a dev server was forbidden. Asserted: nothing this task added carries a `min-w` or fixed width above 368px, every flex row it added wraps, and every control is a `Button`/`Stepper`/`ChoiceChip`. Two mutations kill it.
 
 ### Task 82: Retire the bracket tab's invented team count
 
@@ -1418,11 +1430,17 @@ Task 82 retires it rather than patching the number.
   **The placeholders themselves were a good idea and should survive** — the docblock's argument is sound: the format is the decision an admin wants to make *first*, before applications close and before anybody knows who is captaining what, so requiring real teams to preview a bracket is backwards. What has to change is where the number comes from: **the Format panel's team count**, which is real and saved, instead of a local `useState` seeded with 8.
   Where the Format panel says players-per-team and the accepted count is not yet known, the preview falls back to a stated assumption rather than a silent 8.
 - **Acceptance criteria:**
-  - [ ] The bracket preview uses the Format panel's count, and changing it there changes the preview
-  - [ ] No literal 8 survives as a team-count default
-  - [ ] Placeholders still work before any real team exists
-  - [ ] When the count cannot be derived yet, the screen says what it is assuming
+  - [x] The bracket preview uses the Format panel's count, and changing it there changes the preview
+  - [x] No literal 8 survives as a team-count default — sweep scoped to `FormatTab.tsx`, stated below
+  - [x] Placeholders still work before any real team exists
+  - [x] When the count cannot be derived yet, the screen says what it is assuming
 - **Depends on:** Task 79.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The count is the Format panel's, through the same `sizingConsequence` the panel itself prints**, so the two screens cannot disagree about what the number means. `placeholderPlan(shape, accepted, capacity)` is pure and exported; the preview still persists nothing and cannot reach `saveEventShapeAction`, which is asserted by a source sweep rather than assumed.
+  **The stated assumption is "every seat fills".** With per-team sizing and nobody accepted — the default for *every* fresh event, since an absent `eventShape` reads as per-team — the preview runs the panel's own arithmetic over `events.seats.capacity` and says so, naming what ends the assumption ("Accept applicants and the real count takes over, or set a number of teams there and the assumption goes"). Only with no cap at all, or a full house that falls outside the site's 2–8 bound, does it fall to `MIN_TEAMS`, and it says that too. Where some are accepted but too few, it carries **the planner's own refusal verbatim** rather than paraphrasing it.
+  **The "no literal 8" sweep is scoped to `FormatTab.tsx` with comments stripped, and the scope is stated in the test rather than implied.** That is the self-vouching trap this criterion walks straight into: a repo-wide sweep would have read the test's own fixtures and the docblock's account of the old behaviour. Proved both ways — a bare `8` dies, an `8` inside a comment survives, and that survivor is kept deliberately as proof the stripper works.
+  **Removing the `<select>` lowered `field-ordering.test.ts`'s floors by one** (4 → 3 hand-rolled `.field` controls, 19 → 18 writing an eaten utility), because `FormatTab`'s was one of the four Task 31 found. The docblock names which one went and why, so the next reader does not take the lower number for a weakened guard.
+  **`audit.ts`'s `format.stages` is now "Bracket changed"** — Task 79's relabel made "Format changed" ambiguous between the bracket and the new panel. Nothing asserted the old string. **Not browser-verified**, structural only: the placeholder line is a wrapping `<span>` in the existing `flex-wrap` panel, and the inline `<select>` it replaced was the one thing there that could not wrap.
 
 ### Task 83: Post an announcement by hand (R-221 to R-223 / UC-43)
 

@@ -70,7 +70,12 @@ import {
 } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
 import { getEventById, updateEvent } from "@/lib/events";
-import { type TeamFormat, isNightFormat, teamFormatFrom } from "@/lib/events-policy";
+import {
+  type TeamFormat,
+  eventShapeFrom,
+  isNightFormat,
+  teamFormatFrom,
+} from "@/lib/events-policy";
 import {
   type SyncResult,
   type TeamRelease,
@@ -415,10 +420,11 @@ export async function saveNightFormatAction(
  * Re-running is allowed and expected (5a) — this is the admin's own tool, and
  * 3a is what stops a reshuffle being an accident.
  *
- * The team size is read from the **stored** format rather than taken from the
- * browser: the format is a decision with its own write and its own audit line,
- * and a size sent beside the request would be a second place it could be
- * decided.
+ * Nothing about the size travels with the request. `assignRandomTeams` reads
+ * the Format panel's sizing off the locked event row itself (R-218 / UC-42 6);
+ * the night's comp is read here only to be named in the log line, because the
+ * admin still reads "6v6" on the Teams tab and the audit should say what they
+ * saw.
  */
 export async function randomiseTeamsAction(
   eventId: string,
@@ -434,12 +440,12 @@ export async function randomiseTeamsAction(
 > {
   const admin = await requireEventManager(eventId);
 
-  // Read from what is stored, never from a size sent beside the request: the
-  // format is its own decision with its own audit line.
-  const teamFormat = teamFormatFrom((await getEventById(eventId))?.config);
+  // Both read from what is stored, never from anything sent beside the request.
+  const config = (await getEventById(eventId))?.config;
+  const teamFormat = teamFormatFrom(config);
+  const sizing = eventShapeFrom(config).sizing;
 
   const result = await assignRandomTeams(eventId, {
-    teamSize: teamFormat.teamSize,
     random: Math.random,
     replace,
     /*
@@ -457,10 +463,10 @@ export async function randomiseTeamsAction(
     action: "team.random",
     actor: admin,
     eventId,
-    summary: `Shuffled ${result.data.rosters.reduce((total, row) => total + row.userIds.length, 0)} accepted players into ${result.data.teams.length} random teams of ${teamFormat.teamSize} (${teamFormat.format})${result.data.discarded > 0 ? `, replacing ${result.data.discarded}` : ""}.`,
+    summary: `Shuffled ${result.data.rosters.reduce((total, row) => total + row.userIds.length, 0)} accepted players into ${result.data.teams.length} random teams, sized by ${sizing.mode === "teams" ? `${sizing.value} teams` : `${sizing.value} per team`} (${teamFormat.format})${result.data.discarded > 0 ? `, replacing ${result.data.discarded}` : ""}.`,
     detail: {
       format: teamFormat.format,
-      teamSize: teamFormat.teamSize,
+      sizing: { mode: sizing.mode, value: sizing.value },
       teams: result.data.teams.length,
       short: result.data.short,
       discarded: result.data.discarded,

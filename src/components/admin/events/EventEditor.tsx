@@ -387,6 +387,9 @@ function EditorBody({
             format={format.view}
             matchIds={format.matchIds}
             maxStages={maxStages}
+            shape={shape}
+            accepted={accepted}
+            capacity={event.seats.capacity}
           />
         )}
         {here === "schedule" && (
@@ -412,7 +415,7 @@ function EditorBody({
 
         {here === "applicants" && <ApplicantsTab event={event} applicants={applicants} />}
         {here === "teams" && (
-          <TeamsTab eventId={event.id} applicants={applicants} data={draft} />
+          <TeamsTab eventId={event.id} applicants={applicants} data={draft} shape={shape} />
         )}
         {here === "captains" && (
           <CaptainsTab eventId={event.id} event={event} applicants={applicants} data={draft} />

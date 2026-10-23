@@ -435,6 +435,16 @@ describe("a link to a tab the event no longer has", () => {
     // The teams come off the page's own read, so a solo-bound event with teams
     // already on it shows the discard confirmation rather than a bare switch.
     const { eventId, host } = await hostedEvent(12);
+    // Four teams is what the Format panel says first, because since Task 81
+    // `setTeamCount` refuses a count the panel contradicts (twelve at six a
+    // side would be two).
+    unwrap(
+      await updateEvent(
+        eventId,
+        { config: { eventShape: { teamEvent: true, draft: true, sizing: { mode: "teams", value: 4 } } } },
+        db
+      )
+    );
     unwrap(await setTeamCount(eventId, 4, db));
     unwrap(await updateEvent(eventId, { config: SOLO }, db));
 

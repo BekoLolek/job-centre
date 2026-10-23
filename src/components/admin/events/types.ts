@@ -9,6 +9,7 @@ import type {
   RecordedPlacement,
 } from "@/lib/championship-results";
 import type { EventChampionship } from "@/lib/championships";
+import type { TeamsFill } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
 import type { TeamFormat } from "@/lib/events-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
@@ -85,6 +86,15 @@ export type DraftTabData = {
    * tab reads it back to refuse anything (UC-41 2).
    */
   teamFormat: TeamFormat;
+  /**
+   * Which route filled the current rosters — by hand, at random, or the draft
+   * (R-220 / UC-42 6a) — from `teamsFillOf` over the same `getTeams` rows the
+   * teams above came from, plus the mark the shuffle leaves on the event.
+   *
+   * Computed on the server because the answer needs `lotId` and `acquiredAt`,
+   * which `TeamLike` deliberately does not carry to the client.
+   */
+  fill: TeamsFill;
 };
 
 /**

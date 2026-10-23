@@ -391,27 +391,30 @@ const CLASSIFIED: Record<string, Bucket[]> = {
    */
   "src/components/admin/events/ShapeTab.tsx": ["announced", "standing"],
   /*
-   * Twelve, five of them Task 78's (R-215, R-216 / UC-41).
+   * Twelve — Task 78's five became four when Task 81 folded the two shuffle
+   * refusals into one `shuffleGate` site, and Task 81 added one (R-220 / UC-42 6).
    *
-   * In source order: the list's save error; the format save error; the shuffle
-   * error; "the draft has already awarded lots" (UC-41 3b); why the numbers
-   * cannot make teams (UC-41 4b); the count error; "will be removed when you
-   * save"; the roster error; "the draft has started"; the shuffle confirm's
-   * discard warning; and the removal dialog's two branches.
+   * In source order: the list's save error; **which route filled the current
+   * teams** (Task 81); the format save error; the shuffle error; the shuffle
+   * gate's refusal — "the draft has already awarded lots" (UC-41 3b) or why the
+   * numbers cannot make teams (UC-41 4b), one site now; the count error; "will
+   * be removed when you save"; the roster error; "the draft has started"; the
+   * shuffle confirm's replacement warning; and the removal dialog's two branches.
    *
-   * The two new `standing` ones are both derived from server props alone —
-   * `data.started`, and `planTeams` over the accepted applicants and the
-   * stored format — so both are already in the markup when the tab arrives,
-   * and an admin opening an event that has not filled up yet must not be
-   * interrupted by either. The shuffle confirm's warning is announced for the
-   * reason every modal body here is: `Modal` returns null when closed, so it
-   * is on the page only because the admin asked for random teams.
+   * The three `standing` ones are all derived from server props alone — the
+   * fill off `data.fill`, the gate off `data.started` and `planSides` over the
+   * accepted applicants and the Format panel's sizing, and `data.started`
+   * again — so each is already in the markup when the tab arrives, and an
+   * admin opening an event must not be interrupted by any of them. The
+   * shuffle confirm's warning is announced for the reason every modal body
+   * here is: `Modal` returns null when closed, so it is on the page only
+   * because the admin asked for random teams.
    */
   "src/components/admin/events/TeamsTab.tsx": [
     "announced",
-    "announced",
-    "announced",
     "standing",
+    "announced",
+    "announced",
     "standing",
     "announced",
     "announced",

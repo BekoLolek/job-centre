@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MemberLike, TeamLike } from "@/components/draft";
 import { DEFAULT_DRAFT_CONFIG, rosterState } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
-import { teamFormatFrom } from "@/lib/events-policy";
+import { eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
 import { applicant } from "./applicants-fixture";
 import type { DraftTabData } from "../types";
 
@@ -96,14 +96,18 @@ function tabData(over: Partial<DraftTabData> = {}): DraftTabData {
     // The real reader, not a literal: a hand-written format is what lets the
     // screen and the rule it prints drift apart.
     teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
+    fill: { route: "empty" },
     ...over,
   };
 }
 
 /** The raw markup, for the things that live in attributes. */
 function markup(applicants: ApplicantView[], data: DraftTabData): string {
+  // The shape an event that never saw the Format panel has: sized by its own
+  // comp, through the real reader, so 3v3 fixtures still plan at three.
+  const shape = eventShapeFrom({ teamFormat: data.teamFormat.format });
   return renderToStaticMarkup(
-    createElement(TeamsTab, { eventId: "event-1", applicants, data })
+    createElement(TeamsTab, { eventId: "event-1", applicants, data, shape })
   );
 }
 
@@ -152,17 +156,20 @@ describe("the people the shuffle has to work with", () => {
 /* ------------------------------------------------------------------ */
 
 describe("the comp is stated, never enforced", () => {
-  it("states 2-2-2 and teams of six at 6v6", () => {
+  it("states 2-2-2 at 6v6, and says the sizing lives on the Format panel", () => {
+    // Since Task 81 the chip states the comp and sizes nothing; the Format
+    // panel sizes the teams, and this sentence says where.
     const screen = render(people(12), tabData());
-    expect(screen).toContain("6v6 states a 2-2-2 comp and makes teams of 6");
+    expect(screen).toContain("6v6 states a 2-2-2 comp.");
+    expect(screen).toContain("Teams are sized in Setup → Format, not here.");
   });
 
-  it("states 1-1-1 and teams of three at 3v3", () => {
+  it("states 1-1-1 at 3v3", () => {
     const screen = render(
       people(12),
       tabData({ teamFormat: teamFormatFrom({ teamFormat: "3v3" }) })
     );
-    expect(screen).toContain("3v3 states a 1-1-1 comp and makes teams of 3");
+    expect(screen).toContain("3v3 states a 1-1-1 comp.");
   });
 
   it("says in as many words that it is not enforced", () => {
@@ -260,11 +267,14 @@ describe("what the screen says before the shuffle runs", () => {
             { teamId: "t2", userId: "accepted-1", price: 0, isCaptain: false },
           ]),
         ],
+        // What the page would say of these rows: one place, by hand (the
+        // captain is not a placement).
+        fill: { route: "hand", placed: 1 },
       })
     );
 
     expect(screen).toContain(
-      "Shuffling discards the 2 teams that already exist, with their names, seeds and 2 roster places."
+      "Shuffling discards the 2 teams that already exist, with their names, seeds and 2 roster places — every one of them placed by hand."
     );
   });
 

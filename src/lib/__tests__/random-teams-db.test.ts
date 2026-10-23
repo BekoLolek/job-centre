@@ -19,7 +19,7 @@ import {
   setTeams,
   voidLot,
 } from "@/lib/draft";
-import { applyToEvent, createEvent, publishEvent } from "@/lib/events";
+import { applyToEvent, createEvent, publishEvent, updateEvent } from "@/lib/events";
 import { planTeams } from "@/lib/random-teams";
 
 /**
@@ -144,7 +144,7 @@ describe("shuffling the accepted participants into teams", () => {
     const fixture = await seededEvent(12);
 
     const result = unwrap(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db)
     );
 
     expect(result.teams).toHaveLength(2);
@@ -169,7 +169,7 @@ describe("shuffling the accepted participants into teams", () => {
     if (!plan.ok) throw new Error(plan.error);
 
     const result = unwrap(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db)
     );
 
     // Seed 1 over twelve players in application order, pinned in the pure
@@ -189,7 +189,7 @@ describe("shuffling the accepted participants into teams", () => {
     const fixture = await seededEvent(16);
 
     const result = unwrap(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(5) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(5) }, db)
     );
 
     expect(result.teams).toHaveLength(3);
@@ -202,10 +202,13 @@ describe("shuffling the accepted participants into teams", () => {
   });
 
   it("sizes 3v3 teams at three from the same head count", async () => {
+    // The size is read off the event, not handed in: `eventShapeFrom` reads an
+    // event that has never seen the Format panel as the night's own comp.
     const fixture = await seededEvent(12);
+    unwrap(await updateEvent(fixture.eventId, { config: { teamFormat: "3v3" } }, db));
 
     const result = unwrap(
-      await assignRandomTeams(fixture.eventId, { teamSize: 3, random: seeded(2) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(2) }, db)
     );
 
     expect(result.teams).toHaveLength(4);
@@ -218,7 +221,7 @@ describe("shuffling the accepted participants into teams", () => {
     // `name_is_custom = false` (UC-15 4), which is why the shuffle goes
     // through it rather than writing team rows itself.
     const fixture = await seededEvent(12);
-    unwrap(await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db));
+    unwrap(await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db));
 
     const teams = await storedTeams(fixture.eventId);
     expect(teams.map((team) => team.name)).toEqual(["Team 1", "Team 2"]);
@@ -227,7 +230,7 @@ describe("shuffling the accepted participants into teams", () => {
 
   it("deals nobody a price and nobody a captaincy", async () => {
     const fixture = await seededEvent(12);
-    unwrap(await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db));
+    unwrap(await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db));
 
     const rows = await db
       .select()
@@ -267,7 +270,7 @@ describe("shuffling the accepted participants into teams", () => {
       );
 
     const result = unwrap(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(3) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(3) }, db)
     );
 
     const dealt = result.rosters.flatMap((row) => row.userIds);
@@ -291,7 +294,7 @@ describe("teams that already exist", () => {
     const before = await snapshot(fixture.eventId);
 
     const error = refusal(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db)
     );
 
     // Names how many would go (UC-41 3a).
@@ -312,7 +315,7 @@ describe("teams that already exist", () => {
     const result = unwrap(
       await assignRandomTeams(
         fixture.eventId,
-        { teamSize: 6, random: seeded(1), replace: true },
+        { random: seeded(1), replace: true },
         db
       )
     );
@@ -329,12 +332,12 @@ describe("teams that already exist", () => {
     const fixture = await seededEvent(12);
 
     const first = unwrap(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db)
     );
     const second = unwrap(
       await assignRandomTeams(
         fixture.eventId,
-        { teamSize: 6, random: seeded(4), replace: true },
+        { random: seeded(4), replace: true },
         db
       )
     );
@@ -375,7 +378,7 @@ describe("teams that already exist", () => {
     unwrap(
       await assignRandomTeams(
         fixture.eventId,
-        { teamSize: 6, random: seeded(1), replace: true },
+        { random: seeded(1), replace: true },
         db
       )
     );
@@ -412,7 +415,7 @@ describe("refusing to shuffle", () => {
     const error = refusal(
       await assignRandomTeams(
         fixture.eventId,
-        { teamSize: 6, random: seeded(1), replace: true },
+        { random: seeded(1), replace: true },
         db
       )
     );
@@ -478,7 +481,7 @@ describe("refusing to shuffle", () => {
     const error = refusal(
       await assignRandomTeams(
         fixture.eventId,
-        { teamSize: 6, random: seeded(1), replace: true },
+        { random: seeded(1), replace: true },
         db
       )
     );
@@ -493,7 +496,7 @@ describe("refusing to shuffle", () => {
     const before = await snapshot(fixture.eventId);
 
     const error = refusal(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db)
     );
 
     expect(error).toContain("4");
@@ -506,7 +509,7 @@ describe("refusing to shuffle", () => {
     const fixture = await seededEvent(6);
 
     const error = refusal(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db)
     );
 
     expect(error).toContain("one team");
@@ -517,7 +520,7 @@ describe("refusing to shuffle", () => {
     const error = refusal(
       await assignRandomTeams(
         "00000000-0000-0000-0000-000000000000",
-        { teamSize: 6, random: seeded(1) },
+        { random: seeded(1) },
         db
       )
     );
@@ -534,7 +537,7 @@ describe("refusing to shuffle", () => {
       .where(eq(eventsTable.id, fixture.eventId));
 
     const error = refusal(
-      await assignRandomTeams(fixture.eventId, { teamSize: 6, random: seeded(1) }, db)
+      await assignRandomTeams(fixture.eventId, { random: seeded(1) }, db)
     );
 
     expect(error.length).toBeGreaterThan(0);
