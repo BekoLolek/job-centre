@@ -34,6 +34,7 @@ import type {
 } from "@/db/schema";
 import { MAX_TEAMS, MIN_TEAMS } from "@/lib/draft-policy";
 import { type TeamPlanResult, planTeams } from "@/lib/random-teams";
+import { MAX_ROUNDS, type RoundSetup } from "@/lib/round-scoring";
 
 /* ------------------------------------------------------------------ */
 /* Status                                                             */
@@ -1649,4 +1650,293 @@ export function promoteFromWaitlist<T extends WaitlistApplication>(
     waitlist: recomputeWaitlist(after),
     seatsLeft: capacity === null ? null : Math.max(0, capacity - accepted - promoted.length),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* How a solo night is scored (R-225, R-226, R-229 / UC-44)           */
+/* ------------------------------------------------------------------ */
+
+/** A round as the naming rule needs it: what it is called, if anything. */
+export type RoundView = {
+  /** The name the manager gave it. Absent is "Round N" (R-225). */
+  name?: string | null;
+};
+
+/**
+ * The Scoring panel's whole answer — UC-44 2, 3 and 4 — and the one shape the
+ * stored key, the panel, the action and the ranking all agree on.
+ *
+ * **Extends `RoundSetup` rather than restating its two fields**, so a stored
+ * setup is `rankRounds`'s input with no mapping step: there is one vocabulary
+ * for "which way does this night score" and "what is a bonus worth", and it is
+ * `src/lib/round-scoring.ts`'s. What this adds is what the ranking does not
+ * care about — how many rounds there are and what each is called.
+ *
+ * The count is `rounds.length`, not a second field beside the list, because
+ * two fields for one fact are a disagreement waiting to happen.
+ *
+ * A bonus's `key` is its **name**. UC-44 4b says a bonus is picked out on the
+ * scoring screen by its name, and the awards on a score row are keyed by the
+ * same string — so renaming a bonus is deleting the old one, and
+ * {@link roundScoringLosses} says so rather than letting the awards go quiet.
+ */
+export type RoundScoring = RoundSetup & {
+  /** `name` is `null` rather than absent, so the stored object is a `SettingValue`. */
+  rounds: readonly { name: string | null }[];
+};
+
+/**
+ * Where the panel starts on a night nobody has set up: one round, highest
+ * score wins, no bonuses. The smallest legal setup, and nothing it says is a
+ * guess about the game — the manager changes every part of it on the panel.
+ */
+export const DEFAULT_ROUND_SCORING: RoundScoring = Object.freeze({
+  rounds: Object.freeze([{ name: null }]),
+  lowWins: false,
+  bonuses: Object.freeze([]),
+});
+
+/**
+ * The name the manager gave this round, or `null` when they did not — `dayLabel`'s
+ * question, asked of a round.
+ *
+ * One trim, in one place, so "is there a name?" and "what is this round called?"
+ * cannot disagree about a name of spaces. The panel labels each name box by
+ * position ("Round 3"), so it needs this rather than {@link roundName}: a round
+ * with no name of its own must show no hint rather than "Round 3" twice.
+ */
+export function givenRoundName(round: RoundView | undefined): string | null {
+  const name = typeof round?.name === "string" ? round.name.trim() : "";
+  return name === "" ? null : name;
+}
+
+/**
+ * "Round 2", or the name the manager gave it (R-225) — `dayName`'s rule.
+ *
+ * `index` is the round's **position in the list**, 0-based like `dayName`'s, so
+ * `rounds.map(roundName)` works; an `event_round_scores.roundIndex` is 1-based
+ * and a caller holding one passes `roundIndex - 1`.
+ */
+export function roundName(round: RoundView | undefined, index: number): string {
+  return givenRoundName(round) ?? `Round ${index + 1}`;
+}
+
+/**
+ * The scoring setup, resolved — or **`null` for an event that is not scored in
+ * rounds**, which is every event that has never saved the Scoring panel.
+ *
+ * ## Absent reads as the event that exists today
+ *
+ * The opposite default from `eventShapeFrom`, for exactly its reason: absent
+ * must read as the event that already exists, and today no event on the site is
+ * scored in rounds. A default of "scored" would make every solo event claim a
+ * scoring system it has never had — a Results tab asking for rounds nobody
+ * played, and a championship reading places off an empty table (R-236).
+ *
+ * ## One top-level key, for Task 78's reason
+ *
+ * `config.roundScoring` is a sibling of `config.format`, never inside it.
+ * `updateEvent` merges a config patch one level deep and
+ * `saveScheduleSettingsAction` rewrites the whole of `config.format`, so a
+ * setup nested there would be erased the next time anybody opened the Schedule
+ * tab. The only writer is `saveRoundScoring`, which writes the whole object, so
+ * there is no half-written setup to read. No migration: `EventConfig` ends in
+ * an index signature.
+ *
+ * ## What counts as a setup
+ *
+ * An object with a `rounds` list is one. Anything else under the key — a
+ * string, an array, an object with no rounds — is not a setup and reads as not
+ * round-scored, since there is nothing in it a round could be scored against.
+ * Inside a setup, a round that is not an object is an unnamed round and a bonus
+ * missing a string name or a numeric value is dropped; the reader is lenient
+ * because the public page reads this, and {@link roundScoringProblem} is where
+ * a bad setup is refused rather than here.
+ */
+export function roundScoringFrom(config: EventConfig | null | undefined): RoundScoring | null {
+  const stored = record(config?.roundScoring);
+  if (!Array.isArray(stored.rounds)) return null;
+
+  const bonuses = Array.isArray(stored.bonuses) ? stored.bonuses : [];
+  return {
+    rounds: stored.rounds.map((round) => ({ name: givenRoundName({ name: storedName(round) }) })),
+    lowWins: stored.lowWins === true,
+    bonuses: bonuses.flatMap((bonus) => {
+      const row = record(bonus);
+      return typeof row.key === "string" && typeof row.value === "number"
+        ? [{ key: row.key, value: row.value }]
+        : [];
+    }),
+  };
+}
+
+/** The `name` off a stored round, when it is a string; a round that is anything else has none. */
+function storedName(round: SettingValue): string | null {
+  const name = record(round).name;
+  return typeof name === "string" ? name : null;
+}
+
+/**
+ * Why this setup cannot be saved, or null when it can (UC-44 4b, 4c).
+ *
+ * Pure and shared, like every other refusal in this module, so the sentence the
+ * panel shows before a round trip is the sentence the save would have been
+ * refused with. Names are compared trimmed and without case: "Fast" and " fast"
+ * would be two boxes nobody could tell apart on the scoring screen, which is the
+ * whole of 4b's reason.
+ *
+ * Bonus values are whole numbers because scores are (decision 006): a bonus
+ * worth 1.5 would be the one fraction in an integer table.
+ *
+ * The three sentences share no phrase — Task 78's `toContain` escape.
+ */
+export function roundScoringProblem(setup: RoundScoring): string | null {
+  if (setup.rounds.length < 1) return "A night has at least one round.";
+  if (setup.rounds.length > MAX_ROUNDS) return `A night has at most ${MAX_ROUNDS} rounds.`;
+
+  const seen = new Set<string>();
+  for (const bonus of setup.bonuses) {
+    const name = bonus.key.trim();
+    if (name === "") return "Every bonus needs a name. The scoring screen picks a bonus out by it.";
+    const folded = name.toLowerCase();
+    if (seen.has(folded)) {
+      return `Two bonuses are called "${name}". The scoring screen picks a bonus out by its name, so each needs its own.`;
+    }
+    seen.add(folded);
+    if (!Number.isInteger(bonus.value)) return `"${name}" has to be worth a whole number of points.`;
+    if (bonus.value < 1) return `"${name}" has to be worth at least a point. A penalty is not a bonus.`;
+  }
+  return null;
+}
+
+/** UC-44 5's sentence: "6 rounds, highest total wins, 2 bonuses". */
+export function roundScoringSummary(setup: RoundScoring): string {
+  const bonuses =
+    setup.bonuses.length === 0 ? "no bonuses" : counted(setup.bonuses.length, "bonus", "bonuses");
+  return `${counted(setup.rounds.length, "round")}, ${setup.lowWins ? "lowest" : "highest"} total wins, ${bonuses}`;
+}
+
+/**
+ * A score row as the destructive rules need it — the fields of an
+ * `event_round_scores` row that say which round, whose, and which bonuses. A
+ * full `RoundScoreRow` fits; the score itself is not read.
+ */
+export type ScoredRow = {
+  /** 1-based, as the table stores it. */
+  roundIndex: number;
+  userId: string;
+  bonuses: Readonly<Record<string, number>>;
+};
+
+/**
+ * What saving `after` over `before` would take away, as sentences — empty when
+ * nothing would (UC-44 2b, 3a, 4d).
+ *
+ * ## Why a list of sentences rather than three booleans
+ *
+ * `tabHiddenBecause`'s reason, one level down: each of these states has to be
+ * *named* to the manager — how many scores, from which rounds, how many awards,
+ * to whom — and a predicate gives the panel and the action nothing to print.
+ * The same list is the panel's standing warning and, joined by
+ * {@link roundScoringConfirmRefusal}, the action's refusal, so the two cannot
+ * say different things about the same save.
+ *
+ * ## Why it is pure, and takes the rows
+ *
+ * The confirm states are reachable only by editing, and the suite has nothing
+ * to click — so this is a decision over plain data, asserted directly over
+ * every combination, the way Task 83's `manualPostStep` and Task 80's
+ * `standingOn` were. The rows come in rather than being read here for the
+ * reason `rankRounds` takes them: the panel holds the page's read, the action
+ * reads its own, and both run the identical arithmetic.
+ *
+ * ## The three, in the order the panel asks
+ *
+ *  1. **Fewer rounds than are scored** (2b): every row in a round past the new
+ *     count goes, named by round — the name given, or "Round N".
+ *  2. **A bonus deleted that has been awarded** (4d): every award of a key the
+ *     new setup no longer defines goes, counted and named by player. Only
+ *     awards in rounds that *survive* are counted, so an award in a round that
+ *     is going anyway is not named twice. Task 86 decided an award with no
+ *     definition counts nothing rather than throwing; this is what keeps that
+ *     state unreachable.
+ *  3. **The direction flipped with scores on the board** (3a): nothing is
+ *     deleted, but the table turns upside down, and the manager is told so.
+ *     Not asked when every recorded score is going anyway — there is no table
+ *     left to invert.
+ */
+export function roundScoringLosses(
+  before: RoundScoring | null,
+  after: RoundScoring,
+  rows: readonly ScoredRow[],
+  nameOf: (userId: string) => string
+): string[] {
+  const losses: string[] = [];
+  const kept = after.rounds.length;
+
+  const cut = rows.filter((row) => row.roundIndex > kept);
+  if (cut.length > 0) {
+    const roundsHit = [...new Set(cut.map((row) => row.roundIndex))]
+      .sort((x, y) => x - y)
+      .map((index) => roundName(before?.rounds[index - 1], index - 1));
+    losses.push(
+      `Cutting the night to ${counted(kept, "round")} discards ${counted(cut.length, "score")}, from ${listed(roundsHit)}.`
+    );
+  }
+
+  const surviving = rows.filter((row) => row.roundIndex <= kept);
+  const defined = new Set(after.bonuses.map((bonus) => bonus.key.trim()));
+  // Key → player → how many times, in the order the old setup listed its
+  // bonuses so the sentences come out in a stable order.
+  const awarded = new Map<string, Map<string, number>>();
+  for (const bonus of before?.bonuses ?? []) {
+    if (!defined.has(bonus.key)) awarded.set(bonus.key, new Map());
+  }
+  for (const row of surviving) {
+    for (const [key, count] of Object.entries(row.bonuses)) {
+      if (defined.has(key) || count < 1) continue;
+      const byPlayer = awarded.get(key) ?? new Map<string, number>();
+      byPlayer.set(row.userId, (byPlayer.get(row.userId) ?? 0) + count);
+      awarded.set(key, byPlayer);
+    }
+  }
+  for (const [key, byPlayer] of awarded) {
+    if (byPlayer.size === 0) continue;
+    let total = 0;
+    const who: string[] = [];
+    for (const [userId, count] of byPlayer) {
+      total += count;
+      who.push(count > 1 ? `${nameOf(userId)} (x${count})` : nameOf(userId));
+    }
+    losses.push(`Dropping "${key}" takes back ${counted(total, "award")}, from ${listed(who)}.`);
+  }
+
+  if (before !== null && before.lowWins !== after.lowWins && surviving.length > 0) {
+    const one = surviving.length === 1;
+    losses.push(
+      `Switching to ${after.lowWins ? "lowest" : "highest"} total wins turns the table upside down: the ${counted(surviving.length, "score")} already recorded ${one ? "ranks" : "rank"} the other way round.`
+    );
+  }
+
+  return losses;
+}
+
+/**
+ * The action's refusal when a save would take something away and the manager
+ * has not yet said so — the losses, then what to do about it. Worded to share
+ * no phrase with {@link roundScoringProblem}'s sentences.
+ */
+export function roundScoringConfirmRefusal(losses: readonly string[]): string {
+  return `${losses.join(" ")} Tick the box below to go ahead.`;
+}
+
+/** "1 round", "3 scores", "2 bonuses". */
+function counted(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+/** "A", "A and B", "A, B and C". */
+function listed(items: readonly string[]): string {
+  if (items.length <= 1) return items.join("");
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 }

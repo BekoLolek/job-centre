@@ -74,6 +74,12 @@ export const AUDIT_ACTIONS = {
    * `format.stages` below already is, and it means the bracket.
    */
   "event.shape": "Event format changed",
+  /*
+   * How a solo night is scored — the round count, the direction, the bonuses
+   * (R-225, R-226, R-229 / UC-44). Its own action because it is the line that
+   * answers "who cut the night to four rounds, and did the scores go with it".
+   */
+  "event.roundScoring": "Scoring changed",
   "application.decided": "Application decided",
   "application.availability": "Applicant's days corrected",
   "waiver.granted": "Entry rule waived",

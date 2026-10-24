@@ -28,11 +28,16 @@
  * event counts towards is another sentence describing it, not a stage of
  * running it. Format (R-217, R-218) is the sixth, and the same argument again:
  * whether an event has sides and how big they are is a sentence describing it.
+ * Scoring (R-225, R-226, R-229) is the seventh: how a solo night is scored is
+ * a sentence describing it, settled before the first round and rarely after.
  *
  * **It also decides which of the rest are drawn** (R-219), which is why the
  * answer to that lives here rather than in `EventEditor`: `?tab=` is read by
  * the *server* page, so the page is what has to know that a link to a tab this
- * event does not have should land somewhere else. See {@link landOn}.
+ * event does not have should land somewhere else. See {@link landOn}. The same
+ * decision is made one level down for the panels inside Setup
+ * ({@link setupHiddenBecause}): a night with teams has a bracket and no Scoring
+ * panel (UC-44 6b).
  *
  * ## No dependencies, on purpose
  *
@@ -67,6 +72,10 @@ export type TabKey =
  * fixes it". The panel is keyed `shape`, and the step it would have shadowed is
  * relabelled "Bracket" — see {@link TAB_LABELS} — because two tabs both called
  * Format in one editor is worse than either.
+ *
+ * **`scoring`** shadows nothing: no step is called that, so the alias below is
+ * safe to consult first. It is the one panel that does not apply to every
+ * event — see {@link SOLO_ONLY_SETUP_KEYS}.
  */
 export type SetupKey =
   | "basics"
@@ -74,7 +83,8 @@ export type SetupKey =
   | "questions"
   | "rules"
   | "championship"
-  | "shape";
+  | "shape"
+  | "scoring";
 
 export const STEP_KEYS: readonly TabKey[] = [
   "setup",
@@ -96,6 +106,7 @@ export const SETUP_KEYS: readonly SetupKey[] = [
   "rules",
   "championship",
   "shape",
+  "scoring",
 ];
 
 /**
@@ -127,21 +138,24 @@ export const SETUP_LABELS: Readonly<Record<SetupKey, string>> = {
   rules: "Entry rules",
   championship: "Championship",
   shape: "Format",
+  scoring: "Scoring",
 };
 
 /**
- * The four names Setup absorbed, plus the two it grew. Old links and bookmarks
+ * The four names Setup absorbed, plus the three it grew. Old links and bookmarks
  * still name the four, and `/admin`'s action lines were written against them,
  * so they keep working — they land on Setup with the right panel open.
  *
  * `championship` is a panel rather than a seventh step for the same reason the
  * other four are not steps: which season an event counts towards is a sentence
  * describing the event, not a stage of running one. Nobody visits it in the
- * middle of a draft. `shape` is the sixth, on the same argument.
+ * middle of a draft. `shape` is the sixth, on the same argument, and `scoring`
+ * the seventh.
  *
  * **`format` is deliberately not in here**, and `shape-tabs.test.ts` asserts
  * that it never is. This map is consulted before the step keys, so adding
  * `format` would quietly turn every link to the bracket into a link to Setup.
+ * `scoring-tabs.test.ts` asserts the same of `scoring`: it names no step.
  */
 const SETUP_ALIASES: Record<string, SetupKey> = {
   basics: "basics",
@@ -150,6 +164,7 @@ const SETUP_ALIASES: Record<string, SetupKey> = {
   rules: "rules",
   championship: "championship",
   shape: "shape",
+  scoring: "scoring",
 };
 
 /**
@@ -234,12 +249,50 @@ export function visibleTabs(shape: TabVisibility): TabKey[] {
   return TAB_KEYS.filter((tab) => tabHiddenBecause(tab, shape) === null);
 }
 
+/* ------------------------------------------------------------------ */
+/* Which Setup panels apply (UC-44 6b)                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The one panel a team event has no use for (UC-44 6b).
+ *
+ * Scoring is how a night with no sides ends as one ranked list; a night with
+ * sides has a bracket instead, and round scoring for a team event is out of
+ * scope by name (Constraints). Everything *not* in this list is drawn for
+ * every event — Format included, whatever the shape, because it is where the
+ * shape is decided and the panel that brings this one back.
+ */
+export const SOLO_ONLY_SETUP_KEYS: readonly SetupKey[] = ["scoring"];
+
+/**
+ * Why this Setup panel does not apply to this event, or null when it does —
+ * {@link tabHiddenBecause} one level down, and a sentence for the same reason:
+ * a link naming a panel the event does not have lands somewhere real and says
+ * why, and a predicate would give the landing nothing to print.
+ *
+ * Not an authorisation either. `saveRoundScoringAction` keeps its own guard, and
+ * a manager who saves a scoring setup on a team event is allowed to (UC-42 5b);
+ * the panel is hidden because it does not apply, not because it is forbidden.
+ */
+export function setupHiddenBecause(panel: SetupKey, shape: TabVisibility): string | null {
+  if (!SOLO_ONLY_SETUP_KEYS.includes(panel)) return null;
+  if (shape.teamEvent) {
+    return `${SETUP_LABELS[panel]} is only for an event with no sides — a night with teams has a bracket instead. Setup → Format is where that is decided.`;
+  }
+  return null;
+}
+
+/** Every Setup panel this event actually has, in rail order. */
+export function visibleSetup(shape: TabVisibility): SetupKey[] {
+  return SETUP_KEYS.filter((panel) => setupHiddenBecause(panel, shape) === null);
+}
+
 /** Where a `?tab=` ended up, and what the reader has to be told about it. */
 export type TabLanding = {
   tab: TabKey;
   setup: SetupKey;
-  /** The tab that was asked for and is not here — null when nothing moved. */
-  asked: TabKey | null;
+  /** The tab or Setup panel that was asked for and is not here — null when nothing moved. */
+  asked: TabKey | SetupKey | null;
   /** Why it is not here. Null when nothing moved. */
   why: string | null;
 };
@@ -258,6 +311,10 @@ export type TabLanding = {
  * A stale bookmark naming a tab that never existed still lands on Setup with
  * nothing said, which is {@link tabFrom}'s rule and unchanged: there is no
  * explanation to give for a word that was never a tab.
+ *
+ * A link to a Setup *panel* the event does not have — `?tab=scoring` on a team
+ * event — lands the same way, on the Format panel with
+ * {@link setupHiddenBecause}'s sentence (UC-44 6b).
  */
 export function landOn(
   raw: string | string[] | undefined,
@@ -265,8 +322,13 @@ export function landOn(
 ): TabLanding {
   const tab = tabFrom(raw);
   const why = tabHiddenBecause(tab, shape);
-  if (why === null) return { tab, setup: setupFrom(raw), asked: null, why: null };
-  return { tab: "setup", setup: "shape", asked: tab, why };
+  if (why !== null) return { tab: "setup", setup: "shape", asked: tab, why };
+
+  const setup = setupFrom(raw);
+  const panelWhy = setupHiddenBecause(setup, shape);
+  if (panelWhy !== null) return { tab: "setup", setup: "shape", asked: setup, why: panelWhy };
+
+  return { tab, setup, asked: null, why: null };
 }
 
 /**
@@ -298,4 +360,22 @@ export function standingOn(
 ): { here: TabKey; notice: string | null } {
   const why = tabHiddenBecause(tab, shape);
   return { here: why === null ? tab : "setup", notice: why ?? said };
+}
+
+/**
+ * {@link standingOn} for the panel inside Setup: an admin on the Scoring panel
+ * turns teams on from Format, the save lands, and the panel they were on no
+ * longer applies. They are moved to Format — the panel that decided it — with
+ * the live reason, which wins over whatever the server said on arrival for the
+ * reason `standingOn` gives. A pure function for the same reason too: the state
+ * needs a click to reach, so the decision is asserted directly and the editor
+ * only obeys it.
+ */
+export function standingOnPanel(
+  setup: SetupKey,
+  shape: TabVisibility,
+  said: string | null
+): { here: SetupKey; notice: string | null } {
+  const why = setupHiddenBecause(setup, shape);
+  return { here: why === null ? setup : "shape", notice: why ?? said };
 }

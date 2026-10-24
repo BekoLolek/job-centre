@@ -65,7 +65,7 @@ vi.mock("next/navigation", async (importOriginal) => ({
   useRouter: () => ({ replace: () => {}, refresh: () => {}, push: () => {} }),
 }));
 
-const { SETUP_KEYS, SETUP_LABELS } = await import("../tabs");
+const { SETUP_LABELS, visibleSetup } = await import("../tabs");
 const { default: ShapeTab } = await import("../ShapeTab");
 const { default: EventEditor } = await import("../EventEditor");
 const { default: AdminEventPage } = await import("@/app/admin/events/[id]/page");
@@ -380,12 +380,16 @@ describe("the rail the page builds", () => {
      * this file green, because they all arrive by URL — so this is the test
      * that notices.
      *
-     * The list is read off `SETUP_KEYS` rather than written out, so a seventh
-     * panel that nobody adds to the rail fails here too.
+     * The list is read off the module rather than written out, so a panel
+     * that nobody adds to the rail fails here too. `visibleSetup` rather than
+     * `SETUP_KEYS` since Task 87: a team event has no Scoring panel (UC-44 6b),
+     * and `scoring-panel.test.ts` holds the full list against a solo event.
      */
     const { eventId, host } = await hostedEvent(12);
     const markup = await screen(eventId, host);
-    expect(setupRail(markup)).toEqual(SETUP_KEYS.map((key) => SETUP_LABELS[key]));
+    expect(setupRail(markup)).toEqual(
+      visibleSetup(eventShapeFrom({})).map((key) => SETUP_LABELS[key])
+    );
     expect(setupRail(markup)).toContain("Format");
   });
 

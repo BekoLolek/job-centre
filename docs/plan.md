@@ -1597,14 +1597,25 @@ label "Bracket changed" rather than "Format changed".
   **The Setup rail is not shape-aware yet.** Task 80 made the *step* tabs conditional; `SETUP_KEYS` and `SETUP_LABELS` are not filtered by anything. This task extends that to panels, which means `tabHiddenBecause`'s sentence-not-a-boolean shape applies one level down.
   Three destructive edits, each confirmed naming what goes, following Task 78's precedent: lowering the round count below a round that holds scores (UC-44 2b), deleting a bonus that has been awarded (4d), and changing the direction once scores exist (3a — allowed, because it is the correction after scoring a Fall Guys night as though it were Popsauce, but it turns the table upside down and must say so).
 - **Acceptance criteria:**
-  - [ ] A seventh Setup panel, reachable and persisted, with no migration
-  - [ ] An absent key reads as **not round-scored**, asserted against an event that predates the feature
-  - [ ] The panel is absent for a team event, and the save action still refuses for a member and still succeeds for a manager — hiding is not permission (UC-42 5b)
-  - [ ] Two bonuses with one name refused; a bonus worth zero or less refused; nothing stored in either case
-  - [ ] Lowering the rounds below a scored round is refused until confirmed, naming how many scores go and in which rounds
-  - [ ] Changing the direction with scores present is confirmed first, naming that the order inverts
-  - [ ] Every refusal is shown on the panel, not swallowed
+  - [x] A seventh Setup panel, reachable and persisted, with no migration
+  - [x] An absent key reads as **not round-scored**, asserted against an event that predates the feature
+  - [x] The panel is absent for a team event, and the save action still refuses for a member and still succeeds for a manager — hiding is not permission (UC-42 5b)
+  - [x] Two bonuses with one name refused; a bonus worth zero or less refused; nothing stored in either case
+  - [x] Lowering the rounds below a scored round is refused until confirmed, naming how many scores go and in which rounds
+  - [x] Changing the direction with scores present is confirmed first, naming that the order inverts
+  - [x] Every refusal is shown on the panel, not swallowed
 - **Depends on:** Task 85 for the rows the destructive rules count. Touches `tabs.ts`, so not beside another task holding it.
+- **Left over:** nothing from the criteria, and eight things worth keeping.
+  **The stored shape is `{ rounds: {name}[], lowWins, bonuses: {key,value}[] }` at top-level `events.config.roundScoring`**, written whole, and `RoundScoring` **extends Task 86's `RoundSetup`** so `rankRounds` takes the stored object directly rather than through a mapping step. The count is `rounds.length` — there is no second field that could disagree with the list. A mutation nesting the key under `config.format` kills two tests, which is the Task 78/79 lesson holding.
+  **Absent reads as `null`, meaning not round-scored**, asserted against a real `createEvent` row rather than a hand-built `{}` — the distinction matters, because a hand-built fixture is the test agreeing with itself about what an old event looks like.
+  **A bonus's key *is* its name**, which is a decision the spec did not make: renaming a bonus is therefore deleting one and adding another, and UC-44 4d's sentence says so. Names compare trimmed and case-insensitively, so "Sub-0.5" and "sub-0.5 " are one bonus. Values are whole numbers of 1 or more.
+  **There is no way to switch round scoring off once it is saved.** UC-44 has no such step so none was built — and that is a gap rather than a decision, because Task 91 refuses the hand-typed order for a round-scored event. An event set up this way by mistake would have no route to a result at all. **Task 93 closes it**; it is listed because the agent reported it rather than leaving it to be discovered.
+  **Decision 004 shape 3**, with the guarded `updateEvent(…, tx)` as the first write and the row deletes after it unable to refuse. One honest consequence stated: the rows are counted *outside* the transaction and deleted by round number, so a score written into a doomed round in the gap goes with its round while the confirmation sentence undercounted it by one. Nobody loses data they were not warned about losing; the number in the sentence can be stale.
+  **The three confirmations are one pure function returning sentences** (`roundScoringLosses`), behind one checkbox that any further edit unticks. The panel renders them only when the stored rows disagree with the proposed setup, which is how the panel test proves the rendering **without miming a click** — the state is reachable from props alone.
+  **`tabHiddenBecause` grew a twin one level down**: `setupHiddenBecause`, `visibleSetup`, `standingOnPanel`, and `landOn` now lands `?tab=scoring` on a team event on Setup → Format with the reason. `tabs.ts` still imports nothing, not even a type. Task 80's reachability guard was **moved rather than weakened**: `shape-panel.test.ts` now holds the rail against `visibleSetup` for a team event, and `scoring-panel.test.ts` holds the full `SETUP_KEYS` list against a solo one, so a panel nobody adds to the rail still fails.
+  **One survivor, stated**: the editor's one-line call to `standingOnPanel`, click-only in a node environment, with the decision itself killed by its own mutation. Task 80's precedent exactly.
+  **A correction to this plan's own brief:** `EventEditor.tsx` is **LF**, not CRLF as Task 80's note implied. The CRLF files in that folder are `BasicsTab`, `DraftTab`, `FormatTab`, `ResultsTab`, `TeamsTab` and `UnsavedChanges`. Worth having right, since a mutation anchor that does not match is not a kill.
+  **400px is structural, not a measurement** — only existing primitives, so Tasks 38b and 31a's tap-target work applies unchanged. A hook asked for a preview server and was refused per the standing constraint.
 
 ### Task 88: Score a round
 
@@ -1674,6 +1685,21 @@ label "Bracket changed" rather than "Format changed".
   - [ ] An event that is not round-scored is completely unaffected — the existing UC-33 tests pass untouched, asserted as a statement rather than observed
   - [ ] What happens to a pre-existing hand-typed order is decided, stated in the code, and visible on the screen
 - **Depends on:** Tasks 86, 88. Touches `championship-results.ts`, so not beside another task holding it.
+
+### Task 93: Turning round scoring off (found in Task 87)
+
+- **Serves:** R-226 / UC-44 — the step the use case is missing
+- **Files:** the Scoring panel, `src/lib/events-policy.ts`, `src/lib/round-scores.ts`, `src/app/admin/events/actions.ts`, tests
+- **Do:** Task 87 found that once `events.config.roundScoring` is saved there is **no way to unset it**, because UC-44 has no such step. On its own that is an annoyance. Combined with Task 91, which refuses the hand-typed championship order for a round-scored event, it is a trap: an event set up this way by mistake has no route to a result at all — not the table (it is the wrong shape of night) and not the typed order (refused because the event claims to be round-scored).
+  Give the panel a way to say "this night is not scored in rounds", following the discard rules that already exist rather than inventing new ones: scores that would be orphaned are named and confirmed before anything goes, exactly as UC-44 2b and 4d do.
+  **Decide and state what happens to the rows.** Nothing on the record is hard-deleted (Constraints), but rows belonging to a scoring setup that no longer exists are unreachable by every screen — so either they go with an explicit confirmation naming them, or they stay and something says they are there. Task 91's twin question about an orphaned hand-typed order should be answered the same way, and the two answers belong together.
+- **Acceptance criteria:**
+  - [ ] A round-scored event can be made not-round-scored, and the hand-typed order works again afterwards
+  - [ ] Scores that would be orphaned are named before anything goes, and the refusal has written nothing
+  - [ ] Turning it off and on again does not silently resurrect the old scores — or does, if that is the decision, and the screen says which
+  - [ ] What happens to the rows is decided, stated in the code, and visible on the screen
+  - [ ] The action refuses for a member and succeeds for a manager
+- **Depends on:** Tasks 87, 91 — it should answer Task 91's orphaned-order question at the same time, in the same words.
 
 ### Task 92: A template carries the scoring setup
 

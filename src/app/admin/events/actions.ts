@@ -69,12 +69,17 @@ import {
   type ApplicationDecision,
   DRAFT_AWARDED_REFUSAL,
   type EventShape,
+  type RoundScoring,
   changedSetupFields,
   eventShapeFrom,
+  givenRoundName,
   isSizingMode,
+  roundScoringFrom,
+  roundScoringSummary,
   shapeProblem,
   teamsInTheWayRefusal,
 } from "@/lib/events-policy";
+import { type RoundScoringSaved, saveRoundScoring } from "@/lib/round-scores";
 /*
  * The team reads and the one team write the Format panel can cause (UC-42 2a).
  * `setTeams` is the event's team write and owns every refusal that goes with
@@ -881,6 +886,112 @@ export async function saveEventShapeAction(
     ok: true,
     data: { shape: stored, teamsDiscarded: losingTeams ? existing.length : 0 },
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* How a solo night is scored (R-225, R-226, R-229 / UC-44)           */
+/* ------------------------------------------------------------------ */
+
+/** The Scoring panel's answers, as they arrive off the wire. */
+export type RoundScoringFields = {
+  /** One entry per round, in order; the count is the length. */
+  rounds: { name: string | null }[];
+  /** True when the lower score takes a round (a placing game). */
+  lowWins: boolean;
+  /** `key` is the bonus's name — the string the awards on a score row carry. */
+  bonuses: { key: string; value: number }[];
+  /** UC-44 2b, 3a, 4d: the manager has read what the save takes away and said yes. */
+  confirmed?: boolean;
+};
+
+/**
+ * Store how this night is scored — the round count and names, which way a
+ * round is won, and the bonuses with what each is worth (UC-44 1-6).
+ *
+ * ## Where it goes, and why nothing is migrated
+ *
+ * One top-level key on `events.config`, `roundScoring`, written whole on every
+ * save — `eventShape`'s placement and Task 78's reason: `updateEvent` merges a
+ * config patch one level deep and `saveScheduleSettingsAction` rewrites the
+ * whole of `config.format`, so anything nested there is erased by the next
+ * schedule save. **Absent reads as not round-scored**; `roundScoringFrom` has
+ * the argument.
+ *
+ * ## What is decided here, and what is not
+ *
+ * This file shapes the wire input into a `RoundScoring` — a name that is not a
+ * string is no name, a value that is not a number is `NaN` so the bound refuses
+ * it rather than reading a zero nobody typed — and hands it to
+ * `saveRoundScoring`, which owns every rule: the bounds, the three
+ * confirmations and the writes they allow, in decision 004's order. Nothing
+ * about a score row is decided in this file.
+ *
+ * ## It guards itself, because hiding a panel is not forbidding it
+ *
+ * `requireEventManager` runs here whatever the editor happens to be drawing.
+ * The Scoring panel is absent for a team event (UC-44 6b), and this action
+ * still refuses a member and still succeeds for a manager (UC-42 5b). Next's
+ * own note: "Render-time gating (only rendering a form on an authenticated
+ * page) is not a security boundary."
+ */
+export async function saveRoundScoringAction(
+  eventId: string,
+  fields: RoundScoringFields
+): Promise<EventResult<RoundScoringSaved>> {
+  const admin = await requireEventManager(eventId);
+
+  if (!Array.isArray(fields.rounds) || !Array.isArray(fields.bonuses)) {
+    return fail("That is not a scoring setup.");
+  }
+
+  const before = await getEventById(eventId);
+  if (!before) return fail("That event no longer exists.");
+
+  const wanted: RoundScoring = {
+    rounds: fields.rounds.map((round) => ({
+      name: givenRoundName({ name: typeof round?.name === "string" ? round.name : null }),
+    })),
+    lowWins: fields.lowWins === true,
+    bonuses: fields.bonuses.map((bonus) => ({
+      key: typeof bonus?.key === "string" ? bonus.key.trim() : "",
+      value: typeof bonus?.value === "number" ? bonus.value : Number.NaN,
+    })),
+  };
+
+  const result = await saveRoundScoring(eventId, wanted, {
+    confirmed: fields.confirmed === true,
+  });
+  if (!result.ok) return result;
+
+  const { scoring, losses, scoresDiscarded, awardsDiscarded } = result.data;
+  const was = roundScoringFrom(before.config);
+  const moved = JSON.stringify(was) !== JSON.stringify(scoring);
+
+  // Nothing is logged when nothing moved — `event.shape`'s rule.
+  if (moved || losses.length > 0) {
+    const discarded = [
+      scoresDiscarded > 0 ? `${scoresDiscarded} ${scoresDiscarded === 1 ? "score" : "scores"}` : null,
+      awardsDiscarded > 0 ? `${awardsDiscarded} ${awardsDiscarded === 1 ? "award" : "awards"}` : null,
+    ].filter((part): part is string => part !== null);
+    await recordAudit({
+      action: "event.roundScoring",
+      actor: admin,
+      eventId,
+      summary: `Set the scoring of "${before.title}" to ${roundScoringSummary(scoring)}${discarded.length > 0 ? `, discarding ${discarded.join(" and ")}` : ""}.`,
+      detail: {
+        rounds: scoring.rounds.length,
+        roundNames: scoring.rounds.map((round) => round.name),
+        lowWins: scoring.lowWins,
+        bonuses: scoring.bonuses.map((bonus) => ({ key: bonus.key, value: bonus.value })),
+        losses: [...losses],
+        scoresDiscarded,
+        awardsDiscarded,
+      },
+    });
+  }
+
+  refresh(eventId);
+  return { ok: true, data: result.data };
 }
 
 /* ------------------------------------------------------------------ */

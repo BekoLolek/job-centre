@@ -46,6 +46,7 @@ import {
 } from "@/lib/events";
 import { eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
 import { MAX_STAGES, formatFor, matchIdsFor, scheduleSettingsFrom } from "@/lib/format";
+import { listRoundScores } from "@/lib/round-scores";
 import { requireEventManager } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -91,6 +92,7 @@ export default async function AdminEventPage({
     counting,
     seasons,
     announcements,
+    roundScores,
   ] = await Promise.all([
     getApplicationsForEvent(event.id),
     loadAdminGames(),
@@ -118,6 +120,12 @@ export default async function AdminEventPage({
      * client component (see `EventEditorProps.announcements`).
      */
     manualAnnouncementPanel(event.id),
+    /*
+     * UC-44 2b, 3a, 4d. The rows the Scoring panel counts before it refuses —
+     * read here because `listRoundScores` reaches Postgres and the panel is a
+     * client component (see `EventEditorProps.roundScores`).
+     */
+    listRoundScores(event.id),
   ]);
 
   /*
@@ -281,6 +289,7 @@ export default async function AdminEventPage({
           draft={draft}
           format={format}
           championship={championship}
+          roundScores={roundScores}
           announcements={announcements}
           maxDays={MAX_EVENT_DAYS}
           maxQuestions={MAX_EVENT_QUESTIONS}

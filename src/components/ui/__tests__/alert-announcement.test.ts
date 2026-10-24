@@ -379,6 +379,18 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   "src/components/admin/events/ResultsTab.tsx": ["announced", "announced", "announced"],
   "src/components/admin/events/ScheduleTab.tsx": ["announced", "standing", "standing"],
   /*
+   * Two, both Task 87's (R-225, R-226, R-229 / UC-44).
+   *
+   * In source order: the save error, handler state, announced; and the list of
+   * what a save would take away (UC-44 2b, 3a, 4d), which reads the edited
+   * setup against the stored one and the rows — on arrival the two setups are
+   * equal, so it is the "will be deleted when you save" shape and announced for
+   * that group's reason. It can be on the page at first render only when the
+   * rows already disagree with the stored setup, which no save of this panel
+   * leaves behind.
+   */
+  "src/components/admin/events/ScoringTab.tsx": ["announced", "announced"],
+  /*
    * Two, both Task 79's (R-217, R-218 / UC-42).
    *
    * In source order: the save error, which is handler state and announced; and

@@ -28,6 +28,7 @@ import PublishTab from "./PublishTab";
 import QuestionsTab from "./QuestionsTab";
 import ResultsTab from "./ResultsTab";
 import ScheduleTab from "./ScheduleTab";
+import ScoringTab from "./ScoringTab";
 import ShapeTab from "./ShapeTab";
 import TeamsTab from "./TeamsTab";
 import UnsavedChangesProvider, { useIsDirty, useNavigationLock } from "./UnsavedChanges";
@@ -38,10 +39,14 @@ import {
   type SetupKey,
   TAB_LABELS,
   type TabKey,
+  type TabVisibility,
   standingOn,
+  standingOnPanel,
+  visibleSetup,
   visibleTabs,
 } from "./tabs";
-import { eventShapeFrom } from "@/lib/events-policy";
+import { eventShapeFrom, roundScoringFrom } from "@/lib/events-policy";
+import type { RoundScoreRow } from "@/lib/round-scoring";
 // The pure half of the templates library, deliberately: `@/lib/admin-templates`
 // builds every Drizzle table at import time and a client bundle has no use for
 // any of it.
@@ -135,6 +140,14 @@ type EventEditorProps = {
   /** Which season this event counts towards, and which it could (UC-32). */
   championship: ChampionshipTabData;
   /**
+   * Every recorded round score, from `listRoundScores` (UC-44 2b, 3a, 4d).
+   *
+   * The Scoring panel counts these before it refuses — how many scores a lower
+   * round count discards, how many awards a deleted bonus takes back. Read on
+   * the server because `src/lib/round-scores.ts` reaches Postgres.
+   */
+  roundScores: RoundScoreRow[];
+  /**
    * The five announcements this event can post by hand, as the server read
    * them (R-221 / UC-43) — the switches, the claims and the refusals.
    *
@@ -178,6 +191,7 @@ function EditorBody({
   draft,
   format,
   championship,
+  roundScores,
   announcements,
   maxDays,
   maxQuestions,
@@ -216,7 +230,15 @@ function EditorBody({
    * state needs a click and this suite has nothing to click: as two lines here
    * it was a guard no test could kill. See that function's docblock.
    */
-  const { here, notice } = standingOn(tab, shape, redirected);
+  const stood = standingOn(tab, shape, redirected);
+  const here = stood.here;
+  /*
+   * The same, one level down: the Scoring panel goes when teams are turned on
+   * from the Format panel beside it (UC-44 6b). `standingOnPanel` decides, for
+   * the reason `standingOn` does.
+   */
+  const panel = standingOnPanel(setup, shape, stood.notice);
+  const notice = panel.notice;
 
   // Rows, not resolved slots: `formatFor` resolves a stage's matches from its
   // generated spec whether or not it has been generated, so counting those
@@ -347,14 +369,15 @@ function EditorBody({
       <div key={`${here}-${resetKey}`}>
         {here === "setup" && (
           <Setup
-            current={setup}
+            current={panel.here}
             onGo={(next) => guard(() => setSetup(next))}
             event={event}
+            shape={shape}
             counts={{ days: event.days.length, questions: event.questions.length }}
           >
-            {setup === "basics" && <BasicsTab event={event} games={games} />}
-            {setup === "days" && <DaysTab event={event} maxDays={maxDays} />}
-            {setup === "questions" && (
+            {panel.here === "basics" && <BasicsTab event={event} games={games} />}
+            {panel.here === "days" && <DaysTab event={event} maxDays={maxDays} />}
+            {panel.here === "questions" && (
               <QuestionsTab
                 event={event}
                 applicants={applicants}
@@ -362,17 +385,25 @@ function EditorBody({
                 maxQuestions={maxQuestions}
               />
             )}
-            {setup === "rules" && <EntryRulesTab event={event} />}
-            {setup === "championship" && (
+            {panel.here === "rules" && <EntryRulesTab event={event} />}
+            {panel.here === "championship" && (
               <ChampionshipTab eventId={event.id} data={championship} />
             )}
-            {setup === "shape" && (
+            {panel.here === "shape" && (
               <ShapeTab
                 eventId={event.id}
                 shape={shape}
                 accepted={accepted}
                 existingTeams={draft.teams.length}
                 draftStarted={draft.started}
+              />
+            )}
+            {panel.here === "scoring" && (
+              <ScoringTab
+                eventId={event.id}
+                scoring={roundScoringFrom(event.config)}
+                rows={roundScores}
+                players={draft.players}
               />
             )}
           </Setup>
@@ -713,22 +744,37 @@ export function SaveAsTemplate({
  * shape it is — so they are one step with a secondary rail, rather than six
  * steps that each look as significant as running the draft.
  *
- * Format is last of the six although it decides the most, and that is
+ * Format is near the end although it decides the most, and that is
  * deliberate: it is the answer you give once and change rarely, and putting it
- * first would make every admin walk past it to reach Basics.
+ * first would make every admin walk past it to reach Basics. Scoring follows
+ * it because it only exists for one of Format's answers.
+ *
+ * ## The rail is read off `tabs.ts`, not written out here (UC-44 6b)
+ *
+ * `visibleSetup` filtered by the shape, the way the step rail reads
+ * `visibleTabs`: a team event has no Scoring panel, and nothing in this
+ * function knows which panel is conditional — that is `setupHiddenBecause`'s
+ * to say, so an eighth panel cannot arrive and be forgotten here. The two
+ * counts are the only per-panel knowledge left, and they are the rail's own.
  */
 function Setup({
   current,
   onGo,
+  shape,
   counts,
   children,
 }: {
   current: SetupKey;
   onGo: (next: SetupKey) => void;
   event: EventDetail;
+  shape: TabVisibility;
   counts: { days: number; questions: number };
   children: React.ReactNode;
 }) {
+  const count: Partial<Record<SetupKey, number>> = {
+    days: counts.days,
+    questions: counts.questions,
+  };
   return (
     <div className="space-y-6">
       <div className="flex min-w-0 items-center gap-3">
@@ -740,18 +786,11 @@ function Setup({
           rule={false}
           value={current}
           onChange={onGo}
-          items={[
-            { value: "basics", label: SETUP_LABELS.basics },
-            { value: "days", label: SETUP_LABELS.days, count: counts.days },
-            {
-              value: "questions",
-              label: SETUP_LABELS.questions,
-              count: counts.questions,
-            },
-            { value: "rules", label: SETUP_LABELS.rules },
-            { value: "championship", label: SETUP_LABELS.championship },
-            { value: "shape", label: SETUP_LABELS.shape },
-          ]}
+          items={visibleSetup(shape).map((key) => ({
+            value: key,
+            label: SETUP_LABELS[key],
+            count: count[key],
+          }))}
         />
       </div>
       {children}
