@@ -10,18 +10,33 @@
  * split every other `src/lib` write follows, and the one that lets the panel
  * refuse in the same words without a database.
  *
- * Task 88's per-round write belongs here too, beside `listRoundScores`.
+ * Task 88's per-round write is `saveRound`, below `saveRoundScoring`.
  */
 
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
-import { type Database, db as defaultDb, eventRoundScores, events, users } from "@/db";
+import {
+  type Database,
+  applications,
+  db as defaultDb,
+  eventRoundScores,
+  events,
+  users,
+} from "@/db";
+import { lockRefusal } from "@/lib/archive-policy";
 import { type EventResult, updateEvent } from "@/lib/events";
 import {
+  type RoundEntry,
+  type RoundRow,
   type RoundScoring,
+  roundEntriesProblem,
+  roundMovedRefusal,
+  roundMovedSince,
+  roundName,
   roundScoringConfirmRefusal,
   roundScoringFrom,
   roundScoringLosses,
   roundScoringProblem,
+  unseatedRefusal,
 } from "@/lib/events-policy";
 import type { RoundScoreRow } from "@/lib/round-scoring";
 
@@ -169,10 +184,169 @@ export async function saveRoundScoring(
   });
 }
 
+export type RoundSaved = {
+  roundIndex: number;
+  /** The round as the manager named it, or "Round N" — for the audit line. */
+  name: string;
+  /** The event's title, read under the same lock — for the audit line. */
+  title: string;
+  /** The round as it is now stored, in `listRoundScores`' order. */
+  rows: RoundScoreRow[];
+  /** How many rows the round held before — zero for a first scoring, so the log can say "re-scored". */
+  replaced: number;
+};
+
+export type RoundSaveResult =
+  | { ok: true; data: RoundSaved }
+  | {
+      ok: false;
+      error: string;
+      /**
+       * UC-45 4b only: the round as it is stored now, when the refusal is that
+       * it moved since the screen loaded it. The screen re-seeds from these.
+       */
+      moved?: RoundScoreRow[];
+    };
+
+/**
+ * Store one round — every player's score and awards, replacing whatever the
+ * round held (UC-45 4-5, 3c, 3d, 3e, 4a, 4b, 4c).
+ *
+ * ## The whole round, in one write, for `setPlacements`' reason
+ *
+ * The entries sent *are* the round, and the old rows go. There is no diff and
+ * no per-player path: a correction is the same call (4a), and a player left
+ * blank on it loses their row rather than keeping a stale one. One authority
+ * per round, and nothing to get wrong between two.
+ *
+ * ## Decided before anything is written — decision 004, shape 1
+ *
+ * Every refusal here precedes the first write. The event row is taken for
+ * update first, so the lock (`lockRefusal`, UC-09 6b's gate — the same one
+ * `recordGames` asks) and every read after it see what is actually stored
+ * rather than what the page was rendered with. Then, in order: the night must
+ * be round-scored; the entries must be a round (`roundEntriesProblem`);
+ * everybody scored must hold a seat or already be recorded here
+ * (`unseatedRefusal`); and the round must not have moved since the screen
+ * loaded it (`roundMovedSince`). Only then the delete and the insert, neither
+ * of which can refuse — the unique constraint cannot fire on a round that was
+ * just emptied of deduplicated entries, and a failure there is a crash that
+ * rolls both back.
+ *
+ * ## Two managers, one round (UC-45 4b) — detected from the rows themselves
+ *
+ * Task 85 stored no version and no timestamp, and this does not add one. The
+ * rows are the round's state, so `expected` — the round as the screen read it
+ * — is compared with the round as it is under the lock. The second manager's
+ * transaction waits on the first's lock, then reads rows the first just wrote,
+ * and is refused with those rows attached: told the round moved, and shown
+ * what is there now. That is also what stops a stale screen stripping an award
+ * that arrived after it loaded — the award is a difference, so the save does
+ * not go through.
+ */
+export async function saveRound(
+  eventId: string,
+  input: { roundIndex: number; entries: readonly RoundEntry[]; expected: readonly RoundRow[] },
+  database: Database = defaultDb
+): Promise<RoundSaveResult> {
+  const { roundIndex, entries, expected } = input;
+
+  return database.transaction(async (tx) => {
+    const [event] = await tx
+      .select({ title: events.title, status: events.status, config: events.config })
+      .from(events)
+      .where(eq(events.id, eventId))
+      .for("update")
+      .limit(1);
+    if (!event) return fail("That event no longer exists.");
+
+    const locked = lockRefusal(event);
+    if (locked) return fail(locked);
+
+    const scoring = roundScoringFrom(event.config);
+    if (!scoring) return fail("This night is not scored in rounds. Set that up on the Scoring panel first.");
+
+    const current = await roundRows(tx, eventId, roundIndex);
+    const nameOf = await displayNames(
+      [...new Set([...entries.map((line) => line.userId), ...current.map((row) => row.userId)])],
+      tx
+    );
+
+    const problem = roundEntriesProblem(scoring, roundIndex, entries, nameOf);
+    if (problem) return fail(problem);
+
+    // UC-45 pre 3: the players are the accepted applicants. Anyone the round
+    // already records is scorable too — `unseatedRefusal` says why.
+    const seated = await tx
+      .select({ userId: applications.userId })
+      .from(applications)
+      .where(and(eq(applications.eventId, eventId), eq(applications.status, "accepted")));
+    const scorable = new Set([
+      ...seated.map((row) => row.userId),
+      ...current.map((row) => row.userId),
+    ]);
+    const unseated = unseatedRefusal(entries, scorable, nameOf);
+    if (unseated) return fail(unseated);
+
+    const name = roundName(scoring.rounds[roundIndex - 1], roundIndex - 1);
+    if (roundMovedSince(expected, current)) {
+      return { ok: false, error: roundMovedRefusal(name), moved: current };
+    }
+
+    // Everything above has refused; nothing below can.
+    await tx
+      .delete(eventRoundScores)
+      .where(and(eq(eventRoundScores.eventId, eventId), eq(eventRoundScores.roundIndex, roundIndex)));
+
+    const played = entries.filter((line): line is RoundEntry & { score: number } => line.score !== null);
+    if (played.length > 0) {
+      await tx.insert(eventRoundScores).values(
+        played.map((line) => ({
+          eventId,
+          roundIndex,
+          userId: line.userId,
+          score: line.score,
+          bonuses: { ...line.bonuses },
+        }))
+      );
+    }
+
+    return {
+      ok: true,
+      data: {
+        roundIndex,
+        name,
+        title: event.title,
+        rows: await roundRows(tx, eventId, roundIndex),
+        replaced: current.length,
+      },
+    };
+  });
+}
+
+/** One round's rows, in `listRoundScores`' order. */
+async function roundRows(
+  database: Database,
+  eventId: string,
+  roundIndex: number
+): Promise<RoundScoreRow[]> {
+  return database
+    .select({
+      roundIndex: eventRoundScores.roundIndex,
+      userId: eventRoundScores.userId,
+      score: eventRoundScores.score,
+      bonuses: eventRoundScores.bonuses,
+    })
+    .from(eventRoundScores)
+    .where(and(eq(eventRoundScores.eventId, eventId), eq(eventRoundScores.roundIndex, roundIndex)))
+    .orderBy(asc(eventRoundScores.id));
+}
+
 /**
  * A display name for each of these users, for the sentences that name who an
- * award came back from. The rows cascade on a user's deletion, so a scored
- * player always has a row here; the fallback is for a profile with no name set.
+ * award came back from, or who cannot be scored. The rows cascade on a user's
+ * deletion, so a scored player always has a row here; the fallback is for a
+ * profile with no name set, or an id that names nobody.
  */
 async function displayNames(
   userIds: readonly string[],

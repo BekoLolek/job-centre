@@ -40,6 +40,9 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/app/admin/events/format-actions", () => actions);
+// The round sheet's action (Task 88), for the same reason: the tab imports it
+// and it would drag the session into a test that only wants markup.
+vi.mock("@/app/admin/events/actions", () => ({ saveRoundAction: vi.fn() }));
 
 const { default: ResultsTab, FlaggedAlert } = await import("../ResultsTab");
 
@@ -118,6 +121,8 @@ function render(view: FormatView): string {
       matchIds: Object.fromEntries(
         view.stages.flatMap((stage) => stage.matches.map((m) => [m.slot, `row-${m.slot}`]))
       ),
+      // A team event: not scored in rounds, so no round sheet (Task 88).
+      rounds: { scoring: null, rows: [], players: {}, seated: [], status: "live" },
     })
   );
 }

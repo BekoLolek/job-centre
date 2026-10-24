@@ -69,6 +69,8 @@ import {
   type ApplicationDecision,
   DRAFT_AWARDED_REFUSAL,
   type EventShape,
+  type RoundEntry,
+  type RoundRow,
   type RoundScoring,
   changedSetupFields,
   eventShapeFrom,
@@ -79,7 +81,12 @@ import {
   shapeProblem,
   teamsInTheWayRefusal,
 } from "@/lib/events-policy";
-import { type RoundScoringSaved, saveRoundScoring } from "@/lib/round-scores";
+import {
+  type RoundSaveResult,
+  type RoundScoringSaved,
+  saveRound,
+  saveRoundScoring,
+} from "@/lib/round-scores";
 /*
  * The team reads and the one team write the Format panel can cause (UC-42 2a).
  * `setTeams` is the event's team write and owns every refusal that goes with
@@ -992,6 +999,104 @@ export async function saveRoundScoringAction(
 
   refresh(eventId);
   return { ok: true, data: result.data };
+}
+
+/* ------------------------------------------------------------------ */
+/* Scoring a round (R-224, R-227, R-230, R-233 / UC-45)               */
+/* ------------------------------------------------------------------ */
+
+/** One player's line as the round-scoring screen sends it. */
+export type RoundLineFields = {
+  userId: string;
+  /** `null` for a player who did not play this round — never a zero (R-228). */
+  score: number | null;
+  /** Bonus name to how many times it was earned. Only awards given; no zeros. */
+  bonuses: Record<string, number>;
+};
+
+/** The whole round, as the screen sends it (UC-45 4). */
+export type RoundFields = {
+  /** 1-based, "Round 3" is 3. */
+  roundIndex: number;
+  /** Every listed player, blank or scored. */
+  entries: RoundLineFields[];
+  /**
+   * The round as the screen loaded it (UC-45 4b): what the save expects to be
+   * replacing. A round that holds anything else has moved, and is not replaced.
+   */
+  expected: { userId: string; score: number; bonuses: Record<string, number> }[];
+};
+
+/**
+ * Store one round of a round-scored night (UC-45 4-5).
+ *
+ * This file shapes the wire input — a score that is not a number is `NaN` so
+ * the whole-number rule refuses it rather than reading a zero nobody typed, a
+ * count that is not a number likewise — and hands it to `saveRound`, which owns
+ * every rule and every refusal in decision 004's order. Nothing about a round
+ * is decided here.
+ *
+ * `requireEventManager` runs here whatever the editor happens to be drawing
+ * (UC-42 5b). Next's own note: "Render-time gating (only rendering a form on an
+ * authenticated page) is not a security boundary."
+ *
+ * The audit line names who (the actor) and which round (by the manager's name
+ * for it), and says "re-scored" when the round held rows before, so the log can
+ * answer "who changed the final after it was in".
+ */
+export async function saveRoundAction(eventId: string, fields: RoundFields): Promise<RoundSaveResult> {
+  const admin = await requireEventManager(eventId);
+
+  if (!Array.isArray(fields.entries) || !Array.isArray(fields.expected)) {
+    return fail("That is not a round.");
+  }
+
+  const entries: RoundEntry[] = fields.entries.map((line) => ({
+    userId: String(line?.userId ?? ""),
+    score: line?.score === null ? null : typeof line?.score === "number" ? line.score : Number.NaN,
+    bonuses: awardsFrom(line?.bonuses),
+  }));
+  const expected: RoundRow[] = fields.expected.map((row) => ({
+    userId: String(row?.userId ?? ""),
+    score: typeof row?.score === "number" ? row.score : Number.NaN,
+    bonuses: awardsFrom(row?.bonuses),
+  }));
+
+  const result = await saveRound(eventId, { roundIndex: fields.roundIndex, entries, expected });
+  if (!result.ok) return result;
+
+  const { name, title, rows, replaced } = result.data;
+  const awards = rows.reduce(
+    (sum, row) => sum + Object.values(row.bonuses).reduce((inner, count) => inner + count, 0),
+    0
+  );
+  await recordAudit({
+    action: "result.round",
+    actor: admin,
+    eventId,
+    subject: `round-${result.data.roundIndex}`,
+    summary: `${replaced > 0 ? "Re-scored" : "Scored"} ${name} of "${title}": ${rows.length} ${rows.length === 1 ? "player" : "players"} and ${awards === 0 ? "no awards" : `${awards} ${awards === 1 ? "award" : "awards"}`}.`,
+    detail: {
+      roundIndex: result.data.roundIndex,
+      round: name,
+      scored: rows.map((row) => ({ userId: row.userId, score: row.score, bonuses: row.bonuses })),
+      replaced,
+    },
+  });
+
+  refresh(eventId);
+  return result;
+}
+
+/** A wire object as awards: string keys to numbers, anything else `NaN` so the count rule refuses it. */
+function awardsFrom(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).map(([key, count]) => [
+      key,
+      typeof count === "number" ? count : Number.NaN,
+    ])
+  );
 }
 
 /* ------------------------------------------------------------------ */

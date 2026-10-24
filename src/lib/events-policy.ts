@@ -1930,6 +1930,147 @@ export function roundScoringConfirmRefusal(losses: readonly string[]): string {
   return `${losses.join(" ")} Tick the box below to go ahead.`;
 }
 
+/* ------------------------------------------------------------------ */
+/* Scoring a round (R-224, R-227, R-230, R-233 / UC-45)               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One player's line on the round-scoring screen: a score or a blank, and the
+ * awards beside it (UC-45 2, 3).
+ *
+ * `score: null` is "did not play" (R-228) and is never a zero — the writes
+ * module turns it into the absence of a row, which decision 006 made the only
+ * representation of a blank. A `RoundScoreRow` is **not** one of these: the
+ * stored row has a score, and the screen's line may not.
+ */
+export type RoundEntry = {
+  userId: string;
+  /** The score as typed, or `null` for a player who did not play this round. */
+  score: number | null;
+  /** How many times each of the night's bonuses was earned. Absent is none. */
+  bonuses: Readonly<Record<string, number>>;
+};
+
+/**
+ * A row as one round holds it — the fields {@link roundMovedSince} compares.
+ * A full `RoundScoreRow` fits; the round number is the caller's to match.
+ */
+export type RoundRow = {
+  userId: string;
+  score: number;
+  bonuses: Readonly<Record<string, number>>;
+};
+
+/**
+ * Why these entries cannot be stored as this round, or null when they can
+ * (UC-45 3c, 3d, and the two doors Task 86's "an unknown key counts nothing"
+ * relies on being shut).
+ *
+ * Pure and shared, like {@link roundScoringProblem}: the screen refuses before
+ * the round trip and the write refuses after it, in one sentence. Checked in
+ * list order and the first problem wins, so the sentence always points at one
+ * line. Each sentence shares no phrase with the others — Task 78's `toContain`
+ * escape.
+ *
+ * The seat rule is not here: it needs who holds a seat, which is a read, and
+ * lives in {@link unseatedRefusal} so the two can be asked separately.
+ */
+export function roundEntriesProblem(
+  setup: RoundScoring,
+  roundIndex: number,
+  entries: readonly RoundEntry[],
+  nameOf: (userId: string) => string
+): string | null {
+  const count = setup.rounds.length;
+  if (!Number.isInteger(roundIndex) || roundIndex < 1 || roundIndex > count) {
+    return `This night has ${counted(count, "round")}, so there is no round ${roundIndex} to score.`;
+  }
+  const round = roundName(setup.rounds[roundIndex - 1], roundIndex - 1);
+  const defined = new Set(setup.bonuses.map((bonus) => bonus.key));
+
+  const seen = new Set<string>();
+  for (const line of entries) {
+    const name = nameOf(line.userId);
+    if (seen.has(line.userId)) return `${name} appears twice in this round. Each player has one line.`;
+    seen.add(line.userId);
+
+    if (line.score !== null && !Number.isInteger(line.score)) {
+      return `${name}'s score has to be a whole number. A fraction of a second is a bonus, not a score.`;
+    }
+
+    for (const [key, times] of Object.entries(line.bonuses)) {
+      if (!defined.has(key)) {
+        return `${name} was given "${key}", which is not one of this night's bonuses. Add it on the Scoring panel first.`;
+      }
+      if (!Number.isInteger(times) || times < 1) {
+        return `${name} cannot earn "${key}" fewer than once, or a fraction of a time. Take the award back instead.`;
+      }
+      if (line.score === null) {
+        return `${name} was left blank for ${round} but given "${key}". Somebody who did not play a round cannot have earned anything in it.`;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The first scored line belonging to somebody who may not be scored, as a
+ * refusal — or null (UC-45 3e).
+ *
+ * `scorable` is who holds a seat **plus** whoever this round already records,
+ * which is `setPlacements`' rule for the same reason: somebody who was scored
+ * and has since withdrawn still played, and a correction to one typo must not
+ * silently drop their row. A blank line for somebody unseated is let through —
+ * it writes nothing, and refusing it would block a whole round over a player
+ * who is not being scored.
+ */
+export function unseatedRefusal(
+  entries: readonly RoundEntry[],
+  scorable: ReadonlySet<string>,
+  nameOf: (userId: string) => string
+): string | null {
+  for (const line of entries) {
+    const writes = line.score !== null || Object.keys(line.bonuses).length > 0;
+    if (!writes || scorable.has(line.userId)) continue;
+    return `${nameOf(line.userId)} holds no seat in this event, so they cannot be scored. Accept them on Applicants first.`;
+  }
+  return null;
+}
+
+/**
+ * Has this round changed since the screen loaded it? (UC-45 4b)
+ *
+ * The rows **are** the round's state — Task 85 stored no version and no
+ * timestamp — so a lost update is detected by comparing them: the save carries
+ * the round as the screen read it, and the write compares that with what the
+ * round holds now, under the event lock. Compared as sets, so the order rows
+ * were read in and the order keys sit in on a row are not differences.
+ *
+ * A round that two managers wrote the *same* content into has not moved in any
+ * way the second one could tell, and their save goes through: what they replace
+ * is exactly what they saw. That is the honest reading of "moved".
+ */
+export function roundMovedSince(expected: readonly RoundRow[], current: readonly RoundRow[]): boolean {
+  return canonicalRound(expected) !== canonicalRound(current);
+}
+
+function canonicalRound(rows: readonly RoundRow[]): string {
+  return JSON.stringify(
+    rows
+      .map((row) => [
+        row.userId,
+        row.score,
+        Object.entries(row.bonuses).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)),
+      ])
+      .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))
+  );
+}
+
+/** UC-45 4b's sentence to the manager who lost: what happened, and what the screen now shows. */
+export function roundMovedRefusal(round: string): string {
+  return `Somebody else saved ${round} while you were on it. What they stored is shown now. Check it, and save again if it needs changing.`;
+}
+
 /** "1 round", "3 scores", "2 bonuses". */
 function counted(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`;

@@ -1626,17 +1626,26 @@ label "Bracket changed" rather than "Format changed".
   `ResultsTab` currently receives only `format` and `matchIds` (`EventEditor.tsx:405`), so the plumbing is part of the task rather than a surprise inside it.
   The confirm-and-refuse states are reachable only by clicking, and this suite is a node environment — so the decisions come out as pure functions asserted directly, the way Task 83's `manualPostStep` and Task 80's `standingOn` did. **No test mimes a click.**
 - **Acceptance criteria:**
-  - [ ] A round's scores are stored in one write, and a blank player has no row
-  - [ ] A bonus earned twice is recorded twice and reads back as twice
-  - [ ] Saving a round again corrects it, and the ranking follows
-  - [ ] A bonus awarded to a player left blank is refused, naming them
-  - [ ] A score that is not a whole number is refused, naming the player
-  - [ ] Somebody who holds no seat cannot be scored; the screen says so and points at Applicants
-  - [ ] Two managers saving one round: one wins, the loser is told the round moved and shown what is there now
-  - [ ] A complete event refuses the write, as a match result does (UC-09 6b)
-  - [ ] Every save is audited, naming who and which round
-  - [ ] Works at 400px
+  - [x] A round's scores are stored in one write, and a blank player has no row
+  - [x] A bonus earned twice is recorded twice and reads back as twice
+  - [x] Saving a round again corrects it, and the ranking follows
+  - [x] A bonus awarded to a player left blank is refused, naming them
+  - [x] A score that is not a whole number is refused, naming the player
+  - [x] Somebody who holds no seat cannot be scored; the screen says so and points at Applicants
+  - [x] Two managers saving one round: one wins, the loser is told the round moved and shown what is there now
+  - [x] A complete event refuses the write, as a match result does (UC-09 6b)
+  - [x] Every save is audited, naming who and which round
+  - [x] Works at 400px — structural evidence only, stated below
 - **Depends on:** Tasks 85, 86, 87.
+- **Left over:** nothing from the criteria, and eight things worth keeping.
+  **The lost update needed no migration, and the reason is the shape of the data rather than a trick.** Task 87 stored no timestamp and no version column and said this task would have to justify an ALTER if it needed one. It did not: **the rows *are* the round's state**, so the sheet keeps the round as it was seeded, sends it as `expected`, and `saveRound` compares that against the rows read under the event lock. Same content in any row or key order is not "moved". That also closes the harder half nobody wrote a criterion for — *a stale sheet silently stripping an award that arrived after it loaded* — because the award is a difference and the comparison sees it. One consequence is stated in the component rather than hidden: the loser's own typing is discarded in favour of what is stored.
+  **Decision 004 shape 1.** The event row is taken `for update` first and every refusal precedes the delete and the insert; the two writes cannot refuse, so a constraint failure there is a crash that rolls both back rather than a refusal that commits.
+  **Who may be scored is accepted applicants *plus* anyone the round already records**, which is `setPlacements`' own rule reused rather than re-invented — so correcting a round never silently drops a player who has since withdrawn. A *blank* line for somebody unseated is let through rather than refused, because a blank is the absence of a row and there is nothing to refuse.
+  **Three kills are crash-shaped, and they are named as such.** Dropping the not-round-scored refusal died on `Cannot read properties of null`; removing the delete-before-insert and letting blank players write rows both died on Postgres refusing by constraint. Those are the real code failing, not a test proxy — the distinction Task 75's note exists to make, applied in the honest direction for once.
+  **One survivor, stated and unfixable here**: removing `.for("update")` from the lock. PGlite is a single connection, so a lock cannot be observed at all; the concurrency test pins the sequenced interleave with `committingAfter`, not the lock. `setPlacements`' own lock is held exactly as loosely. The pooling sweep from Task 66 now at least pins that the lock *exists*, since it inventories every `.for("update")` call site.
+  **Bonus counts are number boxes, not `Stepper`s** — two steppers beside a score box are wider than a phone. Under `sm` the player's name takes its own line so the score and the bonuses sit together instead of the bonuses wrapping away from the score they belong to. 400px is **structural, not measured**; no dev server was run.
+  **`listRoundScores` orders a round's rows by their random uuid**, so rows within one round have no stable order and the tests sort before comparing. That is fine for a write path and is a **trap for Task 89**, which has to choose a display order rather than inherit one.
+  **Four private copies of "lock the event row" now exist** — in `events`, `draft`, `format`, and inline in `round-scores`. That is a three-strikes candidate the agent flagged and deliberately did not refactor, which was the right call mid-feature: it is four modules' lock ordering, Tasks 36 and 56 spent real effort making that correct, and no requirement asks for it. Recorded here so the fourth copy is a decision rather than drift.
 
 ### Task 89: The night's table on the Results tab
 

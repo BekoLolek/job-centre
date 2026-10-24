@@ -377,6 +377,17 @@ const CLASSIFIED: Record<string, Bucket[]> = {
     "announced",
   ],
   "src/components/admin/events/ResultsTab.tsx": ["announced", "announced", "announced"],
+  /*
+   * Two, both Task 88's (R-224, R-227, R-230, R-233 / UC-45).
+   *
+   * In source order: the save error, handler state, announced — it carries
+   * UC-45 4b's "somebody else saved this round", which is the sentence that
+   * most has to reach somebody who cannot see the boxes change under them; and
+   * the finished-event lock (UC-45 4c), which is `lockRefusal` over the status
+   * the server page read, so it is in the markup the moment the sheet arrives
+   * and is **standing** for the reason `ShapeTab`'s props-derived bar is.
+   */
+  "src/components/admin/events/RoundScores.tsx": ["announced", "standing"],
   "src/components/admin/events/ScheduleTab.tsx": ["announced", "standing", "standing"],
   /*
    * Two, both Task 87's (R-225, R-226, R-229 / UC-44).

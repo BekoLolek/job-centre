@@ -1,6 +1,7 @@
 import type { PlayerBook, TeamLike } from "@/components/draft";
 import type {
   ChampionshipStatusValue,
+  EventStatus,
   ProfileFieldOption,
   ProfileFieldType,
 } from "@/db/schema";
@@ -11,8 +12,9 @@ import type {
 import type { EventChampionship } from "@/lib/championships";
 import type { TeamsFill } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
-import type { TeamFormat } from "@/lib/events-policy";
+import type { RoundScoring, TeamFormat } from "@/lib/events-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
+import type { RoundScoreRow } from "@/lib/round-scoring";
 
 /**
  * The props the event editor's tabs share.
@@ -150,4 +152,28 @@ export type FormatTabData = {
    * id, so the mapping travels alongside the board.
    */
   matchIds: Record<string, string>;
+};
+
+/**
+ * What the Results tab reads for a round-scored night (UC-45), in one bundle.
+ *
+ * Nothing here is a new read: the editor already holds every piece — the
+ * setup is one key on `event.config`, the rows are `EventEditorProps.roundScores`,
+ * the names are the draft bundle's `players`, the seats are the accepted
+ * applicants, and the status is the event's own. Bundled so the Results tab
+ * takes one prop for the round sheet rather than five, the way the Format and
+ * Draft tabs take theirs.
+ *
+ * `scoring` is **null for a night that is not scored in rounds**, and the tab
+ * then draws no sheet at all — `roundScoringFrom`'s default, which is every
+ * event on the site today.
+ */
+export type RoundScoresData = {
+  scoring: RoundScoring | null;
+  rows: RoundScoreRow[];
+  players: PlayerBook;
+  /** The accepted applicants' user ids: the players (UC-45 pre 3). */
+  seated: string[];
+  /** For UC-09 6b's lock, so the sheet can say so before the server has to. */
+  status: EventStatus;
 };

@@ -142,6 +142,9 @@ describe("the premise behind an unbounded pool", () => {
       "draft.ts",
       "events.ts",
       "format.ts",
+      // Task 88: `saveRound` takes the event row for update so two managers
+      // saving one round are serialised and the second reads the first's rows.
+      "round-scores.ts",
     ]);
   });
 });

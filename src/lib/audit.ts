@@ -96,6 +96,14 @@ export const AUDIT_ACTIONS = {
   "result.recorded": "Result recorded",
   "result.cleared": "Result cleared",
   "result.override": "Winner overturned",
+  /*
+   * One round of a round-scored night stored, or stored again (R-224, R-233 /
+   * UC-45's outcome: "the audit log says who scored it"). A `result.` row
+   * because that is what it is — the solo night's result arrives a round at a
+   * time, where a bracket's arrives a match at a time — and the summary names
+   * the round, so "who scored the final" is a line somebody can scan for.
+   */
+  "result.round": "Round scored",
   "match.reflip": "Coin re-flipped",
   "schedule.applied": "Schedule rebuilt",
   // "Bracket", not "Format": the Setup panel called Format is `event.shape`

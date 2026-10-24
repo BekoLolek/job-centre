@@ -33,6 +33,8 @@ import type { DependentFlag, FormatView } from "@/lib/format";
 import { type MatchSlot, otherSlot, unresolvedSlotRefusal } from "@/lib/format-policy";
 import type { ResolvedMatch } from "@/lib/format-resolve";
 import { formatClock, toInstant, toLocalInput } from "@/lib/time";
+import RoundScores from "./RoundScores";
+import type { RoundScoresData } from "./types";
 import {
   type RecordFields,
   clearMatchAction,
@@ -111,6 +113,7 @@ type View = "day" | "bracket";
 export default function ResultsTab({
   format,
   matchIds,
+  rounds,
 }: {
   format: FormatView;
   /**
@@ -122,6 +125,11 @@ export default function ResultsTab({
    * when a stage is regenerated, which re-renders this page anyway.
    */
   matchIds: Record<string, string>;
+  /**
+   * The round sheet's bundle (UC-45). `scoring` null means the night is not
+   * scored in rounds and no sheet is drawn — see `RoundScoresData`.
+   */
+  rounds: RoundScoresData;
 }) {
   const router = useRouter();
 
@@ -165,7 +173,27 @@ export default function ResultsTab({
   const undecided = matches.filter((match) => match.needsDecision);
   const played = matches.filter((match) => match.status === "done").length;
 
+  /*
+   * UC-45 1. A round-scored night's results are its rounds, so the sheet is
+   * what this tab shows for one — and for the ordinary solo night, which has
+   * no rounds and no matches, the empty state below stands as it was (that
+   * sentence is Task 89's to retire). A team event somebody also set up to
+   * score in rounds gets the sheet above its board rather than instead of it:
+   * hiding the Scoring panel is not forbidding its save (UC-42 5b).
+   */
+  const sheet = rounds.scoring ? (
+    <RoundScores
+      eventId={format.eventId}
+      scoring={rounds.scoring}
+      rows={rounds.rows}
+      players={rounds.players}
+      seated={rounds.seated}
+      status={rounds.status}
+    />
+  ) : null;
+
   if (matches.length === 0) {
+    if (sheet) return sheet;
     return (
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Results</Eyebrow>
@@ -299,6 +327,8 @@ export default function ResultsTab({
 
   return (
     <div className="space-y-6">
+      {sheet}
+
       {error && <Alert>{error}</Alert>}
 
       {/* --- What the last save moved ------------------------------ */}

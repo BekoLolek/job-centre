@@ -433,7 +433,26 @@ function EditorBody({
           />
         )}
         {here === "results" && (
-          <ResultsTab format={format.view} matchIds={format.matchIds} />
+          <ResultsTab
+            format={format.view}
+            matchIds={format.matchIds}
+            /*
+             * UC-45. Everything the round sheet reads is already here — the
+             * setup off `event.config`, the rows the page read, the names
+             * the draft bundle carries, the accepted applicants and the
+             * status — so the tab is handed one bundle and reads nothing of
+             * its own. See `RoundScoresData`.
+             */
+            rounds={{
+              scoring: roundScoringFrom(event.config),
+              rows: roundScores,
+              players: draft.players,
+              seated: applicants
+                .filter((row) => row.status === "accepted")
+                .map((row) => row.member.id),
+              status: event.status,
+            }}
+          />
         )}
         {here === "publish" && (
           <PublishTab
