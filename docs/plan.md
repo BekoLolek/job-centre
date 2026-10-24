@@ -1544,13 +1544,13 @@ label "Bracket changed" rather than "Format changed".
   - [ ] A blank round is the absence of a row, asserted — there is no null score
   - [ ] `bonuses` defaults to `{}` for a row written without one
   - [ ] The migration replays from 0000 and `migrations.test.ts`'s table count and by-name list both move
-  - [ ] The round bound is a CHECK, and the policy module reads the same constant rather than repeating the number
+  - [ ] The round bound is a CHECK writing the literal **32**, following `event_days`' own `check(0..4)` — `schema.ts` imports nothing from `src/lib` and this task does not change that
 - **Depends on:** nothing. Needs a migration, so it must not run beside another that holds one.
 
 ### Task 86: What the table says — the scoring rules, as pure functions
 
 - **Serves:** R-228, R-231, R-232, R-238 / UC-46 1, 2, 2a
-- **Files:** a new `src/lib/round-scoring.ts`, tests
+- **Files:** a new `src/lib/round-scoring.ts` (which **owns** `MAX_ROUNDS`), tests
 - **Do:** `rankRounds(setup, rows)` → the ranked list: every round added up, plus bonuses **in the player's favour**, equal totals sharing a place with the next place skipped.
   Four rules that the obvious implementation gets wrong, each of which is why this is its own task and pure:
   **A blank round is that round's worst recorded score, not zero** (R-228). In a low-score-wins event a zero is the best mark on the board, so the obvious `?? 0` hands the night to whoever skipped a round. Worst *recorded* in that round, so a round nobody scored contributes nothing to anybody.
@@ -1565,6 +1565,7 @@ label "Bracket changed" rather than "Format changed".
   - [ ] Equal totals share a place and the place below is empty
   - [ ] A player with rows in no round is absent from the ranking rather than last in it
   - [ ] Nothing in the module reaches Postgres or imports anything that does
+  - [ ] `MAX_ROUNDS` is **defined here** (32) and pinned against the live CHECK clause read out of `information_schema`, so the literal in the migration and the constant the panel validates with cannot drift apart in silence — Task 75's `hero_hands` constraint test is the precedent
 - **Depends on:** nothing. Pure; can run beside Task 85.
 
 ### Task 87: The Scoring panel — how a night is scored
