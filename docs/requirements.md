@@ -410,6 +410,7 @@ sub-0.5-second answer, a run that takes gold in every round.
 | R-235 | As a participant, I want to find my own rounds in that table, so that I can see where my points came from. | Could | |
 | R-236 | As a manager, I want a round-scored event's championship places to come from its own table, so that the night's result and the season standings cannot disagree. | Must | One authority for the finishing order. The hand-typed order (UC-33) is for events that are not round-scored |
 | R-237 | As an admin, I want a template to carry the scoring setup and the bonus list, so that every Popsauce night starts the same. | Should | Templates already copy `config` (R-22 / UC-28), so this is a consequence of storing the setup there rather than new machinery |
+| R-238 | As a manager, I want tied players to take the same championship points as well as the same place, so that a tie is a tie all the way through. | Must | Confirmed against the code rather than assumed: `placementValue` is `pointsTable[position - 1] ?? participationPoints`, so two players at place 1 each take the first row and nobody takes the second. The new work is that the **derived** order produces a shared place rather than inventing a split |
 
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 

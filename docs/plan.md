@@ -1505,3 +1505,166 @@ Task 82 retires it rather than patching the number.
   **The sweep vouched for itself**, which is recorded in full under Plan hygiene because it is the third instance of one family. Short version: the inbound-link sweep matched `href` literals across `src`, and the test's own helper spelled out `href="/events/${slug}/draw"`, so deleting the real link left it green. `__tests__` is now excluded as a link source *and* the attribute name is joined to the path at runtime, so the adjacency does not exist in the file to match.
   **The link asks the same question the page does**, by calling `loadDraw`'s own audience decision rather than re-deriving "is a participant of a hero game" — so `no_seat`, `no_game`, `no_heroes` and `too_thin` each withhold the link, and the route cannot advertise itself into a refusal. The `too_thin` case is the one worth noting: a half-filled hero list hides the link rather than offering a draw that will be refused.
   **The hand itself stays off the event page** — the link says *whether* one was drawn, not what it was, asserted directly. A spoiler on the way to the reveal would undo Task 76's whole shape.
+
+## M. Solo events scored in rounds (R-224 to R-238)
+
+Added 2026-10-24, Tier 3, Gate 1 approved by the user with the finishing-order question settled
+in favour of **the table wins**. `docs/decisions/006-round-scored-events.md` carries both
+structural decisions: round scores are rows with bonuses on the row, and for a round-scored event
+the derived table is the only authority for the finishing order.
+
+**What this section is not.** The customisation is a closed set — a round count, round names, which
+direction wins, and a list of bonuses with values. There is no formula language, no admin-authored
+arithmetic, and no combining rule beyond the total of every round. The user picked "total of every
+round" alone from four offered, so drop-worst, best-N and average are **not built**; the stored
+shape leaves room for one without a migration, and adding one later is a task, not a correction.
+
+**Two things the mapping found before any code.** The championship already scores individual
+players natively (`PlacementSubject` is `member | team`, `championship_placements` holds `userId`
+XOR `teamId`, `scoreChampionship` outputs per-user), so there is no championship schema work. And
+a solo event's Results tab is not merely empty — its empty state says "Choose a format and generate
+them on the Format tab", a tab `TEAM_ONLY_KEYS` hides for solo events and `tabHiddenBecause` would
+refuse a link to. It tells the admin to go somewhere they cannot go. Task 89 retires that sentence.
+
+**The word "round" is taken three times** — `matches.round`, `roundLabel`, and the draft's
+`reserveRounds` — and is completely free in the championship layer, which is where this lives.
+Nothing here puts a `Round` type in `src/lib/format*`, on the same reasoning that made the audit
+label "Bracket changed" rather than "Format changed".
+
+### Task 85: The round-score table
+
+- **Serves:** R-224 / UC-45 5
+- **Files:** `src/db/schema.ts`, a new migration, `src/db/__tests__/migrations.test.ts`
+- **Do:** `event_round_scores` — one row per (event, round, player), `unique(event_id, round_index, user_id)`, `score integer not null`, `bonuses jsonb not null default '{}'` holding `Record<bonusKey, count>`, and an index on `(event_id, round_index)` for the per-round read.
+  **`score` is NOT NULL and a blank is the absence of a row**, which is the point rather than an economy: with bonuses on the row, "a player left blank for a round cannot have earned a bonus in it" (UC-45 3c) becomes impossible to represent rather than a guard somebody can forget. Decision 006 has the argument.
+  `round_index` is 1-based with a CHECK and an upper bound, following `event_days`' `check(0..4)` precedent — a bound stops a typo creating round 9000, and the bound is a constant the policy module also reads.
+  On-delete behaviour follows `championship_placements` rather than being chosen fresh; the migration states which and why.
+- **Acceptance criteria:**
+  - [ ] Two rows for one player in one round are impossible, proven against the constraint by name
+  - [ ] A blank round is the absence of a row, asserted — there is no null score
+  - [ ] `bonuses` defaults to `{}` for a row written without one
+  - [ ] The migration replays from 0000 and `migrations.test.ts`'s table count and by-name list both move
+  - [ ] The round bound is a CHECK, and the policy module reads the same constant rather than repeating the number
+- **Depends on:** nothing. Needs a migration, so it must not run beside another that holds one.
+
+### Task 86: What the table says — the scoring rules, as pure functions
+
+- **Serves:** R-228, R-231, R-232, R-238 / UC-46 1, 2, 2a
+- **Files:** a new `src/lib/round-scoring.ts`, tests
+- **Do:** `rankRounds(setup, rows)` → the ranked list: every round added up, plus bonuses **in the player's favour**, equal totals sharing a place with the next place skipped.
+  Four rules that the obvious implementation gets wrong, each of which is why this is its own task and pure:
+  **A blank round is that round's worst recorded score, not zero** (R-228). In a low-score-wins event a zero is the best mark on the board, so the obvious `?? 0` hands the night to whoever skipped a round. Worst *recorded* in that round, so a round nobody scored contributes nothing to anybody.
+  **A bonus subtracts when a low score wins**, because a bonus is points in the player's favour (Constraints). Adding in both directions turns every reward into a penalty for half the games on the site.
+  **Equal totals share a place and the next is skipped** — 1, 1, 3 — which is what the bracket's placements already produce and what `placementValue` already pays correctly.
+  **A player with no score in any round is not placed at all.** They took part and played nothing, which is not a finishing place; the season gives them the taking-part points through UC-33 3b's existing path.
+  No randomness anywhere in this module, so the evidence is enumeration rather than any kind of sweep.
+- **Acceptance criteria:**
+  - [ ] The total is every round added up, proven on a night where the per-round winner is not the night's winner
+  - [ ] A blank round counts as that round's worst recorded score, proven in **both** directions, and a round nobody scored changes nobody's total
+  - [ ] A bonus improves a player's standing in both directions — the same bonus, the same value, opposite arithmetic
+  - [ ] Equal totals share a place and the place below is empty
+  - [ ] A player with rows in no round is absent from the ranking rather than last in it
+  - [ ] Nothing in the module reaches Postgres or imports anything that does
+- **Depends on:** nothing. Pure; can run beside Task 85.
+
+### Task 87: The Scoring panel — how a night is scored
+
+- **Serves:** R-225, R-226, R-229 / UC-44
+- **Files:** a new Setup panel component, `src/lib/events-policy.ts`, `src/app/admin/events/actions.ts`, `src/components/admin/events/tabs.ts`, tests
+- **Do:** a seventh Setup panel keyed `scoring`, holding the round count, each round's name, which direction wins, and the bonus list with a value each.
+  Stored at **top-level `events.config.roundScoring`**, written whole on every save, for the reason Tasks 78 and 79 both paid for: `updateEvent` merges one level deep and `saveScheduleSettingsAction` rewrites all of `config.format`.
+  **Absent reads as "not round-scored"**, which is the opposite default from `eventShape` and is right for the same reason: absent must read as the event that exists today, and today no event is round-scored. Getting this backwards would make every solo event on the site claim a scoring system it has never had.
+  A round is named the way a day is — the name given, or "Round N" — so `dayName`'s rule is the precedent and `dayLabel`'s question is the one the panel asks.
+  **The Setup rail is not shape-aware yet.** Task 80 made the *step* tabs conditional; `SETUP_KEYS` and `SETUP_LABELS` are not filtered by anything. This task extends that to panels, which means `tabHiddenBecause`'s sentence-not-a-boolean shape applies one level down.
+  Three destructive edits, each confirmed naming what goes, following Task 78's precedent: lowering the round count below a round that holds scores (UC-44 2b), deleting a bonus that has been awarded (4d), and changing the direction once scores exist (3a — allowed, because it is the correction after scoring a Fall Guys night as though it were Popsauce, but it turns the table upside down and must say so).
+- **Acceptance criteria:**
+  - [ ] A seventh Setup panel, reachable and persisted, with no migration
+  - [ ] An absent key reads as **not round-scored**, asserted against an event that predates the feature
+  - [ ] The panel is absent for a team event, and the save action still refuses for a member and still succeeds for a manager — hiding is not permission (UC-42 5b)
+  - [ ] Two bonuses with one name refused; a bonus worth zero or less refused; nothing stored in either case
+  - [ ] Lowering the rounds below a scored round is refused until confirmed, naming how many scores go and in which rounds
+  - [ ] Changing the direction with scores present is confirmed first, naming that the order inverts
+  - [ ] Every refusal is shown on the panel, not swallowed
+- **Depends on:** Task 85 for the rows the destructive rules count. Touches `tabs.ts`, so not beside another task holding it.
+
+### Task 88: Score a round
+
+- **Serves:** R-224, R-227, R-230, R-233 / UC-45
+- **Files:** a new round-scoring screen, a new action, a new module for the writes, `EventEditor.tsx` and `types.ts` plumbing, tests
+- **Do:** one screen per round listing every accepted applicant with a score box and the night's bonuses beside each, saved in **one write per round** that replaces that round's rows — the same whole-unit replace `setPlacements` uses for an order, for the same reason: one authority per round and no diff to get wrong.
+  Decision 004 applies; the task names which of the four safe shapes it took.
+  `ResultsTab` currently receives only `format` and `matchIds` (`EventEditor.tsx:405`), so the plumbing is part of the task rather than a surprise inside it.
+  The confirm-and-refuse states are reachable only by clicking, and this suite is a node environment — so the decisions come out as pure functions asserted directly, the way Task 83's `manualPostStep` and Task 80's `standingOn` did. **No test mimes a click.**
+- **Acceptance criteria:**
+  - [ ] A round's scores are stored in one write, and a blank player has no row
+  - [ ] A bonus earned twice is recorded twice and reads back as twice
+  - [ ] Saving a round again corrects it, and the ranking follows
+  - [ ] A bonus awarded to a player left blank is refused, naming them
+  - [ ] A score that is not a whole number is refused, naming the player
+  - [ ] Somebody who holds no seat cannot be scored; the screen says so and points at Applicants
+  - [ ] Two managers saving one round: one wins, the loser is told the round moved and shown what is there now
+  - [ ] A complete event refuses the write, as a match result does (UC-09 6b)
+  - [ ] Every save is audited, naming who and which round
+  - [ ] Works at 400px
+- **Depends on:** Tasks 85, 86, 87.
+
+### Task 89: The night's table on the Results tab
+
+- **Serves:** R-231, R-234, R-235 / UC-46 3, 3a, 4a
+- **Files:** the Results tab, tests
+- **Do:** the ranked table beside the round entry — every round and every bonus shown next to the total, so a total nobody can see the parts of is never the only thing on screen (R-234's note).
+  **This retires the misdirecting empty state.** For a solo event the Results tab currently says "Choose a format and generate them on the Format tab", and that tab is hidden for solo events and would refuse the link. A team event's Results tab must be untouched, asserted rather than assumed.
+  A partly-scored night shows the table as it stands and says how many rounds are in it; a night with nothing scored says that, rather than rendering an empty table with a header.
+- **Acceptance criteria:**
+  - [ ] The table shows the finishing order with every round and every bonus beside the total
+  - [ ] A participant can find their own rounds in it
+  - [ ] A partly-scored night says how many rounds the table covers
+  - [ ] Nothing scored says so, and names no tab the reader cannot open
+  - [ ] No sentence anywhere on a solo event's Results tab names a hidden tab, swept rather than eyeballed
+  - [ ] A team event's Results tab renders exactly as it does today, asserted
+  - [ ] Works at 400px
+- **Depends on:** Tasks 86, 88. Touches the Results tab, so not beside Task 88.
+
+### Task 90: The solo result on the public event page
+
+- **Serves:** R-234, R-235 / UC-46 4, 4a
+- **Files:** `src/app/events/[slug]/page.tsx`, its public Results tab, `src/lib/event-board.ts`, tests
+- **Do:** three places read a result today and all three are bracket-shaped — `has.results` is `matches.some(done)`, `podiumFor`/`placementsOf` derive from the last stage with a champion, and `BoardPlacement` is keyed on `teamId`. A solo event therefore shows no podium, no result line and no public Results tab however well it is scored.
+  Give each a non-team notion of "who won", without changing what a team event shows. `BoardPlacement` gaining a player subject is the honest shape; a second parallel type is the thing to avoid, and the task says which it chose and why.
+- **Acceptance criteria:**
+  - [ ] A scored solo event shows its table on its public page, and its winner in the result line
+  - [ ] A solo event with nothing scored says the night has not been scored
+  - [ ] A team event's podium, result line and Results tab are unchanged, asserted over a real fixture rather than by inspection
+  - [ ] Works at 400px
+- **Depends on:** Tasks 86, 88.
+
+### Task 91: The championship takes its places from the table
+
+- **Serves:** R-232, R-236, R-238 / UC-46 5, 5a, 5b, 5c, 5d
+- **Files:** `src/lib/championship-results.ts`, the championship panel and its placement editor, tests
+- **Do:** for a round-scored event, `countingEventInput` derives its placements from `rankRounds` instead of reading `championship_placements`, and `setPlacements` **refuses**, pointing at the Results tab. Decision 006 carries the reasoning and the cost: there is no way to drag a player to first place, and a wrong result is fixed in the round.
+  The panel shows the derived order read-only rather than hiding itself, because "where did these places come from" is the question an admin will have.
+  **This task must decide what happens to a hand-typed order that already exists** on an event later switched to round-scored. Nothing on the record is hard-deleted (Constraints), but rows that are kept and silently ignored are worse than either alternative. Decide, state it, and make the screen say it.
+  A tie is the half worth proving end to end: a shared place in the table must reach the season as a shared place, and `placementValue` then pays both players the same row and nobody the row below.
+- **Acceptance criteria:**
+  - [ ] A round-scored event's season points follow its table, with nobody typing an order
+  - [ ] Two players tied in the table each take that place's points, and the place below pays nobody
+  - [ ] Correcting a round moves the standings, proven by scoring the season before and after
+  - [ ] A player with no score in any round gets the taking-part points, not a place
+  - [ ] The hand-typed order is refused for a round-scored event, naming where to go instead
+  - [ ] An event that is not round-scored is completely unaffected — the existing UC-33 tests pass untouched, asserted as a statement rather than observed
+  - [ ] What happens to a pre-existing hand-typed order is decided, stated in the code, and visible on the screen
+- **Depends on:** Tasks 86, 88. Touches `championship-results.ts`, so not beside another task holding it.
+
+### Task 92: A template carries the scoring setup
+
+- **Serves:** R-237 / UC-44 6a
+- **Files:** `src/lib/admin-templates-policy.ts`, the templates screen if it needs it, tests
+- **Do:** a template already copies `config` wholesale (R-22 / UC-28), so storing the setup there *should* make this free — but `normaliseTemplateConfig` validates template config against a known set, so an unknown key may well be stripped on the way in. **Verify rather than assume**, and if it is stripped, the fix is that function knowing the key.
+  Task 79's note flagged that `normaliseTemplateConfig` also validates `teams` as 2…`MAX_TEMPLATE_TEAMS`; this is the second task to meet that function, so whatever it learns about it is worth writing down.
+- **Acceptance criteria:**
+  - [ ] A template stores a scoring setup and an event made from it arrives with it
+  - [ ] Editing the template afterwards changes no event already made from it
+  - [ ] A malformed setup in a template is refused at save rather than silently stripped
+  - [ ] A template with no scoring setup makes an event that is not round-scored
+- **Depends on:** Task 87.

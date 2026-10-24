@@ -1587,7 +1587,7 @@ A season of two to four events a month across different games, with one running 
 ## UC-46: The night's table, and the season
 
 **Actor:** Manager; Visitor; Participant
-**Requirements covered:** R-231, R-232, R-234, R-235, R-236
+**Requirements covered:** R-231, R-232, R-234, R-235, R-236, R-238
 **Trigger:** At least one round has been scored.
 
 **Preconditions**
@@ -1607,7 +1607,8 @@ A season of two to four events a month across different games, with one running 
 - **2a.** Two players tie - they share the place and the next place is skipped, as the bracket's placements already do (R-232, UC-33 3a).
 - **3a.** Not every round is scored yet - the table is shown as it stands, saying how many rounds are in it, rather than hidden until the night is over.
 - **4a.** Nothing is scored yet - the event page says the night has not been scored, rather than showing an empty table.
-- **5a.** A player who took part but is not in the table - they still get the taking-part points, exactly as UC-33 3b gives them.
+- **5a.** A player who took part but is not in the table - they still get the taking-part points, exactly as UC-33 3b gives them. A player with no score in any round is such a player: they were there and played nothing, which is not a finishing place.
+- **5d.** Two players share a place - the season gives **each of them that place's points** and nobody takes the place below, which is what a shared place already means when the order is typed by hand (UC-33 3a). A tie is a tie in the night's table and in the season's table alike (R-238).
 
 **Error flows**
 - **5b.** A manager tries to type a finishing order by hand for a round-scored event - refused, pointing at the Results tab, because the table is the authority (R-236). The hand-typed order stays for events that are not round-scored.
