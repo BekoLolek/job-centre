@@ -380,6 +380,37 @@ say "send that one now" short of editing the database.
 | R-222 | As an admin, I want to be told when an announcement has already gone out, so that I do not post it twice by accident. | Should | Warned and asked to confirm, not refused - the case this exists for is precisely the one where it *did* go out and nobody saw it |
 | R-223 | As an admin, I want a manual post to work even when that kind is switched off, so that a one-off does not mean changing a setting and remembering to change it back. | Should | The switch governs what posts **automatically**; a button is an explicit decision |
 
+### Solo events scored in rounds (added 2026-10-24)
+
+A jklm.fun Popsauce night or a Fall Guys night is not a tournament: there are no teams, no
+bracket and no matches, and the result is a table of players built up over several rounds.
+R-219 already says "a solo event still has a running order and a winner" - but there was no
+way to record the winner. The Results step of a solo event was permanently empty, and the one
+place a solo finishing order *could* be typed was the championship panel, which only exists
+when the event counts towards a season.
+
+Two games, scored two different ways, which is what shapes this: Popsauce gives a player
+**points** in a round (more is better), while a Fall Guys round gives them a **finishing
+place** (less is better). Both have feats worth rewarding that no round score captures - a
+sub-0.5-second answer, a run that takes gold in every round.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-224 | As a manager, I want to score a solo event round by round, so that a night of several games ends as one ranked list. | Must | The ranked list is the night's result and the only source of its championship places |
+| R-225 | As a manager, I want to say how many rounds a night has and name them, so that the scoring screen matches what we actually played. | Should | Named like a day is (R-30): the name given, or "Round N" |
+| R-226 | As a manager, I want to say whether a high score or a low score wins a round, so that both a points game and a placement game work. | Must | Popsauce scores points; a Fall Guys round gives a place. Without this an admin converts places to points by hand every round |
+| R-227 | As a manager, I want to type a whole round's scores on one screen and save them together, so that scoring between games is one action rather than twenty. | Should | |
+| R-228 | As a manager, I want to leave a player blank when they did not play a round, so that absence is recorded as absence. | Must | **Never a zero.** In a low-score-wins event a zero is the best mark on the board, so a blank must count as the worst score in that round rather than the best |
+| R-229 | As a manager, I want to define what the night's bonuses are and what each is worth, so that a feat is recorded as itself rather than folded into somebody's score. | Should | "Sub-0.5 answer, +2". A score with a feat baked into it cannot be checked by the player it belongs to |
+| R-230 | As a manager, I want to award a bonus as many times as a player earned it, so that three fast answers count three times. | Should | |
+| R-231 | As a manager, I want the ranked list worked out from the rounds and the bonuses, so that nobody adds up a column by hand. | Must | The total of every round, plus bonuses **in the player's favour** |
+| R-232 | As a manager, I want equal totals to share a place, so that a genuine tie is not broken by a rule nobody agreed to. | Should | The next place is skipped, which is what the bracket's placements already do |
+| R-233 | As a manager, I want to correct a round after saving it, so that a typo is not permanent. | Must | The ranking and the season standings follow, the same way a corrected bracket result re-scores (R-79) |
+| R-234 | As a visitor, I want a solo event's table on its page - the finishing order, each round and the bonuses - so that the result is public and checkable. | Should | A total nobody can see the parts of is a number to be argued with |
+| R-235 | As a participant, I want to find my own rounds in that table, so that I can see where my points came from. | Could | |
+| R-236 | As a manager, I want a round-scored event's championship places to come from its own table, so that the night's result and the season standings cannot disagree. | Must | One authority for the finishing order. The hand-typed order (UC-33) is for events that are not round-scored |
+| R-237 | As an admin, I want a template to carry the scoring setup and the bonus list, so that every Popsauce night starts the same. | Should | Templates already copy `config` (R-22 / UC-28), so this is a consequence of storing the setup there rather than new machinery |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -398,6 +429,8 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - **A mention is only ever the admin's own words.** Interpolated data - a display name, an event title - is rendered into the embed, where Discord does not parse mentions at all. The mention line is built solely from the stored template, and `allowed_mentions` names the exact role ids that template used, permitting `everyone` only when the template itself asks for it. A member who renames themselves `@everyone` therefore cannot make the site ping the server, which is the hole `allowed_mentions: { parse: [] }` was closing before any announcement could mention anyone.
 - **A hero may belong to more than one role.** Deadpool is playable as Vanguard, Duelist and Strategist, so the hero catalogue stores a set of roles per hero rather than one. Checked against the live roster on 2026-10-23 rather than recalled: 54 heroes at Season 10.5, which is 14 + 27 + 12 plus Deadpool in all three.
 - **An event belongs to at most one championship**, so a result cannot count twice.
+- **A round score is a recorded fact; a total never is.** Somebody typed it, exactly as somebody types a match's maps, so it is stored. What stays derived is every number worked out *from* it - a player's total, the night's ranking, the championship places and the season standings - which is the same rule as "points are worked out from recorded places, never stored as a total" one layer down. Correcting a round re-scores everything above it.
+- **A bonus helps the player whichever way the event scores.** A bonus is points *in the player's favour*, so in a low-score-wins event it subtracts. Stated as a constraint because the obvious implementation adds in both directions, and in half of them that is a penalty dressed as a reward.
 
 ## Out of scope
 
@@ -416,6 +449,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - One host managing several events under a single grant (each grant is one event; R-86).
 - The retired password-based draft board and its env-var accounts.
 - Artificial delays or simulated mouse movement between actions.
+- Solo scoring: a formula language or any admin-authored expression for working out a score - the customisation is a stated set of choices, not arbitrary arithmetic. Also out: any combining rule other than the total of every round (dropping the worst round, counting the best N, averaging per round); weighting one round more than another; players entering their own scores; reading scores out of jklm.fun or Fall Guys; round scoring for an event that has teams, which has a bracket instead.
 - Championship: skill ratings or ELO; automatic results from game APIs; prizes, money or entry fees; leaderboards across other communities; more than one championship counting the same event; per-game separate championships running as their own competitions (one season, one table, games are just where the points came from).
 
 ## Open questions

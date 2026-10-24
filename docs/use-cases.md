@@ -1509,3 +1509,106 @@ A season of two to four events a month across different games, with one running 
 - **4b.** The claim is already taken - the post still goes out (3a confirmed it), and no second claim row is written.
 - **4c.** The claim is free - it is taken, so the scheduler does not post the same thing again an hour later.
 - **5a.** Discord refuses the post - recorded as `announcement.failed` against the event, exactly as an automatic one is (R-208, UC-38 5c), and the screen says so rather than reporting success.
+
+---
+
+## UC-44: Say how a solo night is scored
+
+**Actor:** Manager
+**Requirements covered:** R-225, R-226, R-229, R-237
+**Trigger:** A manager sets up a night with no teams - a Popsauce night, a Fall Guys night.
+
+**Preconditions**
+1. The manager manages this event.
+2. The event is not a team event (UC-42 2) - a night with teams has a bracket instead.
+
+**Main success path**
+1. Manager opens Setup and the Scoring panel.
+2. Manager says how many rounds the night has, and names any round whose name matters.
+3. Manager says which way a round is won - the higher score or the lower one.
+4. Manager adds the night's bonuses, each with a name and what it is worth.
+5. System states what it will do with the choices: "6 rounds, highest total wins, 2 bonuses" - and that a blank round counts as that round's worst score.
+6. Manager saves.
+
+**Outcome**
+- The event knows how it is scored; the Results tab can take a round; nothing has been scored yet.
+
+**Alternate flows**
+- **2a.** The night runs longer than planned - the manager raises the round count and the new round is empty, with nothing re-scored.
+- **4a.** A night with no bonuses at all - the list is empty and the scoring screen shows no bonus controls, rather than an empty row nobody can use.
+- **6a.** The event was made from a template carrying a scoring setup - the panel opens on it rather than on the defaults (R-237).
+
+**Error flows**
+- **2b.** Lowering the round count below a round that has scores in it - refused until the manager says to discard them, naming how many scores go and in which rounds. The same rule as discarding teams (UC-42 2a).
+- **3a.** Changing which way a round is won once scores exist - allowed, because it is the correction an admin makes after scoring a Fall Guys night as though it were Popsauce, but **confirmed first**, naming that it turns the table upside down.
+- **4b.** Two bonuses with the same name - refused; a bonus is identified on the scoring screen by its name.
+- **4c.** A bonus worth nothing, or worth a negative amount - refused. A penalty is not a bonus, and it is not in scope.
+- **4d.** Deleting a bonus that has already been awarded - refused until the manager says to discard those awards, naming how many and to whom.
+- **6b.** The event has teams - the panel is not there at all, the same way the bracket is not there for a solo event (UC-42 5).
+
+---
+
+## UC-45: Score a round
+
+**Actor:** Manager
+**Requirements covered:** R-224, R-227, R-228, R-230, R-233
+**Trigger:** A round has just been played.
+
+**Preconditions**
+1. The manager manages this event.
+2. The event is scored in rounds (UC-44).
+3. The event has accepted applicants - they are the players.
+
+**Main success path**
+1. Manager opens the Results tab and picks the round.
+2. System lists every accepted applicant with a box for their score, and the night's bonuses beside each.
+3. Manager types the scores, leaving blank anybody who did not play, and awards bonuses where they were earned.
+4. Manager saves the round.
+5. System stores the round's scores and awards in one write, and the night's table moves.
+
+**Outcome**
+- That round is recorded, the ranking reflects it, and the audit log says who scored it.
+
+**Alternate flows**
+- **3a.** A player did not play - left blank, and the table counts it as that round's worst score rather than as a zero (R-228).
+- **3b.** A player earned a bonus twice - it is awarded twice, and the table shows "x2".
+- **4a.** Correcting a round already saved - the manager edits and saves it again; the ranking and, if the event counts towards a season, the standings follow (R-233).
+- **5a.** Somebody is accepted after a round was scored - they appear with that round blank, so they are behind rather than absent from the table.
+
+**Error flows**
+- **3c.** A bonus awarded to a player left blank for that round - refused; a player who did not play cannot have earned something in it.
+- **3d.** A score that is not a whole number - refused, naming the player. A decimal score is out of scope; a feat measured in fractions of a second is a bonus (R-229).
+- **3e.** Somebody played who holds no seat - they cannot be scored. The screen says so and points at Applicants, rather than inventing a second way to be in an event.
+- **4b.** Two managers save the same round at once - one wins; the other is told the round moved and shown what is there now.
+- **4c.** The event's results are locked because it is complete - refused, the same as a match result (UC-09 6b).
+
+---
+
+## UC-46: The night's table, and the season
+
+**Actor:** Manager; Visitor; Participant
+**Requirements covered:** R-231, R-232, R-234, R-235, R-236
+**Trigger:** At least one round has been scored.
+
+**Preconditions**
+1. The event is scored in rounds and has at least one round recorded.
+
+**Main success path**
+1. System works out each player's total - every round added up, plus their bonuses in their favour.
+2. System ranks the players, best total first, and gives equal totals the same place.
+3. Manager sees the table on the Results tab, with every round and every bonus shown beside the total.
+4. Visitor sees the same table on the event's page, and the winner in its result line.
+5. If the event counts towards a championship, the season takes its places from that table.
+
+**Outcome**
+- One ranked list, visible to everyone, and the season's points follow it without anybody typing an order.
+
+**Alternate flows**
+- **2a.** Two players tie - they share the place and the next place is skipped, as the bracket's placements already do (R-232, UC-33 3a).
+- **3a.** Not every round is scored yet - the table is shown as it stands, saying how many rounds are in it, rather than hidden until the night is over.
+- **4a.** Nothing is scored yet - the event page says the night has not been scored, rather than showing an empty table.
+- **5a.** A player who took part but is not in the table - they still get the taking-part points, exactly as UC-33 3b gives them.
+
+**Error flows**
+- **5b.** A manager tries to type a finishing order by hand for a round-scored event - refused, pointing at the Results tab, because the table is the authority (R-236). The hand-typed order stays for events that are not round-scored.
+- **5c.** A round is corrected after the season recorded its result - the places are re-derived and the standings move, because nothing stored a total (Constraints).
