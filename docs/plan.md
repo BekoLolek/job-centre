@@ -787,6 +787,8 @@ A reconciliation of every acceptance criterion against the tree (2026-10-22, at 
 - **A mutation that does not apply is not a kill, and this repo's line endings make that easy to miss.** Task 77's harness scored two mutations as caught when its multi-line patterns had matched **nothing**: `GamesManager.tsx` is CRLF and the finds used `
 `. It reported them as BAD-PATCH rather than counting them, which is the only reason it was noticed — a harness that merely diffs green-to-red would have recorded two kills for two edits that never happened. **Require the anchor to match exactly once and fail loudly when it does not**, and remember that files here are CRLF on disk.
   Related, from Task 75: a mutation can also turn red for the *wrong reason*. Deleting an `onConflictDoNothing` failed its test with `returning is not a function` — the sequencing proxy breaking, not the database refusing. Both shapes produce a green-to-red transition that proves nothing about the guard.
+- **A test with a wall-clock timeout is a test that fails under load.** Task 85 ran the full suite concurrently with `build:only`, and `src/app/api/cron/__tests__/schedule.test.ts` failed at exactly 6000ms; run alone it passes 16/16 in 759ms. Nothing was wrong with the code, and nothing in the failure text said so - the only clue was the number being exactly the timeout. Two lessons: **run the suite alone before believing a failure**, and a timing test that passes only on an idle machine is evidence about the machine. Worth revisiting if it ever fails where the machine is never idle.
+
 - **A new rule breaking an old fixture is a question about the fixture, not licence to weaken the rule.** Task 81 made `setTeamCount` refuse a count the Format panel contradicts, and that refusal fired on a Task 79 fixture which built four teams on a default six-a-side event with twelve accepted. Two ways out: narrow the refusal, or make the fixture state the shape it meant. The fixture gave way, and the test is better for it — it was *about* the discard confirmation, and it now arrives there through a premise it states out loud instead of one it got away with. The tell that this is the right direction: nothing about the assertion changed, only the setup.
   The same question arrived in reverse through a **floor**. Task 82 removed one of the four hand-rolled `.field` controls Task 31 found, so `field-ordering.test.ts`'s floors dropped 4 → 3 and 19 → 18. A lowered floor looks exactly like a weakened guard, so the docblock now names which control went and in which task. **A floor that is lowered without saying what left stops being evidence of anything.**
 
@@ -1540,12 +1542,21 @@ label "Bracket changed" rather than "Format changed".
   `round_index` is 1-based with a CHECK and an upper bound, following `event_days`' `check(0..4)` precedent — a bound stops a typo creating round 9000, and the bound is a constant the policy module also reads.
   On-delete behaviour follows `championship_placements` rather than being chosen fresh; the migration states which and why.
 - **Acceptance criteria:**
-  - [ ] Two rows for one player in one round are impossible, proven against the constraint by name
-  - [ ] A blank round is the absence of a row, asserted — there is no null score
-  - [ ] `bonuses` defaults to `{}` for a row written without one
-  - [ ] The migration replays from 0000 and `migrations.test.ts`'s table count and by-name list both move
-  - [ ] The round bound is a CHECK writing the literal **32**, following `event_days`' own `check(0..4)` — `schema.ts` imports nothing from `src/lib` and this task does not change that
+  - [x] Two rows for one player in one round are impossible, proven against the constraint by name
+  - [x] A blank round is the absence of a row, asserted — there is no null score
+  - [x] `bonuses` defaults to `{}` for a row written without one
+  - [x] The migration replays from 0000 and `migrations.test.ts`'s table count and by-name list both move
+  - [x] The round bound is a CHECK writing the literal **32**, following `event_days`' own `check(0..4)` — `schema.ts` imports nothing from `src/lib` and this task does not change that
 - **Depends on:** nothing. Needs a migration, so it must not run beside another that holds one.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **The constraint names are the contract, not an implementation detail.** `event_round_scores_event_round_user_uniq`, `event_round_scores_round_range`, `event_round_scores_event_round_idx`, and the two foreign keys. The tests match each refusal **by name**, so a rename is a change to Tasks 87 and 88's error handling rather than a tidy-up - proved by two mutations that *rename* rather than drop, which die on the name and not merely on the failure.
+  **Postgres normalises the clause**, so the pin reads `((round_index >= 1) AND (round_index <= 32))` and not `between 1 and 32`. Task 86's `information_schema` test pins the number and the operator, never the `between` spelling; that was handed over explicitly, and it is why the two tasks' numbers cannot drift apart in silence.
+  **Both foreign keys cascade**, following `championship_placements` rather than being chosen fresh, and the migration header says why: a round with one row missing is still a readable round. Two mutations switch each to `no action` and both die.
+  **No timestamp column, deliberately.** Nothing in R-224 to R-238 or decision 006 reads one, and "who scored it and when" is the audit log's job (UC-45's outcome). If UC-45 4b's "the round moved" needs a version to detect a lost update, that is an ALTER for Task 88 to justify - not an omission here.
+  **No CHECK on the score's sign.** Scores are whole numbers and nothing says they cannot be negative; `>= 0` would be a rule nobody asked for, and a placement game could legitimately want one.
+  **Bonus counts are not enforced in the column** and cannot be, inside jsonb - the docblock names Tasks 87/88 as the owner of "a count below 1 is refused". That is the guard Task 86's decision (an unknown bonus key counts nothing) is relying on.
+  **The `championships` header gained one sentence**, because "There is no `points` column anywhere below this comment" is now followed a few screens later by a `score` column. The sentence says the rule is that no *derived* value is stored, and points at the new table's docblock. Without it the next reader meets a contradiction and has to guess which side won.
+  The constraint tests live in `migrations.test.ts` because the Files line said so; `hero_hands` put its equivalents in a file of their own. Either is fine, and this way costs no extra PGlite boot.
 
 ### Task 86: What the table says — the scoring rules, as pure functions
 
@@ -1559,14 +1570,21 @@ label "Bracket changed" rather than "Format changed".
   **A player with no score in any round is not placed at all.** They took part and played nothing, which is not a finishing place; the season gives them the taking-part points through UC-33 3b's existing path.
   No randomness anywhere in this module, so the evidence is enumeration rather than any kind of sweep.
 - **Acceptance criteria:**
-  - [ ] The total is every round added up, proven on a night where the per-round winner is not the night's winner
-  - [ ] A blank round counts as that round's worst recorded score, proven in **both** directions, and a round nobody scored changes nobody's total
-  - [ ] A bonus improves a player's standing in both directions — the same bonus, the same value, opposite arithmetic
-  - [ ] Equal totals share a place and the place below is empty
-  - [ ] A player with rows in no round is absent from the ranking rather than last in it
-  - [ ] Nothing in the module reaches Postgres or imports anything that does
-  - [ ] `MAX_ROUNDS` is **defined here** (32) and pinned against the live CHECK clause read out of `information_schema`, so the literal in the migration and the constant the panel validates with cannot drift apart in silence — Task 75's `hero_hands` constraint test is the precedent
+  - [x] The total is every round added up, proven on a night where the per-round winner is not the night's winner
+  - [x] A blank round counts as that round's worst recorded score, proven in **both** directions, and a round nobody scored changes nobody's total
+  - [x] A bonus improves a player's standing in both directions — the same bonus, the same value, opposite arithmetic
+  - [x] Equal totals share a place and the place below is empty
+  - [x] A player with rows in no round is absent from the ranking rather than last in it — **structural, and stated as such**; see below
+  - [x] Nothing in the module reaches Postgres or imports anything that does
+  - [x] `MAX_ROUNDS` is **defined here** (32) and pinned against the live CHECK clause read out of `information_schema`, so the literal in the migration and the constant the panel validates with cannot drift apart in silence — Task 75's `hero_hands` constraint test is the precedent
 - **Depends on:** nothing. Pure; can run beside Task 85.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **"The worst recorded score in that round" means worst among that round's scorers**, so adding a player's score to a round changes what a blank in that round is worth. That is chosen rather than incidental, and a test pins it: one player's blank is worth 10 while another is alone in the round, and 2 once a third scores 2 there. **"Worst in the night" was considered and rejected** - a 20-player placing round and a 5-player one do not share a scale, so borrowing the big round's last place would invent a penalty nobody in the small round received.
+  **The one criterion that cannot be mutation-proved is the one that needs no guard.** "A player with no rows is absent rather than last" holds because decision 006 made the absence of a row the only representation of "did not play", so `rankRounds` takes rows alone and there is no participant list for such a player to be ranked *from*. The test pins the signature rather than a branch, and the agent said so instead of claiming a kill - which is the right handling. A rule enforced by shape needs no guard, but it does need saying, or the next reader adds a participants parameter and quietly reintroduces the question.
+  **An awarded bonus whose key the setup no longer defines counts nothing** rather than throwing, following the existing rule that scoring stays total because the public page reads it. UC-44 4d is what makes that unreachable - so **Task 87's refusal is what this decision rests on**, and weakening it turns a refusal into silent arithmetic.
+  **A round absent from the rows is a label gap, not an all-blank round**: rows in rounds 1 and 3 rank identically to rows in 1 and 2. Proved, because the obvious reading - "round 2 exists and everybody blanked it" - would hand every player that round's worst score for a round nobody played.
+  **The tie shape is 1, 1, 3 and is asserted as the shape**, not merely as "equal". `placementValue` indexes the ladder by `position - 1`, so 1, 1, 2 would silently pay the ladder's second row; two separate mutations produce 1, 2, 3 and 1, 1, 2 and both die.
+  **The input types are structural and named as the table's columns are**, so a drizzle-selected row is a `RoundScoreRow` with no mapping step, and a mutation adding one `drizzle-orm` import dies on the imports-nothing census. `roundName` is deliberately **not** here: R-225 is not in this task's Serves list, so "the name given, or Round N" belongs to the panel, following `dayName`.
 
 ### Task 87: The Scoring panel — how a night is scored
 

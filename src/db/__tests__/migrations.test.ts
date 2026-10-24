@@ -4,7 +4,7 @@ import path from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabase, createPgliteDatabase, driverFor, games } from "@/db";
+import { createDatabase, createPgliteDatabase, driverFor, eventRoundScores, games } from "@/db";
 import { applyMigrations } from "@/db/migrate";
 import { seed } from "@/db/seed";
 import { DEFAULT_POINTS_TABLE } from "@/lib/championship-policy";
@@ -80,6 +80,13 @@ describe("migrations", () => {
       "event_days",
       "event_hosts",
       "event_questions",
+      // R-224 / UC-45 5: one player's score in one round of a round-scored
+      // solo event, bonuses on the row. drizzle/0033 — `score` is NOT NULL
+      // because a blank round is the absence of a row, which is what makes "a
+      // bonus for a player who did not play" unrepresentable rather than
+      // guarded (decision 006). Empty on every install: nothing has ever
+      // scored a round.
+      "event_round_scores",
       "event_suggestions",
       "event_templates",
       "events",
@@ -292,11 +299,11 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    // 47 since drizzle/0032 added `hero_hands`. The list itself is asserted by
-    // name in the first test in this file, which is the one to read on a
-    // mismatch; this count is here so a second pass that *created* something
-    // cannot hide behind a list that was updated to expect it.
-    expect(await tableNames(ctx.client)).toHaveLength(47);
+    // 48 since drizzle/0033 added `event_round_scores`. The list itself is
+    // asserted by name in the first test in this file, which is the one to read
+    // on a mismatch; this count is here so a second pass that *created*
+    // something cannot hide behind a list that was updated to expect it.
+    expect(await tableNames(ctx.client)).toHaveLength(48);
   });
 
   it("ships the default points table a new championship starts with", async () => {
@@ -1844,4 +1851,205 @@ describe("the hero catalogue, and no roster in the migration (drizzle/0031)", ()
 
     await client.close();
   }, PGLITE_BOOT_BUDGET_MS);
+});
+
+describe("the round-score table (drizzle/0033)", () => {
+  /**
+   * What Postgres itself guarantees about a round score (R-224 / UC-45 3a, 3c,
+   * 5; docs/decisions/006-round-scored-events.md, decision 1).
+   *
+   * Asked of the database the migrations built — `ctx` at the top of this file
+   * — rather than of the schema module, for the reason every constraint test
+   * in this folder gives: a guard only TypeScript holds is not a guard on the
+   * table, and the scoring action is not the only thing that could ever write
+   * here. Raw SQL where the point is a value TypeScript would not let a caller
+   * write (a NULL score, round 0); drizzle where the point is that the schema
+   * export and the table agree on a default.
+   *
+   * The names matter. `event_round_scores_event_round_user_uniq` is UC-45 5's
+   * "one write per round" held where it can be held, and the two assertions on
+   * it match the constraint by name rather than on "it threw": the row below
+   * also has two foreign keys to satisfy, so a bare rejection would pass for a
+   * player who does not exist and say nothing about scoring twice.
+   */
+  let counter = 0;
+
+  /** An event, and one player who could be scored at it. */
+  async function fixture(): Promise<{ eventId: string; userId: string }> {
+    counter += 1;
+    const [event] = (
+      await ctx.client.query<{ id: string }>(
+        `insert into events (slug, title) values ($1, $2) returning id`,
+        [`round-event-${counter}`, `Round event ${counter}`]
+      )
+    ).rows;
+    const [user] = (
+      await ctx.client.query<{ id: string }>(
+        `insert into users (name, display_name) values ($1, $2) returning id`,
+        [`round-player-${counter}`, `Round player ${counter}`]
+      )
+    ).rows;
+    return { eventId: event.id, userId: user.id };
+  }
+
+  /** Score one round for the fixture's player, past TypeScript. */
+  function scoreRaw(
+    fix: { eventId: string; userId: string },
+    roundIndex: number,
+    score: number | null
+  ): Promise<unknown> {
+    return ctx.client.query(
+      `insert into event_round_scores (event_id, round_index, user_id, score)
+       values ($1, $2, $3, $4)`,
+      [fix.eventId, roundIndex, fix.userId, score]
+    );
+  }
+
+  /** Every score row for one event, as "round:user=score". */
+  async function rowsFor(eventId: string): Promise<string[]> {
+    const result = await ctx.client.query<{ round_index: number; user_id: string; score: number }>(
+      `select round_index, user_id, score from event_round_scores
+       where event_id = $1 order by round_index, user_id`,
+      [eventId]
+    );
+    return result.rows.map((row) => `${row.round_index}:${row.user_id}=${row.score}`);
+  }
+
+  it("refuses a second score for one player in one round, by name", async () => {
+    const fix = await fixture();
+    await scoreRaw(fix, 1, 10);
+
+    await expectRejection(() => scoreRaw(fix, 1, 12), /event_round_scores_event_round_user_uniq/);
+
+    // And the first score stands: the refusal was a refusal, not an overwrite.
+    expect(await rowsFor(fix.eventId)).toEqual([`1:${fix.userId}=10`]);
+  });
+
+  it("lets one player score in each of two rounds, and two players score in one", async () => {
+    const fix = await fixture();
+    const other = await fixture();
+    await scoreRaw(fix, 1, 10);
+    await scoreRaw(fix, 2, 4);
+    await scoreRaw({ eventId: fix.eventId, userId: other.userId }, 1, 9);
+
+    expect(await rowsFor(fix.eventId)).toEqual(
+      [`1:${fix.userId}=10`, `1:${other.userId}=9`, `2:${fix.userId}=4`].sort()
+    );
+  });
+
+  /**
+   * UC-45 3a and 3c, in the database. A player who did not play a round is
+   * left blank, and a player left blank cannot have earned a bonus in it. With
+   * the bonuses on this row, the only way to say "did not play" is to write no
+   * row — so there must be no row shape that says it, and a NULL score is
+   * exactly that shape: a row with no score and room for two bonuses on it.
+   * Asserted by attempting the write rather than by reading `is_nullable`, so
+   * the test says what a caller would see.
+   */
+  it("has no null score: a blank round is the absence of a row", async () => {
+    const fix = await fixture();
+
+    await expectRejection(() => scoreRaw(fix, 1, null), /null value in column "score"|not-null/);
+
+    expect(await rowsFor(fix.eventId)).toEqual([]);
+  });
+
+  it("defaults bonuses to {} on a row written without one", async () => {
+    const fix = await fixture();
+    const [row] = await ctx.db
+      .insert(eventRoundScores)
+      .values({ eventId: fix.eventId, roundIndex: 1, userId: fix.userId, score: 7 })
+      .returning({ bonuses: eventRoundScores.bonuses });
+    expect(row.bonuses).toEqual({});
+
+    // And a row written with awards reads them back as the map it was given
+    // (R-230: a bonus earned twice is a count, not two rows).
+    const [awarded] = await ctx.db
+      .insert(eventRoundScores)
+      .values({
+        eventId: fix.eventId,
+        roundIndex: 2,
+        userId: fix.userId,
+        score: 3,
+        bonuses: { fast: 2 },
+      })
+      .returning({ bonuses: eventRoundScores.bonuses });
+    expect(awarded.bonuses).toEqual({ fast: 2 });
+  });
+
+  /**
+   * 1-based with an upper bound, following `event_days_index_range`'s
+   * `between 0 and 4`: a bound stops a typo creating round 9000. 1 and 32 are
+   * written in the same test as the refusals, because a constraint that
+   * refused round 32 too would pass a test that only checked 33.
+   */
+  it.each([0, -1, 33, 9000])("refuses round %i, by name", async (roundIndex) => {
+    const fix = await fixture();
+    await expectRejection(() => scoreRaw(fix, roundIndex, 1), /event_round_scores_round_range/);
+  });
+
+  it("accepts rounds 1 and 32, the edges of the bound", async () => {
+    const fix = await fixture();
+    await scoreRaw(fix, 1, 5);
+    await scoreRaw(fix, 32, 6);
+    expect(await rowsFor(fix.eventId)).toEqual([`1:${fix.userId}=5`, `32:${fix.userId}=6`]);
+  });
+
+  /**
+   * The bound is the literal 32 because a CHECK cannot import a constant.
+   * `MAX_ROUNDS` in src/lib/round-scoring.ts is the same number, and *its* test
+   * reads this clause out of `information_schema` and compares — the shape
+   * `hero_hands_nine_distinct_per_role` already uses against `HERO_ROLES.length
+   * * HEROES_PER_ROLE`. This side asserts only what the migration wrote, so
+   * `src/db/schema.ts` goes on importing nothing from src/lib.
+   */
+  it("bounds the round with a CHECK that says 32", async () => {
+    const result = await ctx.client.query<{ check_clause: string }>(
+      `select check_clause from information_schema.check_constraints
+       where constraint_name = 'event_round_scores_round_range'`
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].check_clause).toContain("32");
+    expect(result.rows[0].check_clause).toContain(">= 1");
+  });
+
+  /*
+   * On delete, as `championship_placements`: a round with a row missing is
+   * still a readable round, and the ranking re-derives without them. The
+   * alternative — refusing the delete — would make an account deletion fail on
+   * a Popsauce night from two seasons ago.
+   */
+  it("goes when its event goes", async () => {
+    const fix = await fixture();
+    await scoreRaw(fix, 1, 10);
+
+    await ctx.client.query(`delete from events where id = $1`, [fix.eventId]);
+
+    expect(await rowsFor(fix.eventId)).toEqual([]);
+  });
+
+  it("goes when its player goes", async () => {
+    const fix = await fixture();
+    await scoreRaw(fix, 1, 10);
+
+    await ctx.client.query(`delete from users where id = $1`, [fix.userId]);
+
+    expect(await rowsFor(fix.eventId)).toEqual([]);
+  });
+
+  /**
+   * The per-round read: UC-45 1 picks a round and 2 lists every player in it.
+   * The unique constraint is itself an index led by `event_id`, so this one is
+   * not for the per-event read; it is the (event, round) prefix the scoring
+   * screen asks by. Asserted on the definition rather than the name, so an
+   * index renamed to cover something else does not pass.
+   */
+  it("is indexed by (event, round) for the per-round read", async () => {
+    const result = await ctx.client.query<{ indexdef: string }>(
+      `select indexdef from pg_indexes
+       where tablename = 'event_round_scores' and indexname = 'event_round_scores_event_round_idx'`
+    );
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].indexdef).toContain("(event_id, round_index)");
+  });
 });

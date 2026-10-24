@@ -2705,7 +2705,11 @@ export type ChampionshipStatusValue = (typeof championshipStatus.enumValues)[num
  * `scoreChampionship` in src/lib/championship-policy.ts — the same rule that
  * keeps a bracket slot's teams out of `matches` and a team's remaining balance
  * out of `teams`. It is what makes a correction three months later re-score the
- * whole season with nothing left behind to disagree with it (R-179).
+ * whole season with nothing left behind to disagree with it (R-179). The rule
+ * is that a *derived* value is never stored, not that no number is: the
+ * `score` on `event_round_scores` at the end of this section is a recorded
+ * fact somebody typed, and its docblock says why that is the rule upheld
+ * rather than an exception to it.
  *
  * `runs_from` / `runs_to` are months, stored as the first of the month: a
  * season runs "March to November", not "March 3rd to November 17th", and a
@@ -2869,6 +2873,106 @@ export const championshipPlacements = pgTable(
       "championship_placements_one_subject",
       sql`(${table.userId} is not null) <> (${table.teamId} is not null)`
     ),
+  ]
+);
+
+/**
+ * One player's score in one round of a round-scored solo event (R-224 /
+ * UC-45 5; docs/decisions/006-round-scored-events.md, decision 1).
+ *
+ * ## A recorded fact, not a stored total
+ *
+ * The section header says there is no `points` column below it, and this table
+ * is where that sentence has to be read carefully rather than by reflex. The
+ * rule is that a **derived** value is never stored. A round score is derived
+ * from nothing: a person typed it, exactly as a person types a map's score
+ * into `match_games.score_a`. Everything worked out *from* it — a player's
+ * total for the night, the ranking, the championship places, the standings —
+ * stays derived on every read, so a corrected round re-scores all of them with
+ * nothing left behind to disagree (R-233). Nothing here stores a total.
+ *
+ * ## `score` is NOT NULL, and a blank is no row at all
+ *
+ * UC-45 3a and 3c together: a player left blank for a round did not play it,
+ * and a player who did not play it cannot have earned a bonus in it. With the
+ * bonuses *on this row*, the absence of a row is the only representation of
+ * "did not play", so the second sentence is impossible to write rather than a
+ * guard somebody can forget — there is no row to hang an award off. A nullable
+ * score would reopen exactly that: a row with no score and two bonuses on it.
+ * R-228's "never a zero" is the same fact seen from the ranking: the policy
+ * reads a missing row as that round's worst mark, which in a low-score-wins
+ * event a stored 0 could never be.
+ *
+ * ## Bonuses are a column, not a table
+ *
+ * `Record<bonusKey, count>` — the key names one of the night's bonuses as
+ * UC-44 4 defines them (which string that is belongs to the policy module,
+ * not to this column), the value how many times it was earned (R-230, "x2").
+ * A bonus award has no meaning apart from the round it was earned in, and a
+ * second table keyed (event, round, player, bonus) could hold an award with
+ * no score behind it, which is the state the paragraph above makes
+ * unrepresentable. Decision 006 has the comparison.
+ *
+ * What a CHECK cannot say: that every count is at least 1. A CHECK cannot
+ * iterate jsonb, so a count of 0 or below is refused by the policy function
+ * the scoring panel and its action both go through (Tasks 87 and 88) — stated
+ * here because a CHECK is otherwise this project's preference, and a reader
+ * should know the guard is one layer up rather than missing.
+ *
+ * ## `round_index` is 1-based and bounded
+ *
+ * `between 1 and 32`, following `event_days_index_range`'s `between 0 and 4`.
+ * 1-based because it is the number the screen shows ("Round 3"), and nothing
+ * permutes rounds the way `setEventDays` permutes days, so there is no spare
+ * slot to park one in. The bound stops a typo creating round 9000 and leaving
+ * it in the table for good. The literal is written out because a CHECK cannot
+ * import a constant; `MAX_ROUNDS` in src/lib/round-scoring.ts is the same
+ * number, and *its* test reads this clause out of `information_schema` so the
+ * two cannot drift in silence — the way `hero_hands_nine_distinct_per_role` is
+ * held to `HERO_ROLES.length * HEROES_PER_ROLE`. This file imports nothing
+ * from src/lib, and this table does not change that.
+ *
+ * ## On delete, as `championship_placements`
+ *
+ * Deleting the event or the player removes their scores rather than blocking
+ * the delete, for the reason the placements table gives: a round with a row
+ * missing is still a readable round, and the ranking simply re-derives without
+ * them. A `restrict` would make an account deletion fail on a Popsauce night
+ * from two seasons ago.
+ */
+export const eventRoundScores = pgTable(
+  "event_round_scores",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    /** 1-based, "Round 3" is 3. Bounded by the check below. */
+    roundIndex: integer("round_index").notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    /** A whole number, as typed. Never null: a blank round is no row (see above). */
+    score: integer("score").notNull(),
+    /** Bonus key to how many times it was earned. `{}` is "none". */
+    bonuses: json<Record<string, number>>("bonuses")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+  },
+  (table) => [
+    // UC-45 5, in the database: one row per player per round, so "scored
+    // twice" is a conflict rather than a decision taken in code.
+    unique("event_round_scores_event_round_user_uniq").on(
+      table.eventId,
+      table.roundIndex,
+      table.userId
+    ),
+    // The per-round read (UC-45 1, 2): every player's row for one round. The
+    // unique constraint above is already an index led by `event_id`, so the
+    // per-event read has one; this is the (event, round) prefix the scoring
+    // screen asks by.
+    index("event_round_scores_event_round_idx").on(table.eventId, table.roundIndex),
+    check("event_round_scores_round_range", sql`${table.roundIndex} between 1 and 32`),
   ]
 );
 

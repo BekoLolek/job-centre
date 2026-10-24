@@ -232,6 +232,13 @@
       "when": 1792779771225,
       "tag": "0032_hero_hands",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792844073073,
+      "tag": "0033_event_round_scores",
+      "breakpoints": true
     }
   ]
 }
