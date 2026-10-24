@@ -19,7 +19,13 @@ import type {
   EventTemplateDay,
   ProfileFieldOption,
 } from "@/db/schema";
-import { capacityProblem, entryMode } from "./events-policy";
+import {
+  capacityProblem,
+  entryMode,
+  roundScoringFrom,
+  roundScoringProblem,
+  roundScoringSummary,
+} from "./events-policy";
 import { MAX_DAYS } from "./format-policy";
 import { isFieldType, normaliseOptions, slugify, uniqueKey } from "./profile-fields";
 
@@ -89,11 +95,21 @@ export function cleanTemplateType(raw: unknown): string {
 /**
  * A template's config, vetted.
  *
- * Only the four documented knobs of `EventConfig` are checked; **everything
- * else on the object is carried through untouched**, `config.format` above all
- * — that is where §10's schedule and stage settings live. A template made from
- * a real event has to keep the settings that made that event what it was, so
- * dropping unknown keys here would quietly gut "do that again next month".
+ * Only the four documented knobs of `EventConfig` and the scoring setup are
+ * checked; **everything else on the object is carried through untouched**,
+ * `config.format` above all — that is where §10's schedule and stage settings
+ * live. A template made from a real event has to keep the settings that made
+ * that event what it was, so dropping unknown keys here would quietly gut "do
+ * that again next month".
+ *
+ * `config.roundScoring` (R-237) is checked and never rewritten, like `teams`:
+ * `createEvent` copies `config` wholesale, so a setup stored here *is* the
+ * setup every event made from the template starts on, and the Scoring panel
+ * would refuse to save what this lets through. `roundScoringProblem` is the
+ * panel's own rule, so the two cannot disagree about what a setup may be. A key
+ * that is present but is not a setup at all is refused rather than carried:
+ * `roundScoringFrom` reads it as "not round-scored", so carrying it would be
+ * stripping the setup with nothing on the template saying so.
  */
 export function normaliseTemplateConfig(raw: unknown): TemplateResult<EventConfig> {
   if (raw === undefined || raw === null) return templateData({});
@@ -129,6 +145,13 @@ export function normaliseTemplateConfig(raw: unknown): TemplateResult<EventConfi
   const mode = config.entryMode;
   if (mode !== undefined && mode !== "first_come" && mode !== "approval") {
     return templateFail("Entry is either first come or by approval.");
+  }
+
+  if (config.roundScoring !== undefined && config.roundScoring !== null) {
+    const scoring = roundScoringFrom(config);
+    if (!scoring) return templateFail("The scoring setup has to say what the night's rounds are.");
+    const problem = roundScoringProblem(scoring);
+    if (problem) return templateFail(problem);
   }
 
   return templateData(config);
@@ -348,6 +371,11 @@ export function describeTemplate(template: {
   // and it is worth saying so rather than letting an admin discover that a
   // template carries more than the four knobs on the screen.
   if (config.format && typeof config.format === "object") parts.push("format settings");
+
+  // A scoring setup makes every event from this template a round-scored night
+  // (R-237), said in the Scoring panel's own sentence so the two agree.
+  const scoring = roundScoringFrom(config);
+  if (scoring) parts.push(roundScoringSummary(scoring));
 
   return parts;
 }

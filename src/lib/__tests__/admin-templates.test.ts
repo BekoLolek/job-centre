@@ -41,6 +41,8 @@ import {
   publishEvent,
   setEventQuestions,
 } from "@/lib/events";
+import { type RoundScoring, roundScoringFrom } from "@/lib/events-policy";
+import { MAX_ROUNDS } from "@/lib/round-scoring";
 
 /**
  * `/admin/templates` — the writing half of `event_templates`.
@@ -147,6 +149,27 @@ async function makeRivalsEvent(title = "Rivals Winter Cup") {
   return event;
 }
 
+/**
+ * A six-round, highest-wins night with two bonuses — UC-44 5's example.
+ * `satisfies` rather than a type annotation: `RoundScoring`'s arrays are
+ * readonly, and a config literal has to be a mutable `SettingValue`.
+ */
+const POPSAUCE = {
+  rounds: [
+    { name: null },
+    { name: null },
+    { name: "Semis" },
+    { name: null },
+    { name: null },
+    { name: "Final" },
+  ],
+  lowWins: false,
+  bonuses: [
+    { key: "Sub-0.5 answer", value: 2 },
+    { key: "Gold run", value: 5 },
+  ],
+} satisfies RoundScoring;
+
 /* ------------------------------------------------------------------ */
 /* The pure half                                                      */
 /* ------------------------------------------------------------------ */
@@ -198,6 +221,53 @@ describe("normaliseTemplateConfig", () => {
     expect(await expectFail(normaliseTemplateConfig({ entryMode: "lottery" }))).toMatch(
       /first come or by approval/i
     );
+  });
+
+  it("carries a scoring setup through, exactly as stored (R-237)", () => {
+    const config = expectOk(normaliseTemplateConfig({ roundScoring: POPSAUCE }));
+    expect(config.roundScoring).toEqual(POPSAUCE);
+    // Null is "no setup", the way `teams: null` is "no teams".
+    expect(expectOk(normaliseTemplateConfig({ roundScoring: null })).roundScoring).toBeNull();
+  });
+
+  it("refuses a malformed scoring setup in the Scoring panel's own words, rather than stripping it", async () => {
+    const worthless = await expectFail(
+      normaliseTemplateConfig({
+        roundScoring: { ...POPSAUCE, bonuses: [{ key: "Fast", value: 0 }] },
+      })
+    );
+    expect(worthless).toBe('"Fast" has to be worth at least a point. A penalty is not a bonus.');
+    expect(worthless).not.toContain("Two bonuses");
+
+    const twice = await expectFail(
+      normaliseTemplateConfig({
+        roundScoring: { ...POPSAUCE, bonuses: [{ key: "Fast", value: 2 }, { key: " fast", value: 1 }] },
+      })
+    );
+    expect(twice).toBe(
+      'Two bonuses are called "fast". The scoring screen picks a bonus out by its name, so each needs its own.'
+    );
+    expect(twice).not.toContain("worth");
+
+    expect(await expectFail(normaliseTemplateConfig({ roundScoring: { ...POPSAUCE, rounds: [] } }))).toBe(
+      "A night has at least one round."
+    );
+    const tooMany = Array.from({ length: MAX_ROUNDS + 1 }, () => ({ name: null }));
+    expect(
+      await expectFail(normaliseTemplateConfig({ roundScoring: { ...POPSAUCE, rounds: tooMany } }))
+    ).toBe(`A night has at most ${MAX_ROUNDS} rounds.`);
+  });
+
+  it("refuses a key that is not a setup at all, because carrying it would be stripping it quietly", async () => {
+    // `roundScoringFrom` reads each of these as "not round-scored", so a
+    // template that stored one would make events with no scoring and nothing
+    // on the template saying so.
+    for (const stored of ["rounds", [1, 2], { lowWins: true }, { rounds: "six" }]) {
+      expect(
+        await expectFail(normaliseTemplateConfig({ roundScoring: stored })),
+        JSON.stringify(stored)
+      ).toBe("The scoring setup has to say what the night's rounds are.");
+    }
   });
 });
 
@@ -271,6 +341,20 @@ describe("describeTemplate", () => {
     });
     expect(parts).toContain("format settings");
     expect(parts).toContain("no questions");
+  });
+
+  it("says how a template's nights are scored, in the Scoring panel's sentence (R-237)", () => {
+    // The honesty rule in the docblock: a template that makes every event from
+    // it a round-scored night must not be described as though it did not.
+    const parts = describeTemplate({
+      type: "custom",
+      config: { roundScoring: POPSAUCE },
+      questions: [],
+    });
+    expect(parts).toContain("6 rounds, highest total wins, 2 bonuses");
+
+    const silent = describeTemplate({ type: "custom", config: { teams: 4 }, questions: [] });
+    expect(silent.some((part) => part.includes("total wins"))).toBe(false);
   });
 });
 
@@ -1392,6 +1476,103 @@ describe("a template's own setup", () => {
     expect(copy.minRankToEnter).toBe(RIVALS_RANK_LADDER[2]);
     expect(copy.minRankToCaptain).toBe(RIVALS_RANK_LADDER[4]);
     expect(copy.days).toEqual(source.days);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The scoring setup (R-237 / UC-44 6a)                                */
+/* ------------------------------------------------------------------ */
+
+describe("a template carries the scoring setup (R-237 / UC-44 6a)", () => {
+  /** The event's config as Postgres holds it — never the object `createEvent` returned. */
+  async function storedConfig(eventId: string) {
+    const [row] = await db.select({ config: events.config }).from(events).where(eq(events.id, eventId));
+    return row.config;
+  }
+
+  it("stores a scoring setup, and an event made from it arrives with it", async () => {
+    const template = expectOk(
+      await createTemplate({ name: "Popsauce night", config: { roundScoring: POPSAUCE } }, db)
+    );
+    expect(roundScoringFrom((await getTemplate(template.id, db))!.config)).toEqual(POPSAUCE);
+
+    const event = expectOk(await createEvent({ title: "Popsauce, March", templateId: template.id }, db));
+    expect(roundScoringFrom(await storedConfig(event.id))).toEqual(POPSAUCE);
+  });
+
+  it("round-trips: a scored night becomes a template, and the next night starts on its setup", async () => {
+    // UC-44 6a's real route — the Scoring panel saved it on one event, and
+    // "do that again next month" is a template made from that event.
+    const source = expectOk(
+      await createEvent({ title: "Popsauce, March", config: { roundScoring: POPSAUCE } }, db)
+    );
+    const template = expectOk(await createTemplateFromEvent(source.id, { name: "Popsauce" }, db));
+    expect(roundScoringFrom(template.config)).toEqual(POPSAUCE);
+
+    const next = expectOk(await createEvent({ title: "Popsauce, April", templateId: template.id }, db));
+    expect(roundScoringFrom(await storedConfig(next.id))).toEqual(POPSAUCE);
+  });
+
+  it("editing the template afterwards changes no event already made from it", async () => {
+    const template = expectOk(
+      await createTemplate({ name: "Popsauce night", config: { roundScoring: POPSAUCE } }, db)
+    );
+    const event = expectOk(await createEvent({ title: "Popsauce, March", templateId: template.id }, db));
+
+    const fallGuys = {
+      rounds: [{ name: null }, { name: null }, { name: null }],
+      lowWins: true,
+      bonuses: [],
+    } satisfies RoundScoring;
+    expectOk(await updateTemplate(template.id, { config: { roundScoring: fallGuys } }, db));
+    expect(roundScoringFrom((await getTemplate(template.id, db))!.config)).toEqual(fallGuys);
+
+    expect(roundScoringFrom(await storedConfig(event.id))).toEqual(POPSAUCE);
+  });
+
+  it("refuses a malformed setup when the template is saved, and writes nothing", async () => {
+    const malformed = { ...POPSAUCE, bonuses: [{ key: "Fast", value: 0 }] };
+    const sentence = '"Fast" has to be worth at least a point. A penalty is not a bonus.';
+
+    expect(
+      await expectFail(createTemplate({ name: "Broken", config: { roundScoring: malformed } }, db))
+    ).toBe(sentence);
+    expect(await db.select({ id: eventTemplates.id }).from(eventTemplates)).toEqual([]);
+
+    const template = expectOk(
+      await createTemplate({ name: "Popsauce night", config: { roundScoring: POPSAUCE } }, db)
+    );
+    expect(
+      await expectFail(updateTemplate(template.id, { config: { roundScoring: malformed } }, db))
+    ).toBe(sentence);
+    expect((await getTemplate(template.id, db))!.config).toEqual({ roundScoring: POPSAUCE });
+  });
+
+  it("refuses to capture a malformed setup from an event too, so the two routes agree", async () => {
+    // The panel's save would never write this; a row edited by hand might hold
+    // it. The template made from it has to be refused in the same sentence the
+    // admin screen would use, not stripped on the way across.
+    const source = expectOk(await createEvent({ title: "Edited by hand" }, db));
+    await db
+      .update(events)
+      .set({ config: { roundScoring: { ...POPSAUCE, rounds: [] } } })
+      .where(eq(events.id, source.id));
+
+    expect(await expectFail(createTemplateFromEvent(source.id, { name: "From it" }, db))).toBe(
+      "A night has at least one round."
+    );
+    expect(await db.select({ id: eventTemplates.id }).from(eventTemplates)).toEqual([]);
+  });
+
+  it("makes an event that is not round-scored from a template with no setup", async () => {
+    // Task 87's "absent reads as null", holding across the template path: the
+    // key must be *absent* on the new event, not present as a default.
+    const template = expectOk(await createTemplate({ name: "Rivals monthly", config: { teams: 4 } }, db));
+    const event = expectOk(await createEvent({ title: "Rivals, March", templateId: template.id }, db));
+
+    const config = await storedConfig(event.id);
+    expect(roundScoringFrom(config)).toBeNull();
+    expect("roundScoring" in config).toBe(false);
   });
 });
 
