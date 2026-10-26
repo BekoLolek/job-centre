@@ -1,6 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { type Database, type EventConfig, auditLog, eventRoundScores, events } from "@/db";
+import {
+  type Database,
+  type EventConfig,
+  auditLog,
+  championships,
+  eventRoundScores,
+  events,
+} from "@/db";
 import {
   PUBLISHABLE,
   type TestDatabase,
@@ -65,8 +72,15 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/server", () => ({ after: () => {} }));
 
-const { saveRoundScoringAction } = await import("../actions");
+const { clearRoundScoringAction, saveRoundScoringAction } = await import("../actions");
 const { saveScheduleSettingsAction } = await import("../format-actions");
+const { ROUND_SCORED_REFUSAL, finishingOrderFor, listPlacements, setPlacements } = await import(
+  "@/lib/championship-results"
+);
+const { addCountingEvent, createChampionship, getChampionship } = await import(
+  "@/lib/championships"
+);
+const { seasonPage } = await import("@/lib/championship-season");
 const { applyToEvent, createEvent, getEventById, publishEvent, updateEvent } = await import(
   "@/lib/events"
 );
@@ -532,5 +546,238 @@ describe("the hidden panel's action", () => {
     const saved = unwrap(await saveRoundScoringAction(fixture.eventId, SIX));
     expect(saved.scoring).toEqual(SIX);
     expect(roundScoringFrom(await storedConfig(fixture.eventId))).toEqual(SIX);
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/* Turning round scoring off (Task 93 — the step UC-44 was missing)      */
+/* --------------------------------------------------------------------- */
+
+/*
+ * Task 87 found there was no way to unset `config.roundScoring`, and Task 91
+ * made that a trap: `setPlacements` refuses a round-scored night, so an event
+ * set up this way by mistake had no route to a result. The decision on the rows
+ * is Task 91's, in its words — kept, never read, named on the screen that would
+ * have read them, and read again exactly as they were only when the setup that
+ * reads them is switched back on.
+ *
+ * What is proved only here: that the key is **gone** from the row rather than
+ * present as `null` (`updateEvent` merges one level deep, so the spelling that
+ * removes a key is the thing most likely to silently not work); that the refusal
+ * wrote nothing, as bytes; that the rows survive the switch unchanged, scores
+ * and awards included, and are read again when it is switched back on; and the
+ * whole trap closing end to end — refused typed order, switch, typed order
+ * accepted, season scored from it.
+ */
+
+/** The sentence `clearRoundScoringAction` refuses `scoredNight` with, before the box is ticked. */
+function keptSentence(fixture: Fixture): string {
+  const [alice, bob, cass] = fixture.members.map((userId) => fixture.names[userId]);
+  return `Turning round scoring off leaves 5 scores with nothing to read them: ${alice} in Round 1 and Round 5; ${bob} in Round 1 and Final; ${cass} in Round 5. They are kept, not deleted, and would be read again exactly as they are if this night were scored in rounds again.`;
+}
+
+async function auditSummaries(eventId: string): Promise<string[]> {
+  const lines = await db
+    .select({ summary: auditLog.summary })
+    .from(auditLog)
+    .where(and(eq(auditLog.eventId, eventId), eq(auditLog.action, "event.roundScoring")));
+  return lines.map((line) => line.summary);
+}
+
+describe("turning round scoring off", () => {
+  it("is refused until confirmed, naming whose scores are left unread, and writes nothing", async () => {
+    const fixture = await scoredNight();
+    const before = await configBytes(fixture.eventId);
+    const rowsBefore = await listRoundScores(fixture.eventId);
+
+    const said = refusal(await clearRoundScoringAction(fixture.eventId));
+
+    expect(said).toBe(`${keptSentence(fixture)} Tick the box below to go ahead.`);
+    // Not one of the three discards, which share the box.
+    expect(said).not.toContain("Cutting");
+    expect(said).not.toContain("Dropping");
+    expect(said).not.toContain("upside down");
+    // Nothing written: the setup is still there, byte for byte, and so are the rows.
+    expect(await configBytes(fixture.eventId)).toBe(before);
+    expect(roundScoringFrom(await storedConfig(fixture.eventId))).toEqual(SIX);
+    expect(await listRoundScores(fixture.eventId)).toEqual(rowsBefore);
+  });
+
+  it("is the same sentence the panel computes from the same rows", async () => {
+    const fixture = await scoredNight();
+    const stored = roundScoringFrom(await storedConfig(fixture.eventId));
+    const rows = await listRoundScores(fixture.eventId);
+    const losses = roundScoringLosses(stored, null, rows, (userId) => fixture.names[userId]);
+    expect(losses).toEqual([keptSentence(fixture)]);
+    expect(refusal(await clearRoundScoringAction(fixture.eventId))).toBe(
+      roundScoringConfirmRefusal(losses)
+    );
+  });
+
+  it("removes the key once confirmed — gone, not null — and keeps every row exactly as it was", async () => {
+    const fixture = await scoredNight();
+    const rowsBefore = await listRoundScores(fixture.eventId);
+    expect(rowsBefore.length).toBe(5);
+
+    const cleared = unwrap(await clearRoundScoringAction(fixture.eventId, { confirmed: true }));
+
+    expect(cleared.changed).toBe(true);
+    expect(cleared.losses).toEqual([keptSentence(fixture)]);
+    expect(cleared.kept).toEqual(rowsBefore);
+
+    // The key is absent from the row, not present as null or as the defaults:
+    // `updateEvent` merges one level deep, so this is the assertion that the
+    // spelling which removes a key actually removed it.
+    const config = await storedConfig(fixture.eventId);
+    expect(config).not.toHaveProperty("roundScoring");
+    expect(roundScoringFrom(config)).toBeNull();
+    expect(await configBytes(fixture.eventId)).not.toContain("roundScoring");
+    // Its siblings are untouched.
+    expect(eventShapeFrom(config).teamEvent).toBe(false);
+
+    // Every row, with its score and its awards, exactly as before.
+    expect(await listRoundScores(fixture.eventId)).toEqual(rowsBefore);
+    const alice = rowsBefore.find((row) => row.roundIndex === 1 && row.userId === fixture.members[0])!;
+    expect(alice.score).toBe(10);
+    expect(alice.bonuses).toEqual({ "Sub-0.5 answer": 2 });
+  });
+
+  it("asks nothing on a night with nothing scored", async () => {
+    const fixture = await hostedEvent(2);
+    unwrap(await saveRoundScoringAction(fixture.eventId, SIX));
+
+    const cleared = unwrap(await clearRoundScoringAction(fixture.eventId));
+
+    expect(cleared).toEqual({ changed: true, kept: [], losses: [] });
+    expect(await storedConfig(fixture.eventId)).not.toHaveProperty("roundScoring");
+  });
+
+  it("reads the kept scores again, exactly as they were, when round scoring is turned back on", async () => {
+    /*
+     * Criterion 3, answered the way Task 91 answered it for a typed order: the
+     * rows do come back, and the screen says so — before the switch (the
+     * sentence above) and while it is off (the panel's standing notice, held in
+     * `scoring-panel.test.ts`). Asserted as the same rows, scores and awards
+     * included, not as a count.
+     */
+    const fixture = await scoredNight();
+    const rowsBefore = await listRoundScores(fixture.eventId);
+    expect((await finishingOrderFor(fixture.eventId)).source).toBe("table");
+
+    unwrap(await clearRoundScoringAction(fixture.eventId, { confirmed: true }));
+    // Off: the rows are there and nothing reads them as a table.
+    expect(await listRoundScores(fixture.eventId)).toEqual(rowsBefore);
+    expect(await finishingOrderFor(fixture.eventId)).toEqual({ source: "typed", places: [] });
+
+    // On again, with a setup the rows fit: nothing to confirm, nothing discarded.
+    const saved = unwrap(await saveRoundScoringAction(fixture.eventId, SIX));
+    expect(saved.losses).toEqual([]);
+    expect(saved.scoresDiscarded).toBe(0);
+    expect(saved.awardsDiscarded).toBe(0);
+    expect(await listRoundScores(fixture.eventId)).toEqual(rowsBefore);
+    const order = await finishingOrderFor(fixture.eventId);
+    expect(order.source).toBe("table");
+    // The table is ranked from exactly those rows, a blank taking the round's
+    // worst: Cass 8 + 9 + 12 + 5 = 34, Alice 10 + 7 + 12 + 2×2 = 33, Bob 8 + 7 + 12 + 2 = 29.
+    const [alice, bob, cass] = fixture.members;
+    expect(order.places.map((place) => [place.id, place.position])).toEqual([
+      [cass, 1],
+      [alice, 2],
+      [bob, 3],
+    ]);
+  });
+
+  it("does nothing, and says so, on a night that is not scored in rounds", async () => {
+    const fixture = await hostedEvent(2);
+    const before = await configBytes(fixture.eventId);
+
+    const cleared = unwrap(await clearRoundScoringAction(fixture.eventId, { confirmed: true }));
+
+    expect(cleared.changed).toBe(false);
+    expect(await configBytes(fixture.eventId)).toBe(before);
+    expect(await auditSummaries(fixture.eventId)).toEqual([]);
+  });
+
+  it("logs the switch once, naming what was kept", async () => {
+    const fixture = await scoredNight();
+    unwrap(await clearRoundScoringAction(fixture.eventId, { confirmed: true }));
+
+    const lines = await auditSummaries(fixture.eventId);
+    // Two: the fixture's own save of six rounds, and the switch.
+    expect(lines.length).toBe(2);
+    const off = lines.find((line) => line.includes("Turned round scoring off"));
+    expect(off, "no log line for the switch").toBeDefined();
+    expect(off).toContain("5 scores");
+  });
+
+  it("refuses a member and succeeds for the manager", async () => {
+    const fixture = await scoredNight();
+    const before = await configBytes(fixture.eventId);
+
+    state.userId = fixture.members[0];
+    await expect(clearRoundScoringAction(fixture.eventId, { confirmed: true })).rejects.toThrow(
+      /NEXT_REDIRECT/
+    );
+    state.userId = null;
+    await expect(clearRoundScoringAction(fixture.eventId, { confirmed: true })).rejects.toThrow(
+      /NEXT_REDIRECT/
+    );
+    expect(await configBytes(fixture.eventId)).toBe(before);
+    expect(roundScoringFrom(await storedConfig(fixture.eventId))).toEqual(SIX);
+
+    state.userId = fixture.host;
+    unwrap(await clearRoundScoringAction(fixture.eventId, { confirmed: true }));
+    expect(roundScoringFrom(await storedConfig(fixture.eventId))).toBeNull();
+  });
+
+  it("opens the hand-typed order again, and the season reads it — the trap, closed end to end", async () => {
+    /*
+     * Criterion 1, which is the whole point of the task: a night set up as
+     * round-scored by mistake, in a season, with scores on the board. Before the
+     * switch the typed order is refused (UC-46 5b). After it, the typed order is
+     * accepted and the season scores from it; the round rows are still there
+     * and consulted by nothing.
+     */
+    const fixture = await scoredNight();
+    const [alice, bob] = fixture.members;
+    const season = unwrap(await createChampionship({ name: `Trap season ${counter}` }, db));
+    await db.update(championships).set({ status: "published" }).where(eq(championships.id, season.id));
+    unwrap(await addCountingEvent(season.id, fixture.eventId, db));
+
+    const refused = await setPlacements(
+      fixture.eventId,
+      [
+        { id: bob, position: 1 },
+        { id: alice, position: 2 },
+      ],
+      db
+    );
+    expect(refused).toEqual({ ok: false, error: ROUND_SCORED_REFUSAL });
+    expect(await listPlacements(fixture.eventId, db)).toEqual([]);
+
+    unwrap(await clearRoundScoringAction(fixture.eventId, { confirmed: true }));
+
+    const typed = await setPlacements(
+      fixture.eventId,
+      [
+        { id: bob, position: 1 },
+        { id: alice, position: 2 },
+      ],
+      db
+    );
+    expect(typed.ok).toBe(true);
+    const order = await finishingOrderFor(fixture.eventId, db);
+    expect(order.source).toBe("typed");
+    expect(order.places.map((place) => [place.id, place.position])).toEqual([
+      [bob, 1],
+      [alice, 2],
+    ]);
+
+    // The season scores the typed order — Bob first — not the table, which had Bob last.
+    const page = await seasonPage((await getChampionship(season.id, db))!, db);
+    expect(page.standings.find((row) => row.userId === bob)).toMatchObject({ points: 25, position: 1 });
+    expect(page.standings.find((row) => row.userId === alice)).toMatchObject({ points: 18, position: 2 });
+    // The round rows were never deleted; they are simply not what is read.
+    expect((await listRoundScores(fixture.eventId)).length).toBe(5);
   });
 });

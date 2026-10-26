@@ -83,7 +83,9 @@ import {
 } from "@/lib/events-policy";
 import {
   type RoundSaveResult,
+  type RoundScoringCleared,
   type RoundScoringSaved,
+  clearRoundScoring,
   saveRound,
   saveRoundScoring,
 } from "@/lib/round-scores";
@@ -994,6 +996,53 @@ export async function saveRoundScoringAction(
         scoresDiscarded,
         awardsDiscarded,
       },
+    });
+  }
+
+  refresh(eventId);
+  return { ok: true, data: result.data };
+}
+
+/** Task 93: the manager has read what turning round scoring off leaves behind and said yes. */
+export type ClearRoundScoringFields = {
+  confirmed?: boolean;
+};
+
+/**
+ * Say this night is not scored in rounds after all (Task 93 — the step UC-44
+ * was missing).
+ *
+ * The mirror of {@link saveRoundScoringAction}, and as thin: `clearRoundScoring`
+ * owns the rule — the confirmation naming every kept score, the one write that
+ * removes the key, and the decision that the rows stay. Nothing about a score
+ * row is decided here, and nothing is deleted anywhere.
+ *
+ * Guarded by `requireEventManager` for the reason the save is: a server action
+ * is a public endpoint, and Next's own note is that render-time gating "is not
+ * a security boundary". Logged under the same `event.roundScoring` action as
+ * the save, so one filter shows a night's scoring history; nothing is logged
+ * when the night was not round-scored to begin with, since nothing moved.
+ */
+export async function clearRoundScoringAction(
+  eventId: string,
+  fields: ClearRoundScoringFields = {}
+): Promise<EventResult<RoundScoringCleared>> {
+  const admin = await requireEventManager(eventId);
+
+  const before = await getEventById(eventId);
+  if (!before) return fail("That event no longer exists.");
+
+  const result = await clearRoundScoring(eventId, { confirmed: fields.confirmed === true });
+  if (!result.ok) return result;
+
+  const { changed, kept, losses } = result.data;
+  if (changed) {
+    await recordAudit({
+      action: "event.roundScoring",
+      actor: admin,
+      eventId,
+      summary: `Turned round scoring off for "${before.title}"${kept.length > 0 ? `, keeping ${kept.length} ${kept.length === 1 ? "score" : "scores"} unread` : ""}.`,
+      detail: { off: true, kept: kept.length, losses: [...losses] },
     });
   }
 

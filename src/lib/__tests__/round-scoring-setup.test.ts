@@ -10,6 +10,7 @@ import {
   roundScoringLosses,
   roundScoringProblem,
   roundScoringSummary,
+  scoresNamed,
 } from "@/lib/events-policy";
 import { MAX_ROUNDS, rankRounds } from "@/lib/round-scoring";
 import type { EventConfig } from "@/db/schema";
@@ -342,6 +343,64 @@ describe("what a save would take away", () => {
     expect(losses[0]).toContain("Cutting the night");
     expect(losses[1]).toContain("Dropping");
     expect(losses[2]).toContain("upside down");
+  });
+
+  /*
+   * Task 93 — the step UC-44 was missing. Turning round scoring off deletes
+   * nothing; the decision `finishingOrdersFor` made for a shadowed typed order
+   * is applied to the round rows in the same words: kept, never read, and
+   * named on the screen that would have read them. So what is confirmed is a
+   * naming, not a count, and the sentence says they come back as they are.
+   */
+  describe("turning round scoring off", () => {
+    it("names every score on the board, by whose and which round, before anything is turned off", () => {
+      expect(roundScoringLosses(SIX, null, scored, nameOf)).toEqual([
+        "Turning round scoring off leaves 5 scores with nothing to read them: Alice in Round 1 and Round 5; Bob in Round 1 and Final; Cass in Round 5. They are kept, not deleted, and would be read again exactly as they are if this night were scored in rounds again.",
+      ]);
+    });
+
+    it("asks nothing when the board is empty", () => {
+      expect(roundScoringLosses(SIX, null, [], nameOf)).toEqual([]);
+      expect(roundScoringLosses(null, null, [], nameOf)).toEqual([]);
+    });
+
+    it("reads one score in the singular", () => {
+      expect(roundScoringLosses(SIX, null, [row(3, "cass")], nameOf)).toEqual([
+        "Turning round scoring off leaves 1 score with nothing to read them: Cass in Semis. They are kept, not deleted, and would be read again exactly as they are if this night were scored in rounds again.",
+      ]);
+    });
+
+    it("names the kept scores in name order, whatever order the rows arrive in", () => {
+      // Task 88's note: rows within a round have no stable order.
+      expect(scoresNamed(SIX, scored, nameOf)).toBe(
+        "Alice in Round 1 and Round 5; Bob in Round 1 and Final; Cass in Round 5"
+      );
+      expect(scoresNamed(SIX, [...scored].reverse(), nameOf)).toBe(
+        "Alice in Round 1 and Round 5; Bob in Round 1 and Final; Cass in Round 5"
+      );
+    });
+
+    it("calls a round by its number once the setup that named it is gone", () => {
+      // The panel's standing notice while the night is off: the setup — and
+      // with it "Final" — is no longer stored, so each round is its number.
+      expect(scoresNamed(null, scored, nameOf)).toBe(
+        "Alice in Round 1 and Round 5; Bob in Round 1 and Round 6; Cass in Round 5"
+      );
+    });
+
+    it("asks only that, never the three discards — nothing is cut, dropped or inverted", () => {
+      const [said, ...rest] = roundScoringLosses(SIX, null, scored, nameOf);
+      expect(rest).toEqual([]);
+      // Task 78's `toContain` escape: no phrase from the other sentences.
+      expect(said).not.toContain("Cutting");
+      expect(said).not.toContain("Dropping");
+      expect(said).not.toContain("upside down");
+      expect(said).not.toContain("Two bonuses");
+      expect(said).not.toContain("worth");
+      // Nor `setPlacements`' or `saveRound`'s refusal, which it must not be mistaken for.
+      expect(said).not.toContain("is scored in rounds, so");
+      expect(said).not.toContain("not scored in rounds");
+    });
   });
 
   it("turns the list into the refusal the action answers with, as one sentence set", () => {

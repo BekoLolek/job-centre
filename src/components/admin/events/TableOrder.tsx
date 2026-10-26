@@ -86,7 +86,8 @@ export default function TableOrder({ eventId, counting, order }: TableOrderProps
 
       {order.shadowed.length > 0 && (
         <Alert tone="union" standing>
-          {plural(order.shadowed.length, "place")} were typed by hand before this night was
+          {plural(order.shadowed.length, "place")}{" "}
+          {order.shadowed.length === 1 ? "was" : "were"} typed by hand before this night was
           scored in rounds:{" "}
           {order.shadowed.map((place) => `${place.name} ${ordinal(place.position)}`).join(", ")}.
           They are kept but not read; the season takes its places from the table above. They

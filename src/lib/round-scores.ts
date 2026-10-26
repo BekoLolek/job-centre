@@ -10,7 +10,9 @@
  * split every other `src/lib` write follows, and the one that lets the panel
  * refuse in the same words without a database.
  *
- * Task 88's per-round write is `saveRound`, below `saveRoundScoring`.
+ * Task 88's per-round write is `saveRound`, below `saveRoundScoring`. Task 93's
+ * `clearRoundScoring` — the step UC-44 was missing — sits between them and
+ * deletes nothing.
  */
 
 import { and, asc, eq, gt, inArray } from "drizzle-orm";
@@ -214,6 +216,91 @@ export async function saveRoundScoring(
       data: { scoring, losses, scoresDiscarded: doomed.length, awardsDiscarded },
     };
   });
+}
+
+export type RoundScoringCleared = {
+  /** False when the night was not scored in rounds to begin with — nothing was written. */
+  changed: boolean;
+  /** Every row left on the board, exactly as it was — kept, and read by nothing until a setup is back. */
+  kept: RoundScoreRow[];
+  /** The sentence the manager confirmed — none when the board was empty. */
+  losses: string[];
+};
+
+/**
+ * Say this night is not scored in rounds after all (Task 93 — the step UC-44
+ * was missing, and the way out of the trap Tasks 87 and 91 made together:
+ * `setPlacements` refuses a round-scored night, so without this an event set up
+ * in rounds by mistake had no route to a result).
+ *
+ * ## What happens to the rows: nothing, said out loud
+ *
+ * The decision is `finishingOrdersFor`'s, made for a typed order on a night
+ * switched *to* rounds, and applied here to the round rows on a night switched
+ * *from* them, in the same words: **kept, never read, and named on the screen
+ * that would have read them.** Nothing is deleted when the scoring changes —
+ * the Constraints forbid it, and the rows are facts somebody typed. Nothing
+ * comes back in silence either: the manager confirms a sentence naming every
+ * score before the switch (`roundScoringLosses` with `after` null), the Scoring
+ * panel names them for as long as the night is off, and when a setup is saved
+ * again they are read exactly as they were — `saveRoundScoring` then asks its
+ * usual three questions of them, so a smaller setup discards named rows with
+ * confirmation and a fitting one discards none. Absence of the key is what
+ * "not round-scored" means (`roundScoringFrom`), so no row is marked and no
+ * second flag is stored.
+ *
+ * ## How the key is removed, and why that is proved by a test
+ *
+ * `updateEvent` merges a config patch one level deep, `{ ...current, ...patch }`,
+ * so a key can only be removed by patching it to `undefined`: drizzle's jsonb
+ * column serialises with `JSON.stringify`, which leaves an undefined-valued key
+ * out, and the row comes back from Postgres without it. `null` would *not* do —
+ * it would store the key as `null`, which reads as not round-scored today and
+ * is a lie about the record. The read-back below asserts the key is gone and
+ * throws if it is not, because this is the step most likely to stop working
+ * quietly if either the merge or the serialisation changes.
+ *
+ * ## Decision 004, shape 3 — and no transaction of its own
+ *
+ * Every refusal precedes the one write, and the write is `updateEvent`'s
+ * compare-and-set, whose refusal is its own zero-row result. There is nothing
+ * after it to roll back — no row is deleted or rewritten — so there is no
+ * transaction to open. The rows are read before the write for the sentence; a
+ * round scored in the gap is kept like the rest, and only the sentence would
+ * have undercounted (`saveRoundScoring`'s stated consequence, in the direction
+ * where nobody loses anything).
+ */
+export async function clearRoundScoring(
+  eventId: string,
+  options: { confirmed: boolean },
+  database: Database = defaultDb
+): Promise<EventResult<RoundScoringCleared>> {
+  const [current] = await database
+    .select({ config: events.config })
+    .from(events)
+    .where(eq(events.id, eventId));
+  if (!current) return fail("That event no longer exists.");
+
+  const rows = await listRoundScores(eventId, database);
+  const scoring = roundScoringFrom(current.config);
+  // Already off: asking twice is not an error, and nothing is written —
+  // `publishEvent`'s rule.
+  if (!scoring) return { ok: true, data: { changed: false, kept: rows, losses: [] } };
+
+  const nameOf = await displayNames([...new Set(rows.map((row) => row.userId))], database);
+  const losses = roundScoringLosses(scoring, null, rows, nameOf);
+  if (losses.length > 0 && !options.confirmed) return fail(roundScoringConfirmRefusal(losses));
+
+  const updated = await updateEvent(eventId, { config: { roundScoring: undefined } }, database);
+  if (!updated.ok) return updated;
+
+  // Written as absent a moment ago; present on the way back is a broken
+  // invariant, and a throw is what 004 asks of one.
+  if ("roundScoring" in updated.data.config) {
+    throw new Error("The scoring setup was removed and came back on the read.");
+  }
+
+  return { ok: true, data: { changed: true, kept: rows, losses } };
 }
 
 export type RoundSaved = {

@@ -235,6 +235,67 @@ describe("the Scoring panel", () => {
     expect(markup).not.toContain("Tick the box below");
     expect(markup).not.toContain('type="checkbox"');
   });
+
+  /*
+   * Task 93 — the step UC-44 was missing. The switch itself is a click, which
+   * this suite cannot make; the sentence it confirms is held over every
+   * combination in `round-scoring-setup.test.ts` and against the action in
+   * `round-scoring.test.ts`. What is props-reachable, and so proved here, is
+   * that the way out exists only where it applies, and that a night turned off
+   * with scores still on the board says so — the decision on the rows, visible.
+   */
+  it("offers to turn round scoring off only on a night that is scored in rounds", () => {
+    expect(panel({ config: { roundScoring: SIX } })).toContain("Turn round scoring off");
+    expect(panel()).not.toContain("Turn round scoring off");
+  });
+
+  it("names the scores kept from when the night was scored in rounds, for as long as it is not", () => {
+    const markup = panel({
+      config: {},
+      rows: [
+        { roundIndex: 1, userId: "alice", score: 10, bonuses: {} },
+        { roundIndex: 1, userId: "bob", score: 7, bonuses: { Clutch: 1 } },
+        { roundIndex: 5, userId: "bob", score: 3, bonuses: {} },
+      ],
+      players: {
+        alice: { displayName: "Alice", avatarUrl: null },
+        bob: { displayName: "Bob", avatarUrl: null },
+      },
+    });
+    // Named, not counted — `TableOrder`'s voice for a shadowed typed order.
+    expect(markup).toContain(
+      "3 scores were recorded while this night was scored in rounds: Alice in Round 1; Bob in Round 1 and Round 5. They are kept but not read. They would be read again, exactly as they are, only if this night were scored in rounds again."
+    );
+    // And the panel opens on the defaults, so it also says which of them the
+    // default setup would discard if saved as it stands — the rows do come
+    // back, and the screen says which.
+    expect(markup).toContain("Cutting the night to 1 round discards 1 score, from Round 5.");
+    expect(markup).toContain("Dropping &quot;Clutch&quot; takes back 1 award, from Bob.");
+  });
+
+  it("reads one kept score in the singular", () => {
+    const markup = panel({
+      config: {},
+      rows: [{ roundIndex: 1, userId: "alice", score: 10, bonuses: {} }],
+      players: { alice: { displayName: "Alice", avatarUrl: null } },
+    });
+    expect(markup).toContain("1 score was recorded while this night was scored in rounds: Alice in Round 1.");
+  });
+
+  it("says nothing about kept scores when there are none, or while the night is scored in rounds", () => {
+    // The phrase both the singular and the plural carry — a one-row fixture
+    // reads "was recorded", and a negative on "were recorded" passed over it.
+    expect(panel()).not.toContain("recorded while this night was scored in rounds");
+    expect(
+      panel({
+        config: { roundScoring: SIX },
+        rows: [
+          { roundIndex: 1, userId: "alice", score: 10, bonuses: {} },
+          { roundIndex: 2, userId: "bob", score: 4, bonuses: {} },
+        ],
+      })
+    ).not.toContain("recorded while this night was scored in rounds");
+  });
 });
 
 /* --------------------------------------------------------------------- */

@@ -1754,12 +1754,20 @@ label "Bracket changed" rather than "Format changed".
   Give the panel a way to say "this night is not scored in rounds", following the discard rules that already exist rather than inventing new ones: scores that would be orphaned are named and confirmed before anything goes, exactly as UC-44 2b and 4d do.
   **Decide and state what happens to the rows.** Nothing on the record is hard-deleted (Constraints), but rows belonging to a scoring setup that no longer exists are unreachable by every screen — so either they go with an explicit confirmation naming them, or they stay and something says they are there. Task 91's twin question about an orphaned hand-typed order should be answered the same way, and the two answers belong together.
 - **Acceptance criteria:**
-  - [ ] A round-scored event can be made not-round-scored, and the hand-typed order works again afterwards
-  - [ ] Scores that would be orphaned are named before anything goes, and the refusal has written nothing
-  - [ ] Turning it off and on again does not silently resurrect the old scores — or does, if that is the decision, and the screen says which
-  - [ ] What happens to the rows is decided, stated in the code, and visible on the screen
-  - [ ] The action refuses for a member and succeeds for a manager
+  - [x] A round-scored event can be made not-round-scored, and the hand-typed order works again afterwards
+  - [x] Scores that would be orphaned are named before anything goes, and the refusal has written nothing
+  - [x] Turning it off and on again does not silently resurrect the old scores — or does, if that is the decision, and the screen says which
+  - [x] What happens to the rows is decided, stated in the code, and visible on the screen
+  - [x] The action refuses for a member and succeeds for a manager
 - **Depends on:** Tasks 87, 91 — it should answer Task 91's orphaned-order question at the same time, in the same words.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **The rows stay, in Task 91's exact words** — kept, never read, and named on the screen that would have read them, which here is the Scoring panel — and they are read again exactly as they were when a setup is saved again. `saveRoundScoring` then asks its usual three questions of them, so a smaller setup discards named rows with a confirmation and a fitting one discards none. **Criterion 3 is met by *saying*, before and during, rather than by deleting**, which is the whole point of having one answer for both halves of the question.
+  **A jsonb key is removed by patching it to `undefined`, and that is not obvious.** `updateEvent` merges one level deep and drizzle serialises with `JSON.stringify`, which omits an undefined-valued key; `null` would *store* the key and read as off while lying about the record. The write throws if the returned row still carries it, and a test asserts absence **as bytes** (`config::text` does not contain the key) rather than trusting a reader. Two mutations — writing `null`, and writing the default setup instead of removing the key — both die there.
+  **The trap is proved shut end to end**, which is the task's reason to exist: a round-scored night with five scored rows → `setPlacements` refused with Task 91's sentence and nothing written → scoring turned off with confirmation → `setPlacements` accepted → `finishingOrderFor` reads `typed` → the season pays Bob 25 and Alice 18 (the table had Bob last) → and the five `event_round_scores` rows are **still there**.
+  **It is the existing confirmation machinery, not a second flow**: `roundScoringLosses` with `after: null` yields the one sentence, behind the same single checkbox and the same save bar, with the label becoming "Turn round scoring off". Decision 004 **shape 3** with no transaction of its own — one guarded write and nothing after it.
+  **A deliberate departure, flagged rather than slipped in:** Task 87's losses Alert moved from `announced` to `standing`, because this task creates a state where it is in the markup at first render — a night turned off with rows kept opens on the default draft. The mid-session appearance is still announced by the `role="status"` refusal line beneath it, which carries the same sentences.
+  **An escape caught in its own test:** a negative assertion passed only because the fixture had one row, so "was recorded" never matched `not.toContain("were recorded")`. Fixed to the shared phrase with a two-row fixture. Singular/plural is a real way for a sweep to vouch for itself.
+  **A copy bug it found in Task 91's file and correctly did not touch** — `TableOrder` read "1 place **were** typed by hand" — was fixed by the lead afterwards: the verb now agrees. Worth recording because `plural()` returns the noun phrase only, so every call site owns its own verb agreement, and this is the second place in the project to get it wrong.
 
 ### Task 92: A template carries the scoring setup
 

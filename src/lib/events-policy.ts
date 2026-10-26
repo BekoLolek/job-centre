@@ -1864,13 +1864,34 @@ export type ScoredRow = {
  *     deleted, but the table turns upside down, and the manager is told so.
  *     Not asked when every recorded score is going anyway — there is no table
  *     left to invert.
+ *
+ * ## Turning round scoring off — `after` is `null` (Task 93)
+ *
+ * The step UC-44 was missing, confirmed the way 2b and 4d are: one sentence,
+ * the same box. It is the one case here where **nothing goes**. The decision is
+ * `finishingOrdersFor`'s, applied to the round rows in the same words: rows
+ * that belong to a way of scoring this night no longer uses are kept, never
+ * read, and named on the screen that would have read them. So the sentence
+ * *names* every score — whose, in which round — rather than counting it, says
+ * they are kept, and says they come back exactly as they are if the night is
+ * scored in rounds again. None of the three discards is asked: there is no
+ * count to cut to, no bonus list to drop from and no table left to invert.
+ * The one thing that must never happen in silence — the rows coming back — is
+ * said here before the switch, and by the panel for as long as it is off.
  */
 export function roundScoringLosses(
   before: RoundScoring | null,
-  after: RoundScoring,
+  after: RoundScoring | null,
   rows: readonly ScoredRow[],
   nameOf: (userId: string) => string
 ): string[] {
+  if (after === null) {
+    if (rows.length === 0) return [];
+    return [
+      `Turning round scoring off leaves ${counted(rows.length, "score")} with nothing to read them: ${scoresNamed(before, rows, nameOf)}. They are kept, not deleted, and would be read again exactly as they are if this night were scored in rounds again.`,
+    ];
+  }
+
   const losses: string[] = [];
   const kept = after.rounds.length;
 
@@ -1919,6 +1940,41 @@ export function roundScoringLosses(
   }
 
   return losses;
+}
+
+/**
+ * Every recorded score, named by whose and in which round — "Alice in Round 1
+ * and Round 5; Bob in Final" — for the two places that say the rows are there
+ * once nothing reads them (Task 93): the confirmation before round scoring is
+ * turned off, and the Scoring panel's standing notice for as long as it is off.
+ * `TableOrder` names a shadowed typed order place by place; this names the
+ * round rows the same way, because a count is not a naming.
+ *
+ * Players come out in name order, so the sentence is the same whatever order
+ * the rows arrive in (Task 88's note: rows within one round have none).
+ * `before` supplies the round names; `null` — the setup already gone, which is
+ * the panel's case — calls each round by its number, since the name went with
+ * the setup.
+ */
+export function scoresNamed(
+  before: RoundScoring | null,
+  rows: readonly ScoredRow[],
+  nameOf: (userId: string) => string
+): string {
+  const byPlayer = new Map<string, Set<number>>();
+  for (const row of rows) {
+    const rounds = byPlayer.get(row.userId) ?? new Set<number>();
+    rounds.add(row.roundIndex);
+    byPlayer.set(row.userId, rounds);
+  }
+  return [...byPlayer]
+    .map(([userId, rounds]) => ({
+      name: nameOf(userId),
+      rounds: [...rounds].sort((x, y) => x - y).map((index) => roundName(before?.rounds[index - 1], index - 1)),
+    }))
+    .sort((x, y) => x.name.localeCompare(y.name))
+    .map((player) => `${player.name} in ${listed(player.rounds)}`)
+    .join("; ");
 }
 
 /**

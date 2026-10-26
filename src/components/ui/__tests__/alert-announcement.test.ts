@@ -390,17 +390,24 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   "src/components/admin/events/RoundScores.tsx": ["announced", "standing"],
   "src/components/admin/events/ScheduleTab.tsx": ["announced", "standing", "standing"],
   /*
-   * Two, both Task 87's (R-225, R-226, R-229 / UC-44).
+   * Three — Task 87's two (R-225, R-226, R-229 / UC-44) and Task 93's one.
    *
-   * In source order: the save error, handler state, announced; and the list of
-   * what a save would take away (UC-44 2b, 3a, 4d), which reads the edited
-   * setup against the stored one and the rows — on arrival the two setups are
-   * equal, so it is the "will be deleted when you save" shape and announced for
-   * that group's reason. It can be on the page at first render only when the
-   * rows already disagree with the stored setup, which no save of this panel
-   * leaves behind.
+   * In source order: the save error, handler state, announced; the scores a
+   * night that is no longer scored in rounds still holds (Task 93), derived
+   * from props alone — `scoring` null and rows present — so on the page at
+   * first render for any such night, and **standing**, exactly as `TableOrder`'s
+   * shadowed typed order is; and the list of what a save would take away
+   * (UC-44 2b, 3a, 4d), which reads the edited setup against the stored one and
+   * the rows. Task 87 classified that last one announced, on the ground that no
+   * save of this panel leaves the rows disagreeing with the stored setup. Task
+   * 93 made such a state: a night turned off with scores kept opens on the
+   * default draft, which the kept rows disagree with, so the bar is in the
+   * markup as the panel first renders — the file's own question, answered yes,
+   * so it is now **standing**. Its mid-session appearance, when an edit lowers
+   * the count, is still announced: the `role="status"` refusal line beneath it
+   * carries the same sentences.
    */
-  "src/components/admin/events/ScoringTab.tsx": ["announced", "announced"],
+  "src/components/admin/events/ScoringTab.tsx": ["announced", "standing", "standing"],
   /*
    * Two, both Task 79's (R-217, R-218 / UC-42).
    *
