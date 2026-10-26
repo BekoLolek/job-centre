@@ -22,6 +22,21 @@
  * itself, and what makes a correction (UC-33 4a) nothing more than replacing
  * rows. There is no total anywhere that could go stale, because there is no
  * total.
+ *
+ * ## Two kinds of night, one finishing order each (decision 006, decision 2)
+ *
+ * A night scored in rounds (UC-44 to UC-46) has a table of its own, worked out
+ * from its round scores by `rankRounds`, and R-236 makes that table the only
+ * authority for its championship places: the night's result and the season's
+ * standings must not be able to disagree. So every reader here asks
+ * `roundScoringFrom(event.config)` and gets back **one** {@link FinishingOrder}
+ * per event — the typed rows for an ordinary night, the derived table for a
+ * round-scored one — and the mapping into what the arithmetic takes works off
+ * that single value. The typed rows of a round-scored night travel alongside as
+ * `shadowed`, named so that no screen can mistake them for places: see
+ * {@link finishingOrdersFor} for what happens to them. `setPlacements` refuses
+ * such a night outright, pointing at the Results tab, because a wrong result is
+ * fixed in the round it was typed in and nowhere else.
  */
 
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
@@ -32,6 +47,7 @@ import {
   championshipPlacements,
   championships,
   db as defaultDb,
+  events,
   teamMembers,
   teams,
   users,
@@ -51,7 +67,10 @@ import {
   championshipOfEvent,
   fail,
 } from "./championships";
+import { roundScoringFrom } from "./events-policy";
 import { UNKNOWN_PLAYER, displayNamesFor } from "./players";
+import { rankRounds } from "./round-scoring";
+import { roundScoresFor } from "./round-scores";
 
 /* ------------------------------------------------------------------ */
 /* Shapes                                                             */
@@ -108,6 +127,34 @@ export type RecordedResult = {
   counting: EventChampionship;
   placements: RecordedPlacement[];
 };
+
+/**
+ * One place a round-scored night's table produced (UC-46 2, 5): always a
+ * player's, with the total that put them there, so the panel can answer
+ * "where did this place come from" with the number rather than a sentence.
+ */
+export type DerivedPlace = RecordedPlacement & { kind: "member"; total: number };
+
+/**
+ * Where one event's championship places come from — exactly one of the two.
+ *
+ * `typed` is UC-33's order, the `championship_placements` rows as the manager
+ * saved them. `table` is a round-scored night's, derived from its round scores
+ * on every read and never stored; its `places` share `RecordedPlacement`'s
+ * shape so that whoever prints a winner or a place reads both kinds alike.
+ *
+ * A round-scored night's typed rows, if it has any, are `shadowed`: kept, named,
+ * and not `places`, so the arithmetic cannot be handed them. The type has no
+ * member holding both as places, which is what makes two sources for one order
+ * impossible rather than merely unread.
+ */
+export type FinishingOrder =
+  | { source: "typed"; places: RecordedPlacement[] }
+  | { source: "table"; places: DerivedPlace[]; shadowed: RecordedPlacement[] };
+
+/** UC-46 5b: the hand-typed order, refused for a night whose order is its table. */
+export const ROUND_SCORED_REFUSAL =
+  "This night is scored in rounds, so its finishing order is its table. Correct a round on the Results tab instead.";
 
 const NOT_IN_EVENT =
   "One of those places is for somebody who did not take part in this event.";
@@ -286,6 +333,93 @@ export async function placementsFor(
   return out;
 }
 
+/** Where one event's places come from, decided by how the event is scored. */
+export async function finishingOrderFor(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<FinishingOrder> {
+  const byEvent = await finishingOrdersFor([eventId], database);
+  return byEvent.get(eventId) ?? { source: "typed", places: [] };
+}
+
+/**
+ * {@link finishingOrderFor} for a list of events, in a fixed number of reads.
+ *
+ * **This is the one place that decides which world an event is in.** The
+ * question is `roundScoringFrom(event.config)` — the same reader the Results
+ * tab and `saveRound` ask — and the answer picks the whole order: a
+ * round-scored night's places are `rankRounds` over its round rows, with a name
+ * read for each player, and an ordinary night's are its typed rows. The ranking
+ * is run here, once, so the panel, the public page's "won by" line and the
+ * arithmetic are all reading the same ranks rather than three derivations of
+ * them.
+ *
+ * ## A typed order the night has outgrown
+ *
+ * An event can carry `championship_placements` rows and *then* be switched to
+ * round scoring. Decision 006 says kept-and-silently-ignored rows are worse than
+ * either alternative, and this is the decision: **they are kept, they are never
+ * read as places, and the screen that would have read them says they are there.**
+ * Nothing is deleted when the scoring changes, which is what the Constraints
+ * ask; nothing comes back in silence either, because the panel names the rows
+ * for as long as they are shadowed, and the moment the night stops being
+ * round-scored the same rows are read again exactly as they were typed. Task
+ * 93's mirror image — round rows on a night turned back to a typed order — is
+ * answered in the same words. A night nobody typed an order for has nothing
+ * shadowed, so the common case carries an empty list and the panel says nothing.
+ */
+export async function finishingOrdersFor(
+  eventIds: readonly string[],
+  database: Database = defaultDb
+): Promise<Map<string, FinishingOrder>> {
+  const ids = [...new Set(eventIds)];
+  const out = new Map<string, FinishingOrder>();
+  if (ids.length === 0) return out;
+
+  const [setups, typed, rounds] = await Promise.all([
+    database
+      .select({ id: events.id, config: events.config })
+      .from(events)
+      .where(inArray(events.id, ids)),
+    placementsFor(ids, database),
+    roundScoresFor(ids, database),
+  ]);
+
+  const ranked = new Map(
+    setups.flatMap((event) => {
+      const setup = roundScoringFrom(event.config);
+      return setup ? [[event.id, rankRounds(setup, rounds.get(event.id) ?? [])] as const] : [];
+    })
+  );
+  const names = await displayNamesFor(
+    [...ranked.values()].flat().map((rank) => rank.userId),
+    database
+  );
+
+  for (const id of ids) {
+    const places = typed.get(id) ?? [];
+    const ranks = ranked.get(id);
+    out.set(
+      id,
+      ranks
+        ? {
+            source: "table",
+            places: ranks.map((rank) => ({
+              id: rank.userId,
+              position: rank.position,
+              kind: "member",
+              name: names.get(rank.userId) ?? UNKNOWN_PLAYER,
+              total: rank.total,
+            })),
+            shadowed: places,
+          }
+        : { source: "typed", places }
+    );
+  }
+
+  return out;
+}
+
 /**
  * One event's stored result in the shape `scoreChampionship` takes, or `null`
  * when the event counts towards nothing.
@@ -305,27 +439,27 @@ export async function placementsFor(
  * The participant list is what UC-33 3b rides on: everybody who took part and
  * is in no placement scores the taking-part points.
  *
- * `places` is for the caller that has already read the order and is about to
- * need it for something else. The public page prints who won each night beside
- * the standings it scored them into, and reading the same rows twice — once
- * here, once for the winners — is a query per counted event for nothing.
- * Passing them in is not a second opinion about the order: it is the same rows,
- * on their way to both uses.
+ * `order` is for the caller that has already read the finishing order and is
+ * about to need it for something else. The public page prints who won each
+ * night beside the standings it scored them into, and reading the same rows
+ * twice — once here, once for the winners — is a query per counted event for
+ * nothing. Passing it in is not a second opinion about the order: it is the
+ * same {@link FinishingOrder}, on its way to both uses.
  */
 export async function scoringInputFor(
   eventId: string,
   database: Database = defaultDb,
-  places?: readonly RecordedPlacement[]
+  order?: FinishingOrder
 ): Promise<CountingEventInput | null> {
   const counting = await championshipOfEvent(eventId, database);
   if (!counting) return null;
 
-  const [participants, order] = await Promise.all([
+  const [participants, finishing] = await Promise.all([
     eventParticipants(eventId, database),
-    places ?? listPlacements(eventId, database),
+    order ?? finishingOrderFor(eventId, database),
   ]);
 
-  return countingEventInput(counting, participants, order);
+  return countingEventInput(counting, participants, finishing);
 }
 
 /**
@@ -346,9 +480,9 @@ export async function scoringInputsFor(
   database: Database = defaultDb
 ): Promise<Map<string, CountingEventInput>> {
   const eventIds = counting.map((row) => row.eventId);
-  const [participants, places] = await Promise.all([
+  const [participants, orders] = await Promise.all([
     participantsFor(eventIds, database),
-    placementsFor(eventIds, database),
+    finishingOrdersFor(eventIds, database),
   ]);
 
   return new Map(
@@ -357,29 +491,48 @@ export async function scoringInputsFor(
       countingEventInput(
         row,
         participants.get(row.eventId) ?? EMPTY_PARTICIPANTS,
-        places.get(row.eventId) ?? []
+        orders.get(row.eventId) ?? { source: "typed", places: [] }
       ),
     ])
   );
 }
 
 /**
- * The mapping itself: one counting row, who took part in it and what was
- * recorded on it, as the five fields the arithmetic takes.
+ * The mapping itself: one counting row, who took part in it and where everyone
+ * finished, as the five fields the arithmetic takes.
  *
  * Pure, and the only place that shape is written down — see the note on
  * {@link scoringInputFor} for why there must be exactly one of it.
+ *
+ * ## Where the two worlds meet (decision 006, decision 2)
+ *
+ * A typed order is a list of subjects — a team's place pays its roster, read
+ * fresh — so it goes through `subjectsFor`. A round-scored night's table is a
+ * list of players and nothing else: a derived place is the player's own, never
+ * a team's, and is not looked up in the participant list, because the table
+ * already knows who it ranked. The participant list still does its UC-33 3b
+ * job for both: whoever took part and is in neither kind of order scores the
+ * taking-part points, which is how a player with no score in any round reaches
+ * the season (UC-46 5a). A shared place in the table is a shared position here,
+ * and `placementValue` pays it as one — R-238 needs nothing more from this
+ * branch than passing the position through untouched.
  */
 function countingEventInput(
   counting: Pick<CountingEvent, "eventId" | "weight" | "pointsTable">,
   participants: EventParticipants,
-  places: readonly RecordedPlacement[]
+  order: FinishingOrder
 ): CountingEventInput {
   return {
     id: counting.eventId,
     weight: counting.weight,
     pointsTable: counting.pointsTable,
-    placements: subjectsFor(participants, places),
+    placements:
+      order.source === "table"
+        ? order.places.map((place) => ({
+            position: place.position,
+            subject: { kind: "member", userId: place.id },
+          }))
+        : subjectsFor(participants, order.places),
     participants: participants.rows.flatMap((row) =>
       row.members.map((member) => member.userId)
     ),
@@ -444,6 +597,17 @@ function subjectsFor(
  * have its championship result recorded, because the result belongs to the
  * season rather than to the event's own record (UC-09 6b locks that, and this
  * is not part of it).
+ *
+ * ## Refused for a night scored in rounds (UC-46 5b, R-236)
+ *
+ * Its finishing order is its table, read by `finishingOrdersFor`, and there is
+ * no second way in — not even an empty order to clear what is shadowed, because
+ * an exception for one shape of payload is a second writer wearing a hat. The
+ * cost decision 006 accepted is paid here: there is no dragging a player to
+ * first place, and a wrong result is corrected in the round. The check is made
+ * once, before the transaction, with the lock check; a setup saved in the gap
+ * between it and the write leaves the rows shadowed and named rather than read,
+ * so the race can only cost the honesty of this sentence, never a second source.
  */
 export async function setPlacements(
   eventId: string,
@@ -455,6 +619,13 @@ export async function setPlacements(
 
   const locked = championshipLockRefusal(current.season);
   if (locked) return fail(locked);
+
+  const [event] = await database
+    .select({ config: events.config })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  if (roundScoringFrom(event?.config)) return fail(ROUND_SCORED_REFUSAL);
 
   const participants = await eventParticipants(eventId, database);
   const known = new Map(participants.rows.map((row) => [row.id, row]));

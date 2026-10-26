@@ -64,6 +64,38 @@ export async function listRoundScores(
     .orderBy(asc(eventRoundScores.roundIndex), asc(eventRoundScores.id));
 }
 
+/**
+ * {@link listRoundScores} for a list of events, in one read (UC-46 5).
+ *
+ * Every id asked about gets an entry, empty when the event has no rows — the
+ * same contract as `placementsFor`, and for the same caller: the championship
+ * derives a round-scored event's places from these, and asks for a whole
+ * season's at once rather than a query per counting event.
+ */
+export async function roundScoresFor(
+  eventIds: readonly string[],
+  database: Database = defaultDb
+): Promise<Map<string, RoundScoreRow[]>> {
+  const ids = [...new Set(eventIds)];
+  const out = new Map<string, RoundScoreRow[]>(ids.map((id) => [id, []]));
+  if (ids.length === 0) return out;
+
+  const rows = await database
+    .select({
+      eventId: eventRoundScores.eventId,
+      roundIndex: eventRoundScores.roundIndex,
+      userId: eventRoundScores.userId,
+      score: eventRoundScores.score,
+      bonuses: eventRoundScores.bonuses,
+    })
+    .from(eventRoundScores)
+    .where(inArray(eventRoundScores.eventId, ids))
+    .orderBy(asc(eventRoundScores.roundIndex), asc(eventRoundScores.id));
+
+  for (const { eventId, ...row } of rows) out.get(eventId)?.push(row);
+  return out;
+}
+
 export type RoundScoringSaved = {
   /** As stored, read back through `roundScoringFrom`. */
   scoring: RoundScoring;

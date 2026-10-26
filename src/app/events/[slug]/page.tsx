@@ -62,10 +62,11 @@ import { dayBySlot as dayOfSlot } from "@/components/format/columns";
 import LiveRefresh from "@/components/events/LiveRefresh";
 import BracketTab from "./BracketTab";
 import ResultsTab from "./ResultsTab";
+import RoundsTab from "./RoundsTab";
 import ScheduleTab from "./ScheduleTab";
 import TeamsTab from "./TeamsTab";
 import { loadDraw } from "./draw/draw";
-import { getEventBoard, podiumFor, teamNames } from "@/lib/event-board";
+import { type BoardPlacement, getEventBoard, podiumFor, resultLine } from "@/lib/event-board";
 import {
   type EventDetail,
   getApplicationsForEvent,
@@ -123,7 +124,6 @@ export default async function EventPage({
   // there are teams to watch draft, because before that it is an empty wheel.
   const board = await getEventBoard(event.id, { days: event.days.length });
   const podium = podiumFor(board);
-  const names = teamNames(board);
   // Which day each slot runs on. It comes from the block plan rather than from
   // the instant, because a Saturday session that overruns past midnight is
   // still Saturday — and because a day worked out from `Date#getDate` would
@@ -325,19 +325,50 @@ export default async function EventPage({
         />
 
         {/* --- The podium, once somebody has won -------------------- */}
-        {podium.length > 0 && (
+        {!board.rounds && podium.length > 0 && (
           <Panel as="section" className="rise">
             <Eyebrow className="mb-4">Final standings</Eyebrow>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              {podiumEntries(podium).map((entry) => (
-                <StatTile
-                  key={`${entry.position}-${entry.teamId}`}
-                  label={entry.label}
-                  value={names.get(entry.teamId) ?? "—"}
-                  valueClassName={PODIUM_TONE[entry.position] ?? "text-muted"}
-                />
-              ))}
-            </div>
+            <PodiumTiles podium={podium} />
+          </Panel>
+        )}
+
+        {/*
+          --- The result of a night scored in rounds (UC-46 4, 4a) ---------
+          The same place as a bracket's podium, because it answers the same
+          question, but it is always there for such a night: a round-scored
+          night with nothing in it says so here (4a) rather than growing an
+          empty Results tab, which `has.results` refuses for every event. The
+          sentence is `resultLine`'s — "won" once every round is in, "leads"
+          while it is not — and the tiles appear only with the first, because
+          "Champion" over a half-scored table is a claim the table has not made.
+          The link is the one way into the rounds themselves (R-234: the parts
+          of the total), and it is offered only once the tab exists.
+        */}
+        {board.rounds && (
+          <Panel as="section" className="rise">
+            <Eyebrow className="mb-4">Result</Eyebrow>
+            {resultLine(board) ? (
+              <>
+                <p className="text-16 text-chalk">{resultLine(board)}</p>
+                {board.rounds.scored >= board.rounds.scoring.rounds.length && (
+                  <div className="mt-5">
+                    <PodiumTiles podium={podium} />
+                  </div>
+                )}
+                {board.has.results && (
+                  <p className="mt-4 text-12 text-muted">
+                    <Link
+                      href={`/events/${event.slug}?tab=results`}
+                      className="text-union underline underline-offset-4"
+                    >
+                      Every round and bonus, on the Results tab
+                    </Link>
+                  </p>
+                )}
+              </>
+            ) : (
+              <EmptyState>This night has not been scored yet.</EmptyState>
+            )}
           </Panel>
         )}
 
@@ -420,10 +451,38 @@ export default async function EventPage({
 
         {tab === "bracket" && <BracketTab stages={board.format?.stages ?? []} />}
 
-        {tab === "results" && (
-          <ResultsTab matches={board.matches} dayBySlot={dayBySlot} />
-        )}
+        {/* The table is the authority for a round-scored night (decision 006),
+            so it is the whole of that night's Results tab; every other event
+            keeps the match log. */}
+        {tab === "results" &&
+          (board.rounds ? (
+            <RoundsTab rounds={board.rounds} players={board.players} />
+          ) : (
+            <ResultsTab matches={board.matches} dayBySlot={dayBySlot} />
+          ))}
       </Page>
+    </div>
+  );
+}
+
+/**
+ * The top of the finishing order as tiles, labelled by `podiumEntries` — one
+ * set of tiles for a bracket's teams and a table's players alike. Keyed on the
+ * subject, since two tied players share a position and may share a name.
+ */
+function PodiumTiles({ podium }: { podium: BoardPlacement[] }) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {podiumEntries(podium).map((entry) => (
+        <StatTile
+          key={`${entry.position}-${
+            entry.subject.kind === "team" ? entry.subject.teamId : entry.subject.userId
+          }`}
+          label={entry.label}
+          value={entry.name}
+          valueClassName={PODIUM_TONE[entry.position] ?? "text-muted"}
+        />
+      ))}
     </div>
   );
 }

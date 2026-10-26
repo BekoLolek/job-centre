@@ -204,8 +204,16 @@ const PODIUM_LABEL: Record<number, string> = {
  * "5th–6th" — because two teams knocked out in the same round did not finish
  * fifth and sixth, they finished joint fifth. That is the same distinction
  * `PlacementRule.shared` carries, printed.
+ *
+ * Generic over what is placed: the label reads `position` and `shared` and
+ * nothing else, so a bracket's `Placement` and the event board's placement of a
+ * player (Task 90) are labelled by the one rule. Whatever came in goes out with
+ * its label attached.
  */
-export function podiumEntries(placements: Placement[], limit = 4): PodiumEntry[] {
+export function podiumEntries<T extends Pick<Placement, "position" | "shared">>(
+  placements: T[],
+  limit = 4
+): Array<T & { label: string }> {
   return [...placements]
     .sort((x, y) => x.position - y.position)
     .slice(0, limit)

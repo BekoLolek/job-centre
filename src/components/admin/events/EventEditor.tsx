@@ -436,6 +436,7 @@ function EditorBody({
           <ResultsTab
             format={format.view}
             matchIds={format.matchIds}
+            shape={shape}
             /*
              * UC-45. Everything the round sheet reads is already here — the
              * setup off `event.config`, the rows the page read, the names

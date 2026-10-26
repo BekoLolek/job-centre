@@ -456,7 +456,13 @@ export async function getPlayerProfile(
     withTeams.map(async (entry) => {
       const format = await formatFor(entry.event.id, database);
       const placements = placementsOf(format);
-      const mine = placements.find((placement) => placement.teamId === entry.team?.id);
+      // A format places teams and nothing else; the player-shaped placement a
+      // round-scored night produces comes off the board, not the format, and
+      // is not an honour this page reads yet.
+      const mine = placements.find(
+        (placement) =>
+          placement.subject.kind === "team" && placement.subject.teamId === entry.team?.id
+      );
       if (!mine) return;
       entry.placement = { position: mine.position, shared: mine.shared };
       entry.won = mine.position === 1 && mine.shared === 1;

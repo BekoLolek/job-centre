@@ -136,6 +136,7 @@ function renderTab(view: FormatView): string {
         view.stages.flatMap((stage) => stage.matches.map((m) => [m.slot, `row-${m.slot}`]))
       ),
       // A team event: not scored in rounds, so no round sheet (Task 88).
+      shape: { teamEvent: true, draft: true },
       rounds: { scoring: null, rows: [], players: {}, seated: [], status: "live" },
     })
   );

@@ -28,7 +28,7 @@ import type {
 import { loadAdminGames } from "@/lib/admin-games";
 import { manualAnnouncementPanel } from "@/lib/discord";
 import { championshipOfEvent, championshipsToAddTo } from "@/lib/championships";
-import { eventParticipants, listPlacements } from "@/lib/championship-results";
+import { eventParticipants, finishingOrderFor } from "@/lib/championship-results";
 import {
   getDiscardedPlayers,
   getDraftConfig,
@@ -132,11 +132,12 @@ export default async function AdminEventPage({
    * UC-33 2. Only for an event that is in a season: there is no finishing
    * order to record for one that counts towards nothing, and these two reads
    * would be two queries on every event editor for nothing. `eventParticipants`
-   * decides teams-or-applicants, not this page.
+   * decides teams-or-applicants, not this page, and `finishingOrderFor` decides
+   * typed-order-or-table (UC-46 5) — the panel is told, never asked.
    */
   const result = counting
-    ? await Promise.all([eventParticipants(event.id), listPlacements(event.id)]).then(
-        ([participants, placements]) => ({ participants, placements })
+    ? await Promise.all([eventParticipants(event.id), finishingOrderFor(event.id)]).then(
+        ([participants, order]) => ({ participants, order })
       )
     : null;
 

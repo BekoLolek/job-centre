@@ -7,7 +7,7 @@ import type {
 } from "@/db/schema";
 import type {
   EventParticipants,
-  RecordedPlacement,
+  FinishingOrder,
 } from "@/lib/championship-results";
 import type { EventChampionship } from "@/lib/championships";
 import type { TeamsFill } from "@/lib/draft";
@@ -113,14 +113,16 @@ export type DraftTabData = {
  * `result` is UC-33's half: who took part, and where they finished. Null for
  * the same reason and in the same case as `counting` — an event in no season
  * has no finishing order to record — so the panel never has to ask whether one
- * of the two is present without the other.
+ * of the two is present without the other. `order` says where the places come
+ * from — the typed rows, or a round-scored night's table (UC-46 5) — and the
+ * panel draws the editor or the read-only table accordingly.
  */
 export type ChampionshipTabData = {
   counting: EventChampionship | null;
   seasons: { id: string; name: string; status: ChampionshipStatusValue }[];
   result: {
     participants: EventParticipants;
-    placements: RecordedPlacement[];
+    order: FinishingOrder;
   } | null;
 };
 

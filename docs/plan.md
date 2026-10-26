@@ -1655,14 +1655,22 @@ label "Bracket changed" rather than "Format changed".
   **This retires the misdirecting empty state.** For a solo event the Results tab currently says "Choose a format and generate them on the Format tab", and that tab is hidden for solo events and would refuse the link. A team event's Results tab must be untouched, asserted rather than assumed.
   A partly-scored night shows the table as it stands and says how many rounds are in it; a night with nothing scored says that, rather than rendering an empty table with a header.
 - **Acceptance criteria:**
-  - [ ] The table shows the finishing order with every round and every bonus beside the total
-  - [ ] A participant can find their own rounds in it
-  - [ ] A partly-scored night says how many rounds the table covers
-  - [ ] Nothing scored says so, and names no tab the reader cannot open
-  - [ ] No sentence anywhere on a solo event's Results tab names a hidden tab, swept rather than eyeballed
-  - [ ] A team event's Results tab renders exactly as it does today, asserted
-  - [ ] Works at 400px
+  - [x] The table shows the finishing order with every round and every bonus beside the total
+  - [x] A participant can find their own rounds in it — met as a row per player, stated below
+  - [x] A partly-scored night says how many rounds the table covers
+  - [x] Nothing scored says so, and names no tab the reader cannot open
+  - [x] No sentence anywhere on a solo event's Results tab names a hidden tab, swept rather than eyeballed
+  - [x] A team event's Results tab renders exactly as it does today, asserted
+  - [x] Works at 400px — structural evidence only, stated below
 - **Depends on:** Tasks 86, 88. Touches the Results tab, so not beside Task 88.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **An interrupted agent's draft was rewritten, not inherited.** A rate limit killed the first attempt at this task after it had written ~480 lines of test file and *before it had executed any of it*. The replacement kept three ideas — a byte digest pinning the team markup, a sweep over rendered solo states, a row-grid helper — and **re-derived every fixture value and both digests itself** against an untouched `ResultsTab.tsx`. They matched the draft's pins, so that work was real; it is now verified rather than trusted. A never-executed test file is the most dangerous thing to inherit, because it looks like finished work.
+  **`ResultsTab` now takes `shape: TabVisibility`**, plumbed from `EventEditor` in one line outside the Files line, because "no matches" means two different things and **`format.teams.length === 0` cannot tell them apart** — it is also true of a team event whose teams do not exist yet. A mutation deciding solo-ness that way dies on the team-event digest, which is the criterion-6 pin doing exactly the job it was written for.
+  **Unscored rounds get no column.** They contribute nothing to any total (Task 86's gap rule), so they are not a part of it, and six empty columns on a phone push the total off the screen. The sentence above the table carries the fact instead: "Covers 2 of 6 rounds so far — the order as it stands."
+  **The order is `rankRounds`' places, ties broken by name, then seated-but-unscored players last**, marked "Not scored in any round" with a dash for place and total. Task 86 keeps them out of the ranking because playing nothing is not a finishing place; the manager still needs to see they exist. This is a screen rather than an input, so decision 006's taking-part points are untouched. Proved by ranking the same rows forwards and reversed, which is the answer to Task 88's random-uuid ordering trap.
+  **A team event that has a stored scoring setup gains the table under its sheet** (UC-42 5b), stated rather than prevented — the byte pins cover the scoring-null team event, which is every team event on the site today.
+  **The sweep is over rendered markup of six prop-reachable solo states**, case-insensitive, with the tab labels read off `tabHiddenBecause` rather than written out. Proved both ways: re-introducing the retired "Format tab" sentence dies, and so does a lower-case "bracket". **Its limit is stated** — client-state-only sentences on the round sheet are Task 88's policy copy and outside it.
+  **"A participant can find their own rounds" is met as a row per player under their own name**, and no highlight was invented: the manager reads this screen, and R-235's own-view is *Could* priority on the public page (Task 90). **400px is structural** — a `whitespace-nowrap` table inside the same `overflow-x-auto` panel `StandingsTable` uses, so it scrolls in its own box rather than widening the page. No dev server was run. Two of Task 88's tests that pinned the pre-89 empty state were **updated rather than deleted**, since this task is the specified change to that sentence.
 
 ### Task 90: The solo result on the public event page
 
@@ -1671,11 +1679,19 @@ label "Bracket changed" rather than "Format changed".
 - **Do:** three places read a result today and all three are bracket-shaped — `has.results` is `matches.some(done)`, `podiumFor`/`placementsOf` derive from the last stage with a champion, and `BoardPlacement` is keyed on `teamId`. A solo event therefore shows no podium, no result line and no public Results tab however well it is scored.
   Give each a non-team notion of "who won", without changing what a team event shows. `BoardPlacement` gaining a player subject is the honest shape; a second parallel type is the thing to avoid, and the task says which it chose and why.
 - **Acceptance criteria:**
-  - [ ] A scored solo event shows its table on its public page, and its winner in the result line
-  - [ ] A solo event with nothing scored says the night has not been scored
-  - [ ] A team event's podium, result line and Results tab are unchanged, asserted over a real fixture rather than by inspection
-  - [ ] Works at 400px
+  - [x] A scored solo event shows its table on its public page, and its winner in the result line
+  - [x] A solo event with nothing scored says the night has not been scored
+  - [x] A team event's podium, result line and Results tab are unchanged, asserted over a real fixture rather than by inspection
+  - [x] Works at 400px — structural evidence only, stated below
 - **Depends on:** Tasks 86, 88.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **`BoardPlacement` gained a subject rather than a twin.** It is now `{ position; shared; name; subject }` with `subject` being `{ kind: "team"; teamId }` or `{ kind: "player"; userId }` — one type, two subjects, no parallel type, which is what the task asked for. Deliberately **not** the championship's `PlacementSubject`: that one's team variant carries `memberIds`, which a format view cannot supply. Every reader was found and reported: the public podium (now keys on the subject's id and reads `entry.name`), `players.ts`'s honours (narrows on `kind === "team"`), the board test, and `podiumEntries`, which became generic over `Pick<Placement, "position" | "shared">` so its existing callers did not move.
+  **A mutation survived, and the gap was closed rather than excused.** Making the bracket a fallback when the table is empty was *unobservable*, because the page gates the team panel on `!board.rounds` and the tiles on the result line — so nothing could see it either way. An explicit assertion was added and the mutation then died. That is the standard this project holds: prove equivalence or fix the code, and "no test can see it" is a reason to add one.
+  **The table is the only authority for a round-scored night's podium** — the bracket is never consulted, not even as a fallback (decision 006), and that is now pinned by the assertion above.
+  **The team-event digest was flaky for a real reason, and the premise got pinned instead of the hash.** It varied between runs because the first-side coin is random; the fixture now pins `firstSideChoice`, and the file pins `TZ=UTC` and asserts an `en` locale **as stated premises**. Chasing a varying hash would have produced a test that passes on one machine.
+  **`has.results` stays content-gated**: `matches.some(done)` **or** a round-scored night with rows. An unscored round-scored event gets no Results tab at all, and UC-46 4a's sentence lives in a "Result" panel where the podium would be — so the page says the night has not been scored rather than offering an empty tab. Both directions are tested, which matters because wrong one way hides a scored night and wrong the other way puts an empty tab on every event on the site.
+  **Ties display by name, decided once in `getEventBoard`** so the podium and the table cannot disagree — the answer to Task 88's random-uuid ordering trap. The result line reads "Won by Ada.", "Ada and Bo share first place.", or mid-night "Ada leads after 2 of 6 rounds."
+  **Two things left as one-line decisions for later:** `teamNames` is now test-only (the page reads `placement.name`), and **public-profile honours still read only team placements**, so a solo win is not yet an honour. The second is the more interesting one — it is a product question rather than an oversight, and `ensureHandles` now runs for scored players so they are profile-linkable like any roster member. **400px is structural**: the table scrolls inside its own Panel on `StandingsTable`'s pattern; no dev server was run.
 
 ### Task 91: The championship takes its places from the table
 
@@ -1686,14 +1702,49 @@ label "Bracket changed" rather than "Format changed".
   **This task must decide what happens to a hand-typed order that already exists** on an event later switched to round-scored. Nothing on the record is hard-deleted (Constraints), but rows that are kept and silently ignored are worse than either alternative. Decide, state it, and make the screen say it.
   A tie is the half worth proving end to end: a shared place in the table must reach the season as a shared place, and `placementValue` then pays both players the same row and nobody the row below.
 - **Acceptance criteria:**
-  - [ ] A round-scored event's season points follow its table, with nobody typing an order
-  - [ ] Two players tied in the table each take that place's points, and the place below pays nobody
-  - [ ] Correcting a round moves the standings, proven by scoring the season before and after
-  - [ ] A player with no score in any round gets the taking-part points, not a place
-  - [ ] The hand-typed order is refused for a round-scored event, naming where to go instead
-  - [ ] An event that is not round-scored is completely unaffected — the existing UC-33 tests pass untouched, asserted as a statement rather than observed
-  - [ ] What happens to a pre-existing hand-typed order is decided, stated in the code, and visible on the screen
+  - [x] A round-scored event's season points follow its table, with nobody typing an order
+  - [x] Two players tied in the table each take that place's points, and the place below pays nobody
+  - [x] Correcting a round moves the standings, proven by scoring the season before and after
+  - [x] A player with no score in any round gets the taking-part points, not a place
+  - [x] The hand-typed order is refused for a round-scored event, naming where to go instead
+  - [x] An event that is not round-scored is completely unaffected — the existing UC-33 tests pass untouched, asserted as a statement rather than observed
+  - [x] What happens to a pre-existing hand-typed order is decided, stated in the code, and visible on the screen
 - **Depends on:** Tasks 86, 88. Touches `championship-results.ts`, so not beside another task holding it.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **The decision on an outgrown typed order, in the words Task 93 is to reuse:** *rows that belong to a way of scoring this night no longer uses are **kept, never read, and named on the screen that would have read them**. Nothing is deleted when the scoring changes, and nothing comes back in silence: the screen says the rows are there for as long as they are shadowed, and they are read again, exactly as they were, only when the setup that reads them is switched back on.* A test proves the round-trip. One awkward consequence, stated: the only way to **clear** a shadowed typed order is to turn round scoring off first, because `setPlacements` refuses even an empty order for a round-scored night — an exception for one payload shape would be a second writer. Task 93 is what makes that route exist.
+  **Two sources for one finishing order are impossible in the type, not merely unlikely.** `FinishingOrder` is `{ source: "typed"; places }` or `{ source: "table"; places; shadowed }`, and **no member holds both kinds as `places`** — a round-scored night's typed rows can only arrive as `shadowed`, which `countingEventInput` never reads. One function (`finishingOrdersFor`) asks one question (`roundScoringFrom`, the same reader the Results tab and `saveRound` use), and every reader goes through it. Two mutations hold the switch from both sides: forcing every event into the typed world and forcing every event into the table world each kill the opposite world's tests.
+  **Criterion 6 was proved as a statement, two ways.** The three UC-33 test files are **byte-identical** to before the task began (sha256 recorded before and after), and a new test plants a row in `event_round_scores` for a *non*-round-scored event and asserts its order is still the typed one and its standings follow it. The mutation that forces every event into the table world kills ten tests **including UC-33's own**, which is the untouched suite acting as the guard.
+  **The tie is proved end to end**, which is what R-238 asked for: two level players each take `pointsTable[0]` and **nobody takes `pointsTable[1]`**, with a mutation renumbering the derived places to 1, 2, 3 dying on `expected 18 to be 25`.
+  **One survivor, proven equivalent rather than excused.** Replacing `countingEventInput`'s table arm with `subjectsFor` survives, because that function on a member place returns the identical literal and `DerivedPlace.kind` is `"member"` by type, so the team arm is unreachable. The branch is **kept** because decision 006 names it as the place that carries the reasoning — a redundancy chosen for the reader, not a gap.
+  **A derived place never consults the participant list**, so a round-scored event that somehow also has teams pays its ranked players directly. Correct for a night of individuals, and stated rather than guarded.
+  **`standings()` is now a third copy of a test helper**, and extracting it would mean touching the UC-33 file this task deliberately left byte-identical. Three strikes reached and deliberately not taken; the reason is the proof above.
+
+### Task 94: The admin home still nags for a scored round-scored night (found in Task 91)
+
+- **Serves:** R-236 / UC-33 5 — the line that says a result is missing
+- **Files:** `src/lib/championships.ts` (`unscoredResults`), tests
+- **Do:** `unscoredResults` reads `championship_placements` only, so a round-scored event with a full table and a correctly scored season is **still listed on the admin home as missing a result**. The feature works and the home page says it does not.
+  The fix is one question asked the same way Task 91 asks it — `finishingOrderFor`/`finishingOrdersFor` already answer "has this night got an order, and where from" for a whole season in a fixed number of reads. Use that rather than a second rule about what counts as scored.
+- **Acceptance criteria:**
+  - [ ] A round-scored event with a table is not listed as missing a result
+  - [ ] A round-scored event with nothing scored **is** listed, because it genuinely has no result yet
+  - [ ] A typed-order event is listed exactly as it is today, asserted
+  - [ ] The question is asked through Task 91's reader, not a second copy of "what counts as scored"
+- **Depends on:** Task 91.
+
+### Task 95: A round save moves the season and tells nobody (found in Task 91)
+
+- **Serves:** R-236 / UC-36 — hearing about the season
+- **Files:** `src/app/admin/events/actions.ts` (the round save), `src/lib/notifications*`, `src/lib/discord.ts`, tests
+- **Do:** `notifyStandingsChanged` and `announceStandings` fire only from `saveEventPlacementsAction`. Task 88's round save **moves the standings** — Task 91 proved it — and notifies nobody and announces nothing, so a season can change without the people in it hearing about it. That is UC-36 half-wired rather than a new feature.
+  **The hard part is what counts as a change worth telling people about.** A typed order is saved once; a round-scored night is saved once per round, so the obvious implementation announces the standings six times in an evening. Decide what the trigger is — the last round, every round, or a change in who leads — and say why; the announcement vocabulary (`standings_changed`) and its claim already exist from Tasks 59, 60 and 68.
+- **Acceptance criteria:**
+  - [ ] Saving a round that moves the standings notifies whoever a typed order would have notified
+  - [ ] Scoring six rounds in one night does not post six announcements, and the rule for that is stated
+  - [ ] A round save that changes nothing in the standings announces nothing
+  - [ ] An event in no championship announces nothing, as `standings_changed` already requires
+  - [ ] A failed announcement is audited and not reported as success, exactly as Task 83's manual post is
+- **Depends on:** Tasks 88, 91.
 
 ### Task 93: Turning round scoring off (found in Task 87)
 

@@ -29,6 +29,7 @@ import {
 } from "@/app/admin/events/actions";
 import PlacementEditor from "./PlacementEditor";
 import SaveRow, { type SaveState } from "./SaveRow";
+import TableOrder from "./TableOrder";
 import type { ChampionshipTabData } from "./types";
 
 /**
@@ -401,14 +402,17 @@ function Counting({
         />
       </Panel>
 
-      {result && (
-        <PlacementEditor
-          eventId={eventId}
-          counting={counting}
-          participants={result.participants}
-          placements={result.placements}
-        />
-      )}
+      {result &&
+        (result.order.source === "table" ? (
+          <TableOrder eventId={eventId} counting={counting} order={result.order} />
+        ) : (
+          <PlacementEditor
+            eventId={eventId}
+            counting={counting}
+            participants={result.participants}
+            placements={result.order.places}
+          />
+        ))}
 
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12">
         <Eyebrow>Take it out of the season</Eyebrow>

@@ -96,7 +96,7 @@ import {
   usesOwnTable,
 } from "./championship-policy";
 import {
-  placementsFor,
+  finishingOrdersFor,
   scoringInputFor,
   scoringInputsFor,
 } from "./championship-results";
@@ -388,13 +388,16 @@ export async function seasonPage(
   const all = await seasonEvents(season.id, database);
 
   /*
-   * The recorded order, read once per event and used twice: it is what decides
+   * The finishing order, read once per event and used twice: it is what decides
    * whether an event has counted at all, it is what the arithmetic scores, and
-   * it carries the names this page prints under "Won by". Handing those rows to
-   * `scoringInputFor` rather than letting it read the same ones again is the
+   * it carries the names this page prints under "Won by". Handing it to
+   * `scoringInputFor` rather than letting it read the same rows again is the
    * whole of the saving: the mapping is still its, and there is still one of it.
+   * Which rows — the typed ones, or a round-scored night's table — is
+   * `finishingOrdersFor`'s decision alone (R-236), so a Popsauce night's winner
+   * here is the top of its own table.
    */
-  const places = await placementsFor(
+  const orders = await finishingOrdersFor(
     all.map((event) => event.eventId),
     database
   );
@@ -403,9 +406,7 @@ export async function seasonPage(
   // what the arithmetic takes. An event with no places recorded has not
   // counted, so it is listed and not scored; see the note at the top.
   const inputs = await Promise.all(
-    all.map((event) =>
-      scoringInputFor(event.eventId, database, places.get(event.eventId) ?? [])
-    )
+    all.map((event) => scoringInputFor(event.eventId, database, orders.get(event.eventId)))
   );
 
   const counted: CountedEvent[] = [];
@@ -415,7 +416,10 @@ export async function seasonPage(
     const input = inputs[index];
     if (input && input.placements.length > 0) {
       scored.push(input);
-      counted.push({ ...event, winners: winnersOf(places.get(event.eventId) ?? []) });
+      counted.push({
+        ...event,
+        winners: winnersOf(orders.get(event.eventId)?.places ?? []),
+      });
     } else {
       toCome.push(event);
     }

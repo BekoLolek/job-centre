@@ -414,6 +414,15 @@ const CLASSIFIED: Record<string, Bucket[]> = {
    */
   "src/components/admin/events/ShapeTab.tsx": ["announced", "standing"],
   /*
+   * One, Task 91's (R-236 / UC-46 5) — **standing**. It names a hand-typed
+   * finishing order saved before the night was switched to round scoring, and
+   * says the season is not reading it. Derived from props alone — the shadowed
+   * rows the server read — so it is on the page at first render for any such
+   * night, and interrupting every visit with it would be the trap `Alert`'s
+   * docblock describes. No handler on the panel can make it appear.
+   */
+  "src/components/admin/events/TableOrder.tsx": ["standing"],
+  /*
    * Twelve — Task 78's five became four when Task 81 folded the two shuffle
    * refusals into one `shuffleGate` site, and Task 81 added one (R-220 / UC-42 6).
    *

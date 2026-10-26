@@ -34,6 +34,8 @@ import { type MatchSlot, otherSlot, unresolvedSlotRefusal } from "@/lib/format-p
 import type { ResolvedMatch } from "@/lib/format-resolve";
 import { formatClock, toInstant, toLocalInput } from "@/lib/time";
 import RoundScores from "./RoundScores";
+import RoundTable from "./RoundTable";
+import { SETUP_LABELS, TAB_LABELS, type TabVisibility } from "./tabs";
 import type { RoundScoresData } from "./types";
 import {
   type RecordFields,
@@ -113,6 +115,7 @@ type View = "day" | "bracket";
 export default function ResultsTab({
   format,
   matchIds,
+  shape,
   rounds,
 }: {
   format: FormatView;
@@ -125,6 +128,16 @@ export default function ResultsTab({
    * when a stage is regenerated, which re-renders this page anyway.
    */
   matchIds: Record<string, string>;
+  /**
+   * Whether this event has sides — `eventShapeFrom(event.config)`, read on the
+   * server, and the narrowest type that answers it (Task 89). A board with no
+   * matches means two different things: a team event whose bracket has not
+   * been generated, and a solo event that will never have one. Only the first
+   * can be sent to the Bracket tab, so the empty state has to know which it is
+   * talking to. `format.teams.length` would not do — a team event has no teams
+   * either until somebody fills them.
+   */
+  shape: TabVisibility;
   /**
    * The round sheet's bundle (UC-45). `scoring` null means the night is not
    * scored in rounds and no sheet is drawn — see `RoundScoresData`.
@@ -174,32 +187,47 @@ export default function ResultsTab({
   const played = matches.filter((match) => match.status === "done").length;
 
   /*
-   * UC-45 1. A round-scored night's results are its rounds, so the sheet is
-   * what this tab shows for one — and for the ordinary solo night, which has
-   * no rounds and no matches, the empty state below stands as it was (that
-   * sentence is Task 89's to retire). A team event somebody also set up to
-   * score in rounds gets the sheet above its board rather than instead of it:
-   * hiding the Scoring panel is not forbidding its save (UC-42 5b).
+   * UC-45 1 and UC-46 3. A round-scored night's results are its rounds, so the
+   * sheet and the night's table under it are what this tab shows for one. A
+   * team event somebody also set up to score in rounds gets both above its
+   * board rather than instead of it: hiding the Scoring panel is not forbidding
+   * its save (UC-42 5b).
    */
   const sheet = rounds.scoring ? (
-    <RoundScores
-      eventId={format.eventId}
-      scoring={rounds.scoring}
-      rows={rounds.rows}
-      players={rounds.players}
-      seated={rounds.seated}
-      status={rounds.status}
-    />
+    <>
+      <RoundScores
+        eventId={format.eventId}
+        scoring={rounds.scoring}
+        rows={rounds.rows}
+        players={rounds.players}
+        seated={rounds.seated}
+        status={rounds.status}
+      />
+      <RoundTable
+        scoring={rounds.scoring}
+        rows={rounds.rows}
+        players={rounds.players}
+        seated={rounds.seated}
+      />
+    </>
   ) : null;
 
   if (matches.length === 0) {
-    if (sheet) return sheet;
+    if (sheet) return <div className="space-y-6">{sheet}</div>;
+    /*
+     * Two empty boards, two sentences (Task 89). A team event's is the one it
+     * has always had — pinned byte for byte in `round-table.test.ts`. A solo
+     * event has no Bracket tab to be sent to (`TEAM_ONLY_KEYS`), so it is told
+     * what it *does* have: the Scoring panel, named off `tabs.ts` so the rail
+     * and this sentence cannot disagree about what it is called.
+     */
     return (
       <Panel as="section" padding="none" className="space-y-3 border-t border-hair pt-12 first:border-t-0 first:pt-0">
         <Eyebrow>Results</Eyebrow>
         <EmptyState>
-          No matches yet. Choose a format and generate them on the Format tab — the cards
-          here are the generated matches, not something typed in twice.
+          {shape.teamEvent
+            ? "No matches yet. Choose a format and generate them on the Format tab — the cards here are the generated matches, not something typed in twice."
+            : `This event has no sides, so there are no matches to record. To score it in rounds, set that up under ${TAB_LABELS.setup} → ${SETUP_LABELS.scoring}, and the night's table appears here.`}
         </EmptyState>
       </Panel>
     );

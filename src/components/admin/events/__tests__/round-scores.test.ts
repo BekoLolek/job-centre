@@ -281,6 +281,7 @@ function resultsTab(scoring: RoundScoring | null): string {
     createElement(ResultsTab, {
       format: EMPTY_BOARD,
       matchIds: {},
+      shape: { teamEvent: false, draft: false },
       rounds: { scoring, rows: [], players: PLAYERS, seated: ["alice"], status: "live" },
     })
   );
@@ -293,9 +294,13 @@ describe("the Results tab", () => {
     expect(markup).not.toContain("No matches yet");
   });
 
-  it("is exactly what it was for a night that is not round-scored — Task 89's empty state, untouched", () => {
+  it("draws no sheet for a solo night that is not round-scored, and says what the night can be scored with (Task 89)", () => {
+    // Before Task 89 this pinned the old "No matches yet" sentence, which sent
+    // a solo event to a tab it does not have; `round-table.test.ts` now holds
+    // the sentence itself and sweeps it for hidden tabs.
     const markup = resultsTab(null);
-    expect(markup).toContain("No matches yet");
+    expect(markup).toContain("This event has no sides, so there are no matches to record.");
+    expect(markup).not.toContain("No matches yet");
     expect(markup).not.toContain(SCORE_BOX);
   });
 });
@@ -374,12 +379,17 @@ describe("the page", () => {
     expect(markup).toContain('value="12"');
     expect(markup).toContain("1/6 scored");
     expect(markup).not.toContain("No matches yet");
+    // And the night's table under the sheet (Task 89), reached from the page.
+    expect(markup).toContain("Covers 1 of 6 rounds so far");
   });
 
-  it("leaves a solo night that is not round-scored on the empty state it had", async () => {
+  it("tells a solo night that is not round-scored what it can be scored with, not to generate a bracket (Task 89)", async () => {
+    // The page is where the event's shape reaches the tab; a component test
+    // cannot see that plumbing, which is why this stays a page-level test.
     const { eventId, host } = await hostedEvent(2, SOLO);
     const markup = await screen(eventId, host, "results");
-    expect(markup).toContain("No matches yet");
+    expect(markup).toContain("This event has no sides, so there are no matches to record.");
+    expect(markup).not.toContain("No matches yet");
     expect(markup).not.toContain(SCORE_BOX);
   });
 });
