@@ -55,7 +55,7 @@ import {
   teams,
 } from "@/db";
 import { blockers, readiness } from "@/components/admin/events/readiness";
-import { unscoredResults } from "./championships";
+import { unscoredResults } from "./championship-results";
 import { type EventDetail, type EventSummary, getEventById, listEvents } from "./events";
 import { type FormatView, formatFor, matchIdsFor } from "./format";
 

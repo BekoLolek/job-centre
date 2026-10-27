@@ -21,6 +21,7 @@ import {
   listPlacements,
   scoringInputFor,
   setPlacements,
+  unscoredResults,
 } from "@/lib/championship-results";
 import { seasonPage } from "@/lib/championship-season";
 import {
@@ -454,5 +455,67 @@ describe("the public season page", () => {
     expect(page.counted).toEqual([]);
     expect(page.toCome.map((event) => event.eventId)).toEqual([eventId]);
     expect(page.standings).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The admin home's "missing a result" line (UC-33 5), over a night   */
+/* whose result is its table                                          */
+/* ------------------------------------------------------------------ */
+
+describe("the admin home and a round-scored night", () => {
+  it("does not list a night whose table has a result", async () => {
+    // Task 94. The season scores this night from its table, so the home page
+    // saying nobody has recorded a result would be saying something false.
+    const { eventId } = await counting();
+    const ana = await accepted(eventId, "Ana home");
+    const ben = await accepted(eventId, "Ben home");
+    await scored(eventId, 1, { [ana]: 10, [ben]: 8 });
+    await scored(eventId, 2, { [ana]: 7, [ben]: 9 });
+    await scored(eventId, 3, { [ana]: 6, [ben]: 5 });
+
+    const rows = await unscoredResults(db);
+
+    expect(rows.map((row) => row.eventId)).not.toContain(eventId);
+  });
+
+  it("does not list a night with only some rounds in, because the season already pays from it", async () => {
+    // The one judgment in Task 94. A table covering 1 of 3 rounds is shown to
+    // visitors as it stands (UC-46 3a) and the season takes its places from it
+    // now, so "has a result" is the same question the reader answers for the
+    // season — not a second rule about how many rounds make a result.
+    const { eventId } = await counting();
+    const ana = await accepted(eventId, "Ana early rounds");
+    const ben = await accepted(eventId, "Ben early rounds");
+    await scored(eventId, 1, { [ana]: 10, [ben]: 8 });
+
+    const rows = await unscoredResults(db);
+
+    expect(rows.map((row) => row.eventId)).not.toContain(eventId);
+  });
+
+  it("lists a night with nothing scored, because it genuinely has no result", async () => {
+    const { eventId } = await counting();
+    await accepted(eventId, "Ana nothing yet");
+
+    const rows = await unscoredResults(db);
+
+    expect(rows.map((row) => row.eventId)).toContain(eventId);
+  });
+
+  it("lists a night whose only rows are a shadowed typed order", async () => {
+    // The order was typed before the night became round-scored. Task 91's
+    // decision is that those rows are kept and never read as places, so the
+    // season pays nothing from this night and the home page must say so —
+    // which it can only get right by asking the reader, not the table of rows.
+    const { eventId } = await counting({ config: {} });
+    const ana = await accepted(eventId, "Ana shadowed home");
+    expect((await setPlacements(eventId, [{ id: ana, position: 1 }], db)).ok).toBe(true);
+    expect((await unscoredResults(db)).map((row) => row.eventId)).not.toContain(eventId);
+
+    await rescored(eventId, ROUND_SCORED);
+
+    const rows = await unscoredResults(db);
+    expect(rows.map((row) => row.eventId)).toContain(eventId);
   });
 });

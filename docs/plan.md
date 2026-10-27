@@ -1726,11 +1726,33 @@ label "Bracket changed" rather than "Format changed".
 - **Do:** `unscoredResults` reads `championship_placements` only, so a round-scored event with a full table and a correctly scored season is **still listed on the admin home as missing a result**. The feature works and the home page says it does not.
   The fix is one question asked the same way Task 91 asks it — `finishingOrderFor`/`finishingOrdersFor` already answer "has this night got an order, and where from" for a whole season in a fixed number of reads. Use that rather than a second rule about what counts as scored.
 - **Acceptance criteria:**
-  - [ ] A round-scored event with a table is not listed as missing a result
-  - [ ] A round-scored event with nothing scored **is** listed, because it genuinely has no result yet
-  - [ ] A typed-order event is listed exactly as it is today, asserted
-  - [ ] The question is asked through Task 91's reader, not a second copy of "what counts as scored"
+  - [x] A round-scored event with a table is not listed as missing a result
+  - [x] A round-scored event with nothing scored **is** listed, because it genuinely has no result yet
+  - [x] A typed-order event is listed exactly as it is today, asserted
+  - [x] The question is asked through Task 91's reader, not a second copy of "what counts as scored"
 - **Depends on:** Task 91.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **`unscoredResults` moved to `championship-results.ts`**, which this entry's Files line did not anticipate. Asking Task 91's reader from `championships.ts` would have made the two modules a cycle, and `championships.ts`'s own docblock pins the direction ("that one imports this one … the dependency runs one way"). So the function moved to "where everyone finished", which now also means "nowhere yet", and `admin-dashboard.ts` follows it with one import line. The agent stated the assumption and proceeded rather than stopping, which was the right call: the behaviour is identical either way and the alternative was breaking a stated invariant.
+  **A partly-scored night is not listed as missing a result.** A six-round night with two rounds in *has* places, and the season is already paying from that table (UC-46 3a), so the admin-home line — "it pays nothing and the season cannot be closed" — would be false about it. Listing it would also need a second rule ("scored means every round in"), which criterion 4 forbids. Both sides tested.
+  **The shadowed case is the proof that the reader is what is consulted, and it fixed a defect older than this section.** A night whose only rows are a typed order it has outgrown is now listed as missing a result; the previous code counted those rows and said it had one. Reintroducing the `championship_placements` read dies on exactly that test, which is the one a rows-based rule can never get right.
+  **Criterion 4 was proved behaviourally rather than by a sweep for the import.** Mutating **Task 91's** decision — forcing every event into the typed world, then into the table world — flips this function's answer and kills eleven and thirteen tests respectively. A sweep for the import name could have been satisfied by the test file's own text; a mutation one module away cannot.
+  **Criterion 3 is a byte digest**: the UC-33 test file differs from its pre-task bytes only by a moved import line, and `admin-dashboard.test.ts` is byte-identical and is shown to be the guard. Reads went from 2 to a fixed 4-5 with no per-event loop, so the admin home still costs the same whether it lists one event or forty.
+  **A sibling was found and deliberately not fixed** — see Task 96.
+
+### Task 96: The close-season confirmation asks the same false question (found in Task 94)
+
+- **Serves:** R-236 / UC-35 1a — the "has no result yet. Close the season anyway?" confirmation
+- **Files:** `src/lib/championships.ts` (`unscoredCountingEvents`), its caller, tests
+- **Do:** `unscoredCountingEvents` has the defect Task 94 just fixed one function over: it reads `championship_placements` only. So closing a season that contains a **fully scored round-scored night** asks whether to close it with a result missing, which is false; and a season containing a night whose only rows are a typed order it has outgrown does **not** ask, which is the case where asking matters most.
+  The fix is the same one question — Task 91's `finishingOrdersFor` — and it will meet the same obstacle: `championships.ts` cannot import `championship-results.ts` without making a cycle, so this function moves the same way `unscoredResults` did, or the caller asks the reader directly. **Decide which, and say why**; Task 94's note records the reasoning that applied last time.
+  This one sits on a **write path** (the close-season refusal), so decision 004 applies where Task 94's did not.
+- **Acceptance criteria:**
+  - [ ] Closing a season containing a fully scored round-scored night does not ask about a missing result
+  - [ ] Closing one containing a round-scored night with nothing scored **does** ask
+  - [ ] A night whose only rows are an outgrown typed order is asked about, which the old read gets wrong
+  - [ ] The typed-order path is unchanged, asserted as a digest or a byte-identical guard
+  - [ ] The refusal has written nothing, and the decision-004 shape is named
+- **Depends on:** Tasks 91, 94.
 
 ### Task 95: A round save moves the season and tells nobody (found in Task 91)
 
@@ -1739,12 +1761,33 @@ label "Bracket changed" rather than "Format changed".
 - **Do:** `notifyStandingsChanged` and `announceStandings` fire only from `saveEventPlacementsAction`. Task 88's round save **moves the standings** — Task 91 proved it — and notifies nobody and announces nothing, so a season can change without the people in it hearing about it. That is UC-36 half-wired rather than a new feature.
   **The hard part is what counts as a change worth telling people about.** A typed order is saved once; a round-scored night is saved once per round, so the obvious implementation announces the standings six times in an evening. Decide what the trigger is — the last round, every round, or a change in who leads — and say why; the announcement vocabulary (`standings_changed`) and its claim already exist from Tasks 59, 60 and 68.
 - **Acceptance criteria:**
-  - [ ] Saving a round that moves the standings notifies whoever a typed order would have notified
-  - [ ] Scoring six rounds in one night does not post six announcements, and the rule for that is stated
-  - [ ] A round save that changes nothing in the standings announces nothing
-  - [ ] An event in no championship announces nothing, as `standings_changed` already requires
-  - [ ] A failed announcement is audited and not reported as success, exactly as Task 83's manual post is
+  - [x] Saving a round that moves the standings notifies whoever a typed order would have notified
+  - [x] Scoring six rounds in one night does not post six announcements, and the rule for that is stated
+  - [x] A round save that changes nothing in the standings announces nothing
+  - [x] An event in no championship announces nothing, as `standings_changed` already requires — held vacuously before the change; now held by a test
+  - [x] A failed announcement is audited and not reported as success, exactly as Task 83's manual post is
 - **Depends on:** Tasks 88, 91.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **The trigger is "the save that completes the table, and any later save that moves the standings."** The completing save fires whether or not its own round moved anybody, because before completion nobody has been told anything and a provisional table is not a result — the first result is news. The two rejected candidates and why: "every round" posts six times in an evening (the test performs six saves and counts one post), and "a change in who leads" goes silent when the table churns below first place, which UC-36 2 forbids since it tells each player their *own* place may have moved.
+  **The accepted failure mode, stated rather than discovered later:** a night cut short — fewer rounds played than were set up — never announces on its own. The way out is Task 83's by-hand post, which exists for precisely "the automatic one did not go out". A second accepted cost: both reads sit outside `saveRound`'s lock, so a rival save landing between them is attributed to this one — the standings did move and somebody was told, so the error is in attribution rather than in silence or spam.
+  **"The standings" means who stands where *and* on how many points**, and both halves are load-bearing: a correction moving points but not places, and one moving places but not points (a countback swap on a two-row table), each announce, and each is the only kill of its half of the snapshot. A cheaper proxy was considered and rejected — comparing the event's own places would announce a swap between two places worth equal points, which changes nothing in the season.
+  **No claim is taken, matching the typed path.** `announcement_claims` stays the scheduler's and the by-hand button's answer to "has this kind ever gone out"; burning it here would make the Publish tab call every later correction "already posted" and make the by-hand button ask for confirmation about a night nobody posted by hand.
+  **A finding about an *existing* test, which is why one mutation survived alone.** `standings-announcement.test.ts`'s "posts nothing about an event that counts towards nothing" survives deleting `announceStandings`' own season guard, because the post still does not go out — it becomes an `announcement.failed` row that the test never looks at. Two guards hold criterion 4, so neither single mutation dies; the **double** mutation dies on the failed-row assertion the new test makes. The typed-path file was left byte-identical by design and should gain that assertion — see Task 97.
+  **Task 88's random-uuid row ordering bit again, in the test rather than the code.** An assertion comparing `listRoundScores` arrays before and after a re-save depended on row order and produced three spurious kills in the first pass; replaced with a content comparison and run three times green. The trap Task 88 wrote down caught a later task exactly as intended.
+
+### Task 97: Two tests that pass for the wrong reason, and a trim that announces nothing (found in Task 95)
+
+- **Serves:** R-236 / UC-36 — the same requirement Task 95 serves, where it is still half-held
+- **Files:** `src/lib/__tests__/standings-announcement.test.ts`, `src/lib/round-scores.ts` (`saveRoundScoring`), `src/app/admin/events/actions.ts`, tests
+- **Do:** two separate things Task 95 found and deliberately did not fix, because its criterion was to leave the typed path byte-identical.
+  **One: a test that passes for the wrong reason.** `standings-announcement.test.ts`'s "posts nothing about an event that counts towards nothing" survives deleting `announceStandings`' season guard — the post still does not go out, but it becomes an `announcement.failed` row the test never checks. Add that assertion, and prove it by deleting the guard and watching it die. Task 95's own test already does this and is the model.
+  **Two: a trim can complete a table and tell nobody.** `saveRoundScoring` lowering the round count can make a part-scored night's table complete — every remaining round has a score — which is exactly the moment Task 95's rule says is news, and it announces nothing. Either the trim asks Task 95's question too, or the rule is narrowed and says why.
+- **Acceptance criteria:**
+  - [ ] Deleting `announceStandings`' season guard fails the typed-path test, proven by mutation
+  - [ ] A trim that completes a table either announces, or is covered by a stated narrowing of Task 95's rule
+  - [ ] A trim that does not complete a table announces nothing
+  - [ ] The round-save path's behaviour is unchanged, asserted
+- **Depends on:** Task 95.
 
 ### Task 93: Turning round scoring off (found in Task 87)
 

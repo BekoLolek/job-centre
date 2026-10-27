@@ -28,13 +28,13 @@ import {
   getChampionship,
   listCountingEvents,
   setCountingEvent,
-  unscoredResults,
 } from "@/lib/championships";
 import {
   eventParticipants,
   listPlacements,
   scoringInputFor,
   setPlacements,
+  unscoredResults,
 } from "@/lib/championship-results";
 
 /*

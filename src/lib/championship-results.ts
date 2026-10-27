@@ -39,9 +39,10 @@
  * fixed in the round it was typed in and nowhere else.
  */
 
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import {
   type Database,
+  type EventStatus,
   applications,
   championshipEvents,
   championshipPlacements,
@@ -63,6 +64,7 @@ import {
   type ChampionshipResult,
   type CountingEvent,
   type EventChampionship,
+  type UnscoredEvent,
   NOT_COUNTING,
   championshipOfEvent,
   fail,
@@ -418,6 +420,70 @@ export async function finishingOrdersFor(
   }
 
   return out;
+}
+
+/** A counting event still waiting for a finishing order, wherever it lives. */
+export type UnscoredResult = UnscoredEvent & {
+  slug: string;
+  eventStatus: EventStatus;
+  seasonId: string;
+  seasonName: string;
+};
+
+/**
+ * The counting events with no finishing order yet, across every season at
+ * once — the admin home's line (UC-33 5).
+ *
+ * Whether a night has an order is {@link finishingOrdersFor}'s answer and
+ * nobody else's: a night has a result when that order has places, whichever
+ * world they came from. A round-scored night with rounds in therefore has one
+ * — even mid-flight, with some rounds still to play, because the season is
+ * already paying from the table as it stands (UC-46 3a, 5) and the line would
+ * otherwise say "it pays nothing" about a night that does. A round-scored night
+ * whose only rows are a typed order it has outgrown has none, because those
+ * rows are `shadowed`, never places. Reading `championship_placements` here
+ * instead would be a second opinion about what counts as scored, and it is the
+ * one Task 94 found wrong.
+ *
+ * **Only events that have been played.** UC-33's precondition is that the
+ * event has taken place, so a draft or a published event three weeks away is
+ * not missing anything yet, and a cancelled one never will be. `complete` is
+ * the ordinary case and is the whole reason this exists: the event whose
+ * result is most conspicuously missing is the one that finished last night,
+ * and recording it then is expressly allowed (UC-33 1b).
+ *
+ * A finished season is left out on the same reasoning as
+ * `championshipsToAddTo`: it refuses the write, so listing it would be listing
+ * a refusal.
+ */
+export async function unscoredResults(
+  database: Database = defaultDb
+): Promise<UnscoredResult[]> {
+  const counting = await database
+    .select({
+      eventId: championshipEvents.eventId,
+      title: events.title,
+      slug: events.slug,
+      eventStatus: events.status,
+      seasonId: championships.id,
+      seasonName: championships.name,
+    })
+    .from(championshipEvents)
+    .innerJoin(events, eq(events.id, championshipEvents.eventId))
+    .innerJoin(championships, eq(championships.id, championshipEvents.championshipId))
+    .where(
+      and(ne(championships.status, "closed"), inArray(events.status, ["live", "complete"]))
+    )
+    .orderBy(asc(events.title));
+
+  if (counting.length === 0) return [];
+
+  const orders = await finishingOrdersFor(
+    counting.map((row) => row.eventId),
+    database
+  );
+
+  return counting.filter((row) => (orders.get(row.eventId)?.places.length ?? 0) === 0);
 }
 
 /**

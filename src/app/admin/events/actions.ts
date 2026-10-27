@@ -86,9 +86,13 @@ import {
   type RoundScoringCleared,
   type RoundScoringSaved,
   clearRoundScoring,
+  listRoundScores,
   saveRound,
   saveRoundScoring,
 } from "@/lib/round-scores";
+// Read before and after a round save, because the standings are stored nowhere
+// and "did this save move the season" can only be answered by looking twice.
+import { seasonOfEvent, seasonPage } from "@/lib/championship-season";
 /*
  * The team reads and the one team write the Format panel can cause (UC-42 2a).
  * `setTeams` is the event's team write and owns every refusal that goes with
@@ -99,6 +103,7 @@ import { getDraftHistory, getTeams, setTeams } from "@/lib/draft";
 import { releaseTeamsFromMatches } from "@/lib/format";
 import {
   type ChampionshipResult,
+  type ChampionshipRow,
   type CountingEventFields,
   addCountingEvent,
   removeCountingEvent,
@@ -1092,6 +1097,31 @@ export type RoundFields = {
  * The audit line names who (the actor) and which round (by the manager's name
  * for it), and says "re-scored" when the round held rows before, so the log can
  * answer "who changed the final after it was in".
+ *
+ * ## When a round save tells people about the season (UC-36 1-3, Task 95)
+ *
+ * A round-scored night moves the standings on every save (R-236: the season
+ * takes its places from the table, and nothing stores a total), so the
+ * notification and the announcement `saveEventPlacementsAction` sends belong
+ * here too. A typed order is saved once; a night is saved once per round, and
+ * "the standings have changed" six times in an evening is a channel switched
+ * off. The rule, in {@link seasonNews}: speak when the save **completes the
+ * table** — the moment a round-scored night's result is recorded, the moment a
+ * typed order would have been saved — and again when a save on a night already
+ * complete **moves the standings**, which is the typed path's correct-and-
+ * re-announce. A round on a part-scored night and a correction that moved
+ * nobody say nothing.
+ *
+ * The cost accepted: a night cut short — fewer rounds played than set up —
+ * never announces on its own. Its manager has Task 83's button, which exists
+ * for the automatic post that did not go out. Both reads happen outside
+ * `saveRound`'s lock, so a second manager's save landing between them is
+ * attributed to this one; the standings did move, and somebody was told.
+ *
+ * No claim is taken, exactly as the typed path takes none: `announcement_claims`
+ * is the scheduler's and the by-hand button's "has this kind ever gone out for
+ * this event", and a save that burnt it would make the Publish tab call a
+ * correction "already posted".
  */
 export async function saveRoundAction(eventId: string, fields: RoundFields): Promise<RoundSaveResult> {
   const admin = await requireEventManager(eventId);
@@ -1110,6 +1140,10 @@ export async function saveRoundAction(eventId: string, fields: RoundFields): Pro
     score: typeof row?.score === "number" ? row.score : Number.NaN,
     bonuses: awardsFrom(row?.bonuses),
   }));
+
+  // Only a counting event has a season to move; an ordinary night reads nothing.
+  const season = await seasonOfEvent(eventId);
+  const before = season ? await nightInSeason(eventId, season) : null;
 
   const result = await saveRound(eventId, { roundIndex: fields.roundIndex, entries, expected });
   if (!result.ok) return result;
@@ -1133,6 +1167,18 @@ export async function saveRoundAction(eventId: string, fields: RoundFields): Pro
     },
   });
 
+  /*
+   * The same two calls `saveEventPlacementsAction` makes, with the same `admin`
+   * excluded for the same reason, so the two paths cannot disagree about who
+   * hears. Both are fire-and-forget and cannot fail the save; a post Discord
+   * refuses is `announcement.failed` against the event, and nothing in this
+   * result says a post went out.
+   */
+  if (season && before && seasonNews(before, await nightInSeason(eventId, season))) {
+    notifyStandingsChanged(eventId, admin.id);
+    announceStandings(eventId);
+  }
+
   refresh(eventId);
   return result;
 }
@@ -1146,6 +1192,41 @@ function awardsFrom(raw: unknown): Record<string, number> {
       typeof count === "number" ? count : Number.NaN,
     ])
   );
+}
+
+/**
+ * The two facts a round save is judged on, read at one instant: whether every
+ * round of the night's setup has a score in it, and the season's table as one
+ * comparable string — who stands where, on how many points, sorted by member so
+ * two reads of one table cannot differ by row order.
+ */
+type NightInSeason = { complete: boolean; standings: string };
+
+async function nightInSeason(eventId: string, season: ChampionshipRow): Promise<NightInSeason> {
+  const [event, rows, page] = await Promise.all([
+    getEventById(eventId),
+    listRoundScores(eventId),
+    seasonPage(season),
+  ]);
+  const setup = event ? roundScoringFrom(event.config) : null;
+  const scored = new Set(rows.map((row) => row.roundIndex));
+  return {
+    complete: setup !== null && setup.rounds.every((_, index) => scored.has(index + 1)),
+    standings: JSON.stringify(
+      page.standings
+        .map((row) => [row.userId, row.position, row.points] as const)
+        .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))
+    ),
+  };
+}
+
+/**
+ * Task 95's rule, as one expression: the save that completes the table is news,
+ * and a save on a complete table is news when the standings moved. See
+ * {@link saveRoundAction}.
+ */
+function seasonNews(before: NightInSeason, after: NightInSeason): boolean {
+  return after.complete && (!before.complete || after.standings !== before.standings);
 }
 
 /* ------------------------------------------------------------------ */
