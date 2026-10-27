@@ -90,8 +90,9 @@ import {
   saveRound,
   saveRoundScoring,
 } from "@/lib/round-scores";
-// Read before and after a round save, because the standings are stored nowhere
-// and "did this save move the season" can only be answered by looking twice.
+// Read before and after a round save or a scoring save, because the standings
+// are stored nowhere and "did this save move the season" can only be answered
+// by looking twice.
 import { seasonOfEvent, seasonPage } from "@/lib/championship-season";
 /*
  * The team reads and the one team write the Format panel can cause (UC-42 2a).
@@ -947,6 +948,26 @@ export type RoundScoringFields = {
  * still refuses a member and still succeeds for a manager (UC-42 5b). Next's
  * own note: "Render-time gating (only rendering a form on an authenticated
  * page) is not a security boundary."
+ *
+ * ## When a scoring save tells people about the season (UC-36 1-3, Task 97)
+ *
+ * The setup decides what the table *is*, so saving it can move the season as
+ * surely as scoring a round can: a trim can complete a part-scored night —
+ * six rounds set up, four played, cut to four, and at that moment the table is
+ * complete — which is exactly the moment {@link saveRoundAction} calls news;
+ * a trim can also strike scored rounds from a complete night, and a confirmed
+ * direction change turns a complete table upside down (UC-44 3a). So this save
+ * asks **Task 95's question through Task 95's code**, {@link seasonNews} over
+ * two {@link nightInSeason} reads, and never a second rule: speak when the
+ * save completes the table, or moves the standings of a complete one. A trim
+ * that leaves the night part-scored says nothing, and so does a refused one —
+ * the refusal returns before the second read.
+ *
+ * This closes the half of Task 95's accepted gap that a trim is the honest
+ * answer to. A night cut short is finished by trimming the setup to what was
+ * played, and the record then says so; Task 83's by-hand button stays the way
+ * out for a manager who would rather leave the unplayed rounds standing.
+ * Turning scoring *off* is not asked: see {@link clearRoundScoringAction}.
  */
 export async function saveRoundScoringAction(
   eventId: string,
@@ -960,6 +981,10 @@ export async function saveRoundScoringAction(
 
   const before = await getEventById(eventId);
   if (!before) return fail("That event no longer exists.");
+
+  // Only a counting event has a season to move; an ordinary night reads nothing.
+  const season = await seasonOfEvent(eventId);
+  const nightBefore = season ? await nightInSeason(eventId, season) : null;
 
   const wanted: RoundScoring = {
     rounds: fields.rounds.map((round) => ({
@@ -1004,6 +1029,14 @@ export async function saveRoundScoringAction(
     });
   }
 
+  // The same pair `saveRoundAction` sends, under the same rule, with the same
+  // `admin` excluded. Both are fire-and-forget and cannot fail the save; a post
+  // Discord refuses is `announcement.failed` against the event.
+  if (season && nightBefore && seasonNews(nightBefore, await nightInSeason(eventId, season))) {
+    notifyStandingsChanged(eventId, admin.id);
+    announceStandings(eventId);
+  }
+
   refresh(eventId);
   return { ok: true, data: result.data };
 }
@@ -1027,6 +1060,17 @@ export type ClearRoundScoringFields = {
  * a security boundary". Logged under the same `event.roundScoring` action as
  * the save, so one filter shows a night's scoring history; nothing is logged
  * when the night was not round-scored to begin with, since nothing moved.
+ *
+ * **Nobody is told, and that is decided rather than left (Task 97).** Switching
+ * off takes the night's table away, so the season stops counting the night —
+ * which is the typed path's *cleared order*, and `announceStandings` and
+ * `notifyStandingsChanged` both already refuse an event with no order on it
+ * ("clearing an order is an admin undoing a mistake"). Asking them would be
+ * asking a question whose answer is fixed. Task 95's rule agrees from the other
+ * side: a save that leaves no complete table is not news. The one case this
+ * leaves to Task 83's by-hand button is an outgrown typed order coming back
+ * into the season as the table goes — that order was never saved by this
+ * switch, so this switch does not announce it.
  */
 export async function clearRoundScoringAction(
   eventId: string,
@@ -1195,10 +1239,11 @@ function awardsFrom(raw: unknown): Record<string, number> {
 }
 
 /**
- * The two facts a round save is judged on, read at one instant: whether every
- * round of the night's setup has a score in it, and the season's table as one
- * comparable string — who stands where, on how many points, sorted by member so
- * two reads of one table cannot differ by row order.
+ * The two facts a round save or a scoring save is judged on, read at one
+ * instant: whether every round of the night's setup has a score in it, and the
+ * season's table as one comparable string — who stands where, on how many
+ * points, sorted by member so two reads of one table cannot differ by row
+ * order. A night with no setup is never complete.
  */
 type NightInSeason = { complete: boolean; standings: string };
 
@@ -1222,8 +1267,10 @@ async function nightInSeason(eventId: string, season: ChampionshipRow): Promise<
 
 /**
  * Task 95's rule, as one expression: the save that completes the table is news,
- * and a save on a complete table is news when the standings moved. See
- * {@link saveRoundAction}.
+ * and a save on a complete table is news when the standings moved. Asked by
+ * {@link saveRoundAction} and by {@link saveRoundScoringAction}, and by nothing
+ * else — two functions deciding "did the standings move" is the defect this
+ * section has been avoiding.
  */
 function seasonNews(before: NightInSeason, after: NightInSeason): boolean {
   return after.complete && (!before.complete || after.standings !== before.standings);

@@ -12,10 +12,21 @@
  * their own event the night it was played, and it moves whenever teams,
  * applications or placements do. Two reasons to change, two modules. That one
  * imports this one — `championshipOfEvent`, {@link fail} and
- * {@link NOT_COUNTING} — and nothing here asks about a place, so the
- * dependency runs one way. The admin home's "no result yet" line
- * (`unscoredResults`) lives over there for that reason: since decision 006 a
- * finishing order can come from two places, and only that module decides which.
+ * {@link NOT_COUNTING} — and this one imports exactly one thing back,
+ * `finishingOrdersFor`, for the close-season question (UC-35 1a): since
+ * decision 006 a finishing order can come from two places, only that module
+ * decides which, and "does this counting event have a result" is that
+ * question and no other. A `championship_placements` read here was a second
+ * opinion about what counts as scored, and it was wrong both ways (Task 96).
+ * The admin home's line (`unscoredResults`) lives over there outright because
+ * its caller is a third module; {@link unscoredCountingEvents} stays here
+ * because its caller is {@link setChampionshipStatus}.
+ *
+ * So the two modules import each other, and that is safe for one reason that
+ * must stay true: **every cross-module use is inside a function body.** Neither
+ * file evaluates anything from the other while it is being loaded, so the
+ * order the two are loaded in cannot matter. A top-level `fail(…)` or
+ * `finishingOrdersFor(…)` in either file would be the first thing to break.
  *
  * ## The lock is asked for on every write, not remembered
  *
@@ -64,7 +75,6 @@ import {
   type ChampionshipStatusValue,
   type Database,
   championshipEvents,
-  championshipPlacements,
   championships,
   db as defaultDb,
   events,
@@ -78,6 +88,7 @@ import {
   scoringRulesProblem,
   weightProblem,
 } from "./championship-policy";
+import { finishingOrdersFor } from "./championship-results";
 import { uniqueKey } from "./profile-fields";
 
 /* ------------------------------------------------------------------ */
@@ -174,23 +185,29 @@ export async function getChampionship(
 }
 
 /**
- * The counting events with no finishing order recorded, by name (UC-35 1a).
+ * The counting events with no finishing order, by name (UC-35 1a).
  *
- * Two queries rather than a `group by … having`, for the reason `listAudit`
- * gives: a season has tens of counting events, the set fits in memory, and the
- * pair reads as what it is — "the events, then which of them anybody has
- * scored".
+ * Whether a night has an order is `finishingOrdersFor`'s answer and nobody
+ * else's — the same reading `unscoredResults` takes for the admin home, for the
+ * same reasons: a night has a result when that order has places, whichever
+ * world they came from. A round-scored night with rounds in has one even
+ * mid-flight, because the season is already paying from its table (UC-46 3a,
+ * 5), so closing over it leaves nothing out; a round-scored night whose only
+ * rows are a typed order it has outgrown has none, because those rows are
+ * `shadowed`, never places, and the season would close paying nothing for it.
+ * Counting `championship_placements` rows here got both of those backwards.
+ *
+ * A fixed number of reads whatever the size of the season — the counting
+ * events, then one call for every one of their orders, which is itself a fixed
+ * handful — so the question costs the same for a season of one night and of
+ * forty.
  */
 export async function unscoredCountingEvents(
   championshipId: string,
   database: Database = defaultDb
 ): Promise<UnscoredEvent[]> {
   const counting = await database
-    .select({
-      id: championshipEvents.id,
-      eventId: championshipEvents.eventId,
-      title: events.title,
-    })
+    .select({ eventId: championshipEvents.eventId, title: events.title })
     .from(championshipEvents)
     .innerJoin(events, eq(events.id, championshipEvents.eventId))
     .where(eq(championshipEvents.championshipId, championshipId))
@@ -198,20 +215,12 @@ export async function unscoredCountingEvents(
 
   if (counting.length === 0) return [];
 
-  const scored = await database
-    .select({ id: championshipPlacements.championshipEventId })
-    .from(championshipPlacements)
-    .where(
-      inArray(
-        championshipPlacements.championshipEventId,
-        counting.map((row) => row.id)
-      )
-    );
+  const orders = await finishingOrdersFor(
+    counting.map((row) => row.eventId),
+    database
+  );
 
-  const hasResult = new Set(scored.map((row) => row.id));
-  return counting
-    .filter((row) => !hasResult.has(row.id))
-    .map((row) => ({ eventId: row.eventId, title: row.title }));
+  return counting.filter((row) => (orders.get(row.eventId)?.places.length ?? 0) === 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -539,6 +548,9 @@ export async function setChampionshipStatus(
     }
   }
 
+  // Asked before the one write below, like every other refusal in this
+  // function (decision 004, shape 1): a season that is asked the question
+  // has nothing to roll back, and the update is itself a compare-and-set.
   if (to === "closed" && !options.confirm) {
     const unscored = await unscoredCountingEvents(championshipId, database);
     if (unscored.length > 0) {

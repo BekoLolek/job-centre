@@ -29,6 +29,8 @@ import {
   createChampionship,
   getChampionship,
   listCountingEvents,
+  setChampionshipStatus,
+  unscoredCountingEvents,
 } from "@/lib/championships";
 import { listRoundScores, saveRound } from "@/lib/round-scores";
 
@@ -517,5 +519,120 @@ describe("the admin home and a round-scored night", () => {
 
     const rows = await unscoredResults(db);
     expect(rows.map((row) => row.eventId)).toContain(eventId);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Closing the season (UC-35 1a) over a night whose result is its     */
+/* table                                                              */
+/* ------------------------------------------------------------------ */
+
+/** The one sentence the close-season question is allowed to be, for one night. */
+function askedAbout(title: string): string {
+  return `"${title}" has no result yet. Close the season anyway?`;
+}
+
+/** Everything a refused close must leave exactly as it was. */
+async function stateOf(seasonId: string, eventId: string) {
+  return {
+    season: await getChampionship(seasonId, db),
+    counting: await listCountingEvents(seasonId, db),
+    typed: await listPlacements(eventId, db),
+    rounds: (await listRoundScores(eventId, db)).sort((x, y) =>
+      `${x.roundIndex}:${x.userId}`.localeCompare(`${y.roundIndex}:${y.userId}`)
+    ),
+  };
+}
+
+describe("closing a season that contains a round-scored night", () => {
+  it("does not ask about a night whose table is fully scored", async () => {
+    // Task 96. The season pays this night from its table, so "has no result
+    // yet" would be false; the old `championship_placements` read said it.
+    const { seasonId, eventId } = await counting();
+    const ana = await accepted(eventId, "Ana closing");
+    const ben = await accepted(eventId, "Ben closing");
+    await scored(eventId, 1, { [ana]: 10, [ben]: 8 });
+    await scored(eventId, 2, { [ana]: 7, [ben]: 9 });
+    await scored(eventId, 3, { [ana]: 6, [ben]: 5 });
+    expect(await unscoredCountingEvents(seasonId, db)).toEqual([]);
+
+    const result = await setChampionshipStatus(seasonId, "published", "closed", {}, db);
+
+    expect(result.ok).toBe(true);
+    expect((await getChampionship(seasonId, db))?.status).toBe("closed");
+  });
+
+  it("does not ask about a night with only some rounds in, because the season already pays from it", async () => {
+    // Task 94's judgment, applied here: a part-scored table has places, and
+    // the season takes them now (UC-46 3a, 5), so nothing is missing from it.
+    const { seasonId, eventId } = await counting();
+    const ana = await accepted(eventId, "Ana part closing");
+    const ben = await accepted(eventId, "Ben part closing");
+    await scored(eventId, 1, { [ana]: 10, [ben]: 8 });
+
+    const result = await setChampionshipStatus(seasonId, "published", "closed", {}, db);
+
+    expect(result.ok).toBe(true);
+  });
+
+  it("asks about a night with nothing scored, and writes nothing while it asks", async () => {
+    // UC-35 1a. The refusal precedes the one write (decision 004, shape 1), so
+    // the rows it would have touched are compared, not merely the `ok`.
+    const { seasonId, eventId } = await counting();
+    await accepted(eventId, "Ana unscored closing");
+    const title = (await listCountingEvents(seasonId, db))[0].title;
+    const before = await stateOf(seasonId, eventId);
+
+    const result = await setChampionshipStatus(seasonId, "published", "closed", {}, db);
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toBe(askedAbout(title));
+    // The season question, not the Results-tab refusal or the lock's sentence.
+    expect(!result.ok && result.error).not.toContain("scored in rounds");
+    expect(!result.ok && result.error).not.toContain("finished");
+    expect(!result.ok && result.unscored).toEqual([{ eventId, title }]);
+    expect(await stateOf(seasonId, eventId)).toEqual(before);
+    expect(before.season?.status).toBe("published");
+  });
+
+  it("closes a season with such a night once the admin confirms", async () => {
+    // UC-35 1a, confirmed — the same answer the typed world gives.
+    const { seasonId, eventId } = await counting();
+    await accepted(eventId, "Ana confirmed closing");
+
+    const result = await setChampionshipStatus(
+      seasonId,
+      "published",
+      "closed",
+      { confirm: true },
+      db
+    );
+
+    expect(result.ok).toBe(true);
+    expect((await getChampionship(seasonId, db))?.status).toBe("closed");
+  });
+
+  it("asks about a night whose only rows are a shadowed typed order", async () => {
+    // The case that matters most, and the one a `championship_placements`
+    // read can never get right: the rows are there, so it says the night has a
+    // result, and the season closes paying nothing for that night. Task 91's
+    // decision is that those rows are kept and never read as places.
+    const { seasonId, eventId } = await counting({ config: {} });
+    const ana = await accepted(eventId, "Ana shadowed closing");
+    expect((await setPlacements(eventId, [{ id: ana, position: 1 }], db)).ok).toBe(true);
+    const title = (await listCountingEvents(seasonId, db))[0].title;
+    // Typed world: the order counts, so nothing is asked.
+    expect(await unscoredCountingEvents(seasonId, db)).toEqual([]);
+
+    await rescored(eventId, ROUND_SCORED);
+    const before = await stateOf(seasonId, eventId);
+    const result = await setChampionshipStatus(seasonId, "published", "closed", {}, db);
+
+    expect(result.ok).toBe(false);
+    expect(!result.ok && result.error).toBe(askedAbout(title));
+    expect(!result.ok && result.unscored).toEqual([{ eventId, title }]);
+    expect(await stateOf(seasonId, eventId)).toEqual(before);
+    // The typed rows are still there — they are what the old read counted.
+    expect(before.typed.map((row) => row.id)).toEqual([ana]);
   });
 });

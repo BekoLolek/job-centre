@@ -161,6 +161,16 @@ function posted(): DiscordMessage[] {
   return fetchStub.mock.calls.map(([, init]) => JSON.parse(String(init.body)) as DiscordMessage);
 }
 
+/**
+ * The `announcement.failed` rows under an event. "Announces nothing" is a
+ * sender with zero calls **and** none of these: a build that crashes on the
+ * way to deciding not to post also makes no call, and lands here instead
+ * (Task 95's finding about this file, closed by Task 97).
+ */
+async function failures(eventId: string) {
+  return (await listAudit({ eventId }, db)).filter((row) => row.action === "announcement.failed");
+}
+
 /* ------------------------------------------------------------------ */
 /* UC-36 3 — the new top of the table                                 */
 /* ------------------------------------------------------------------ */
@@ -280,6 +290,7 @@ describe("what is not announced", () => {
     await announced(eventId);
 
     expect(fetchStub).not.toHaveBeenCalled();
+    expect(await failures(eventId)).toEqual([]);
   });
 
   it("posts nothing while its switch is off, even with every other one on", async () => {
@@ -298,6 +309,7 @@ describe("what is not announced", () => {
     await announced(eventId);
 
     expect(fetchStub).not.toHaveBeenCalled();
+    expect(await failures(eventId)).toEqual([]);
   });
 
   it("posts nothing and logs nothing with no channel configured", async () => {
@@ -326,6 +338,7 @@ describe("what is not announced", () => {
     await announced(eventId);
 
     expect(fetchStub).not.toHaveBeenCalled();
+    expect(await failures(eventId)).toEqual([]);
   });
 
   it("posts nothing when the order has been cleared", async () => {
@@ -338,6 +351,7 @@ describe("what is not announced", () => {
     await announced(eventId);
 
     expect(fetchStub).not.toHaveBeenCalled();
+    expect(await failures(eventId)).toEqual([]);
   });
 
   it("posts nothing about an event that counts towards nothing", async () => {
@@ -351,6 +365,10 @@ describe("what is not announced", () => {
     await announced(row.id);
 
     expect(fetchStub).not.toHaveBeenCalled();
+    // Decided, not crashed: without `announceStandings`' own season guard the
+    // post still does not go out, but only because `seasonPage(null)` threw
+    // on the way — and that is a failure row, not a decision.
+    expect(await failures(row.id)).toEqual([]);
   });
 });
 

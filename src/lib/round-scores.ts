@@ -133,6 +133,14 @@ export type RoundScoringSaved = {
  * Decision 006 puts the awards on the score row as `Record<key, count>`, so
  * taking an award back is rewriting that object without the key — never a
  * second table to delete from, and never a score lost with it.
+ *
+ * ## What this does not do: tell anybody
+ *
+ * A trim can complete a part-scored night's table, and a confirmed cut or a
+ * direction change can move a complete one (Task 97). That news is sent by
+ * `saveRoundScoringAction` **after** this has returned `ok`, through the same
+ * rule the round save uses — so nothing here is announced, nothing is announced
+ * that did not commit, and the shape above is untouched.
  */
 export async function saveRoundScoring(
   eventId: string,

@@ -1747,12 +1747,18 @@ label "Bracket changed" rather than "Format changed".
   The fix is the same one question — Task 91's `finishingOrdersFor` — and it will meet the same obstacle: `championships.ts` cannot import `championship-results.ts` without making a cycle, so this function moves the same way `unscoredResults` did, or the caller asks the reader directly. **Decide which, and say why**; Task 94's note records the reasoning that applied last time.
   This one sits on a **write path** (the close-season refusal), so decision 004 applies where Task 94's did not.
 - **Acceptance criteria:**
-  - [ ] Closing a season containing a fully scored round-scored night does not ask about a missing result
-  - [ ] Closing one containing a round-scored night with nothing scored **does** ask
-  - [ ] A night whose only rows are an outgrown typed order is asked about, which the old read gets wrong
-  - [ ] The typed-order path is unchanged, asserted as a digest or a byte-identical guard
-  - [ ] The refusal has written nothing, and the decision-004 shape is named
+  - [x] Closing a season containing a fully scored round-scored night does not ask about a missing result
+  - [x] Closing one containing a round-scored night with nothing scored **does** ask
+  - [x] A night whose only rows are an outgrown typed order is asked about, which the old read gets wrong
+  - [x] The typed-order path is unchanged, asserted as a digest or a byte-identical guard
+  - [x] The refusal has written nothing, and the decision-004 shape is named
 - **Depends on:** Tasks 91, 94.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **Neither option this entry offered avoided the cycle**, and the reason is worth having written down: `unscoredCountingEvents`'s only caller is `setChampionshipStatus` **in the same file**, so moving the function still puts an import of `championship-results.ts` into `championships.ts`. Task 94's move worked only because *its* caller was a third module (`admin-dashboard.ts`). The plan was wrong to assume the same escape twice.
+  **The resolution, accepted by the lead: a documented function-level mutual import.** `championships.ts` imports exactly one name back (`finishingOrdersFor`), both modules use the other only inside function bodies so load order cannot matter, and both docblocks now state the cycle and the rule that keeps it safe. The old docblock's invariant — "nothing here asks about a place" — **stopped being true the moment UC-35 1a had to ask decision 006's question**, so the statement was rewritten rather than preserved as a comforting falsehood. The repo already ran one such cycle undocumented: `event-board.ts` ↔ `players.ts`.
+  **The alternative is recorded and deliberately not taken.** Extracting `setChampionshipStatus` into a `championship-lifecycle.ts` would restore an acyclic graph, at the cost of exporting four privates and moving eighty lines of working code with no requirement behind it. Available as a mechanical follow-on if an acyclic graph is ever wanted for its own sake.
+  **The outgrown typed order is the kill a rows-based read cannot survive**: before this, the season **closed with `ok: true`** while that night paid nothing. That is the inverse of the loud defect and the more dangerous one, which is why it was the criterion written to be hard.
+  **Decision 004 was already satisfied** — shape 1, every refusal preceding the one compare-and-set `update` (itself shape 3) — and that is proved rather than asserted: a mutation moving the write ahead of the refusal kills three tests, and the tests compare the season row, the counting rows, the typed placements and the round scores before and after with `toEqual`, not merely `ok: false`. **Criterion 4 is a byte digest**: `championships.test.ts` and the action's own test are byte-identical to pre-task, and the table-world mutation kills three of that untouched file's tests, so the file left alone is itself the guard.
 
 ### Task 95: A round save moves the season and tells nobody (found in Task 91)
 
@@ -1783,11 +1789,18 @@ label "Bracket changed" rather than "Format changed".
   **One: a test that passes for the wrong reason.** `standings-announcement.test.ts`'s "posts nothing about an event that counts towards nothing" survives deleting `announceStandings`' season guard — the post still does not go out, but it becomes an `announcement.failed` row the test never checks. Add that assertion, and prove it by deleting the guard and watching it die. Task 95's own test already does this and is the model.
   **Two: a trim can complete a table and tell nobody.** `saveRoundScoring` lowering the round count can make a part-scored night's table complete — every remaining round has a score — which is exactly the moment Task 95's rule says is news, and it announces nothing. Either the trim asks Task 95's question too, or the rule is narrowed and says why.
 - **Acceptance criteria:**
-  - [ ] Deleting `announceStandings`' season guard fails the typed-path test, proven by mutation
-  - [ ] A trim that completes a table either announces, or is covered by a stated narrowing of Task 95's rule
-  - [ ] A trim that does not complete a table announces nothing
-  - [ ] The round-save path's behaviour is unchanged, asserted
+  - [x] Deleting `announceStandings`' season guard fails the typed-path test, proven by mutation
+  - [x] A trim that completes a table either announces, or is covered by a stated narrowing of Task 95's rule — **it announces**
+  - [x] A trim that does not complete a table announces nothing
+  - [x] The round-save path's behaviour is unchanged, asserted
 - **Depends on:** Task 95.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **The trim announces, through Task 95's code rather than a second rule.** `saveRoundScoringAction` asks `seasonNews` over two `nightInSeason` reads, so every scoring save is judged by the one question — a completing trim, a confirmed cut of a *complete* table (the standings move because rounds leave the total), and a direction change on a complete night, which is the biggest move a scoring save can make. A mutation narrowing that rule kills tests in **both** the round-save and the trim files, which is the proof the rule is shared rather than copied.
+  **This closes the half of Task 95's accepted gap that trimming is the honest answer to.** 95 accepted that a night cut short never announces; a trim is exactly how such a night gets finished, so it now does. What is left to Task 83's by-hand button is narrower and named: a manager who leaves unplayed rounds standing.
+  **Turning scoring off announces nothing, decided rather than defaulted.** It removes the table, which is the typed path's cleared order, and both senders already refuse an event with no order. The one case left to the by-hand button — an outgrown typed order coming back as the table goes — is named in the docblock instead of being discovered later.
+  **Criterion 1 was the mutation.** The guard deletion is shown surviving before the change and dying after, on the new assertion, for the right reason: a failure row where a decision should be. The **sibling rule reached four more tests** — every "posts nothing" in `standings-announcement.test.ts` now also asserts no `announcement.failed` row, because the whole lesson of this task is that "the post did not go out" and "the code decided not to post" are different facts.
+  **Two survivors, handled differently and both correctly.** Announcing *before* the refusal check is **equivalent** — a refused save writes nothing, so both reads agree and the rule keeps it silent; the early return is not what holds it. "A night with no setup is never complete" **survived and was fixed with a test**, not an argument: it is observable only when switching a night to rounds whose kept rows already fill the setup, which is now pinned as the completing save.
+  **A fourth copy of Task 95's test harness exists, chosen deliberately** so Task 95's file could stay byte-identical and go on being the criterion-4 guard. Three strikes reached in test code; the duplication buys a digest that proves the shared rule was not quietly edited.
 
 ### Task 93: Turning round scoring off (found in Task 87)
 

@@ -10,9 +10,13 @@
  * share is the lock, and that lives in `./championship-policy` where both can
  * reach it.
  *
- * The dependency runs one way and there is no cycle: everything here asks
- * `championshipOfEvent` which event is in which season, and nothing over there
- * asks about a place.
+ * Everything here asks `championshipOfEvent` which event is in which season,
+ * and that module asks one thing back: {@link finishingOrdersFor}, so that
+ * closing a season (UC-35 1a) can tell which counting events have no result
+ * by the one rule for what a result is. The two files therefore import each
+ * other, and it is safe only because every cross-module use sits inside a
+ * function body — nothing from either is evaluated while the other loads. Keep
+ * it that way; the docblock over there says the same.
  *
  * ## Nothing derived is stored
  *
