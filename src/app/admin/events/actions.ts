@@ -76,6 +76,8 @@ import {
   eventShapeFrom,
   givenRoundName,
   isSizingMode,
+  rosterBelowAwardedRefusal,
+  rosterSizingFrom,
   roundScoringFrom,
   roundScoringSummary,
   shapeProblem,
@@ -786,7 +788,7 @@ export type EventShapeFields = {
  * One mode and one number arrive; the other figure is `sizingConsequence`'s,
  * recomputed on every read. That is R-218 and it is why the two cannot drift.
  *
- * ## The two refusals, and the order they are settled in
+ * ## The three refusals, and the order they are settled in
  *
  * **UC-42 3a first, and outright**: once a lot has been awarded the teams'
  * rosters came from those awards, so the draft cannot be switched off from
@@ -795,7 +797,24 @@ export type EventShapeFields = {
  * no answer to it; voiding the lots is the deliberate act that makes this
  * possible.
  *
- * **UC-42 2a second, with one**: turning teams off on an event that already has
+ * **UC-49 1c second, and outright too**: once a lot has been awarded, the
+ * sizing cannot be set below a roster those awards filled — the players on it
+ * are ones nobody can un-buy. This is the refusal `setDraftConfig` held while
+ * the roster size was a draft rule; the figure is the panel's now (R-248), so
+ * the refusal is asked here, where the number is written, and it needs nothing
+ * this action had not already read: the teams and lots 3a and 2a use, and the
+ * accepted count `before.seats.accepted` already carries — the same
+ * `status === "accepted"` rows `readConfig` counts for the figure on a roster,
+ * and not a query of its own, because a second count phrased even slightly
+ * differently is how the figure here could stop agreeing with the card (the
+ * disagreement R-248 exists to end). `rosterSizingFrom` runs on the shape
+ * *being saved*, not the stored one, because it is the new figure the rosters
+ * are measured against. Outside a draft there is no
+ * refusal at all (UC-49 3a): a hand-built roster over the figure is badged, not
+ * blocked, and `rosterBelowAwardedRefusal`'s docblock has the rest, including
+ * why an opened-but-unawarded lot is "outside".
+ *
+ * **UC-42 2a third, with one**: turning teams off on an event that already has
  * them is refused until the admin says to discard them, and the refusal names
  * how many go.
  *
@@ -807,6 +826,9 @@ export type EventShapeFields = {
  * as the write's own `beforeRemoval` hook for the reason `draft-actions.ts`
  * spells out: a match naming a team blocks the delete, and releasing the
  * reference *before* the call is a write that a later refusal cannot undo.
+ * This action is **not** a transaction, which is the closing case of that
+ * decision — so every refusal above, 1c included, precedes `setTeams`, and the
+ * tests hold the shape, the teams and the rosters row for row across a refusal.
  *
  * ## It guards itself, because hiding a tab is not forbidding it
  *
@@ -837,14 +859,24 @@ export async function saveEventShapeAction(
   if (bounds) return fail(bounds);
 
   const [existing, lots] = await Promise.all([getTeams(eventId), getDraftHistory(eventId)]);
+  const awarded = lots.some((lot) => lot.status === "awarded");
 
   // UC-42 3a. Asserted with the whole sentence in the tests, not a phrase of
   // it — `removeTeamsIn` has a refusal about lots too, and Task 78's escape was
   // exactly that confusion.
   const losingDraft = !wanted.teamEvent || !wanted.draft;
-  if (losingDraft && lots.some((lot) => lot.status === "awarded")) {
+  if (losingDraft && awarded) {
     return fail(DRAFT_AWARDED_REFUSAL);
   }
+
+  // UC-49 1c. `roster.size` is the count the team card badges, captains
+  // included, so the sentence names what the card shows.
+  const stranded = rosterBelowAwardedRefusal(
+    existing.map((team) => ({ name: team.name, size: team.roster.size })),
+    rosterSizingFrom(wanted, before.seats.accepted).cap,
+    awarded
+  );
+  if (stranded) return fail(stranded);
 
   // UC-42 2a.
   const losingTeams = !wanted.teamEvent && existing.length > 0;

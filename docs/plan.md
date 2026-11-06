@@ -2200,12 +2200,19 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Do:** the refusal sentence beside its siblings in `events-policy.ts` (following `countFollowsFormatRefusal`, which already says "Change it there"), and the check in `saveEventShapeAction` **before** its first write - it already has the teams and the draft history in hand. Compare the new figure against **each** roster so the sentence can name the team. Outside a draft, no refusal at all (UC-49 3a).
   `saveEventShapeAction` is not a transaction, which is decision 004's closing case - "a write with no transaction at all is the same bug" - so the refusal must precede `setTeams`.
 - **Acceptance criteria:**
-  - [ ] Shrinking the sizing below a roster filled by an **awarded** lot is refused, naming the team and what it holds
-  - [ ] The refusal leaves `events.config` holding the old sizing and every team untouched, asserted by comparing rows before and after
-  - [ ] `draft.test.ts:1289-1298` is **ported**, not deleted, and its new home fails if the guard is removed
-  - [ ] Outside a draft the same shrink is allowed and the roster reads over-full
-  - [ ] The panel can print the sentence before the round trip, as `ShapeTab` already requires of its refusals
+  - [x] Shrinking the sizing below a roster filled by an **awarded** lot is refused, naming the team and what it holds
+  - [x] The refusal leaves `events.config` holding the old sizing and every team untouched, asserted by comparing rows before and after
+  - [x] `draft.test.ts:1289-1298` is **ported**, not deleted, and its new home fails if the guard is removed
+  - [x] Outside a draft the same shrink is allowed and the roster reads over-full
+  - [x] The panel can print the sentence before the round trip, as `ShapeTab` already requires of its refusals
 - **Depends on:** Tasks 104, 106.
+- **Left over:** nothing from the criteria bar one the lead withdrew, and six things worth keeping.
+  **An opened-but-unawarded lot is allowed, and the reasoning is the remedy.** The old guard keyed on an *awarded* lot and so does this one: an open lot is bidding, not a purchase, so nobody on a team got there by award and it is the hand-built case UC-49 3a says must not be refused. And "void the awards" would name the wrong remedy for a lot with nothing to void. A live lot under a moving figure is a different concern - the rules lock that `setDraftConfig` keeps for the rules that stayed draft rules.
+  **The task fetched a count the action already held, which is this feature's own defect one layer along.** It added `countApplicationsByStatus` to the `Promise.all` for a figure `before.seats.accepted` already carries - and `draft.ts:226-230` warns against exactly that in so many words: "a second query phrased slightly differently is how the figure on the card could stop agreeing". R-248 exists because one quantity had three sources. Caught in review; the second query is gone.
+  **"Awards", not "lots", and that was a recorded decision rather than a free choice.** The sibling refusal on the same panel for the same remedy says "Void the awards on the Draft tab", and `shape-tabs.test.ts` holds that wording deliberately. Two nouns for one action is how an admin learns to distrust a screen.
+  **One mutation survived and was reported rather than dressed up.** Moving the refusal after `setTeams` is an *equivalent* mutant: `setTeams` runs only when `!wanted.teamEvent`, which UC-42 3a refuses first whenever a lot is awarded, and with no award this refusal returns null anyway. Review confirmed the reachability argument independently. The implementer also disclosed that a first attempt at another mutation mis-landed on a different action's `if (!result.ok)` and that it discarded and re-ran it - the kind of note that makes the other seven kills believable.
+  **The sixth criterion was withdrawn because the lead's brief contradicted itself**: it asked the panel to print the sentence before the round trip while the file list did not include `ShapeTab.tsx`. The function is pure and takes `{ name, size }` per team plus whether a lot is awarded, which the panel is not yet handed, so the wiring is real work - moved to Task 110, which already opens that file.
+  **Two states were decided and left simple.** An identical re-save on an already-over roster is refused rather than waved through: a delta rule would need the stored cap and a null-cap case, and the state is barely reachable because `awardLot` and `placeOnRoster` both refuse a full roster. And no refusal fires when no cap derives at all - there is no figure to be below, no member is ever removed, and `rosterState` reports the same.
 
 ### Task 108: The card tells the truth
 
@@ -2245,6 +2252,7 @@ to agree until it is written. Recorded as Task 111, available and not taken.
   - [ ] A 3v3 event sized at six a side renders the note and still saves
   - [ ] An agreeing event renders no note
   - [ ] No refusal exists on this path, asserted
+  - [ ] **Task 107's refusal is wired to print before the round trip**, which is `ShapeTab`'s own standard for its refusals and which Task 107 could not do: its criterion named the panel while its file list did not include it (the lead's contradiction). `rosterBelowAwardedRefusal` is pure and takes `{ name, size }` per team plus whether a lot is awarded - which the panel is not yet handed, so this is real wiring through the editor rather than one line
 - **Depends on:** Task 104.
 
 ### Task 111: Drop `draft_configs.roster_target` - **available, not taken**

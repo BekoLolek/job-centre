@@ -1337,20 +1337,12 @@ describe("setDraftConfig", () => {
   });
 
   /*
-   * Skipped, not deleted — Task 107 is its new home.
-   *
-   * The roster size left `DraftConfig` (R-248): it is the Format panel's
-   * figure now, so `setDraftConfig` has nothing to refuse to lower and the
-   * refusal this test held was removed with it. Whether the figure may still
-   * shrink once players have been bought for it is a real rule and still
-   * wanted; it is refused where the figure is written, on the panel, and Task
-   * 107 writes that refusal and moves this test to its write path. A todo
-   * rather than a red test, so that a green suite stays the evidence it is
-   * meant to be — and a todo rather than a skipped body, because a body
-   * written before the refusal exists can only assert what is true today, and
-   * un-skipping a test that passes empty would prove nothing.
+   * "Refuses to shrink the roster after players have been bought for it" was
+   * here while the roster size was a draft rule. It is the Format panel's
+   * figure now (R-248), so `setDraftConfig` has nothing to lower and the
+   * refusal moved to `saveEventShapeAction` (R-249 / UC-49 1c, Task 107); the
+   * test moved with it, to `src/app/admin/events/__tests__/event-shape.test.ts`.
    */
-  it.todo("refuses to shrink the roster after players have been bought for it (Task 107)");
 
   it("leaves a per-team mode's handicaps alone", async () => {
     const fixture = await seededEvent(0);

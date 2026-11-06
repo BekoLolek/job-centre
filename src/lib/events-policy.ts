@@ -894,6 +894,72 @@ export function teamsInTheWayRefusal(count: number): string {
 export const DRAFT_AWARDED_REFUSAL =
   "Lots have already been awarded in this event's draft, and the teams' rosters came from them. Void the awards on the Draft tab before turning the draft off.";
 
+/** What one team holds, for {@link rosterBelowAwardedRefusal} to name it. */
+export type RosterHolding = { name: string; size: number };
+
+/**
+ * UC-49 1c — sizing the teams below a roster an awarded draft already filled.
+ *
+ * The refusal that used to be `setDraftConfig`'s, when the roster size was a
+ * draft rule of its own; the figure is the Format panel's now (R-248), so the
+ * refusal is asked where the number is written, exactly as
+ * {@link countFollowsFormatRefusal} is asked for the sibling figure. Pure over
+ * what the save would leave — each team and what it holds, the places the new
+ * sizing allows, whether a lot has been awarded — so the panel can print the
+ * same sentence before the round trip, which `ShapeTab` requires of every
+ * refusal it has.
+ *
+ * ## Keyed on an **awarded** lot, not an opened one
+ *
+ * The old guard keyed on an award, and so does this, for the reason R-249
+ * gives: the players this protects are the ones nobody can un-buy. An open lot
+ * is bidding — a name on the wheel and offers against it — and no roster was
+ * built from it; the only players on a team under an open-but-unawarded draft
+ * were put there by hand, which is the case UC-49 3a says must **not** be
+ * refused, because an admin fixing a hand-built side is doing their job and
+ * the "Over target" badge is what tells them it still needs doing. Keying on
+ * an open lot would also point the admin at the wrong remedy: "void the lots"
+ * is the deliberate act that undoes an award, and a lot that was never
+ * awarded has nothing to void. That bidding is live under a figure that is
+ * about to move is a different concern — the one `setDraftConfig`'s "rules
+ * lock when the first lot opens" holds for the rules that stayed draft rules —
+ * and the Format panel is allowed to move the sizing mid-draft on purpose
+ * (`event-shape.test.ts` holds that). It is also the state the panel already
+ * has: its `draftStarted` is "some lot awarded", read for UC-42 3a.
+ *
+ * ## Each roster, and every one that is over
+ *
+ * Measured against every team rather than the largest roster, so the sentence
+ * names each team the figure would strand and what it holds — `setDraftConfig`
+ * names every rule a save would have moved, for the same reason: one refusal
+ * that says all of it, not a list the admin discovers one save at a time.
+ *
+ * ## Against the cap, and nothing when there is none
+ *
+ * `cap` is the most a team may hold under either of the panel's modes — the
+ * stated figure, or the largest side a count of teams deals — and it is the
+ * figure `rosterState` badges a roster as over. Where the sizing derives
+ * nothing (a count of teams with fewer accepted than sides) there is no figure
+ * to be below, so there is no refusal, for the reason `rosterState` leaves
+ * `overfilled` false there: nothing is over a figure nobody has.
+ *
+ * Outside a draft — no lot awarded — there is no refusal whatever the rosters
+ * hold (UC-49 3a); the badge is what an over-full hand-built roster gets.
+ */
+export function rosterBelowAwardedRefusal(
+  rosters: readonly RosterHolding[],
+  cap: number | null,
+  awarded: boolean
+): string | null {
+  if (!awarded || cap === null) return null;
+  const over = rosters.filter((roster) => roster.size > cap);
+  if (over.length === 0) return null;
+  // Over a cap of at least one, so never a single player.
+  const holdings = over.map((roster) => `${roster.name} holds ${roster.size} players`).join(", ");
+  const largest = Math.max(...over.map((roster) => roster.size));
+  return `${holdings}, and the draft has already awarded players, so the teams cannot be sized at ${cap} a side. Void the awards on the Draft tab first, or leave room for ${largest}.`;
+}
+
 /* ------------------------------------------------------------------ */
 /* The sides the Format panel implies (R-220 / UC-42 6)               */
 /* ------------------------------------------------------------------ */

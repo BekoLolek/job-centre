@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { type Database, type EventConfig, auditLog, events, teams } from "@/db";
+import { type Database, type EventConfig, auditLog, events, teamMembers, teams } from "@/db";
 import {
   PUBLISHABLE,
   type TestDatabase,
@@ -72,12 +72,15 @@ const { applyToEvent, createEvent, publishEvent } = await import("@/lib/events")
 const {
   DRAFT_AWARDED_REFUSAL,
   eventShapeFrom,
+  rosterBelowAwardedRefusal,
   sizingConsequence,
   teamFormatFrom,
   teamsInTheWayRefusal,
 } = await import("@/lib/events-policy");
 const { scheduleSettingsFrom } = await import("@/lib/format");
-const { awardLot, openLot, placeBid, setDraftPool } = await import("@/lib/draft");
+const { awardLot, getTeams, openLot, placeBid, placeOnRoster, setDraftPool } = await import(
+  "@/lib/draft"
+);
 const { visibleTabs } = await import("@/components/admin/events/tabs");
 
 let handle: TestDatabase;
@@ -406,6 +409,189 @@ async function awardedDraft(): Promise<Fixture> {
   unwrap(await awardLot(lot.id, built[0].id, {}, db));
   return fixture;
 }
+
+/* --------------------------------------------------------------------- */
+/* Sizing below a roster the draft filled (R-249 / UC-49 1c, 3a)         */
+/* --------------------------------------------------------------------- */
+
+/*
+ * Task 107. This refusal used to live in `setDraftConfig`, where the roster
+ * size was a draft rule; `draft.test.ts` held "refuses to shrink the roster
+ * after players have been bought for it" for it. The figure is the Format
+ * panel's now (R-248), so the refusal is this action's and its test is here —
+ * ported, not lost. Proved against the rows, not merely `ok: false`, because
+ * `saveEventShapeAction` is not a transaction and `docs/decisions/004` closes
+ * on exactly that: a refusal after a bare write is a sentence that lies.
+ */
+
+type Filled = Fixture & { teams: { id: string; name: string }[] };
+
+/**
+ * Six accepted, sized at three a side, two teams, and a draft that has
+ * **awarded** `sizes[0]` players to the first team and `sizes[1]` to the
+ * second — the precondition of UC-49 1c, built through the library's own
+ * writes exactly as `awardedDraft` is.
+ */
+async function filledDraft(sizes: [number, number]): Promise<Filled> {
+  const fixture = await hostedEvent(6);
+  unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 3 }));
+  unwrap(await setTeamCountAction(fixture.eventId, 2));
+
+  const built = await db
+    .select({ id: teams.id, name: teams.name })
+    .from(teams)
+    .where(eq(teams.eventId, fixture.eventId))
+    .orderBy(teams.sort);
+
+  unwrap(await setDraftPool(fixture.eventId, {}, db));
+  let next = 0;
+  for (const [index, size] of sizes.entries()) {
+    for (let bought = 0; bought < size; bought += 1) {
+      const lot = unwrap(
+        await openLot(fixture.eventId, { userId: fixture.members[next] }, db)
+      );
+      unwrap(await placeBid(lot.id, built[index].id, 10, {}, db));
+      unwrap(await awardLot(lot.id, built[index].id, {}, db));
+      next += 1;
+    }
+  }
+  return { ...fixture, teams: built };
+}
+
+/**
+ * Six accepted, sized at three a side, two teams, and three players put on the
+ * first team **by hand** — a roster the draft had no part in.
+ */
+async function handBuilt(options: { draft: boolean }): Promise<Filled> {
+  const fixture = await hostedEvent(6);
+  unwrap(
+    await saveEventShapeAction(fixture.eventId, { ...TEAMS, draft: options.draft, value: 3 })
+  );
+  unwrap(await setTeamCountAction(fixture.eventId, 2));
+
+  const built = await db
+    .select({ id: teams.id, name: teams.name })
+    .from(teams)
+    .where(eq(teams.eventId, fixture.eventId))
+    .orderBy(teams.sort);
+
+  for (const userId of fixture.members.slice(0, 3)) {
+    unwrap(await placeOnRoster(fixture.eventId, userId, built[0].id, db));
+  }
+  return { ...fixture, teams: built };
+}
+
+async function rosterRows(eventId: string) {
+  return db
+    .select({ teamId: teamMembers.teamId, userId: teamMembers.userId, price: teamMembers.price })
+    .from(teamMembers)
+    .where(eq(teamMembers.eventId, eventId))
+    .orderBy(teamMembers.teamId, teamMembers.userId);
+}
+
+async function teamRows(eventId: string) {
+  return db.select().from(teams).where(eq(teams.eventId, eventId)).orderBy(teams.sort);
+}
+
+describe("sizing the teams below a roster the draft filled", () => {
+  it("refuses to shrink the roster after players have been bought for it, naming each team (UC-49 1c)", async () => {
+    const fixture = await filledDraft([3, 3]);
+
+    const said = refusal(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 2 }));
+
+    expect(said).toBe(
+      rosterBelowAwardedRefusal(
+        [
+          { name: fixture.teams[0].name, size: 3 },
+          { name: fixture.teams[1].name, size: 3 },
+        ],
+        2,
+        true
+      )
+    );
+    // The whole sentence, which names each roster rather than the largest.
+  });
+
+  it("names only the teams that would be over the figure", async () => {
+    const fixture = await filledDraft([3, 2]);
+
+    const said = refusal(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 2 }));
+
+    expect(said).toContain(`${fixture.teams[0].name} holds 3 players`);
+    expect(said).not.toContain(fixture.teams[1].name);
+  });
+
+  it("reads the figure a count of teams implies, not only a stated one", async () => {
+    // Three teams from six accepted is two a side — a cap, derived, and still
+    // below the rosters of three the draft filled.
+    const fixture = await filledDraft([3, 3]);
+
+    const said = refusal(
+      await saveEventShapeAction(fixture.eventId, { ...TEAMS, mode: "teams", value: 3 })
+    );
+
+    expect(said).toContain(`${fixture.teams[0].name} holds 3 players`);
+    expect(said).toContain("2 a side");
+  });
+
+  it("writes nothing when it refuses: the shape, the teams and the rosters are as they were", async () => {
+    const fixture = await filledDraft([3, 3]);
+    const config = await storedConfig(fixture.eventId);
+    const built = await teamRows(fixture.eventId);
+    const rosters = await rosterRows(fixture.eventId);
+
+    refusal(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 2 }));
+
+    expect(await storedConfig(fixture.eventId)).toEqual(config);
+    expect(eventShapeFrom(await storedConfig(fixture.eventId)).sizing.value).toBe(3);
+    expect(await teamRows(fixture.eventId)).toEqual(built);
+    expect(await rosterRows(fixture.eventId)).toEqual(rosters);
+    expect(rosters.length).toBe(6);
+  });
+
+  it("still lets the figure grow, and lets a shrink through that no roster is over", async () => {
+    const fixture = await filledDraft([3, 2]);
+
+    expect(
+      unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 4 })).shape.sizing
+        .value
+    ).toBe(4);
+    expect(
+      unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 3 })).shape.sizing
+        .value
+    ).toBe(3);
+  });
+
+  it("allows the same shrink outside a draft, and the roster reads over-full (UC-49 3a)", async () => {
+    const fixture = await handBuilt({ draft: false });
+
+    unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, draft: false, value: 2 }));
+
+    expect(eventShapeFrom(await storedConfig(fixture.eventId)).sizing.value).toBe(2);
+    const [first] = await getTeams(fixture.eventId, db);
+    expect(first.roster.size).toBe(3);
+    // What the team card's "Over target" badge reads.
+    expect(first.roster.overfilled).toBe(true);
+  });
+
+  it("allows it while a lot is open but none has been awarded", async () => {
+    /*
+     * The decision the docblock on `rosterBelowAwardedRefusal` records: an
+     * open lot is bidding, not a purchase. No roster was built from it, so
+     * there is nobody on a team that cannot be un-bought, and the hand-built
+     * roster is the admin's to fix.
+     */
+    const fixture = await handBuilt({ draft: true });
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    unwrap(await openLot(fixture.eventId, { userId: fixture.members[3] }, db));
+
+    unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 2 }));
+
+    expect(eventShapeFrom(await storedConfig(fixture.eventId)).sizing.value).toBe(2);
+    const [first] = await getTeams(fixture.eventId, db);
+    expect(first.roster.overfilled).toBe(true);
+  });
+});
 
 /* --------------------------------------------------------------------- */
 /* Hiding a tab is not forbidding it (UC-42 5b)                          */
