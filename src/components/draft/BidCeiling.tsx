@@ -1,5 +1,6 @@
 import { Alert, Eyebrow, Panel, cx } from "@/components/ui";
 import type { DraftConfig } from "@/lib/draft-policy";
+import type { RosterSizing } from "@/lib/events-policy";
 import Money from "./MoneyFigure";
 import { ceilingsFor } from "./ceiling";
 import type { PlayerBook, TeamLike } from "./types";
@@ -16,22 +17,25 @@ import type { PlayerBook, TeamLike } from "./types";
  * turns the same rule into a decision somebody made on purpose.
  *
  * The figures come from `maxBidFor` against the config passed in — including an
- * unsaved one — so the numbers move as the roster size and the minimum bid are
- * dragged around.
+ * unsaved one — so the numbers move as the minimum bid is dragged around. The
+ * places on a team are the Format panel's `sizing` (R-248), not a rule on this
+ * screen, so they arrive from the same read that sized the teams' own rosters.
  */
 
 export type BidCeilingProps = {
   teams: readonly TeamLike[];
   /** The rules to price against — usually the ones on screen, not the saved ones. */
   config: DraftConfig;
+  /** The places on a team, from the Format panel (R-248) — not a rule on screen. */
+  sizing: RosterSizing;
   players?: PlayerBook;
   /** Rendered as a plain list rather than inside its own panel. */
   bare?: boolean;
   className?: string;
 };
 
-export default function BidCeiling({ teams, config, bare, className }: BidCeilingProps) {
-  const rows = ceilingsFor(teams, config);
+export default function BidCeiling({ teams, config, sizing, bare, className }: BidCeilingProps) {
+  const rows = ceilingsFor(teams, config, sizing);
   const stuck = rows.filter((row) => row.stuck);
 
   const body = (
@@ -97,8 +101,8 @@ export default function BidCeiling({ teams, config, bare, className }: BidCeilin
           <span className="mt-1 block opacity-90">
             {stuck.map((row) => row.team.name).join(", ")} still {stuck.length === 1 ? "has" : "have"}{" "}
             slots to fill, but holding money back for them leaves less than the minimum bid
-            of {config.minBid}. Lower the minimum, lower the roster size, or raise the
-            balances.
+            of {config.minBid}. Lower the minimum, lower the places on a team in Setup →
+            Format, or raise the balances.
           </span>
         </Alert>
       )}

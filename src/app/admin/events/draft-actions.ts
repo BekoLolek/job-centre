@@ -58,6 +58,7 @@ import {
   getDraftConfig,
   getDraftHistory,
   getDraftPool,
+  getRosterSizing,
   getTeams,
   placeOnRoster,
   removeFromRoster,
@@ -748,19 +749,29 @@ export async function saveDraftConfigAction(
   const result = await setDraftConfig(eventId, patch);
   if (!result.ok) return result;
 
+  // The roster size is the Format panel's figure, not one of these rules
+  // (R-248); the summary still names it so the line reads as it always did.
+  // Except when the panel has no figure — a count of teams with fewer accepted
+  // than sides derives nothing — where the clause is left out rather than
+  // written as "rosters of null": an audit row is permanent, and nobody can
+  // go back and fix a sentence in one.
+  const sizing = await getRosterSizing(eventId);
+  const rules = `${result.data.config.defaultBalance} each, ${result.data.config.biddingMode} bidding`;
+  const rosters = sizing.cap === null ? "" : `, rosters of ${sizing.cap}`;
+
   await recordAudit({
     action: "draft.config",
     actor: admin,
     eventId,
     summary:
       result.data.rebalanced > 0
-        ? `Changed the draft rules — ${result.data.config.defaultBalance} each, ${result.data.config.biddingMode} bidding, rosters of ${result.data.config.rosterTarget}. ${result.data.rebalanced} team balances were reset.`
-        : `Changed the draft rules — ${result.data.config.defaultBalance} each, ${result.data.config.biddingMode} bidding, rosters of ${result.data.config.rosterTarget}.`,
+        ? `Changed the draft rules — ${rules}${rosters}. ${result.data.rebalanced} team balances were reset.`
+        : `Changed the draft rules — ${rules}${rosters}.`,
     detail: {
       defaultBalance: result.data.config.defaultBalance,
       biddingMode: result.data.config.biddingMode,
       balanceMode: result.data.config.balanceMode,
-      rosterTarget: result.data.config.rosterTarget,
+      rosterCap: sizing.cap,
       rebalanced: result.data.rebalanced,
     },
   });

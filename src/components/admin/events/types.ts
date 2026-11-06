@@ -13,7 +13,7 @@ import type {
 import type { EventChampionship } from "@/lib/championships";
 import type { TeamsFill } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
-import type { RoundScoring, TeamFormat } from "@/lib/events-policy";
+import type { RosterSizing, RoundScoring, TeamFormat } from "@/lib/events-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
 import type { HandSheet } from "@/lib/hands-sheet";
 import type { RoundScoreRow } from "@/lib/round-scoring";
@@ -66,6 +66,17 @@ export type DraftTabData = {
   teams: TeamLike[];
   /** As stored, or `DEFAULT_DRAFT_CONFIG` when the tab has never been saved. */
   config: DraftConfig;
+  /**
+   * The places on a team, as the Format panel implies them (R-248 / UC-49 2)
+   * — `getRosterSizing`, the same read the public card and the draft room
+   * make, so the three tabs print the figure those screens enforce.
+   *
+   * Carried beside `teams` rather than read off `teams[0].roster`, because
+   * the Captains tab states the figure before any team exists. `cap` is what
+   * every tab prints and counts against; `target` is set only under "players
+   * on a team", when the figure is the admin's own number.
+   */
+  sizing: RosterSizing;
   /** User ids, in wheel order. */
   pool: { main: string[]; reserve: string[] };
   /** Accepted, but in neither a roster nor a pool — the "who is missing" line. */
@@ -75,10 +86,9 @@ export type DraftTabData = {
   /** Everyone any of the three tabs might name, keyed by user id. */
   players: PlayerBook;
   /**
-   * True once a lot has been awarded. Several settings stop being safe then —
-   * `setDraftConfig` refuses to lower the roster target or to rewrite starting
-   * balances — and a screen that offered them anyway would be offering a
-   * rejection.
+   * True once a lot has been awarded. Some settings stop being safe then —
+   * `setDraftConfig` stops rewriting starting balances — and a screen that
+   * offered them anyway would be offering a rejection.
    */
   started: boolean;
   /**

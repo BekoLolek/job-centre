@@ -2110,6 +2110,17 @@ turn:
     `roster`, which is why it is derived inside `readConfig` - the one place all three surfaces
     (public card, admin tabs, redacted draft room) already pass through.
 
+**A third state the entries above never named, found by review of Task 106.** There are not two
+cases but three: a stated `target` (the admin said "Players on a team"), a `cap` with no target (the
+admin said "How many teams" and enough people are accepted to deal them), and **no figure at all** -
+`{ target: null, cap: null }`, reachable whenever a teams-mode event has fewer accepted than it has
+sides, because `planSides` refuses to deal a side with nobody on it. That state previously printed
+the draft default's **6**, and now prints a bare `0` or an empty gap on five screens. Tasks 108 and
+109 originally said "a cap" where they meant "a cap or nothing", so nothing owned it; the criteria
+below now do. It is also why Task 106 was told to write no "rosters of null" into an audit row. The
+lesson is small and repeatable: a nullable pair has three states, and a plan that names two of them
+will ship the third.
+
 **One cost accepted out loud.** Deriving inside `readConfig` means it must also read
 `events.config` and the accepted count: two extra reads, in a function called inside eight
 transactions. The alternative is threading the figure through every call site, which is more code
@@ -2131,12 +2142,17 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Do:** `rosterSizingFrom(shape, accepted)` beside `sizingConsequence`, returning the places on a team as `{ target: number | null; cap: number | null }` - a stated `target` under `perTeam` (equal to the `cap`), a `cap` alone under `teams`, both null when neither can be worked out. Built on `dealSizes`/`planSides` rather than its own arithmetic, so it cannot disagree with the panel's own stated consequence. Pure, no database.
   **An `exact: boolean` third field was built, reviewed and removed, and the reason is worth keeping** because it is this section's own principle turned on itself. The flag said nothing `target !== null` does not. It made the call sites *worse* in this language - `if (places.exact)` leaves `target` typed `number | null`, so every consumer needed a `!`, where `if (places.target !== null)` narrows. It let the type represent a contradiction (`{ target: 3, cap: 3, exact: false }` type-checks) that five later tasks would be hand-building fixtures against, in a feature that had already shipped one silently wrong fixture. And `teamCountFrom`, the nearest sibling, already returns `number | null` and is read as `=== null`. R-248 exists because one quantity was stored in three places; shipping a type with two encodings of one fact, even computed together, is the same mistake one layer down.
 - **Acceptance criteria:**
-  - [ ] `perTeam` gives an exact target equal to the stated figure, whatever the accepted count, including zero accepted
-  - [ ] `teams` with an even split gives that size, marked exact or capped - state which and why in the docblock
-  - [ ] `teams` with an uneven split gives the **largest** side as the cap and no target, proven on eighteen into four
-  - [ ] `teams` with nobody accepted derives nothing rather than guessing
-  - [ ] The figure agrees with `sizingConsequence`'s own `sizes` for the same input, asserted, so the panel's words and this number cannot drift
+  - [x] `perTeam` gives an exact target equal to the stated figure, whatever the accepted count, including zero accepted
+  - [x] `teams` with an even split gives that size, marked exact or capped - state which and why in the docblock
+  - [x] `teams` with an uneven split gives the **largest** side as the cap and no target, proven on eighteen into four
+  - [x] `teams` with nobody accepted derives nothing rather than guessing
+  - [x] The figure agrees with `sizingConsequence`'s own `sizes` for the same input, asserted, so the panel's words and this number cannot drift
 - **Depends on:** nothing.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **The third field was built, then removed, and the argument is this section's own principle turned inward.** `exact: boolean` said nothing `target !== null` does not. It made the call sites *worse* in TypeScript - `if (places.exact)` leaves `target` nullable so every consumer needed a `!`, where the null check narrows. It let the type represent a contradiction (`{ target: 3, cap: 3, exact: false }` type-checks) that five later tasks would hand-build fixtures against, in a feature that had already shipped one silently wrong fixture. And `teamCountFrom`, the nearest sibling, already returns `number | null`. R-248 exists because one quantity was stored in three places; a type with two encodings of one fact is the same mistake one layer down.
+  **The even split is a cap, and the reasoning is the criterion.** Twelve into three is 4, 4, 4 and tempting to call exact - but accept one more and it is 5, 4, 4, so a target would appear and vanish with every acceptance, and a card drawing four places would promise one that may not exist. `target` is null however the arithmetic falls.
+  **A branch nothing exercised got a test rather than trust.** `sizes[0]` is `undefined` only for a `teams` shape with `value < 1`, which `eventShapeFrom` cannot produce and `shapeProblem` refuses - and `noUncheckedIndexedAccess` is off, so the compiler was not forcing it either. One test now reaches it.
+  **The cross-check is the thing that stops drift**: the sweep compares the derived figure against `sizingConsequence`'s own `sizes` over 392 legal counts, from the real function rather than a recomputation, so the panel's words and this number cannot part company.
 
 ### Task 105: `RosterState` takes the figure
 
@@ -2144,12 +2160,17 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Files:** `src/lib/draft-policy.ts`, `src/lib/__tests__/draft-policy.test.ts`
 - **Do:** `rosterState` takes Task 104's figure instead of reading `config.rosterTarget`. `DraftConfig` loses `rosterTarget` - the type, `DEFAULT_DRAFT_CONFIG`, `draftConfigFrom` and `DRAFT_RULE_KEYS` - and the compiler names every reader. The number the draft's arithmetic uses is the `cap`, which under `perTeam` equals the `target`; `draftComplete` contributes no `short` entries when `target === null`, because a team is short only against a target, or a capped draft never reports itself complete and the banner lies.
 - **Acceptance criteria:**
-  - [ ] `rosterState` derives `target`, `slotsLeft`, `full`, `overfilled` and `reserved` from the passed figure, with the existing cases re-pointed rather than rewritten
-  - [ ] Under a cap (no target), no team is reported `short` and a draft completes on an empty pool
-  - [ ] Under a cap, `overfilled` can still fire - and only on a roster larger than the largest legal side, which the cap is
-  - [ ] `changedRules` can no longer name the roster size, and the replacement test asserts the **opposite** of the old one: a moved derived figure cannot lock a draft
-  - [ ] The over-reserve under a cap is at most one minimum bid, asserted, and named in the docblock
+  - [x] `rosterState` derives `target`, `slotsLeft`, `full`, `overfilled` and `reserved` from the passed figure, with the existing cases re-pointed rather than rewritten
+  - [x] Under a cap (no target), no team is reported `short` and a draft completes on an empty pool
+  - [x] Under a cap, `overfilled` can still fire - and only on a roster larger than the largest legal side, which the cap is
+  - [x] `changedRules` can no longer name the roster size, and the replacement test asserts the **opposite** of the old one: a moved derived figure cannot lock a draft
+  - [x] The over-reserve under a cap is at most one minimum bid, asserted, and named in the docblock
 - **Depends on:** Task 104.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **The landmine was caught by the compiler, by design.** `rosterTarget` was in `DRAFT_RULE_KEYS`, which freezes the draft's rules once the first lot opens. A **derived** figure moves when a player is accepted, so leaving the key would have made accepting a player refuse the next save of any unrelated rule, naming the roster size - a bug this change would have *introduced*. The list is declared `satisfies ReadonlyArray<keyof DraftConfig>` precisely so "adding a field is a deliberate decision about whether it locks", so removing the field made the list fail to typecheck until it was dealt with. The replacement test asserts the opposite of the one it replaced: a moved derived figure **cannot** lock a draft.
+  **The third state was decided here rather than defaulted.** For `{ target: null, cap: null }` - a teams-mode night with too few accepted - no place is offered: `slotsLeft 0`, `reserved 0`, `maxBid 0`, refused with a new `roster_unsized` reason, but **not** `full`. An uncapped roster has no honest finite `slotsLeft` and is the "one team buys every player" failure; a *full* one is a lie with consequences, because `full` is what refuses an admin placing somebody. A new refusal reason rather than reusing `roster_full`, whose copy says "Your draft is done" and would have been false.
+  **The over-reserve under a cap is documented, not fixed.** A team on a short side has one slot too many, so it holds back at most one extra minimum bid. Conservative - it never costs anybody a player - and asserted as a bound.
+  **One mutation was reported as narrower than it looks**, which is the honesty this section needed: reading "rosters full" off `slotsLeft` instead of `full` dies only on the *unsized* tests, because under a cap the two readings coincide. Named rather than credited to the cap tests it did not kill.
 
 ### Task 106: The number the screens read - **this is where the reported bug dies**
 
@@ -2157,12 +2178,20 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Files:** `src/lib/draft.ts`, `src/lib/__tests__/draft.test.ts`
 - **Do:** `readConfig` reads the event's shape and accepted count and derives the figure, so every `rosterState` call site gets it - `getTeams` (the public card), `getDraftSnapshot` (the room), `placeOnRoster`, `placeBid`, `awardLot`. `setDraftConfig` stops writing the column and the now-dead shrink refusal at `:1911` goes, because Task 107 is where it lives. `placeOnRoster`'s refusal stops saying "raise the roster size on the Draft tab" and points at Setup -> Format.
 - **Acceptance criteria:**
-  - [ ] **A `perTeam: 3` event with teams and no draft reports `getTeams(...)[0].roster.target === 3`** - the reported defect, as one assertion
-  - [ ] An event with no `draft_configs` row no longer reports a roster figure of 6 from the default
-  - [ ] The draft room's snapshot and the public card report the same figure for the same event
-  - [ ] The fixtures that set roster sizes through `setDraftConfig` now set them through a stored shape, and still exercise the read path rather than a hand-built config literal
-  - [ ] `placeOnRoster`'s refusal names Setup -> Format, asserted on the sentence
+  - [x] **A `perTeam: 3` event with teams and no draft reports `getTeams(...)[0].roster.target === 3`** - the reported defect, as one assertion
+  - [x] An event with no `draft_configs` row no longer reports a roster figure of 6 from the default
+  - [x] The draft room's snapshot and the public card report the same figure for the same event
+  - [x] The fixtures that set roster sizes through `setDraftConfig` now set them through a stored shape, and still exercise the read path rather than a hand-built config literal
+  - [x] `placeOnRoster`'s refusal names Setup -> Format, asserted on the sentence
 - **Depends on:** Task 105.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **The defect died as one assertion, watched failing first.** A `perTeam: 3` event with teams and no draft, no `draft_configs` row, the seeded default 6v6 so three can only come from the derived read: `expected 6 to be 3` before, `3` after. That is the user's report, and it is now a test.
+  **This task absorbed a sequencing error of the lead's.** The plan put the screens in Tasks 108 and 109, but removing a field from `DraftConfig` breaks them at **compile** time, so the tree could not return to green until they were brought to the derived figure. 59 typecheck errors, every one enumerated in the handover from Task 105, repaired mechanically with the wording left to 108/109. The split was right about what the screens must *say* and wrong about when they stop compiling.
+  **"Give it the right number" does not cover `null`.** The audit summary would have written the literal sentence "rosters of null." into a **permanent** row for an unsized event. Caught in review; now a conditional, with the sized sentence byte-identical to before, and a mutation that dies printing exactly that bad string.
+  **Deleting a control is not a mechanical rebinding.** The Draft tab's roster field was removed along with its label and hint - Task 109's first criterion without its second, leaving no labelled figure at all. Restored as a disabled readout showing the cap, with the words untouched, so 109 converts a readout rather than inventing one. The `started`-only suffix was *not* restored: it described the refusal this task deleted.
+  **Three wrong sentences survived the removal**, and that is the pattern of this whole section: a stuck-teams alert telling an admin to "lower the roster size" on a tab that no longer has that control, a rules-locked alert still listing it among the frozen settings, and `readConfig`'s own docblock defending the pair-return with a reason the compiler makes moot. Code right, prose wrong, three times - the same failure as Task 98's early return and Task 104's `exact` flag.
+  **A skipped scaffold that passes empty is worse than none.** The placeholder left for Task 107 asserted `overfilled === false`, true today with no refusal in existence, so un-skipping it would have proved nothing. Now `it.todo`.
+  **And a suite failure that was not one.** A verification run showed 12 failures; every directory passed alone, and the run had taken 521s against the usual 240s because it shared a machine with a concurrent suite and build. This repo recorded that exact trap once before (Task 85, `schedule.test.ts` failing at exactly its 6000ms timeout). **Run the suite alone before believing a failure.**
 
 ### Task 107: The refusal moves to where the number lives
 
@@ -2186,8 +2215,10 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Acceptance criteria:**
   - [ ] A roster with a stated target is unchanged - asserted as a byte digest or a byte-identical guard against pre-task markup
   - [ ] A capped roster (no target) draws no "Empty slot" and no `x/y`
+  - [ ] **An unsized roster (`cap === null`) says so in words rather than printing a `0` or an empty gap**, on every surface that draws one: the public card, the bid box and the draft room's header. The sentence says the panel has not sized the teams yet, and points at Setup -> Format; it must not read as a roster of nothing
   - [ ] A capped roster is not badged short or over for holding what another team holds
   - [ ] The three surfaces that draw a roster agree, so a figure never looks like two things on two pages
+  - [ ] **`DraftRoom`'s header reads the sizing from the snapshot rather than off `teams[0]`** - `getDraftSnapshot` already holds it and discards it at the return, so the room re-derives a fact its own producer had. Needs `sizing` on `DraftSnapshot` and `DraftView` and a pass through `redactDraft`: a policy-type change, which is why it waits for the task that has to word that header's null state anyway (found reviewing Task 106)
 - **Depends on:** Task 105.
 
 ### Task 109: The Draft tab shows it, and stops owning it
@@ -2197,9 +2228,12 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Do:** the roster field becomes a readout naming Setup -> Format. `CaptainsTab`'s "each team drafts N-1 more" needs a capped variant, because under a cap there is no N. The audit summary and `detail` stop carrying `rosterTarget`, since the action no longer settles it; old audit rows keep working because `detail` is read generically and nothing parses that key by name.
 - **Acceptance criteria:**
   - [ ] The Draft tab offers no way to type a roster size, and names where it is set
+  - [ ] **The readout stops being a disabled input.** Task 106 restored it as a `Number_` with `min`/`max` nothing consults (the stepper clamps only on change, and `MAX_PER_TEAM` is 32 regardless) and a mandatory no-op `onChange`. A figure in text under the same eyebrow is the simpler readout; this task is where it changes, since it owns the words (found reviewing Task 106)
   - [ ] The audit line for a draft-rules save no longer claims a roster size
   - [ ] An existing audit row that carries the old key still renders
   - [ ] `CaptainsTab` says something true under a cap, where there is no N for "N-1 more"
+  - [ ] **`CaptainsTab` and `TeamsTab` say something true when there is no figure at all**, rather than "a roster target of 0" or "0 places a team" - the state is reachable with fewer accepted than teams, and it previously printed the draft default's 6
+  - [ ] The audit summary names no roster figure when there is none, which Task 106 made conditional rather than worded - this task decides whether the clause goes entirely
 - **Depends on:** Tasks 105, 106.
 
 ### Task 110: The stated format and the sizing, side by side

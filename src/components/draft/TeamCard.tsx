@@ -87,7 +87,7 @@ export default function TeamCard({
 
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-hair/60 pt-2">
         <span className="num text-12 text-muted">
-          {team.roster.size}/{team.roster.target} on the roster
+          {team.roster.size}/{team.roster.cap} on the roster
         </span>
         {team.roster.slotsLeft > 0 ? (
           <span className="num text-12 text-body">
@@ -106,7 +106,7 @@ export default function TeamCard({
           <RosterList
             members={team.members}
             players={players}
-            target={team.roster.target}
+            target={team.roster.cap ?? undefined}
             hidePrices={hidePrices}
           />
         </div>

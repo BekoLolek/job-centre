@@ -22,6 +22,7 @@ import {
   maxBidFor,
   rosterState,
 } from "@/lib/draft-policy";
+import type { RosterSizing } from "@/lib/events-policy";
 import { formatMoney } from "./money";
 import type { TeamLike } from "./types";
 
@@ -46,10 +47,17 @@ export type Ceiling = {
  *
  * The roster is re-derived from `config` rather than read off the team, because
  * the team's own `roster` was computed against whatever was last *saved* and
- * this is asked while the admin is dragging the roster size around.
+ * this is asked while the admin is dragging the minimum bid around.
+ *
+ * `sizing` is the Format panel's figure for the places on a team (R-248 /
+ * UC-49 2), which the rules no longer carry; the caller hands it in from the
+ * same read that sized the team's own roster, so the preview and the draft
+ * count the same places. A `RosterState` is itself a `RosterSizing` — it
+ * carries `target` and `cap` through untouched — so a caller holding the
+ * team's roster may pass that.
  */
-export function ceilingFor(team: TeamLike, config: DraftConfig): Ceiling {
-  const roster = rosterState(team, team.members, config);
+export function ceilingFor(team: TeamLike, config: DraftConfig, sizing: RosterSizing): Ceiling {
+  const roster = rosterState(team, team.members, config, sizing);
   const max = maxBidFor(team, config, roster);
 
   return {
@@ -61,12 +69,13 @@ export function ceilingFor(team: TeamLike, config: DraftConfig): Ceiling {
   };
 }
 
-/** Every team, under one config. The Draft tab's live readout. */
+/** Every team, under one config and one sizing. The Draft tab's live readout. */
 export function ceilingsFor(
   teams: readonly TeamLike[],
-  config: DraftConfig
+  config: DraftConfig,
+  sizing: RosterSizing
 ): Array<Ceiling & { team: TeamLike }> {
-  return teams.map((team) => ({ team, ...ceilingFor(team, config) }));
+  return teams.map((team) => ({ team, ...ceilingFor(team, config, sizing) }));
 }
 
 function slots(count: number): string {
@@ -96,7 +105,9 @@ function ceilingSentence(
   config: DraftConfig
 ): string {
   if (roster.slotsLeft <= 0) {
-    return `${name} is full at ${roster.target} — nothing left to buy.`;
+    // The cap, not the target: full is measured against the cap, and under a
+    // count of teams there is no target to name.
+    return `${name} is full at ${roster.cap} — nothing left to buy.`;
   }
   if (!config.mustFillRoster) {
     return `With ${slots(roster.slotsLeft)} left, ${name} can bid the whole ${formatMoney(

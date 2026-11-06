@@ -74,7 +74,12 @@ export default function CaptainsTab({
   data: DraftTabData;
 }) {
   const router = useRouter();
-  const { players, config } = data;
+  const { players } = data;
+  // The places on a team are the Format panel's cap (R-248), not a draft
+  // rule. Kept nullable here, and collapsed only where a number is printed,
+  // so the sentence for "the panel has no figure yet" (Task 108's) has one
+  // `cap === null` to branch on.
+  const cap = data.sizing.cap;
 
   const accepted = applicants.filter((row) => row.status === "accepted");
 
@@ -195,9 +200,9 @@ export default function CaptainsTab({
           A captain is on their team from the moment you choose them — a roster row costing{" "}
           <span className="num text-union">0</span> — and they{" "}
           <span className="text-chalk">never enter the draft pool</span>. With a roster target
-          of <span className="num text-union">{config.rosterTarget}</span>, each team drafts{" "}
-          <span className="num text-union">{Math.max(0, config.rosterTarget - 1)}</span> more
-          {config.rosterTarget - 1 === 1 ? " player" : " players"}.
+          of <span className="num text-union">{cap ?? 0}</span>, each team drafts{" "}
+          <span className="num text-union">{Math.max(0, (cap ?? 0) - 1)}</span> more
+          {(cap ?? 0) - 1 === 1 ? " player" : " players"}.
         </p>
         <p className="text-12 text-muted">
           Settled in plan §13 and recorded in §14. Choosing a captain takes them out of the
@@ -329,7 +334,7 @@ export default function CaptainsTab({
                               ...players,
                               [pick]: { displayName: row ? nameOf(row) : "Unknown player" },
                             }}
-                            target={config.rosterTarget}
+                            target={cap ?? undefined}
                           />
                         </div>
                       )}
@@ -342,7 +347,7 @@ export default function CaptainsTab({
                       <RosterList
                         members={team.members}
                         players={players}
-                        target={config.rosterTarget}
+                        target={cap ?? undefined}
                         emptyMessage="Nobody yet — the captain will be the first row."
                       />
                     </div>

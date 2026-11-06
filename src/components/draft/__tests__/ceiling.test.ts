@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_DRAFT_CONFIG, type DraftConfig } from "@/lib/draft-policy";
+import { type RosterSizing, eventShapeFrom, rosterSizingFrom } from "@/lib/events-policy";
 import { ceilingFor, ceilingsFor } from "../ceiling";
 import { formatDelta, formatMoney } from "../money";
 import { playerName } from "../types";
@@ -23,11 +24,13 @@ function team(overrides: Partial<TeamLike> = {}): TeamLike {
     balanceStart: 1000,
     balance: 1000,
     members: [{ teamId: id, userId: "captain-1", price: 0, isCaptain: true }],
-    // Replaced below by `ceilingFor`, which re-derives it from the config.
+    // Replaced below by `ceilingFor`, which re-derives it from the config and
+    // the sizing.
     roster: {
       size: 1,
       captainCount: 1,
       target: 6,
+      cap: 6,
       slotsLeft: 5,
       full: false,
       overfilled: false,
@@ -40,6 +43,21 @@ function team(overrides: Partial<TeamLike> = {}): TeamLike {
 
 function config(overrides: Partial<DraftConfig> = {}): DraftConfig {
   return { ...DEFAULT_DRAFT_CONFIG, ...overrides };
+}
+
+/**
+ * The places on a team, as the Format panel states them under "players on a
+ * team" — through the real reader over a stored shape, never a literal, for
+ * the reason `rosterSizingFrom`'s docblock gives: a hand-built sizing is the
+ * first place target and cap could disagree.
+ */
+function sized(places: number): RosterSizing {
+  return rosterSizingFrom(
+    eventShapeFrom({
+      eventShape: { teamEvent: true, draft: true, sizing: { mode: "perTeam", value: places } },
+    }),
+    0
+  );
 }
 
 describe("ceilingFor", () => {
@@ -55,7 +73,7 @@ describe("ceilingFor", () => {
       ],
     });
 
-    const ceiling = ceilingFor(subject, config({ rosterTarget: 6, mustFillRoster: true }));
+    const ceiling = ceilingFor(subject, config({ mustFillRoster: true }), sized(6));
 
     expect(ceiling.roster.slotsLeft).toBe(3);
     expect(ceiling.roster.reserved).toBe(2);
@@ -75,7 +93,7 @@ describe("ceilingFor", () => {
       ],
     });
 
-    const ceiling = ceilingFor(subject, config({ rosterTarget: 3 }));
+    const ceiling = ceilingFor(subject, config(), sized(3));
 
     expect(ceiling.roster.slotsLeft).toBe(1);
     expect(ceiling.max).toBe(400);
@@ -84,7 +102,7 @@ describe("ceilingFor", () => {
 
   it("gives back the whole balance when the rule is off", () => {
     const subject = team({ balance: 1000 });
-    const ceiling = ceilingFor(subject, config({ mustFillRoster: false, rosterTarget: 6 }));
+    const ceiling = ceilingFor(subject, config({ mustFillRoster: false }), sized(6));
 
     expect(ceiling.max).toBe(1000);
     expect(ceiling.roster.reserved).toBe(0);
@@ -100,17 +118,18 @@ describe("ceilingFor", () => {
       ],
     });
 
-    const ceiling = ceilingFor(subject, config({ rosterTarget: 2 }));
+    const ceiling = ceilingFor(subject, config(), sized(2));
 
     expect(ceiling.max).toBe(0);
     expect(ceiling.sentence).toBe("Rivals Red is full at 2 — nothing left to buy.");
   });
 
   it("counts the captain against the target, per §14", () => {
-    const withCaptain = ceilingFor(team(), config({ rosterTarget: 6 }));
+    const withCaptain = ceilingFor(team(), config(), sized(6));
     const withoutCaptain = ceilingFor(
       team({ captainUserId: null, members: [] }),
-      config({ rosterTarget: 6 })
+      config(),
+      sized(6)
     );
 
     expect(withCaptain.roster.slotsLeft).toBe(5);
@@ -120,19 +139,16 @@ describe("ceilingFor", () => {
   it("flags a team that cannot reach the minimum bid at all", () => {
     // Five slots left holds 4 × 100 back, leaving 50 — under the 100 minimum.
     const subject = team({ balance: 450 });
-    const ceiling = ceilingFor(
-      subject,
-      config({ rosterTarget: 6, minBid: 100, mustFillRoster: true })
-    );
+    const ceiling = ceilingFor(subject, config({ minBid: 100, mustFillRoster: true }), sized(6));
 
     expect(ceiling.max).toBe(50);
     expect(ceiling.stuck).toBe(true);
   });
 
-  it("re-derives the roster from the config rather than trusting the team's own", () => {
-    // The team arrives carrying a roster computed against a target of 6; asking
-    // for 4 must answer for 4, because that is the setting on screen.
-    const ceiling = ceilingFor(team(), config({ rosterTarget: 4 }));
+  it("re-derives the roster from the sizing rather than trusting the team's own", () => {
+    // The team arrives carrying a roster computed against six places; asked
+    // for four it must answer for four, because that is the panel's figure.
+    const ceiling = ceilingFor(team(), config(), sized(4));
 
     expect(ceiling.roster.target).toBe(4);
     expect(ceiling.roster.slotsLeft).toBe(3);
@@ -142,7 +158,8 @@ describe("ceilingFor", () => {
   it("prices every team against one config", () => {
     const rows = ceilingsFor(
       [team({ id: "a", name: "A" }), team({ id: "b", name: "B", balance: 500, members: [] })],
-      config({ rosterTarget: 6 })
+      config(),
+      sized(6)
     );
 
     expect(rows.map((row) => row.team.name)).toEqual(["A", "B"]);

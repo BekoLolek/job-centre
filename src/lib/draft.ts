@@ -111,9 +111,11 @@ import { dealTeams } from "./random-teams";
 // How the Format panel sizes the teams (R-218), read here so that the random
 // fill, the hand-built count and the screen all plan from one function.
 import {
+  type RosterSizing,
   countFollowsFormatRefusal,
   eventShapeFrom,
   planSides,
+  rosterSizingFrom,
   teamCountFrom,
 } from "./events-policy";
 // `gatesFor` rather than a second ladder-and-ranks read of its own: the captain
@@ -174,13 +176,75 @@ async function lockEvent(database: Database, eventId: string): Promise<EventRow 
   return row ?? null;
 }
 
-async function readConfig(database: Database, eventId: string): Promise<DraftConfig> {
+/**
+ * The draft's rules and the places on a team, read together.
+ *
+ * `config` is the `draft_configs` row with its gaps filled, as it always was.
+ * `sizing` is the Format panel's figure, derived by `rosterSizingFrom` from the
+ * event's shape and how many players are accepted — never from a column of
+ * this table (R-248 / UC-49 2, 2a).
+ */
+type DraftRules = { config: DraftConfig; sizing: RosterSizing };
+
+/**
+ * One event's draft rules and roster sizing — **three reads, on purpose**.
+ *
+ * ## Why the sizing is read here and not threaded in by the caller
+ *
+ * This used to read one table and hand back a `DraftConfig` whose
+ * `rosterTarget` sized every roster on the site. That column defaulted to six
+ * when no row existed at all, so an event whose Format panel said three a
+ * side drew six empty places on its public team card — and, for an event with
+ * teams and no draft, the Draft tab that could have corrected the figure was
+ * hidden. The figure was wrong and unreachable at once (R-248).
+ *
+ * The places on a team are now the panel's figure, derived on every read by
+ * `rosterSizingFrom`. Every surface that sizes a roster — the public team
+ * card (`getTeams`), the admin tabs (`getRosterSizing`), the redacted draft
+ * room (`getDraftSnapshot`) and the three writes that refuse on a full roster
+ * — already comes through this one function for the rules, so deriving the
+ * figure here keeps one source: there is exactly one place that turns the
+ * stored shape and the accepted count into places on a team, and every
+ * surface reads it. The alternative — each caller reading the shape and the
+ * count for itself and handing `rosterState` its own `sizing` — would not be
+ * forgettable (`rosterState`'s fourth parameter is mandatory, so the compiler
+ * holds that), but it would be ten derivations of one figure, any of which
+ * could read the count a different way; this read is where they agree.
+ *
+ * ## The cost, stated so nobody rediscovers it
+ *
+ * Deriving the figure needs `events.config` (the shape) and the accepted
+ * count, so this is now three statements where it was one, and it runs inside
+ * eight transactions — including `setTeams`, `setDraftConfig` and
+ * `moveToReserve`, which only want the rules. The two extra reads are a
+ * primary-key lookup and an indexed count on one event, and they were accepted
+ * when this design was chosen over the threaded argument above; the row lock
+ * every one of those transactions already holds is the expensive part, not
+ * these. A read of the event row inside a transaction that has already locked
+ * it sees the locked row, so nothing here reads around the lock.
+ *
+ * `acceptedUserIds` rather than a `count(*)`, because it is the read
+ * `setTeamCount` and `assignRandomTeams` size the teams from, and the places on
+ * a team have to come from the same count as the number of teams — a second
+ * query phrased slightly differently is how the figure on the card could stop
+ * agreeing with the sides the shuffle dealt.
+ *
+ * An event that no longer exists has no places: `eventShapeFrom(null)` would
+ * invent a six from the night format's default, which is exactly the figure
+ * this read exists to stop drawing for nothing.
+ */
+async function readConfig(database: Database, eventId: string): Promise<DraftRules> {
   const [row] = await database
     .select()
     .from(draftConfigs)
     .where(eq(draftConfigs.eventId, eventId))
     .limit(1);
-  return draftConfigFrom(row ?? null);
+  const config = draftConfigFrom(row ?? null);
+
+  const event = await readEvent(database, eventId);
+  if (!event) return { config, sizing: { target: null, cap: null } };
+  const accepted = await acceptedUserIds(database, eventId);
+  return { config, sizing: rosterSizingFrom(eventShapeFrom(event.config), accepted.length) };
 }
 
 async function readTeams(database: Database, eventId: string): Promise<Team[]> {
@@ -615,7 +679,7 @@ export async function setTeams(
       const event = await lockEvent(tx, eventId);
       if (!event) return fail("That event no longer exists.");
 
-      const config = await readConfig(tx, eventId);
+      const { config } = await readConfig(tx, eventId);
       const existing = await readTeams(tx, eventId);
 
       const locked = lockRefusal(event);
@@ -911,7 +975,7 @@ export async function setTeamCount(
         return fail(countFollowsFormatRefusal(shape, accepted.length, expected, count));
       }
 
-      const config = await readConfig(tx, eventId);
+      const { config } = await readConfig(tx, eventId);
       const existing = await readTeams(tx, eventId);
 
       if (count === existing.length) {
@@ -1751,13 +1815,18 @@ export async function placeOnRoster(
       return withData({ member: guard.member, fromTeamId: teamId, toTeamId: teamId });
     }
 
-    const config = await readConfig(tx, eventId);
+    const { config, sizing } = await readConfig(tx, eventId);
     const members = await readMembers(tx, eventId);
-    // R-64's roster size, with the captain counted in it (§14).
-    const roster = rosterState(team, asMemberViews(members), config);
+    // The places on a team are the Format panel's figure (R-248), with the
+    // captain counted in them (§14). `full` is measured against the cap, and
+    // the sentence prints the cap for the same reason: under a count of teams
+    // there is no target to name, and under players-per-team the two are the
+    // same number. The place to change it is the panel, which is the only
+    // screen that holds it now — the Draft tab no longer has a roster size.
+    const roster = rosterState(team, asMemberViews(members), config, sizing);
     if (roster.full) {
       return fail(
-        `${team.name}'s roster is full — ${roster.size} of ${roster.target}. Take somebody off it first, or raise the roster size on the Draft tab.`
+        `${team.name}'s roster is full — ${roster.size} of ${roster.cap}. Take somebody off it first, or raise the places on a team in Setup → Format.`
       );
     }
 
@@ -1837,7 +1906,6 @@ const RULE_LABELS: Record<keyof DraftConfig, string> = {
   selectionMode: "who goes up next",
   reserveEnabled: "the reserve pool",
   reserveRounds: "the reserve rounds",
-  rosterTarget: "the roster size",
   mustFillRoster: "the roster-fill protection",
   bidVisibility: "who sees bids",
 };
@@ -1853,7 +1921,23 @@ export async function getDraftConfig(
   eventId: string,
   database: Database = defaultDb
 ): Promise<DraftConfig> {
-  return readConfig(database, eventId);
+  return (await readConfig(database, eventId)).config;
+}
+
+/**
+ * The places on a team, as the Format panel implies them (R-248 / UC-49 2).
+ *
+ * For the admin tabs, which print the figure beside rosters that may not exist
+ * yet — a Captains tab with no teams still says how many each captain leaves
+ * to draft — so they cannot read it off a team's own `roster`. Through
+ * `readConfig` rather than a derivation of its own, so the tabs, the public
+ * card and the draft room are one read path and cannot show three figures.
+ */
+export async function getRosterSizing(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<RosterSizing> {
+  return (await readConfig(database, eventId)).sizing;
 }
 
 /**
@@ -1871,7 +1955,7 @@ export async function getDraftConfig(
  * Not when the first lot is *awarded*, which is where the refusals above stop,
  * and not when the draft is created. The moment a name goes up on the wheel,
  * captains are deciding what to offer against a published set of rules — a
- * minimum bid, a timer, a must-fill switch, a roster size — and every one of
+ * minimum bid, a timer, a must-fill switch — and every one of
  * those changes what a bid means. Moving them underneath a live room is not a
  * correction, it is a different draft.
  *
@@ -1895,7 +1979,7 @@ export async function setDraftConfig(
     const event = await lockEvent(tx, eventId);
     if (!event) return fail("That event no longer exists.");
 
-    const current = await readConfig(tx, eventId);
+    const { config: current } = await readConfig(tx, eventId);
 
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
@@ -1908,15 +1992,10 @@ export async function setDraftConfig(
       .limit(1);
     const started = awarded.length > 0;
 
-    if (started && next.rosterTarget < current.rosterTarget) {
-      return fail(
-        "The draft has already awarded players, so the roster size cannot be lowered now."
-      );
-    }
-
-    // UC-16 1a. Checked after the sentence above so that the commonest mistake
-    // — reaching for the roster size mid-draft — still gets the answer that
-    // says what is wrong with *that* rather than a list.
+    // The roster size is not among these rules any more (R-248): it is the
+    // Format panel's figure, and whether it may still shrink once players
+    // have been bought for it is refused where it is written, not here.
+    // UC-16 1a.
     const moved = changedRules(current, next);
     if (moved.length > 0 && (await draftHasBegun(tx, eventId))) {
       return fail(
@@ -2266,7 +2345,7 @@ export async function openLot(
     if (locked) return fail(locked);
     if (already) return fail("Somebody is already on the block. Settle that lot first.");
 
-    const config = await readConfig(tx, eventId);
+    const { config, sizing } = await readConfig(tx, eventId);
     const pool = await readPool(tx, eventId);
     /*
      * The pool, minus anybody the event has since let go (R-66 / UC-16 pre1,
@@ -2301,7 +2380,8 @@ export async function openLot(
         id: team.id,
         members: memberViews.filter((member) => member.teamId === team.id),
       })),
-      config
+      config,
+      sizing
     );
     if (completion.reason === "rosters_full" || completion.reason === "both") {
       return fail("Every roster is full, so there is nobody left to bid on them.");
@@ -2455,13 +2535,13 @@ export async function placeBid(
       .limit(1);
     if (!team) return fail("That team is not in this draft.");
 
-    const config = await readConfig(tx, lot.eventId);
+    const { config, sizing } = await readConfig(tx, lot.eventId);
     const members = await readMembers(tx, lot.eventId);
     const lots = await readLots(tx, lot.eventId);
     const bids = await readBids(tx, lotId);
 
     const balance = balanceFor(team, asLotViews(lots));
-    const roster = rosterState(team, asMemberViews(members), config);
+    const roster = rosterState(team, asMemberViews(members), config, sizing);
 
     const check = canPlaceBid(
       { id: team.id, balance },
@@ -2702,7 +2782,7 @@ export async function awardLot(
       );
     }
 
-    const config = await readConfig(tx, lot.eventId);
+    const { config, sizing } = await readConfig(tx, lot.eventId);
     const members = await readMembers(tx, lot.eventId);
     const lots = await readLots(tx, lot.eventId);
 
@@ -2711,7 +2791,7 @@ export async function awardLot(
     }
 
     const balance = balanceFor(team, asLotViews(lots));
-    const roster = rosterState(team, asMemberViews(members), config);
+    const roster = rosterState(team, asMemberViews(members), config, sizing);
 
     if (roster.slotsLeft <= 0) return fail(`${team.name}'s roster is already full.`);
     if (bid.amount > balance) {
@@ -2854,7 +2934,7 @@ export async function moveToReserve(
     const locked = lockRefusal(event);
     if (locked) return fail(locked);
 
-    const config = await readConfig(tx, lot.eventId);
+    const { config } = await readConfig(tx, lot.eventId);
     if (!config.reserveEnabled) return fail("The reserve pool is switched off for this event.");
 
     /*
@@ -3121,7 +3201,7 @@ export async function getTeams(
   eventId: string,
   database: Database = defaultDb
 ): Promise<TeamWithRoster[]> {
-  const [config, rows, members, lots] = await Promise.all([
+  const [{ config, sizing }, rows, members, lots] = await Promise.all([
     readConfig(database, eventId),
     readTeams(database, eventId),
     readMembers(database, eventId),
@@ -3134,7 +3214,7 @@ export async function getTeams(
     ...team,
     members: members.filter((member) => member.teamId === team.id),
     balance: balanceFor(team, lotViews),
-    roster: rosterState(team, memberViews, config),
+    roster: rosterState(team, memberViews, config, sizing),
   }));
 }
 
@@ -3231,7 +3311,7 @@ export async function getDraftSnapshot(
   if (!event) return null;
 
   const now = (options.now ?? new Date()).getTime();
-  const [config, teamRows, memberRows, lotRows, poolRows] = await Promise.all([
+  const [{ config, sizing }, teamRows, memberRows, lotRows, poolRows] = await Promise.all([
     readConfig(database, eventId),
     readTeams(database, eventId),
     readMembers(database, eventId),
@@ -3246,7 +3326,7 @@ export async function getDraftSnapshot(
 
   const standings: TeamStanding[] = teamRows.map((team) => {
     const balance = balanceFor(team, lotViews);
-    const roster = rosterState(team, memberViews, config);
+    const roster = rosterState(team, memberViews, config, sizing);
     const bid = bidRows.find((row) => row.teamId === team.id) ?? null;
     return {
       id: team.id,
@@ -3335,7 +3415,8 @@ export async function getDraftSnapshot(
       id: team.id,
       members: memberViews.filter((member) => member.teamId === team.id),
     })),
-    config
+    config,
+    sizing
   );
 
   return {

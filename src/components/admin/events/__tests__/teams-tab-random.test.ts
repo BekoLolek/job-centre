@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MemberLike, TeamLike } from "@/components/draft";
 import { DEFAULT_DRAFT_CONFIG, rosterState } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
-import { eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
+import { eventShapeFrom, rosterSizingFrom, teamFormatFrom } from "@/lib/events-policy";
 import { applicant } from "./applicants-fixture";
 import type { DraftTabData } from "../types";
 
@@ -50,7 +50,10 @@ vi.mock("@/app/admin/events/draft-actions", () => ({
 
 const { default: TeamsTab, acceptedCount } = await import("../TeamsTab");
 
-const CONFIG = { ...DEFAULT_DRAFT_CONFIG, rosterTarget: 6 };
+const CONFIG = DEFAULT_DRAFT_CONFIG;
+
+/** Six a side, through the real reader over a 6v6 event that never saw the panel. */
+const SIZING = rosterSizingFrom(eventShapeFrom({ teamFormat: "6v6" }), 0);
 
 function team(id: string, name: string, members: MemberLike[] = []): TeamLike {
   return {
@@ -60,7 +63,7 @@ function team(id: string, name: string, members: MemberLike[] = []): TeamLike {
     captainUserId: members.find((row) => row.isCaptain)?.userId ?? null,
     balanceStart: CONFIG.defaultBalance,
     balance: CONFIG.defaultBalance,
-    roster: rosterState({ id }, members, CONFIG),
+    roster: rosterState({ id }, members, CONFIG, SIZING),
     members,
   };
 }
@@ -88,6 +91,7 @@ function tabData(over: Partial<DraftTabData> = {}): DraftTabData {
   return {
     teams: [],
     config: CONFIG,
+    sizing: SIZING,
     pool: { main: [], reserve: [] },
     unpooled: [],
     discarded: [],

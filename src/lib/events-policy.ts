@@ -965,6 +965,108 @@ export function teamCountFrom(shape: EventShape, accepted: number): number | nul
 }
 
 /**
+ * The places on a team, as the Format panel implies them (R-248, R-250 /
+ * UC-49 2, 1a, 1b).
+ *
+ * `target` is a number of places the admin decided on — fill to it, draw it.
+ * `cap` is the most a team may hold. **A set `target` always equals `cap`**:
+ * the stated figure is both the places to fill and the most to hold, so a
+ * reader that only wants the latter reads one field in both modes, and a
+ * reader asking "is this a decision or a consequence?" asks `target !== null`
+ * — which also narrows, where a third boolean field would not. No flag
+ * carries that answer, because a flag could disagree with the two numbers and
+ * a hand-built fixture would be the first place it did.
+ */
+export type RosterSizing = {
+  /** The places a team is meant to hold, when the admin stated them. */
+  target: number | null;
+  /** The most a team may hold — the stated figure, or the largest planned side. */
+  cap: number | null;
+};
+
+/** What a shape yields when there is nothing to derive. */
+const NO_ROSTER_SIZING: RosterSizing = { target: null, cap: null };
+
+/**
+ * How many places a team has, from the Format panel — **derived on every
+ * read, never stored** (R-248 / UC-49 2).
+ *
+ * This is {@link teamCountFrom}'s rule applied to the sibling figure, and it
+ * exists because that figure escaped it: `draft_configs.roster_target` was a
+ * second stored copy of the places on a team, defaulting to six, and the
+ * public team card drew it for an event whose panel said three. The
+ * {@link SIZING_MODES} docblock calls storing both figures "a disagreement
+ * waiting to happen"; this is the function that stops writing one of them.
+ *
+ * ## Players per team is the admin's own number, and is a target
+ *
+ * Under `perTeam` the figure is a decision, so it holds whoever is accepted —
+ * three a side with nobody accepted is still three a side (UC-49 1b). It is
+ * returned as both `target` and `cap`: a team meant to hold three is also a
+ * team that holds no more than three, and a reader that only wants the most a
+ * team may hold (the draft's bid reserve) reads one field in both modes. It
+ * deliberately does not go through `planTeams`, whose refusals are about
+ * whether the accepted count makes two sides yet — the places on one side are
+ * the stated figure either way, exactly as `teamCountFrom` returns a stated
+ * team count without asking the planner.
+ *
+ * ## A count of teams makes the per-team figure a cap, and **why a cap**
+ *
+ * Under `teams` the per-team figure is a consequence of how many are
+ * accepted, and it is uneven by arithmetic: eighteen into four is 5, 5, 4, 4.
+ * Three readings of that were weighed, and the next reader will reach for the
+ * first, so here is why it lost.
+ *
+ * **Each team's own planned size, matched by position — rejected.** `dealSizes`
+ * hands the remainder to the *first* positions, and teams are ordered by
+ * `teams.sort`, so reordering the teams would move which team is allowed five
+ * players — against the Teams tab's own promise that a team carries its
+ * identity with it. Accepting one more player re-deals every position. And two
+ * teams holding the same five players would have one badged over target and
+ * the other not, on nothing but where they sit in the list.
+ *
+ * **No figure at all under this mode — rejected.** The draft needs a cap:
+ * without one a team's maximum bid is its whole balance, and one team can buy
+ * every player.
+ *
+ * **The largest planned side, as a cap — chosen.** It is the largest legal
+ * side, so it can never falsely mark a team over. It over-reserves the draft's
+ * bid reserve by at most one minimum bid, which is conservative and costs
+ * nobody a player.
+ *
+ * ## An even split is still a cap, not a target
+ *
+ * Twelve into three is 4, 4, 4, and it is tempting to call that a target. It
+ * is not: the figure is still a consequence of the accepted count — accept one
+ * more and it is 5, 4, 4 — so a target would appear and vanish with every
+ * acceptance, and a card that drew four places while the split happened to be
+ * even would be promising a place that may not exist, which is what R-250 says
+ * this mode must not do. A set `target` means the figure is a decision; under
+ * this mode it never is, so `target` is null however the arithmetic falls.
+ *
+ * ## Built on `planSides`, not on its own arithmetic
+ *
+ * The cap is the biggest of the sides `planSides` plans — `TeamPlan.sizes` is
+ * biggest first — so it is the same deal `sizingConsequence` prints on the
+ * panel and `assignRandomTeams` writes; `teams-three-ways.test.ts` holds the
+ * figure against the panel's own sizes over every legal count. Where
+ * `planSides` refuses (nobody accepted, or fewer people than sides) there is
+ * nothing to derive and no cap is shown (UC-49 1b): a cap taken from a deal
+ * the shuffle would refuse to write would be a figure for teams that cannot
+ * exist. A solo event has no places to speak of, for `teamCountFrom`'s reason.
+ */
+export function rosterSizingFrom(shape: EventShape, accepted: number): RosterSizing {
+  if (!shape.teamEvent) return NO_ROSTER_SIZING;
+  if (shape.sizing.mode === "perTeam") {
+    return { target: shape.sizing.value, cap: shape.sizing.value };
+  }
+  const plan = planSides(shape.sizing, accepted);
+  if (!plan.ok) return NO_ROSTER_SIZING;
+  const largest = plan.plan.sizes[0];
+  return largest === undefined ? NO_ROSTER_SIZING : { target: null, cap: largest };
+}
+
+/**
  * Why a team count that disagrees with the Format panel is refused — the
  * sentence `setTeamCount` answers with and the Teams tab shows beside the
  * control, so the admin reads the same words before and after the round trip.

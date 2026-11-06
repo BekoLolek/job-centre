@@ -116,7 +116,9 @@ export async function checkBid(
   return {
     check,
     hypothetical: lot === null,
-    ceiling: ceilingFor(team, snapshot.config).sentence,
+    // The team's own roster carries the sizing the snapshot was built with, so
+    // the sentence counts the same places `canPlaceBid` just did.
+    ceiling: ceilingFor(team, snapshot.config, team.roster).sentence,
   };
 }
 

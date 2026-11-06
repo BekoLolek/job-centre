@@ -33,12 +33,30 @@ import {
   spinning,
   tieNotice,
 } from "@/lib/draft-policy";
+import type { RosterSizing } from "@/lib/events-policy";
 
 const T0 = 1_700_000_000_000;
 
 function config(over: Partial<DraftConfig> = {}): DraftConfig {
   return draftConfigFrom({ ...DEFAULT_DRAFT_CONFIG, ...over });
 }
+
+/*
+ * The places on a team, as `rosterSizingFrom` hands them over (Task 104):
+ * a stated figure is a target and the cap at once; a figure derived from a
+ * count of teams is a cap with no target; and nothing derivable is neither.
+ * Built by hand here so this file tests the draft's arithmetic against the
+ * three shapes and not the Format panel's planner, which has its own tests.
+ */
+function stated(places: number): RosterSizing {
+  return { target: places, cap: places };
+}
+function cappedAt(places: number): RosterSizing {
+  return { target: null, cap: places };
+}
+const UNSIZED: RosterSizing = { target: null, cap: null };
+/** The draft the community already knows: six a side, captain included. */
+const SIX = stated(6);
 
 /** A roster of `size` people, the first of whom is the captain. */
 function roster(teamId: string, size: number, price = 100): TeamMemberView[] {
@@ -76,7 +94,6 @@ describe("draftConfigFrom", () => {
       selectionMode: "admin_pick",
       reserveEnabled: false,
       reserveRounds: 2,
-      rosterTarget: 5,
       mustFillRoster: false,
       bidVisibility: "everyone",
     };
@@ -88,19 +105,27 @@ describe("draftConfigFrom", () => {
       defaultBalance: -50,
       minBid: -1,
       minIncrement: 0,
-      rosterTarget: 0,
     });
     expect(clamped.defaultBalance).toBe(0);
     expect(clamped.minBid).toBe(0);
     expect(clamped.minIncrement).toBe(1);
-    expect(clamped.rosterTarget).toBe(1);
   });
 
-  it("truncates fractions rather than storing a fractional roster", () => {
-    expect(draftConfigFrom({ rosterTarget: 6.9, minBid: 12.7 })).toMatchObject({
-      rosterTarget: 6,
+  it("truncates fractions rather than storing a fractional amount", () => {
+    expect(draftConfigFrom({ defaultBalance: 999.9, minBid: 12.7 })).toMatchObject({
+      defaultBalance: 999,
       minBid: 12,
     });
+  });
+
+  it("drops a roster size a stored row still carries — the figure is the Format panel's (R-248)", () => {
+    // `draft_configs.roster_target` is still a column, so a row read from the
+    // database still spells one. It must not come through: `setDraftConfig`
+    // writes the whole normalised config back, and a value that came through
+    // here would be written there, which is the stored copy R-248 retires.
+    const row = { ...DEFAULT_DRAFT_CONFIG, rosterTarget: 3 };
+    expect(draftConfigFrom(row)).not.toHaveProperty("rosterTarget");
+    expect(draftConfigFrom(row)).toEqual(DEFAULT_DRAFT_CONFIG);
   });
 
   it("treats a nonsense enum as the default rather than trusting it", () => {
@@ -175,7 +200,7 @@ describe("balanceFor", () => {
 
 describe("rosterState", () => {
   it("counts the captain as a roster slot (§14)", () => {
-    const state = rosterState({ id: "t1" }, roster("t1", 1), config());
+    const state = rosterState({ id: "t1" }, roster("t1", 1), config(), SIX);
     expect(state.size).toBe(1);
     expect(state.captainCount).toBe(1);
     expect(state.slotsLeft).toBe(5);
@@ -184,84 +209,180 @@ describe("rosterState", () => {
 
   it("ignores members of other teams", () => {
     const members = [...roster("t1", 2), ...roster("t2", 4)];
-    expect(rosterState({ id: "t1" }, members, config()).size).toBe(2);
+    expect(rosterState({ id: "t1" }, members, config(), SIX).size).toBe(2);
+  });
+
+  it("carries the Format panel's figure, not one of its own (R-248)", () => {
+    // The same roster against two stated figures: the places come from the
+    // sizing and nothing else — there is no default to fall back on.
+    expect(rosterState({ id: "t1" }, roster("t1", 1), config(), stated(3))).toMatchObject({
+      target: 3,
+      cap: 3,
+      slotsLeft: 2,
+    });
+    expect(rosterState({ id: "t1" }, roster("t1", 1), config(), stated(8))).toMatchObject({
+      target: 8,
+      cap: 8,
+      slotsLeft: 7,
+    });
   });
 
   it("is full at the target and never reports negative slots", () => {
-    const full = rosterState({ id: "t1" }, roster("t1", 6), config());
+    const full = rosterState({ id: "t1" }, roster("t1", 6), config(), SIX);
     expect(full).toMatchObject({ full: true, slotsLeft: 0, overfilled: false });
 
-    const over = rosterState({ id: "t1" }, roster("t1", 8), config());
+    const over = rosterState({ id: "t1" }, roster("t1", 8), config(), SIX);
     expect(over).toMatchObject({ full: true, slotsLeft: 0, overfilled: true });
   });
 
   it("reserves the minimum bid for each slot beyond the one being bid on", () => {
     // Three slots left: winning takes one, two remain at 50 apiece.
-    const state = rosterState({ id: "t1" }, roster("t1", 3), config({ minBid: 50 }));
+    const state = rosterState({ id: "t1" }, roster("t1", 3), config({ minBid: 50 }), SIX);
     expect(state.slotsLeft).toBe(3);
     expect(state.minPerSlot).toBe(50);
     expect(state.reserved).toBe(100);
   });
 
   it("treats an unpriced slot as costing one, so the rule is never a no-op", () => {
-    const state = rosterState({ id: "t1" }, roster("t1", 3), config({ minBid: 0 }));
+    const state = rosterState({ id: "t1" }, roster("t1", 3), config({ minBid: 0 }), SIX);
     expect(state.minPerSlot).toBe(1);
     expect(state.reserved).toBe(2);
   });
 
   it("reserves nothing when the must-fill rule is off", () => {
-    const state = rosterState({ id: "t1" }, roster("t1", 3), config({ mustFillRoster: false }));
+    const state = rosterState(
+      { id: "t1" },
+      roster("t1", 3),
+      config({ mustFillRoster: false }),
+      SIX
+    );
     expect(state.minPerSlot).toBe(0);
     expect(state.reserved).toBe(0);
   });
 
   it("reserves nothing on the last slot, since there is nothing left to fill", () => {
-    const state = rosterState({ id: "t1" }, roster("t1", 5), config({ minBid: 50 }));
+    const state = rosterState({ id: "t1" }, roster("t1", 5), config({ minBid: 50 }), SIX);
     expect(state.slotsLeft).toBe(1);
     expect(state.reserved).toBe(0);
+  });
+
+  describe("under a cap with no target (R-250 / UC-49 1a)", () => {
+    // Eighteen accepted into four teams is 5, 5, 4, 4: the cap is the
+    // largest side, 5, and no team has a target.
+
+    it("counts slots to the cap, and carries no target", () => {
+      const state = rosterState({ id: "t1" }, roster("t1", 1), config(), cappedAt(5));
+      expect(state).toMatchObject({ target: null, cap: 5, slotsLeft: 4, full: false });
+    });
+
+    it("is full at the cap, and over-filled only above it — the largest legal side", () => {
+      const atCap = rosterState({ id: "t1" }, roster("t1", 5), config(), cappedAt(5));
+      expect(atCap).toMatchObject({ full: true, slotsLeft: 0, overfilled: false });
+
+      const above = rosterState({ id: "t1" }, roster("t1", 6), config(), cappedAt(5));
+      expect(above).toMatchObject({ full: true, slotsLeft: 0, overfilled: true });
+    });
+
+    it("over-reserves for a team on a short side by at most one minimum bid", () => {
+      // The 5, 5, 4, 4 deal: a team that will end up on a side of four is
+      // reserved against the cap of five, so it keeps one slot's minimum
+      // more than its own side needs. Sides differ by at most one (the
+      // planner spreads the remainder one per team), so the over-reserve is
+      // at most one `minPerSlot` — never enough to cost anybody a player.
+      const cfg = config({ minBid: 50 });
+      const underCap = rosterState({ id: "t1" }, roster("t1", 1), cfg, cappedAt(5));
+      const ownSide = rosterState({ id: "t1" }, roster("t1", 1), cfg, stated(4));
+      expect(underCap.reserved).toBe(150);
+      expect(ownSide.reserved).toBe(100);
+      expect(underCap.reserved - ownSide.reserved).toBe(underCap.minPerSlot);
+      expect(underCap.reserved - ownSide.reserved).toBeLessThanOrEqual(underCap.minPerSlot);
+    });
+  });
+
+  describe("with nothing derivable at all", () => {
+    // A count of teams with nobody accepted yet, or fewer people than sides:
+    // the Format panel has no figure, so the draft has no place to offer.
+
+    it("offers no slot, reserves nothing, and is neither full nor over-filled", () => {
+      const state = rosterState({ id: "t1" }, roster("t1", 3), config({ minBid: 50 }), UNSIZED);
+      expect(state).toEqual({
+        size: 3,
+        captainCount: 1,
+        target: null,
+        cap: null,
+        slotsLeft: 0,
+        full: false,
+        overfilled: false,
+        minPerSlot: 50,
+        reserved: 0,
+      });
+    });
+
+    it("produces numbers, never NaN, even with the must-fill rule off", () => {
+      const state = rosterState({ id: "t1" }, roster("t1", 1), config({ mustFillRoster: false }), UNSIZED);
+      expect(Number.isNaN(state.slotsLeft)).toBe(false);
+      expect(Number.isNaN(state.reserved)).toBe(false);
+      expect(state.reserved).toBe(0);
+    });
   });
 });
 
 describe("maxBidFor — the blind-bid protection", () => {
   it("keeps one back per unfilled slot on a default event", () => {
-    const state = rosterState({ id: "t1" }, roster("t1", 3), config());
+    const state = rosterState({ id: "t1" }, roster("t1", 3), config(), SIX);
     expect(state.slotsLeft).toBe(3);
     expect(maxBidFor({ balance: 1000 }, config(), state)).toBe(998);
   });
 
   it("is exact at the boundary", () => {
     const cfg = config({ minBid: 50 });
-    const three = rosterState({ id: "t1" }, roster("t1", 3), cfg);
+    const three = rosterState({ id: "t1" }, roster("t1", 3), cfg, SIX);
     // 1000 - (3 - 1) x 50
     expect(maxBidFor({ balance: 1000 }, cfg, three)).toBe(900);
 
-    const one = rosterState({ id: "t1" }, roster("t1", 5), cfg);
+    const one = rosterState({ id: "t1" }, roster("t1", 5), cfg, SIX);
     expect(maxBidFor({ balance: 1000 }, cfg, one)).toBe(1000);
   });
 
   it("lets a team spend everything on its final slot", () => {
     const cfg = config();
-    const last = rosterState({ id: "t1" }, roster("t1", 5), cfg);
+    const last = rosterState({ id: "t1" }, roster("t1", 5), cfg, SIX);
     expect(maxBidFor({ balance: 640 }, cfg, last)).toBe(640);
   });
 
   it("is the whole balance when the rule is switched off", () => {
     const cfg = config({ mustFillRoster: false });
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     expect(maxBidFor({ balance: 1000 }, cfg, state)).toBe(1000);
   });
 
   it("is zero for a full roster, whatever the money says", () => {
     const cfg = config();
-    const full = rosterState({ id: "t1" }, roster("t1", 6), cfg);
+    const full = rosterState({ id: "t1" }, roster("t1", 6), cfg, SIX);
     expect(maxBidFor({ balance: 900 }, cfg, full)).toBe(0);
   });
 
   it("never goes below zero when the reserve is more than the balance", () => {
     const cfg = config({ minBid: 500 });
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     expect(state.reserved).toBe(2000);
     expect(maxBidFor({ balance: 100 }, cfg, state)).toBe(0);
+  });
+
+  it("runs the arithmetic against the cap when there is no target", () => {
+    const cfg = config({ minBid: 50 });
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, cappedAt(5));
+    // 1000 - (4 - 1) x 50
+    expect(maxBidFor({ balance: 1000 }, cfg, state)).toBe(850);
+  });
+
+  it("is zero when nothing is derivable — no place to buy, under either rule", () => {
+    const strict = rosterState({ id: "t1" }, roster("t1", 1), config(), UNSIZED);
+    expect(maxBidFor({ balance: 1000 }, config(), strict)).toBe(0);
+
+    const loose = config({ mustFillRoster: false });
+    const free = rosterState({ id: "t1" }, roster("t1", 1), loose, UNSIZED);
+    expect(maxBidFor({ balance: 1000 }, loose, free)).toBe(0);
   });
 });
 
@@ -286,14 +407,14 @@ describe("canPlaceBid", () => {
 
   it("accepts a bid inside the cap", () => {
     const cfg = config();
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     const check = canPlaceBid(team(), 400, lot(), cfg, state, NOW);
     expect(check).toMatchObject({ ok: true, amount: 400, max: 996 });
   });
 
   it("accepts exactly the cap and refuses one more", () => {
     const cfg = config();
-    const state = rosterState({ id: "t1" }, roster("t1", 3), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 3), cfg, SIX);
     expect(canPlaceBid(team(), 998, lot(), cfg, state, NOW).ok).toBe(true);
 
     const over = canPlaceBid(team(), 999, lot(), cfg, state, NOW);
@@ -303,7 +424,7 @@ describe("canPlaceBid", () => {
 
   it("separates 'you cannot afford it' from 'then you could not fill your team'", () => {
     const cfg = config();
-    const state = rosterState({ id: "t1" }, roster("t1", 3), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 3), cfg, SIX);
     expect(canPlaceBid(team(100), 150, lot(), cfg, state, NOW)).toMatchObject({
       reason: "over_balance",
     });
@@ -314,7 +435,7 @@ describe("canPlaceBid", () => {
 
   it("refuses a bid that is not a whole number", () => {
     const cfg = config();
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     expect(canPlaceBid(team(), 10.5, lot(), cfg, state, NOW)).toMatchObject({
       reason: "not_a_whole_number",
     });
@@ -328,7 +449,7 @@ describe("canPlaceBid", () => {
 
   it("refuses a bid on a lot that has already settled", () => {
     const cfg = config();
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     expect(
       canPlaceBid(team(), 10, lot([], { status: "awarded" }), cfg, state, NOW)
     ).toMatchObject({ reason: "lot_not_open" });
@@ -336,7 +457,7 @@ describe("canPlaceBid", () => {
 
   it("refuses a bid once the timer has run out, and allows one on the last second", () => {
     const cfg = config({ bidTimerSeconds: 30 });
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     const opened = { status: "open" as const, openedAt: new Date(T0), bids: [] };
 
     expect(canPlaceBid(team(), 10, opened, cfg, state, new Date(T0 + 29_999)).ok).toBe(true);
@@ -347,29 +468,48 @@ describe("canPlaceBid", () => {
 
   it("refuses a bid from a team with no slots left", () => {
     const cfg = config();
-    const full = rosterState({ id: "t1" }, roster("t1", 6), cfg);
+    const full = rosterState({ id: "t1" }, roster("t1", 6), cfg, SIX);
     expect(canPlaceBid(team(), 0, lot(), cfg, full, NOW)).toMatchObject({
       reason: "roster_full",
       max: 0,
     });
   });
 
+  it("names the cap when a capped roster is full, since there is no target to name", () => {
+    const cfg = config();
+    const atCap = rosterState({ id: "t1" }, roster("t1", 5), cfg, cappedAt(5));
+    const check = canPlaceBid(team(), 0, lot(), cfg, atCap, NOW);
+    expect(check).toMatchObject({ reason: "roster_full", max: 0 });
+    expect(check.ok === false && check.message).toMatch(/full at 5/);
+  });
+
+  it("refuses a bid from a team with no places yet, and says why rather than 'full'", () => {
+    // Nothing derivable is not a full roster — it is a draft the Format panel
+    // has not sized yet, and the captain is told that, not that they are done.
+    const cfg = config();
+    const unsized = rosterState({ id: "t1" }, roster("t1", 1), cfg, UNSIZED);
+    const check = canPlaceBid(team(), 0, lot(), cfg, unsized, NOW);
+    expect(check).toMatchObject({ reason: "roster_unsized", max: 0 });
+    expect(check.ok === false && check.message).not.toMatch(/full/);
+    expect(check.ok === false && check.message).not.toMatch(/null/);
+  });
+
   it("refuses a second sealed bid rather than letting it be revised", () => {
     const cfg = config();
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     const check = canPlaceBid(team(), 200, lot([{ teamId: "t1", amount: 100 }]), cfg, state, NOW);
     expect(check).toMatchObject({ reason: "already_bid" });
   });
 
   it("takes a bid of zero, because the last few names go cheap", () => {
     const cfg = config();
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     expect(canPlaceBid(team(), 0, lot(), cfg, state, NOW).ok).toBe(true);
   });
 
   it("enforces a minimum bid when the event sets one", () => {
     const cfg = config({ minBid: 25 });
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
     expect(canPlaceBid(team(), 24, lot(), cfg, state, NOW)).toMatchObject({
       reason: "below_minimum",
     });
@@ -378,7 +518,7 @@ describe("canPlaceBid", () => {
 
   it("says so when the must-fill rule leaves a team unable to meet the minimum", () => {
     const cfg = config({ minBid: 100 });
-    const state = rosterState({ id: "t1" }, roster("t1", 2), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 2), cfg, SIX);
     // Four slots left: 300 has to stay back, and 350 - 300 = 50 is under 100.
     expect(canPlaceBid(team(350), 100, lot(), cfg, state, NOW)).toMatchObject({
       reason: "cannot_afford_minimum",
@@ -387,7 +527,7 @@ describe("canPlaceBid", () => {
 
   describe("open bidding", () => {
     const cfg = config({ biddingMode: "open", minIncrement: 10 });
-    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg);
+    const state = rosterState({ id: "t1" }, roster("t1", 1), cfg, SIX);
 
     it("lets the first bid be the minimum", () => {
       expect(canPlaceBid(team(), 0, lot(), cfg, state, NOW).ok).toBe(true);
@@ -550,7 +690,7 @@ describe("allBidsIn", () => {
 
   /** A team with a captain, a free slot and the money to use it. */
   function team(id: string, over: Partial<Parameters<typeof allBidsIn>[0][number]> = {}) {
-    const state = rosterState({ id }, roster(id, 1), cfg);
+    const state = rosterState({ id }, roster(id, 1), cfg, SIX);
     return {
       id,
       captainUserId: `${id}-p0`,
@@ -563,7 +703,7 @@ describe("allBidsIn", () => {
   const open = team("t1");
   const other = team("t2");
   const done = team("t3", {
-    roster: rosterState({ id: "t3" }, roster("t3", 6), cfg),
+    roster: rosterState({ id: "t3" }, roster("t3", 6), cfg, SIX),
     maxBid: 0,
   });
 
@@ -648,8 +788,20 @@ describe("awardableTeamIds", () => {
 describe("changedRules", () => {
   it("names every rule a save would move", () => {
     const before = config();
-    const after = config({ minBid: 50, rosterTarget: 8 });
-    expect(changedRules(before, after).sort()).toEqual(["minBid", "rosterTarget"]);
+    const after = config({ minBid: 50, reserveRounds: 2 });
+    expect(changedRules(before, after).sort()).toEqual(["minBid", "reserveRounds"]);
+  });
+
+  it("cannot name the roster size, because a derived figure moves with every acceptance", () => {
+    // The places on a team are the Format panel's and are derived on read
+    // (R-248). Were the key still a rule, accepting one more player would
+    // move the figure, and the next save of any *unrelated* rule would be
+    // refused mid-draft, naming a roster size nobody touched. So a config
+    // that still spells one — a database row does — changes nothing by it.
+    const before = { ...config(), rosterTarget: 6 };
+    const after = { ...config(), rosterTarget: 7 };
+    expect(changedRules(before, after)).toEqual([]);
+    expect(DRAFT_RULE_KEYS).not.toContain("rosterTarget");
   });
 
   it("is empty for a re-save of the same rules", () => {
@@ -710,14 +862,20 @@ describe("the reserve pool's comeback limit", () => {
 /* ------------------------------------------------------------------ */
 
 describe("draftComplete", () => {
-  const cfg = config({ rosterTarget: 3 });
+  const cfg = config();
+  const THREE = stated(3);
 
   function team(id: string, size: number) {
     return { id, members: roster(id, size) };
   }
 
   it("is not complete while rosters are short and players are waiting", () => {
-    const done = draftComplete({ main: 4, reserve: 0 }, [team("t1", 1), team("t2", 1)], cfg);
+    const done = draftComplete(
+      { main: 4, reserve: 0 },
+      [team("t1", 1), team("t2", 1)],
+      cfg,
+      THREE
+    );
     expect(done).toMatchObject({ complete: false, reason: "in_progress", playersLeft: 4 });
     expect(done.short).toEqual([
       { teamId: "t1", slotsLeft: 2 },
@@ -726,35 +884,92 @@ describe("draftComplete", () => {
   });
 
   it("is complete once every roster is full, even with names left over", () => {
-    const done = draftComplete({ main: 3, reserve: 0 }, [team("t1", 3), team("t2", 3)], cfg);
+    const done = draftComplete(
+      { main: 3, reserve: 0 },
+      [team("t1", 3), team("t2", 3)],
+      cfg,
+      THREE
+    );
     expect(done).toMatchObject({ complete: true, reason: "rosters_full", short: [] });
   });
 
   it("is complete with an empty pool, and says who is short", () => {
-    const done = draftComplete({ main: 0, reserve: 0 }, [team("t1", 3), team("t2", 1)], cfg);
+    const done = draftComplete(
+      { main: 0, reserve: 0 },
+      [team("t1", 3), team("t2", 1)],
+      cfg,
+      THREE
+    );
     expect(done).toMatchObject({ complete: true, reason: "pool_empty" });
     expect(done.short).toEqual([{ teamId: "t2", slotsLeft: 2 }]);
   });
 
   it("reports both when the pool empties on the last pick", () => {
-    expect(
-      draftComplete({ main: 0, reserve: 0 }, [team("t1", 3)], cfg).reason
-    ).toBe("both");
+    expect(draftComplete({ main: 0, reserve: 0 }, [team("t1", 3)], cfg, THREE).reason).toBe(
+      "both"
+    );
   });
 
   it("counts the reserve pool only when the reserve pool is switched on", () => {
     const teams = [team("t1", 1)];
-    expect(draftComplete({ main: 0, reserve: 3 }, teams, cfg).playersLeft).toBe(3);
+    expect(draftComplete({ main: 0, reserve: 3 }, teams, cfg, THREE).playersLeft).toBe(3);
     expect(
-      draftComplete({ main: 0, reserve: 3 }, teams, config({ rosterTarget: 3, reserveEnabled: false }))
+      draftComplete({ main: 0, reserve: 3 }, teams, config({ reserveEnabled: false }), THREE)
         .playersLeft
     ).toBe(0);
   });
 
   it("is not 'rosters full' when there are no teams at all", () => {
-    expect(draftComplete({ main: 5, reserve: 0 }, [], cfg)).toMatchObject({
+    expect(draftComplete({ main: 5, reserve: 0 }, [], cfg, THREE)).toMatchObject({
       complete: false,
       reason: "in_progress",
+    });
+  });
+
+  describe("under a cap with no target (R-250)", () => {
+    it("reports nobody short, and completes on an empty pool", () => {
+      // A team is short only against a target. Under a cap every team is
+      // below it by arithmetic — 5, 5, 4, 4 against a cap of five — and a
+      // draft that called them short would never report itself complete.
+      const done = draftComplete(
+        { main: 0, reserve: 0 },
+        [team("t1", 3), team("t2", 1)],
+        cfg,
+        cappedAt(5)
+      );
+      expect(done).toMatchObject({ complete: true, reason: "pool_empty", short: [] });
+    });
+
+    it("is still in progress while players wait and some team is below the cap", () => {
+      const done = draftComplete(
+        { main: 2, reserve: 0 },
+        [team("t1", 5), team("t2", 3)],
+        cfg,
+        cappedAt(5)
+      );
+      expect(done).toMatchObject({ complete: false, reason: "in_progress", short: [] });
+    });
+
+    it("is complete once every team is at the cap, since nobody can buy anyone", () => {
+      const done = draftComplete(
+        { main: 2, reserve: 0 },
+        [team("t1", 5), team("t2", 5)],
+        cfg,
+        cappedAt(5)
+      );
+      expect(done).toMatchObject({ complete: true, reason: "rosters_full", short: [] });
+    });
+  });
+
+  describe("with nothing derivable at all", () => {
+    it("is in progress while players wait — rosters without a figure are not full", () => {
+      const done = draftComplete({ main: 2, reserve: 0 }, [team("t1", 1)], cfg, UNSIZED);
+      expect(done).toMatchObject({ complete: false, reason: "in_progress", short: [] });
+    });
+
+    it("completes on an empty pool, and names nobody short", () => {
+      const done = draftComplete({ main: 0, reserve: 0 }, [team("t1", 1)], cfg, UNSIZED);
+      expect(done).toMatchObject({ complete: true, reason: "pool_empty", short: [] });
     });
   });
 });
@@ -768,7 +983,7 @@ describe("redactDraft", () => {
 
   function standing(id: string, over: Partial<TeamStanding> = {}): TeamStanding {
     const members = roster(id, 1);
-    const state = rosterState({ id }, members, cfg);
+    const state = rosterState({ id }, members, cfg, SIX);
     return {
       id,
       name: id.toUpperCase(),
@@ -839,7 +1054,7 @@ describe("redactDraft", () => {
       history,
       pools: { main: pool(["rook", "sable"]), reserve: pool(["kite"], "reserve") },
       activeKind: "main",
-      completion: draftComplete({ main: 2, reserve: 1 }, teams, cfg),
+      completion: draftComplete({ main: 2, reserve: 1 }, teams, cfg, SIX),
       ...over,
     };
   }
@@ -1105,7 +1320,7 @@ describe("redactDraft", () => {
       teams: [
         standing("t3", {
           members: fullMembers,
-          roster: rosterState({ id: "t3" }, fullMembers, cfg),
+          roster: rosterState({ id: "t3" }, fullMembers, cfg, SIX),
           maxBid: 0,
         }),
       ],

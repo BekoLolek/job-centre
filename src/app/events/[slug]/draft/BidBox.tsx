@@ -42,6 +42,8 @@ const STANDING_BLOCKS: ReadonlySet<BidRefusalReason> = new Set<BidRefusalReason>
   "lot_not_open",
   "bidding_ended",
   "roster_full",
+  // The Format panel has not sized the teams yet (R-250): no number helps.
+  "roster_unsized",
   "cannot_afford_minimum",
   "over_balance",
   "over_roster_cap",
@@ -166,7 +168,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
         </div>
         {refusal.reason === "roster_full" && (
           <p className="mt-3 text-14 text-muted">
-            Your draft is done — {me.roster.size} of {me.roster.target} on the roster.
+            Your draft is done — {me.roster.size} of {me.roster.cap} on the roster.
           </p>
         )}
         {standing && <Ceiling standing={standing} maxBid={view.you.maxBid} />}

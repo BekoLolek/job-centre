@@ -277,7 +277,12 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
             <Eyebrow as="span">
               {view.config.biddingMode === "open" ? "Open bidding" : "Sealed bids"}
               {" · "}
-              {view.config.rosterTarget} per roster
+              {/*
+                The places on a team are the Format panel's figure, not a draft
+                rule (R-248), and every team's roster carries the same one — so
+                the first team's cap is the event's. Empty with no teams.
+              */}
+              {view.teams[0]?.roster.cap} per roster
             </Eyebrow>
           }
         />

@@ -5,6 +5,7 @@ import {
   type Database,
   type Team,
   applications as applicationsTable,
+  draftConfigs,
   draftLots,
   draftPoolEntries,
   schema,
@@ -54,8 +55,10 @@ import {
   createEvent,
   publishEvent,
   setApplicationStatus,
+  updateEvent,
   withdrawApplication,
 } from "@/lib/events";
+import type { SizingMode } from "@/lib/events-policy";
 
 /**
  * The draft against real Postgres.
@@ -105,6 +108,45 @@ async function seededEvent(people: number): Promise<Fixture> {
 function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
   if (!result.ok) throw new Error(result.error);
   return result.data;
+}
+
+/**
+ * Size the teams the way an admin does — on the Format panel, as the one
+ * stored figure `events.config.eventShape` holds (R-248 / UC-49 2).
+ *
+ * Written through `updateEvent` and read back by `readConfig` on every call
+ * that follows, so what these fixtures exercise is the read path from the
+ * stored shape to the figure on a roster. Not a `setDraftConfig` patch, which
+ * is what they were: the roster size is no longer a draft rule, and the
+ * column it used to write is neither read nor written. And not a hand-built
+ * `RosterSizing` handed to the policy, which `draft-policy.test.ts` already
+ * does and which would prove nothing about where the figure comes from.
+ *
+ * `perTeam` by default — "players on a team", the admin's own number, which
+ * is both target and cap — because that is the mode the roster size used to
+ * be. A count of teams makes the figure a cap taken from the accepted count,
+ * and the tests that want that say so.
+ */
+async function sized(
+  fixture: Fixture,
+  value: number,
+  options: { mode?: SizingMode; draft?: boolean } = {}
+): Promise<void> {
+  unwrap(
+    await updateEvent(
+      fixture.eventId,
+      {
+        config: {
+          eventShape: {
+            teamEvent: true,
+            draft: options.draft ?? true,
+            sizing: { mode: options.mode ?? "perTeam", value },
+          },
+        },
+      },
+      db
+    )
+  );
 }
 
 /** Two named teams, captained by the first two applicants. */
@@ -971,16 +1013,21 @@ describe("placing players on rosters by hand", () => {
   it("refuses when the destination roster is full (R-64)", async () => {
     const fixture = await seededEvent(5);
     const { a, b } = await twoTeams(fixture);
-    // R-64's roster size, counted with the captain in it (§14): captain plus
-    // two makes three, which is the whole roster.
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 3 }, db));
+    // The Format panel's places on a team, counted with the captain in them
+    // (§14): captain plus two makes three, which is the whole roster.
+    await sized(fixture, 3);
     unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
     unwrap(await placeOnRoster(fixture.eventId, fixture.members[3], a, db));
 
     const result = await placeOnRoster(fixture.eventId, fixture.members[4], a, db);
 
     expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toMatch(/roster is full — 3 of 3/);
+    // The whole sentence, because where it points matters as much as the
+    // count: the figure lives on the Format panel now, and the Draft tab it
+    // used to name no longer has a roster size to raise.
+    expect(result.ok === false && result.error).toBe(
+      "Alpha's roster is full — 3 of 3. Take somebody off it first, or raise the places on a team in Setup → Format."
+    );
     // And the roster they could not join is unchanged, rather than overfilled.
     expect(await rosterOf(fixture.eventId, fixture.members[4])).toEqual([]);
     unwrap(await placeOnRoster(fixture.eventId, fixture.members[4], b, db));
@@ -1155,19 +1202,21 @@ describe("setDraftConfig", () => {
     expect(await getDraftConfig(fixture.eventId, db)).toMatchObject({
       biddingMode: "sealed",
       selectionMode: "wheel",
-      rosterTarget: 6,
       mustFillRoster: true,
       bidVisibility: "admin_only",
     });
+    // And no roster size among them: the places on a team are the Format
+    // panel's figure, not a draft rule (R-248).
+    expect(await getDraftConfig(fixture.eventId, db)).not.toHaveProperty("rosterTarget");
   });
 
   it("writes only the keys it is given", async () => {
     const fixture = await seededEvent(0);
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 4 }, db));
+    unwrap(await setDraftConfig(fixture.eventId, { defaultBalance: 400 }, db));
     unwrap(await setDraftConfig(fixture.eventId, { minBid: 25 }, db));
 
     expect(await getDraftConfig(fixture.eventId, db)).toMatchObject({
-      rosterTarget: 4,
+      defaultBalance: 400,
       minBid: 25,
       biddingMode: "sealed",
     });
@@ -1279,7 +1328,7 @@ describe("setDraftConfig", () => {
       const before = unwrap(
         await setDraftConfig(
           fixture.eventId,
-          { minBid: 30, bidTimerSeconds: 45, rosterTarget: 4, reserveRounds: 2 },
+          { minBid: 30, bidTimerSeconds: 45, reserveRounds: 2 },
           db
         )
       );
@@ -1287,16 +1336,21 @@ describe("setDraftConfig", () => {
     });
   });
 
-  it("refuses to shrink the roster after players have been bought for it", async () => {
-    const fixture = await seededEvent(4);
-    const { a } = await twoTeams(fixture);
-    unwrap(await setDraftPool(fixture.eventId, {}, db));
-    await buy(fixture.eventId, fixture.members[2], a, 100);
-
-    const result = await setDraftConfig(fixture.eventId, { rosterTarget: 2 }, db);
-    expect(result.ok).toBe(false);
-    expect(result.ok === false && result.error).toMatch(/cannot be lowered/);
-  });
+  /*
+   * Skipped, not deleted — Task 107 is its new home.
+   *
+   * The roster size left `DraftConfig` (R-248): it is the Format panel's
+   * figure now, so `setDraftConfig` has nothing to refuse to lower and the
+   * refusal this test held was removed with it. Whether the figure may still
+   * shrink once players have been bought for it is a real rule and still
+   * wanted; it is refused where the figure is written, on the panel, and Task
+   * 107 writes that refusal and moves this test to its write path. A todo
+   * rather than a red test, so that a green suite stays the evidence it is
+   * meant to be — and a todo rather than a skipped body, because a body
+   * written before the refusal exists can only assert what is true today, and
+   * un-skipping a test that passes empty would prove nothing.
+   */
+  it.todo("refuses to shrink the roster after players have been bought for it (Task 107)");
 
   it("leaves a per-team mode's handicaps alone", async () => {
     const fixture = await seededEvent(0);
@@ -1600,7 +1654,7 @@ describe("openLot", () => {
     const fixture = await seededEvent(5);
     const { a, b } = await twoTeams(fixture);
     // One seat per team, and the captain is in it (§14).
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 1 }, db));
+    await sized(fixture, 1);
     unwrap(await setDraftPool(fixture.eventId, {}, db));
 
     const named = await openLot(fixture.eventId, { userId: fixture.members[2] }, db);
@@ -1619,7 +1673,7 @@ describe("openLot", () => {
   it("opens again the moment an undo frees a seat", async () => {
     const fixture = await seededEvent(4);
     const { a, b } = await twoTeams(fixture);
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 2 }, db));
+    await sized(fixture, 2);
     unwrap(await setDraftPool(fixture.eventId, {}, db));
 
     const bought = await buy(fixture.eventId, fixture.members[2], a, 10);
@@ -1868,7 +1922,8 @@ describe("the roster-fill protection (R-146 / UC-16 E4)", () => {
   async function protection(mustFillRoster: boolean) {
     const fixture = await seededEvent(6);
     const { a } = await twoTeams(fixture);
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 5, mustFillRoster }, db));
+    await sized(fixture, 5);
+    unwrap(await setDraftConfig(fixture.eventId, { mustFillRoster }, db));
     unwrap(await setDraftPool(fixture.eventId, {}, db));
     const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.members[2] }, db));
     return { fixture, a, lot };
@@ -2022,7 +2077,7 @@ describe("the all-bids-in light (R-149 / UC-16 E7)", () => {
   it("does not wait for a team whose roster is already full", async () => {
     const fixture = await seededEvent(5);
     const { a, b } = await twoTeams(fixture);
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 2 }, db));
+    await sized(fixture, 2);
     unwrap(await setDraftPool(fixture.eventId, {}, db));
     await buy(fixture.eventId, fixture.members[2], b, 10);
 
@@ -2179,7 +2234,7 @@ describe("awardLot", () => {
   it("refuses to fill a seventh seat on a six-player roster", async () => {
     const fixture = await seededEvent(9);
     const { a } = await twoTeams(fixture);
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 3 }, db));
+    await sized(fixture, 3);
     unwrap(await setDraftPool(fixture.eventId, {}, db));
 
     await buy(fixture.eventId, fixture.members[2], a, 10);
@@ -3069,7 +3124,8 @@ describe("a draft from an empty pool to complete", () => {
   it("fills two three-player rosters and knows when it is done", async () => {
     const fixture = await seededEvent(6);
     const { a, b } = await twoTeams(fixture);
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 3, defaultBalance: 300 }, db));
+    await sized(fixture, 3);
+    unwrap(await setDraftConfig(fixture.eventId, { defaultBalance: 300 }, db));
     unwrap(await setDraftPool(fixture.eventId, {}, db));
 
     const start = await getDraftSnapshot(fixture.eventId, {}, db);
@@ -3098,7 +3154,7 @@ describe("a draft from an empty pool to complete", () => {
   it("finishes with the pool empty and says who is short", async () => {
     const fixture = await seededEvent(3);
     const { a, b } = await twoTeams(fixture);
-    unwrap(await setDraftConfig(fixture.eventId, { rosterTarget: 3 }, db));
+    await sized(fixture, 3);
     unwrap(await setDraftPool(fixture.eventId, {}, db));
 
     await buy(fixture.eventId, fixture.members[2], a, 10);
@@ -3109,6 +3165,95 @@ describe("a draft from an empty pool to complete", () => {
       { teamId: a, slotsLeft: 1 },
       { teamId: b, slotsLeft: 2 },
     ]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The places on a team are the Format panel's (R-248 / UC-49 2, 2a)  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The reported defect: "when I set the team size to be 3 players, the player
+ * view for the event still shows 6 spots per team." It did — `roster.target`
+ * came from `draft_configs.roster_target`, which defaulted to six when no row
+ * existed, and an event with teams and no draft has no row. These hold the
+ * figure to the panel's, through the same reads the public card, the admin
+ * tabs and the draft room make.
+ */
+describe("the places on a team", () => {
+  it("are the panel's three for an event with teams and no draft, not the draft's old six", async () => {
+    const fixture = await seededEvent(4);
+    await sized(fixture, 3, { draft: false });
+    const { a } = await twoTeams(fixture);
+
+    // The whole of the bug's setup: nothing has ever been written to
+    // `draft_configs` for this event, so the only figure a draft default
+    // could come from is the one this read must not fall back to.
+    expect(
+      await db.select().from(draftConfigs).where(eq(draftConfigs.eventId, fixture.eventId))
+    ).toEqual([]);
+
+    const [alpha] = (await getTeams(fixture.eventId, db)).filter((team) => team.id === a);
+    expect(alpha.roster.target).toBe(3);
+    expect(alpha.roster.cap).toBe(3);
+    // The captain is on it (§14), so two places are drawn empty, not five.
+    expect(alpha.roster.slotsLeft).toBe(2);
+  });
+
+  it("are the same figure on the public card and in the draft room", async () => {
+    const fixture = await seededEvent(4);
+    await sized(fixture, 3);
+    const { a } = await twoTeams(fixture);
+
+    const card = (await getTeams(fixture.eventId, db)).find((team) => team.id === a);
+    const room = (await getDraftSnapshot(fixture.eventId, {}, db))?.teams.find(
+      (team) => team.id === a
+    );
+
+    expect(room?.roster.target).toBe(3);
+    expect(room?.roster).toEqual(card?.roster);
+  });
+
+  it("are a cap from the accepted count under a count of teams, and a full roster is refused against it", async () => {
+    // Five accepted into two sides is 3, 2 — so the most a team may hold is
+    // three, and nobody decided on three, so it is nobody's target.
+    const fixture = await seededEvent(5);
+    await sized(fixture, 2, { mode: "teams" });
+    const { a } = await twoTeams(fixture);
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[2], a, db));
+    unwrap(await placeOnRoster(fixture.eventId, fixture.members[3], a, db));
+
+    const [alpha] = (await getTeams(fixture.eventId, db)).filter((team) => team.id === a);
+    expect(alpha.roster).toMatchObject({ target: null, cap: 3, full: true, overfilled: false });
+
+    // The refusal counts against the cap and prints the cap — there is no
+    // target to print, and "3 of null" is not a sentence.
+    const result = await placeOnRoster(fixture.eventId, fixture.members[4], a, db);
+    expect(result.ok === false && result.error).toBe(
+      "Alpha's roster is full — 3 of 3. Take somebody off it first, or raise the places on a team in Setup → Format."
+    );
+  });
+
+  it("leave a six-a-side draft exactly as it was when six was the draft's own default", async () => {
+    // No shape stored: the panel reads the night's own 6v6, which is the six
+    // the draft used to carry as a rule. Every figure below is the one the
+    // old `rosterTarget: 6` produced.
+    const fixture = await seededEvent(8);
+    const { a } = await twoTeams(fixture);
+
+    expect(await getDraftConfig(fixture.eventId, db)).not.toHaveProperty("rosterTarget");
+    const [alpha] = (await getTeams(fixture.eventId, db)).filter((team) => team.id === a);
+    expect(alpha.roster).toMatchObject({ target: 6, cap: 6, slotsLeft: 5, reserved: 4 });
+
+    unwrap(await setDraftPool(fixture.eventId, {}, db));
+    const lot = unwrap(await openLot(fixture.eventId, { userId: fixture.members[2] }, db));
+    const standing = (await getDraftSnapshot(fixture.eventId, {}, db))?.teams.find(
+      (team) => team.id === a
+    );
+    expect(standing?.maxBid).toBe(996);
+    const over = await placeBid(lot.id, a, 997, {}, db);
+    expect(over.ok === false && over.error).toMatch(/at most 996/);
+    expect((await placeBid(lot.id, a, 996, {}, db)).ok).toBe(true);
   });
 });
 

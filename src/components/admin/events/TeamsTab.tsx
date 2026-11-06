@@ -195,24 +195,37 @@ export function unplacedAccepted(
  * The teams a player may be put on: not the one they are already on, and not
  * one whose roster is full.
  *
- * A full roster is `rosterTarget` including the captain (§14), which is the
- * same count `placeOnRoster` refuses on. The team they are on is left out
- * because "move to where you are" is not a move — the server treats it as a
- * no-op rather than an error, and an option that does nothing still should not
- * be in the list.
+ * A full roster is the Format panel's `cap` including the captain (§14), which
+ * is the same count `placeOnRoster` refuses on (R-248). With no cap — the
+ * panel cannot size the teams yet — `rosterState` calls no roster full and
+ * `placeOnRoster` refuses nothing, so every other team is offered. The team
+ * they are on is left out because "move to where you are" is not a move — the
+ * server treats it as a no-op rather than an error, and an option that does
+ * nothing still should not be in the list.
  */
 export function teamsOpenTo(
   teams: readonly { id: string; name: string }[],
   rosters: readonly RosterMove[],
-  target: number,
+  cap: number | null,
   userId: string
 ): { id: string; name: string }[] {
   const on = rosters.find((row) => row.userId === userId)?.teamId ?? null;
   return teams.filter(
     (team) =>
       team.id !== on &&
-      rosters.filter((row) => row.teamId === team.id).length < target
+      !rosterFull(rosters.filter((row) => row.teamId === team.id).length, cap)
   );
+}
+
+/**
+ * `rosterState.full`'s rule over the tab's own optimistic roster rows: at or
+ * above the panel's cap, and nothing is full of a figure the panel does not
+ * have. The server's `team.roster.full` cannot serve here because `rosters`
+ * is the tab's local state between a placement and the refresh — so the rule
+ * is spelled once for both readers of it rather than once per reader.
+ */
+function rosterFull(count: number, cap: number | null): boolean {
+  return cap !== null && count >= cap;
 }
 
 /**
@@ -1030,7 +1043,7 @@ export default function TeamsTab({
                   {existing && (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pl-10 text-12 text-muted">
                       <span className="num">
-                        {existing.roster.size}/{existing.roster.target} on the roster
+                        {existing.roster.size}/{existing.roster.cap} on the roster
                       </span>
                       <span>
                         {existing.captainUserId ? (
@@ -1090,7 +1103,7 @@ export default function TeamsTab({
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Rosters</Eyebrow>
           <Eyebrow as="span">
-            {plural(config.rosterTarget, "place")} a team, captain included
+            {plural(data.sizing.cap ?? 0, "place")} a team, captain included
           </Eyebrow>
         </div>
 
@@ -1112,14 +1125,14 @@ export default function TeamsTab({
           <ul className="grid gap-3 sm:grid-cols-2">
             {sized.map((team) => {
               const on = rosters.filter((row) => row.teamId === team.id);
-              const full = on.length >= config.rosterTarget;
+              const full = rosterFull(on.length, data.sizing.cap);
 
               return (
                 <li key={team.id} className="rounded-lg border border-hair p-3">
                   <div className="mb-2 flex flex-wrap items-baseline gap-2">
                     <span className="font-display text-16">{team.name}</span>
                     <Badge tone={full ? "union" : "default"}>
-                      {on.length}/{config.rosterTarget}
+                      {on.length}/{data.sizing.cap}
                     </Badge>
                   </div>
 
@@ -1160,7 +1173,7 @@ export default function TeamsTab({
                                       {teamsOpenTo(
                                         sized,
                                         rosters,
-                                        config.rosterTarget,
+                                        data.sizing.cap,
                                         member.userId
                                       ).map((other) => (
                                         <option key={other.id} value={other.id}>
@@ -1216,7 +1229,7 @@ export default function TeamsTab({
                         }}
                       >
                         <option value="">Place on…</option>
-                        {teamsOpenTo(sized, rosters, config.rosterTarget, userId).map(
+                        {teamsOpenTo(sized, rosters, data.sizing.cap, userId).map(
                           (team) => (
                             <option key={team.id} value={team.id}>
                               {team.name}

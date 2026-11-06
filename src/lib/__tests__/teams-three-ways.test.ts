@@ -29,6 +29,7 @@ import {
   countFollowsFormatRefusal,
   eventShapeFrom,
   planSides,
+  rosterSizingFrom,
   sizingConsequence,
   teamCountFrom,
 } from "@/lib/events-policy";
@@ -296,6 +297,115 @@ describe("teamCountFrom", () => {
 
   it("has nothing to say about a solo event", () => {
     expect(teamCountFrom(shape({ mode: "teams", value: 4 }, false), 20)).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The places on a team the panel yields (pure)                       */
+/* ------------------------------------------------------------------ */
+
+describe("rosterSizingFrom", () => {
+  /*
+   * Task 104 — R-248, R-250 / UC-49 2, 1a, 1b: the places on a team are the
+   * Format panel's figure, derived on read, the way `teamCountFrom` already
+   * derives the sibling figure. Players per team is a decision and is a
+   * target; a count of teams makes the per-team figure a consequence of the
+   * accepted count, and the figure is the largest planned side, as a cap with
+   * no target. A set target always equals the cap.
+   */
+  const shape = (sizing: EventShape["sizing"], teamEvent = true): EventShape => ({
+    teamEvent,
+    draft: true,
+    sizing,
+  });
+
+  it("is the stated figure, exactly, under players per team — whoever is accepted", () => {
+    expect(rosterSizingFrom(shape({ mode: "perTeam", value: 3 }), 18)).toEqual({
+      target: 3,
+      cap: 3,    });
+    expect(rosterSizingFrom(shape({ mode: "perTeam", value: 3 }), 7)).toEqual({
+      target: 3,
+      cap: 3,    });
+  });
+
+  it("still holds the stated figure with nobody accepted — a decision, not a consequence (UC-49 1b)", () => {
+    expect(rosterSizingFrom(shape({ mode: "perTeam", value: 3 }), 0)).toEqual({
+      target: 3,
+      cap: 3,    });
+  });
+
+  it("caps at the largest side under a count of teams when the split is uneven (UC-49 1a)", () => {
+    // Eighteen into four is 5, 5, 4, 4: the cap is 5, and it is not a target.
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 4 }), 18)).toEqual({
+      target: null,
+      cap: 5,    });
+  });
+
+  it("caps at the even side under a count of teams, and still gives no target", () => {
+    // Twelve into three is 4, 4, 4 — but one more accepted makes it 5, 4, 4,
+    // so the figure is a consequence either way and never a promise of places.
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 3 }), 12)).toEqual({
+      target: null,
+      cap: 4,    });
+  });
+
+  it("follows the accepted count under a count of teams — the stated figure is sides, not places", () => {
+    // Four teams: the per-team figure moves with who is accepted, and is never 4.
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 4 }), 8).cap).toBe(2);
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 4 }), 9).cap).toBe(3);
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 4 }), 40).cap).toBe(10);
+  });
+
+  it("derives nothing under a count of teams with nobody accepted (UC-49 1b)", () => {
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 4 }), 0)).toEqual({
+      target: null,
+      cap: null,    });
+  });
+
+  it("derives nothing under a count of teams while there are fewer people than sides", () => {
+    // `planSides` refuses this deal, because a side with nobody on it is not
+    // a side — and a cap taken from a plan the shuffle will not write would
+    // be a figure for teams that cannot exist.
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 4 }), 3)).toEqual({
+      target: null,
+      cap: null,    });
+  });
+
+  it("derives nothing from a count of zero teams rather than reading an empty deal", () => {
+    // `eventShapeFrom` never produces this and `shapeProblem` refuses it, so
+    // the branch is reached by building the shape by hand: `planSides` plans
+    // no sides at all for it, and there is no largest side to read.
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 0 }), 18)).toEqual({
+      target: null,
+      cap: null,
+    });
+  });
+
+  it("has nothing to say about a solo event", () => {
+    expect(rosterSizingFrom(shape({ mode: "perTeam", value: 3 }, false), 18)).toEqual({
+      target: null,
+      cap: null,    });
+    expect(rosterSizingFrom(shape({ mode: "teams", value: 4 }, false), 18)).toEqual({
+      target: null,
+      cap: null,    });
+  });
+
+  it("is the largest of the Format panel's own sizes for every legal count", () => {
+    // The panel prints `sizingConsequence`'s sizes; this returns one number
+    // from the same deal. Held against each other so the words and the
+    // figure cannot drift apart.
+    let checked = 0;
+    for (let sides = MIN_TEAMS; sides <= MAX_TEAMS; sides += 1) {
+      for (let people = sides; people <= 60; people += 1) {
+        const sizing = { mode: "teams" as const, value: sides };
+        const said = sizingConsequence(sizing, people);
+        const places = rosterSizingFrom(shape(sizing), people);
+        expect(places.cap).toBe(Math.max(...said.sizes));
+        expect(places.target).toBeNull();
+        checked += 1;
+      }
+    }
+    expect(checked).toBeGreaterThan(300);
   });
 });
 

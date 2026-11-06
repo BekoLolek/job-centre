@@ -36,6 +36,7 @@ import {
   getDraftConfig,
   getDraftHistory,
   getDraftPool,
+  getRosterSizing,
   getTeams,
   getUnpooledApplicants,
   teamsFillOf,
@@ -89,6 +90,7 @@ export default async function AdminEventPage({
     adminGames,
     teams,
     draftConfig,
+    rosterSizing,
     pool,
     unpooled,
     discarded,
@@ -106,6 +108,9 @@ export default async function AdminEventPage({
     loadAdminGames(),
     getTeams(event.id),
     getDraftConfig(event.id),
+    // R-248 / UC-49 2: the places on a team, from the Format panel through
+    // the same read `getTeams` sized its rosters with.
+    getRosterSizing(event.id),
     getDraftPool(event.id),
     getUnpooledApplicants(event.id),
     getDiscardedPlayers(event.id),
@@ -242,6 +247,7 @@ export default async function AdminEventPage({
       })),
     })),
     config: draftConfig,
+    sizing: rosterSizing,
     pool: {
       main: pool.main.map((entry) => entry.userId),
       reserve: pool.reserve.map((entry) => entry.userId),

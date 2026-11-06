@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { MemberLike, TeamLike } from "@/components/draft";
 import { DEFAULT_DRAFT_CONFIG, rosterState } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
-import { eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
+import { eventShapeFrom, rosterSizingFrom, teamFormatFrom } from "@/lib/events-policy";
 import { applicant } from "./applicants-fixture";
 import type { DraftTabData } from "../types";
 
@@ -47,7 +47,19 @@ vi.mock("@/app/admin/events/draft-actions", () => ({
 
 const { default: TeamsTab, teamsOpenTo, unplacedAccepted } = await import("../TeamsTab");
 
-const CONFIG = { ...DEFAULT_DRAFT_CONFIG, rosterTarget: 3 };
+const CONFIG = DEFAULT_DRAFT_CONFIG;
+
+/**
+ * Three places a team, as the Format panel states them — through the real
+ * `rosterSizingFrom` over a stored shape, not a literal, for the reason
+ * `roster` below uses the real `rosterState` (R-248).
+ */
+const SIZING = rosterSizingFrom(
+  eventShapeFrom({
+    eventShape: { teamEvent: true, draft: true, sizing: { mode: "perTeam", value: 3 } },
+  }),
+  0
+);
 
 /** One member row. Price zero and not a captain unless it says so. */
 function member(teamId: string, userId: string, over: Partial<MemberLike> = {}): MemberLike {
@@ -67,7 +79,7 @@ function team(id: string, name: string, members: MemberLike[]): TeamLike {
     captainUserId: members.find((row) => row.isCaptain)?.userId ?? null,
     balanceStart: CONFIG.defaultBalance,
     balance: CONFIG.defaultBalance,
-    roster: rosterState({ id }, members, CONFIG),
+    roster: rosterState({ id }, members, CONFIG, SIZING),
     members,
   };
 }
@@ -86,6 +98,7 @@ function tabData(teams: TeamLike[], over: Partial<DraftTabData> = {}): DraftTabD
   return {
     teams,
     config: CONFIG,
+    sizing: SIZING,
     pool: { main: [], reserve: [] },
     unpooled: [],
     discarded: [],
@@ -185,7 +198,7 @@ describe("the teams the tab offers as a destination", () => {
         { id: "team-b", name: "Bravo" },
       ],
       rosters,
-      CONFIG.rosterTarget,
+      SIZING.cap,
       "placed"
     );
     expect(open.map((row) => row.id)).toEqual(["team-b"]);
@@ -205,7 +218,7 @@ describe("the teams the tab offers as a destination", () => {
         { id: "team-b", name: "Bravo" },
       ],
       rosters,
-      CONFIG.rosterTarget,
+      SIZING.cap,
       "free"
     );
     expect(open.map((row) => row.id)).toEqual(["team-b"]);
@@ -219,10 +232,31 @@ describe("the teams the tab offers as a destination", () => {
         { id: "team-c", name: "Charlie" },
       ],
       [],
-      CONFIG.rosterTarget,
+      SIZING.cap,
       "free"
     );
     expect(open.map((row) => row.id)).toEqual(["team-a", "team-b", "team-c"]);
+  });
+
+  it("offers every other team while the panel has no cap, as placeOnRoster refuses none", () => {
+    // A count of teams with too few accepted derives no cap. `rosterState`
+    // calls nothing full of a figure the panel does not have, so neither does
+    // the picker — a team held back here would be refused nowhere.
+    const rosters = [
+      member("team-a", "cap-a", { isCaptain: true }),
+      member("team-a", "one"),
+      member("team-a", "two"),
+    ];
+    const open = teamsOpenTo(
+      [
+        { id: "team-a", name: "Alpha" },
+        { id: "team-b", name: "Bravo" },
+      ],
+      rosters,
+      null,
+      "free"
+    );
+    expect(open.map((row) => row.id)).toEqual(["team-a", "team-b"]);
   });
 
   it("offers the open team and not the full one in the rendered picker", () => {

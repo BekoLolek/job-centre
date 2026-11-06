@@ -66,9 +66,11 @@ import type { DraftTabData } from "./types";
  * cannot see" is not a rule anybody can follow. The screen shows that happening
  * rather than letting the admin save a contradiction and discover it later.
  *
- * Likewise, once a lot has been awarded `setDraftConfig` refuses to lower the
- * roster target and stops rewriting starting balances. The controls say so
- * before they are touched instead of offering a rejection.
+ * Likewise, once a lot has been awarded `setDraftConfig` stops rewriting
+ * starting balances. The controls say so before they are touched instead of
+ * offering a rejection. The roster size is not among the controls at all: the
+ * places on a team are the Format panel's figure (R-248), read here as
+ * `data.sizing` and never saved from this tab.
  *
  * ## The pool, and who is not in it
  *
@@ -378,8 +380,11 @@ export default function DraftTab({
 
   const acceptedCount = applicants.filter((row) => row.status === "accepted").length;
   const poolTotal = pool.main.length + (config.reserveEnabled ? pool.reserve.length : 0);
+  // Against the Format panel's cap (R-248): the places on a team are not a
+  // draft rule, so they are read from `data.sizing`, never from the form.
+  // Nothing to fill while the panel has no figure.
   const slotsToFill = teams.reduce(
-    (total, team) => total + Math.max(0, config.rosterTarget - team.members.length),
+    (total, team) => total + Math.max(0, (data.sizing.cap ?? 0) - team.members.length),
     0
   );
 
@@ -392,7 +397,7 @@ export default function DraftTab({
           <span className="block font-medium">This draft has started, so its rules are fixed</span>
           <span className="mt-1 block opacity-90">
             Every setting below locked when the first player went up on the wheel. Captains
-            have been bidding against a minimum, a timer and a roster size they could see,
+            have been bidding against a minimum and a timer they could see,
             and moving any of them now would change what every bid already placed was
             worth. The pools are fixed for the same reason — during the draft, hold a
             player over from the room instead, so it happens where everyone can see it.
@@ -506,17 +511,24 @@ export default function DraftTab({
         <Eyebrow as="h2">Rosters</Eyebrow>
 
         <div className="grid gap-6 md:grid-cols-2">
+          {/*
+            A readout, not a control: the places on a team are the Format
+            panel's figure (R-248), read as `data.sizing.cap` and never saved
+            from this tab, so the stepper is disabled and its change handler
+            does nothing. The label and hint keep their old words; naming where
+            the figure is set is Task 109's.
+          */}
           <Number_
             label="Roster target"
-            value={form.rosterTarget}
-            min={started ? data.config.rosterTarget : 1}
+            value={data.sizing.cap}
+            min={1}
             max={20}
-            disabled={rulesLocked}
-            onChange={(value) => set("rosterTarget", value ?? 1)}
+            disabled
+            onChange={() => {}}
             hint={`Including the captain (§14), so each team drafts ${Math.max(
               0,
-              config.rosterTarget - 1
-            )} more.${started ? " It cannot be lowered now that players have been awarded." : ""}`}
+              (data.sizing.cap ?? 0) - 1
+            )} more.`}
           />
           <Switch
             label="Must fill your roster"
@@ -529,7 +541,13 @@ export default function DraftTab({
           />
         </div>
 
-        <BidCeiling teams={teams} config={config} bare className="border-t border-hair pt-5" />
+        <BidCeiling
+          teams={teams}
+          config={config}
+          sizing={data.sizing}
+          bare
+          className="border-t border-hair pt-5"
+        />
       </Panel>
 
       {/* --- Selection and the reserve pool -------------------------- */}

@@ -429,7 +429,7 @@ describe("a hidden tab's actions", () => {
     // A member who found the action anyway — by URL, or by keeping the page
     // open while somebody else turned the teams off.
     state.userId = fixture.members[0];
-    await expect(saveDraftConfigAction(fixture.eventId, { rosterTarget: 4 })).rejects.toThrow(
+    await expect(saveDraftConfigAction(fixture.eventId, { minBid: 4 })).rejects.toThrow(
       /NEXT_REDIRECT/
     );
     await expect(setTeamCountAction(fixture.eventId, 4)).rejects.toThrow(/NEXT_REDIRECT/);
@@ -444,7 +444,7 @@ describe("a hidden tab's actions", () => {
     unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, teamEvent: false }));
 
     state.userId = null;
-    await expect(saveDraftConfigAction(fixture.eventId, { rosterTarget: 4 })).rejects.toThrow(
+    await expect(saveDraftConfigAction(fixture.eventId, { minBid: 4 })).rejects.toThrow(
       /NEXT_REDIRECT/
     );
     state.userId = fixture.host;
@@ -464,7 +464,7 @@ describe("a hidden tab's actions", () => {
     );
 
     expect(
-      unwrap(await saveDraftConfigAction(fixture.eventId, { rosterTarget: 4 })).config.rosterTarget
+      unwrap(await saveDraftConfigAction(fixture.eventId, { minBid: 4 })).config.minBid
     ).toBe(4);
     expect(unwrap(await setTeamCountAction(fixture.eventId, 2)).teams.length).toBe(2);
 
@@ -474,5 +474,47 @@ describe("a hidden tab's actions", () => {
     expect(
       refusal(await saveEventShapeAction(fixture.eventId, { ...TEAMS, teamEvent: false }))
     ).toBe(teamsInTheWayRefusal(2));
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/* The audit row never carries a figure the panel does not have (R-248)  */
+/* --------------------------------------------------------------------- */
+
+describe("the draft-rules audit line", () => {
+  async function draftConfigLines(eventId: string): Promise<string[]> {
+    const rows = await db
+      .select({ summary: auditLog.summary })
+      .from(auditLog)
+      .where(and(eq(auditLog.eventId, eventId), eq(auditLog.action, "draft.config")));
+    return rows.map((row) => row.summary);
+  }
+
+  it("names the places on a team when the panel has them", async () => {
+    const fixture = await hostedEvent(4);
+    unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 3 }));
+
+    unwrap(await saveDraftConfigAction(fixture.eventId, { minBid: 5 }));
+
+    const [line] = await draftConfigLines(fixture.eventId);
+    expect(line).toBe("Changed the draft rules — 1000 each, sealed bidding, rosters of 3.");
+  });
+
+  it("leaves the clause out, rather than writing 'rosters of null', when it has none", async () => {
+    /*
+     * A count of teams with fewer accepted than sides: `planSides` refuses the
+     * deal, `rosterSizingFrom` derives nothing, and the cap is null. An audit
+     * row is permanent, so a sentence with "null" in it is one nobody can go
+     * back and fix — the clause is omitted instead.
+     */
+    const fixture = await hostedEvent(1);
+    unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, mode: "teams", value: 3 }));
+
+    unwrap(await saveDraftConfigAction(fixture.eventId, { minBid: 5 }));
+
+    const [line] = await draftConfigLines(fixture.eventId);
+    expect(line).toBe("Changed the draft rules — 1000 each, sealed bidding.");
+    expect(line).not.toContain("null");
+    expect(line).not.toContain("rosters of");
   });
 });

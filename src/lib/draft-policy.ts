@@ -42,6 +42,7 @@ import type {
   DraftSelectionMode,
   DraftSpin,
 } from "@/db/schema";
+import type { RosterSizing } from "./events-policy";
 
 /* ------------------------------------------------------------------ */
 /* Configuration (§9)                                                 */
@@ -51,6 +52,18 @@ import type {
  * One event's draft rules, as the rest of this module wants them: every field
  * present, every number sane. `draft_configs` is the storage; this is the shape
  * after `draftConfigFrom` has filled the gaps.
+ *
+ * ## The roster size is not here, on purpose (R-248, R-250 / UC-49)
+ *
+ * The places on a team are the Format panel's figure, derived on every read
+ * by `rosterSizingFrom` in `events-policy.ts` and handed to `rosterState` as
+ * a {@link RosterSizing}. This type used to carry a `rosterTarget` of its own,
+ * defaulting to six, and the public team card drew that six for an event
+ * whose panel said three — and for an event with no draft at all, where the
+ * only screen that could change it was hidden. A second stored copy of a
+ * figure the panel already owns is a disagreement waiting to happen, so the
+ * draft's rules no longer hold one. `draft_configs.roster_target` is still a
+ * column; it is neither read nor written.
  */
 export type DraftConfig = {
   /** Uniform balances, or one per team so an admin can handicap. */
@@ -68,8 +81,6 @@ export type DraftConfig = {
   reserveEnabled: boolean;
   /** How many times a reserve player may come round again. Null is unlimited. */
   reserveRounds: number | null;
-  /** Roster size *including* the captain (§14). */
-  rosterTarget: number;
   /** §9's blind-bid protection. */
   mustFillRoster: boolean;
   bidVisibility: DraftBidVisibility;
@@ -92,7 +103,6 @@ export const DEFAULT_DRAFT_CONFIG: DraftConfig = {
   selectionMode: "wheel",
   reserveEnabled: true,
   reserveRounds: null,
-  rosterTarget: 6,
   mustFillRoster: true,
   bidVisibility: "admin_only",
 };
@@ -101,12 +111,20 @@ export const DEFAULT_DRAFT_CONFIG: DraftConfig = {
  * Every key of `DraftConfig` that is a **rule** rather than a note.
  *
  * All of them, as it happens — R-64 lists balances, selection, bidding mode,
- * visibility, reserve pool and roster size, and R-143 to R-146 add the timer,
- * the comeback count, the minimum bid and the must-fill switch. The list is
- * written out rather than derived from `Object.keys` so that adding a field to
+ * visibility and reserve pool, and R-143 to R-146 add the timer, the comeback
+ * count, the minimum bid and the must-fill switch. The list is written out
+ * rather than derived from `Object.keys` so that adding a field to
  * `DraftConfig` is a deliberate decision about whether it locks, not a silent
  * one: UC-16 1a refuses *rule* changes once the first lot has opened, and a new
  * key that quietly joined the lock would be a surprise in both directions.
+ *
+ * R-64 also lists the roster size, and it is deliberately **not** here. It is
+ * no longer a key of `DraftConfig` (see that type), and it could not be a
+ * locked rule even if it were: under a count of teams the figure is derived
+ * from how many players are accepted, so accepting one more player mid-draft
+ * would move it — and the next save of any unrelated rule would be refused,
+ * naming a roster size nobody touched. Whether the figure may still shrink
+ * once a lot has been awarded is a question for where the figure now lives.
  */
 export const DRAFT_RULE_KEYS = [
   "balanceMode",
@@ -118,7 +136,6 @@ export const DRAFT_RULE_KEYS = [
   "selectionMode",
   "reserveEnabled",
   "reserveRounds",
-  "rosterTarget",
   "mustFillRoster",
   "bidVisibility",
 ] as const satisfies ReadonlyArray<keyof DraftConfig>;
@@ -200,6 +217,12 @@ const VISIBILITIES = ["admin_only", "captains", "everyone"] as const;
  * can follow, so the combination is silently upgraded rather than stored as a
  * contradiction the bid panel would have to apologise for. §9 lists the two
  * settings side by side without saying they interact; they do.
+ *
+ * The result is built key by key rather than spread from the input, and that
+ * is load-bearing: a `draft_configs` row still carries `roster_target`, and a
+ * config that let it through would hand it straight back to the upsert that
+ * writes the whole config, which is how the retired stored copy would come
+ * back to life (R-248).
  */
 export function draftConfigFrom(
   input: Partial<DraftConfig> | null | undefined
@@ -218,7 +241,6 @@ export function draftConfigFrom(
     selectionMode: oneOf(source.selectionMode, SELECTION_MODES, DEFAULT_DRAFT_CONFIG.selectionMode),
     reserveEnabled: source.reserveEnabled ?? DEFAULT_DRAFT_CONFIG.reserveEnabled,
     reserveRounds: nullableWhole(source.reserveRounds, 1),
-    rosterTarget: whole(source.rosterTarget, DEFAULT_DRAFT_CONFIG.rosterTarget, 1),
     mustFillRoster: source.mustFillRoster ?? DEFAULT_DRAFT_CONFIG.mustFillRoster,
     bidVisibility:
       biddingMode === "open" && wanted === "admin_only" ? "captains" : wanted,
@@ -294,11 +316,26 @@ export type RosterState = {
   size: number;
   /** Normally 1. Zero while the admin has not chosen a captain yet. */
   captainCount: number;
-  target: number;
-  /** Never negative — an over-filled roster has none left, not minus one. */
+  /**
+   * The places the admin stated on the Format panel, or null when the figure
+   * is a consequence of the accepted count (a cap) or nothing is derivable.
+   * A team is *short* only against this.
+   */
+  target: number | null;
+  /**
+   * The most this roster may hold — the stated figure, or the largest planned
+   * side. Null when the panel has no figure yet. Every count below runs
+   * against this, and a stated `target` always equals it.
+   */
+  cap: number | null;
+  /**
+   * Never negative — an over-filled roster has none left, not minus one.
+   * Zero without a cap: a draft cannot sell a place it cannot count.
+   */
   slotsLeft: number;
+  /** At or above the cap. False without a cap — nothing to be full of. */
   full: boolean;
-  /** True when an admin has put more people on than the target allows. */
+  /** True when an admin has put more people on than the cap allows. */
   overfilled: boolean;
   /**
    * The least a further player can cost. Zero when the must-fill rule is off,
@@ -325,25 +362,70 @@ export type RosterState = {
  * whenever it is switched on is worse than no rule, so an unpriced slot is
  * treated as costing 1: enough that a captain can never arrive at the last lot
  * with literally nothing, and small enough that it never surprises anyone.
+ *
+ * ### The figure is the Format panel's, and the arithmetic runs on the cap
+ *
+ * `sizing` is `rosterSizingFrom`'s answer for the event (R-248 / UC-49): the
+ * places on a team, derived on read from the panel rather than kept as a draft
+ * rule of their own. Every count here — slots left, full, over-filled, the
+ * reserve — runs against `sizing.cap`, which is the most a team may hold in
+ * both of the panel's modes; under "players on a team" it is the stated figure
+ * and equals `target`, so a draft the admin sized by hand behaves exactly as
+ * it did when the figure was its own setting. `target` is carried through
+ * untouched for the one question that needs it, whether a team is *short*
+ * (`draftComplete`), because a team can only be short of a figure somebody
+ * decided on.
+ *
+ * ### Under a cap the reserve is conservative by at most one minimum bid
+ *
+ * A count of teams deals the accepted players unevenly — eighteen into four
+ * is 5, 5, 4, 4 — and the cap is the largest side, so a team that will end
+ * up with four is reserved as though it had five places: one slot too many,
+ * and one `minPerSlot` kept back that it will never need. Sides differ by at
+ * most one, so that is the whole of the error, and it points the safe way —
+ * a captain told to keep £50 more than necessary can still buy every player
+ * they would have been able to buy, one bid later. It is documented rather
+ * than corrected because the correction is the per-position deal that
+ * `rosterSizingFrom` rejects: which team is the short one would move with the
+ * team order and with every acceptance.
+ *
+ * ### No figure at all: no place to offer
+ *
+ * A count of teams with nobody accepted, or with fewer people than sides, has
+ * no cap (`rosterSizingFrom` derives nothing from a deal the shuffle would
+ * refuse to write), and the draft console can still be opened on it. Three
+ * answers were weighed. **An uncapped roster** — bid the whole balance — has
+ * no honest `slotsLeft` (every reader prints it) and is the "one team buys
+ * every player" failure the sizing's own docblock rejects. **A full one**
+ * would be a lie with consequences: `full` is what refuses an admin putting
+ * somebody on a team, and a roster that holds one person is not full of a
+ * figure nobody has. So: **no slot is offered** — `slotsLeft` is 0, so the
+ * reserve is 0 and `maxBidFor` is 0, and `canPlaceBid` says why in its own
+ * words rather than `roster_full` — while `full` and `overfilled` stay false,
+ * because there is nothing to be full of or over. A draft whose teams cannot
+ * exist yet is a draft that is waiting on the panel, and every figure here
+ * says so without inventing one.
  */
 export function rosterState(
   team: { id: string },
   members: readonly TeamMemberView[],
-  config: DraftConfig
+  config: DraftConfig,
+  sizing: RosterSizing
 ): RosterState {
   const mine = members.filter((member) => member.teamId === team.id);
   const size = mine.length;
-  const target = config.rosterTarget;
-  const slotsLeft = Math.max(0, target - size);
+  const cap = sizing.cap;
+  const slotsLeft = cap === null ? 0 : Math.max(0, cap - size);
   const minPerSlot = config.mustFillRoster ? Math.max(config.minBid, 1) : 0;
 
   return {
     size,
     captainCount: mine.filter((member) => member.isCaptain).length,
-    target,
+    target: sizing.target,
+    cap,
     slotsLeft,
-    full: size >= target,
-    overfilled: size > target,
+    full: cap !== null && size >= cap,
+    overfilled: cap !== null && size > cap,
     minPerSlot,
     reserved: minPerSlot * Math.max(0, slotsLeft - 1),
   };
@@ -357,7 +439,9 @@ export function rosterState(
  * `minPerSlot` × 2 stays behind. With the rule off it is simply the balance.
  *
  * A full roster gets zero, not the balance — you cannot buy a seventh player
- * for a six-player team however much money is left.
+ * for a six-player team however much money is left. So does a roster with no
+ * figure at all, for `rosterState`'s reason: it offers no slot, under either
+ * setting of the must-fill rule.
  */
 export function maxBidFor(
   team: { balance: number },
@@ -384,6 +468,12 @@ export type BidRefusalReason =
   | "bidding_ended"
   /** Every slot is taken; this team is finished drafting. */
   | "roster_full"
+  /**
+   * The Format panel has no figure for the team yet — a count of teams with
+   * too few accepted to make them — so there is no place to bid for. Not
+   * `roster_full`: nobody is finished, the draft has not been sized.
+   */
+  | "roster_unsized"
   /** Under the event's minimum bid. */
   | "below_minimum"
   /** Open bidding: not far enough above the standing bid. */
@@ -488,8 +578,14 @@ export function canPlaceBid(
     return no("bidding_ended", "Bidding on this player has closed.");
   }
 
+  if (roster.cap === null) {
+    return no(
+      "roster_unsized",
+      "Your team has no places to fill yet — the event's format does not size its teams until enough players are accepted."
+    );
+  }
   if (roster.slotsLeft <= 0) {
-    return no("roster_full", `Your roster is full at ${roster.target}.`);
+    return no("roster_full", `Your roster is full at ${roster.cap}.`);
   }
   if (max < config.minBid) {
     return no(
@@ -663,7 +759,10 @@ export type PoolCounts = { main: number; reserve: number };
 export type DraftCompletion = {
   complete: boolean;
   reason: "rosters_full" | "pool_empty" | "both" | "in_progress";
-  /** Teams still short of the target, and by how much. */
+  /**
+   * Teams still short of the target, and by how much. Always empty when there
+   * is no target: a team can only be short of a figure somebody decided on.
+   */
   short: Array<{ teamId: string; slotsLeft: number }>;
   /** Players still waiting, counting the reserve pool only when it is on. */
   playersLeft: number;
@@ -677,22 +776,40 @@ export type DraftCompletion = {
  * telling about — hence `short`, so the screen can say "Team C is two players
  * light" rather than just going quiet.
  *
+ * ### Short is measured against a target; full is measured against the cap
+ *
+ * They were the same question while the figure was a draft rule of its own.
+ * They are not under a count of teams (R-250): the figure is a cap taken from
+ * the largest side, and most teams sit below it by arithmetic — 5, 5, 4, 4
+ * against a cap of five. A draft that called those teams short would never
+ * report itself complete, and the banner would say two teams were light of a
+ * figure nobody promised them. So `short` is only ever filled against a
+ * stated `target`, and "every roster full" is read off `full` — at the cap,
+ * where no team can buy anyone — rather than off an empty `short`. With a
+ * target the two readings agree, exactly as before. With no figure at all no
+ * roster is full, so the draft is in progress until the pool runs out, which
+ * is the honest state of a console opened before the panel can size it.
+ *
  * The reserve pool only counts when it is switched on. Names sitting in a
  * disabled reserve pool are out of the draft, not waiting in it.
  */
 export function draftComplete(
   pools: PoolCounts,
   teams: ReadonlyArray<{ id: string; members: readonly TeamMemberView[] }>,
-  config: DraftConfig
+  config: DraftConfig,
+  sizing: RosterSizing
 ): DraftCompletion {
   const short: Array<{ teamId: string; slotsLeft: number }> = [];
+  let rostersFull = teams.length > 0;
   for (const team of teams) {
-    const roster = rosterState(team, team.members, config);
-    if (roster.slotsLeft > 0) short.push({ teamId: team.id, slotsLeft: roster.slotsLeft });
+    const roster = rosterState(team, team.members, config, sizing);
+    if (!roster.full) rostersFull = false;
+    if (roster.target !== null && roster.slotsLeft > 0) {
+      short.push({ teamId: team.id, slotsLeft: roster.slotsLeft });
+    }
   }
 
   const playersLeft = pools.main + (config.reserveEnabled ? pools.reserve : 0);
-  const rostersFull = teams.length > 0 && short.length === 0;
   const poolEmpty = playersLeft === 0;
 
   const reason: DraftCompletion["reason"] = rostersFull
