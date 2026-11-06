@@ -295,6 +295,13 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   "src/components/admin/HeroEditor.tsx": ["announced", "announced"],
   "src/components/admin/HostQueue.tsx": ["announced"],
   "src/components/admin/LadderEditor.tsx": ["announced", "announced"],
+  /*
+   * `/admin/hands`'s one Alert: `?player=` names nobody who has drawn (UC-48
+   * 3). Decided on the server from the list before anything renders, and on
+   * the page from first paint — the audit page's "that filter does not name an
+   * event", for a player.
+   */
+  "src/components/admin/PlayerHands.tsx": ["standing"],
   "src/components/admin/QuestionDialog.tsx": ["announced", "announced"],
   "src/components/admin/QuestionList.tsx": ["announced"],
   "src/components/admin/ServerSettings.tsx": [

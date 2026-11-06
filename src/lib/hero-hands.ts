@@ -5,10 +5,22 @@
  * The storage half of the draw, and the only half that touches Postgres.
  * `heroes-policy.ts` decides *which* nine (Task 74, no database, randomness
  * injected); `heroes.ts` supplies the catalogue and the pools; this file is the
- * three sentences in between — "what does this participant already hold",
- * "deal them one if they hold nothing", and "what does everybody on this event
- * hold" — with two callers: Task 76's draw page for the first two, and the
- * manager's hands sheet (R-239 / UC-47) for the third.
+ * five sentences in between — "what does this participant already hold",
+ * "deal them one if they hold nothing", "what does everybody on this event
+ * hold", "what has this player been dealt, night after night", and "who has
+ * been dealt anything at all" — with three callers: Task 76's draw page for
+ * the first two, the manager's hands sheet (R-239 / UC-47) for the third, and
+ * the admin's player history (R-244, R-246 / UC-48) for the last two.
+ *
+ * Three readers of hands — {@link handFor}, {@link handsFor},
+ * {@link handsOfPlayer} — and one pair of private functions under them:
+ * `heroesNamedBy` reads the rows a set of hands name, retired and renamed
+ * included, and `unflatten` rebuilds nine slots from those rows. Every reader
+ * goes through both, so no two screens can disagree about whether a retired
+ * hero is still named or which slot is which role; the tests assert each later
+ * reader against {@link handFor} hand for hand, which is what keeps that true.
+ * {@link playersWithHands} is the fourth read of the table but not of hands:
+ * it counts rows and names nobody's heroes, so it has nothing to rebuild.
  *
  * It is a module of its own rather than more of `heroes.ts` because the two
  * answer different questions about different tables: that file is the hero
@@ -70,7 +82,7 @@
  * *row* is keyed by.
  */
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import {
   type Database,
   type Hero,
@@ -79,6 +91,7 @@ import {
   events,
   heroHands,
   heroes,
+  users,
 } from "@/db";
 import { HERO_ROLES, drawableByRole, listHeroes } from "@/lib/heroes";
 import { HEROES_PER_ROLE, type HeroHand, drawHand } from "@/lib/heroes-policy";
@@ -92,6 +105,29 @@ export type StoredHand = {
 export type HeroDealResult =
   | { ok: true; hand: StoredHand; alreadyHeld: boolean }
   | { ok: false; error: string };
+
+/**
+ * One night in a player's history: the hand, and the event it was dealt on
+ * (UC-48 4).
+ *
+ * Joined to `events` for the title and slug, because a hand that cannot name
+ * its night answers nothing — "Hulk three weeks running" is a claim about
+ * *which* three weeks. The screen names the night and does not link it (UC-48
+ * 5b: nothing on that page is clickable but the player picker), so the id is
+ * here as the row's key and the slug for whoever does want a link; nothing
+ * else of the event is, because nothing else is asked for.
+ */
+export type PlayerHand = StoredHand & {
+  event: { id: string; title: string; slug: string };
+};
+
+/** A member who holds at least one hand, and on how many nights (UC-48 2). */
+export type PlayerWithHands = {
+  userId: string;
+  displayName: string;
+  /** How many hands — one per event, so how many nights they have drawn on. */
+  hands: number;
+};
 
 /**
  * How many ids a stored hand holds: three roles at three each.
@@ -180,20 +216,52 @@ function unflatten(heroIds: readonly string[], rows: readonly Hero[]): Record<He
   return out;
 }
 
+/**
+ * The hero rows a set of hands name — every reader's second query, and the one
+ * place the rule about retirement lives.
+ *
+ * **No `retired_at` filter, deliberately** (UC-40 4a, UC-47 2b, UC-48 4b): the
+ * rows are read by id and nothing else, which is what makes "what was dealt
+ * stays dealt" true on every screen at once. A rename comes through as the new
+ * name for the same reason — a hand is the rows it was dealt and not the names
+ * they carried (UC-47 2c). `drawableByRole` is where retirement is honoured,
+ * and it is about the *next* draw rather than any hand already held.
+ *
+ * One function rather than the same four lines in each reader, because all
+ * three readers change for the same reason and a `retired_at` filter added to
+ * one copy would break "what was dealt stays dealt" on one screen only — a
+ * drift {@link unflatten} cannot catch, since it only sees the rows it is
+ * handed. The third reader was the third strike.
+ *
+ * A second query rather than a join, because a hand of nine can name the same
+ * hero twice — Deadpool in two roles — and a join would hand back eight rows
+ * for nine cards and lose which slot each belonged to. So the ids are
+ * de-duplicated for the `in` list, and {@link unflatten} rebuilds the slots
+ * from each hand's stored order.
+ *
+ * Callers return their own empty value before reaching this, which keeps the
+ * no-hands case off Drizzle's empty-`in` rule ({@link handsFor} has the
+ * history). Handed an empty list, this would build exactly that `in`.
+ */
+async function heroesNamedBy(
+  hands: readonly { heroIds: string[] }[],
+  database: Database
+): Promise<Hero[]> {
+  return database
+    .select()
+    .from(heroes)
+    .where(inArray(heroes.id, [...new Set(hands.flatMap((hand) => hand.heroIds))]));
+}
+
 /* --- Reading, and dealing ----------------------------------------- */
 
 /**
  * The hand this participant already holds for this event, or null.
  *
- * **Retired heroes included, deliberately** (UC-40 4a): the hero rows are read
- * by id with no `retired_at` filter, which is what makes "what was dealt stays
- * dealt" true. `drawableByRole` is where retirement is honoured, and it is
- * about the *next* draw rather than this hand.
- *
- * Two queries rather than a join, because a hand of nine can name the same
- * hero twice — Deadpool in two roles — and a join would hand back eight rows
- * for nine cards and lose which slot each belonged to. The ids are de-duplicated
- * for the `in` list and the slots are rebuilt from the stored order.
+ * The hero rows come through {@link heroesNamedBy}, which is where retired and
+ * renamed heroes are kept in the hand (UC-40 4a) and where the de-duplicated
+ * `in` list is argued; the slots are rebuilt from the stored order by
+ * {@link unflatten}.
  */
 export async function handFor(
   eventId: string,
@@ -207,10 +275,7 @@ export async function handFor(
     .limit(1);
   if (!row) return null;
 
-  const rows = await database
-    .select()
-    .from(heroes)
-    .where(inArray(heroes.id, [...new Set(row.heroIds)]));
+  const rows = await heroesNamedBy([row], database);
 
   return { heroes: unflatten(row.heroIds, rows), dealtAt: row.dealtAt };
 }
@@ -220,17 +285,13 @@ export async function handFor(
  * manager's sheet (R-239, R-242 / UC-47 2, 2b, 2c, 2d).
  *
  * Each value is exactly what {@link handFor} returns for that participant, and
- * the two are built the same way on purpose: one `in` list over the
- * de-duplicated ids of every hand on the event, then {@link unflatten} per row.
- * The sheet and the player's own screen read slots through one function, so
- * they cannot disagree about which slot is which role (UC-47 2d — Deadpool in
- * two slots is two cards, and a join would hand back one row for both).
- *
- * **No `retired_at` filter**, for {@link handFor}'s reason: what was dealt
- * stays dealt (UC-40 4a, UC-47 2b), and a rename comes through as the new name
- * because a hand is the rows it was dealt and not the names they carried
- * (UC-47 2c). An id with no row throws, from the same line the single read
- * throws from.
+ * the two are built through the same two functions on purpose:
+ * {@link heroesNamedBy} for the rows of every hand on the event, then
+ * {@link unflatten} per hand. The sheet and the player's own screen read rows
+ * and slots through one pair, so they cannot disagree about whether a retired
+ * hero is still named (UC-47 2b), what a renamed one is called (UC-47 2c), or
+ * which slot is which role (UC-47 2d — Deadpool in two slots is two cards). An
+ * id with no row throws, from the same line the single read throws from.
  *
  * Keyed by user rather than returned as a list because that is the question
  * the sheet asks of it — "what does *this* seat hold" for each participant the
@@ -255,16 +316,113 @@ export async function handsFor(
   const hands = await database.select().from(heroHands).where(eq(heroHands.eventId, eventId));
   if (hands.length === 0) return {};
 
-  const rows = await database
-    .select()
-    .from(heroes)
-    .where(inArray(heroes.id, [...new Set(hands.flatMap((hand) => hand.heroIds))]));
+  const rows = await heroesNamedBy(hands, database);
 
   const out: Record<string, StoredHand> = {};
   for (const hand of hands) {
     out[hand.userId] = { heroes: unflatten(hand.heroIds, rows), dealtAt: hand.dealtAt };
   }
   return out;
+}
+
+/**
+ * Every hand one player has been dealt, newest first, each naming the event it
+ * came from — the admin's player history (R-244 / UC-48 4, 4b).
+ *
+ * The third reader of `hero_hands`, and built the way {@link handsFor} is: the
+ * hands this player holds, {@link heroesNamedBy} for their rows, then
+ * {@link unflatten} per hand. The tests assert it against {@link handFor} hand
+ * for hand, so a hand in the history *is* the hand the player's own page shows
+ * — retired and renamed heroes included (UC-48 4b), which is that function's
+ * rule and not restated here.
+ *
+ * **Ordered by `dealt_at desc` in the query**, because that is the order the
+ * screen reads and not the screen's job to impose: "have they had Hulk three
+ * weeks running" is read top-down from the most recent night, and a list the
+ * page had to sort would be a second place for the order to be wrong. Storage
+ * order is not dealt order — nothing about a uuid primary key says when a row
+ * went in — which is why the test dates its three hands out of insertion order.
+ *
+ * **Inner-joined to `events`**, so a hand names its night. A hand whose event
+ * is gone cannot exist: `hero_hands.event_id` cascades on delete, so the join
+ * drops nothing the table still holds.
+ *
+ * No filter by game, status or date — every hand this player holds, in
+ * one order. A member who has never drawn, or an id that names nobody, is an
+ * empty list rather than a refusal, and the early return keeps that case off
+ * Drizzle's empty-`in` rule exactly as {@link handsFor}'s does.
+ */
+export async function handsOfPlayer(
+  userId: string,
+  database: Database = defaultDb
+): Promise<PlayerHand[]> {
+  const hands = await database
+    .select({
+      heroIds: heroHands.heroIds,
+      dealtAt: heroHands.dealtAt,
+      event: { id: events.id, title: events.title, slug: events.slug },
+    })
+    .from(heroHands)
+    .innerJoin(events, eq(events.id, heroHands.eventId))
+    .where(eq(heroHands.userId, userId))
+    .orderBy(desc(heroHands.dealtAt));
+  if (hands.length === 0) return [];
+
+  const rows = await heroesNamedBy(hands, database);
+
+  return hands.map((hand) => ({
+    heroes: unflatten(hand.heroIds, rows),
+    dealtAt: hand.dealtAt,
+    event: hand.event,
+  }));
+}
+
+/**
+ * Every member who holds at least one hand, with their display name and how
+ * many nights they have drawn on, most nights first — the picker on the
+ * admin's player history (R-246 / UC-48 2).
+ *
+ * **One grouped query, not a read per player**, for `loadAdminGames`' reason
+ * (`src/lib/admin-games.ts`): forty members would otherwise be forty round
+ * trips, and on Neon that is forty HTTP requests. Postgres counts the hands and
+ * orders the members; this function only names them. The test counts the
+ * statements begun and asserts exactly one.
+ *
+ * Driven from `hero_hands` and joined *to* `users`, rather than the other way
+ * round with a `left join` and a `having`, because the question is "who has
+ * drawn" and not "which members have not": a member with no hand has no
+ * history to show, so they are not in the result at all, and an inner join
+ * from the hands is the shape that says so without a filter to forget.
+ *
+ * `hands` is a count of rows, and one row is one event (R-212's unique pair),
+ * so it is also how many nights. Ties on nights are broken by display name,
+ * and ties on that by id, so the picker holds still between loads: both name
+ * columns are nullable, and two members with neither set on the same number
+ * of nights would otherwise have no defined order at all. The terminal key is
+ * the repo's idiom — `loadAdminUsers` ends on `createdAt`, and the notes read
+ * in the same file on `id`, for this reason. The display name falls back to
+ * `name` as `loadAdminUsers` does, and the fallback is the name of an account
+ * rather than a refusal because the picker is a list of people who *have* a
+ * hand, whatever their row says they are called.
+ */
+export async function playersWithHands(database: Database = defaultDb): Promise<PlayerWithHands[]> {
+  const rows = await database
+    .select({
+      userId: users.id,
+      displayName: users.displayName,
+      name: users.name,
+      hands: count(),
+    })
+    .from(heroHands)
+    .innerJoin(users, eq(users.id, heroHands.userId))
+    .groupBy(users.id)
+    .orderBy(desc(count()), asc(users.displayName), asc(users.id));
+
+  return rows.map((row) => ({
+    userId: row.userId,
+    displayName: row.displayName ?? row.name ?? "Unknown member",
+    hands: Number(row.hands),
+  }));
 }
 
 /**

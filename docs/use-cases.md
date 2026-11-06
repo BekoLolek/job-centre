@@ -1647,3 +1647,64 @@ A season of two to four events a month across different games, with one running 
 **Error flows**
 - **5a.** A manager looks for a way to redeal, clear or draw on somebody's behalf - there is none, by design. The draw happens once and stands (R-212), so the sheet offers nothing to click; it is a screen that only reads.
 - **5b.** Somebody who is not a manager opens the tab's URL - the editor's own guard turns them away, as it does for every other tab. A hidden tab is not an authorisation (UC-42 5b): what keeps a member out is the page's guard, not the rail.
+
+## UC-48: Look back at what a player has rolled
+
+**Actor:** Admin
+**Requirements covered:** R-244, R-245, R-246, R-247
+**Trigger:** An admin wonders whether a hero keeps coming up for the same player.
+
+**Preconditions**
+1. The admin is signed in as an admin. A host is not one (R-247).
+
+**Main success path**
+1. Admin opens Hands from the admin nav.
+2. System lists the players who have been dealt at least one hand, each with how many nights they have drawn on.
+3. Admin picks one.
+4. System shows every hand that player has been dealt, newest first, each naming the event it came from and when it was dealt, with the nine heroes grouped by role.
+5. System shows, for that player, every hero that has come up and on how many nights.
+
+**Outcome**
+- The admin can see whether a hero keeps coming up for one player, from the rows rather than from memory.
+
+**Alternate flows**
+- **2a.** Nobody has ever been dealt a hand - the page says so, rather than showing an empty picker and inviting a choice that cannot be made.
+- **3a.** No player picked yet - the page shows the list and says to pick one. It does not pick somebody on the admin's behalf; whose history is being read is not a thing to guess at.
+- **4a.** A player who has drawn once - one hand, and the per-hero tally reads one night for each of the nine. Not a special case, and the screen says nothing different.
+- **4b.** A retired hero is still named, and a renamed hero appears under its new name - the same rule as UC-47 2b and 2c, and for the same reason: a hand is the rows it was dealt and not the names they carried.
+- **4c.** A hero dealt twice in one hand - both slots show in that night's hand, and that night counts **once** in the tally (R-245).
+- **5a.** A hero that has never come up for this player is absent from the tally rather than listed at zero. The tally is what they have had, not the catalogue.
+
+**Error flows**
+- **1a.** Somebody who is not an admin opens the page - including a host, who manages one event and not the site - is turned away by the page's own guard, as every other `/admin` page turns them away.
+- **5b.** An admin looks for a way to act on a run of repeats - to reroll it, or to keep a hero out of somebody's next draw - there is none. The draw happens once and stands (R-212), and a draw that remembered last week would not be random (Out of scope).
+
+## UC-49: Size the sides once, and have every screen say it
+
+**Actor:** Admin
+**Requirements covered:** R-248, R-249, R-250, R-251
+**Trigger:** An admin sets how the teams are sized on Setup -> Format.
+
+**Preconditions**
+1. The admin may manage this event.
+2. The event has teams (UC-42 1).
+
+**Main success path**
+1. Admin sets "Players on a team" to a figure and saves.
+2. System stores that one figure and derives the places on a team from it on every read.
+3. Every screen that names the places agrees: the public team card, the admin Teams tab, the Captains tab, the draft room and the draft's own refusals.
+4. Admin sees the same figure on the Draft tab, as a readout pointing at Setup -> Format rather than a second box to fill in.
+
+**Outcome**
+- One figure, set in one place, true everywhere - and no screen can show a number nobody can reach.
+
+**Alternate flows**
+- **1a.** Sized by **"How many teams"** instead - the per-team figure is then derived from how many are accepted and is uneven by arithmetic (eighteen into four is 5, 5, 4, 4). The places become a **cap**: a card reads "5 on the roster, up to 6", draws no empty slots, and no team is marked short or over for holding the same players as another (R-250).
+- **1b.** Nobody is accepted yet - under "Players on a team" the stated figure still holds, because it is a decision rather than a consequence. Under "How many teams" there is nothing to derive and no cap is shown.
+- **2a.** The event has no draft - nothing changes about this. The figure is the sizing's, which is what the defect behind R-248 got wrong: a draft default was drawn for an event with no draft.
+- **3a.** A roster already holds more than the new figure allows, outside a draft - permitted, and the card shows the existing "Over target" badge. An admin fixing a hand-built side must not be blocked (R-249's note).
+- **4a.** A draft is running - the readout is still a readout. The draft's rules lock once the first lot opens (UC-16 1a) and the places are no longer one of those rules, because they are no longer stored as one.
+
+**Error flows**
+- **1c.** Sizing the teams below a roster an awarded draft already filled - **refused**, naming the team and what it holds, and pointing at voiding the lots on the Draft tab. Nothing is written: the refusal is reached before the save, which decision 004 requires of an action that writes without a transaction (R-249).
+- **1d.** The stated night format disagrees with the sizing - **not** refused. The Format panel says so in a note and saves anyway. R-215 is "stated, never enforced", and a 6v6 night fielding eight with substitutes is a real night (R-251).

@@ -1245,6 +1245,7 @@ const NUM_DECISIONS: Record<string, NumDecision> = {
     size: "11px",
     why: "an availability-grid row label; its leading-[1.6rem] pins the row height, which only holds at a known size",
   },
+  "num shrink-0 text-12 text-muted": { decision: "absolute", size: "12px", why: SIBLING },
   "num shrink-0 text-13 text-body": { decision: "absolute", size: "13px", why: SIBLING },
   "num shrink-0 text-20": {
     decision: "absolute",

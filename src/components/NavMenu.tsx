@@ -45,6 +45,10 @@ const ADMIN: Item[] = [
   { href: "/admin/templates", label: "Templates" },
   { href: "/admin/games", label: "Games and questions" },
   { href: "/admin/users", label: "Members" },
+  // R-247 / UC-48 1. Between Members and Audit, as `AdminNav` has it — and
+  // here because below `lg` the bar is hidden and this menu is the only way
+  // an admin on a phone reaches it at all.
+  { href: "/admin/hands", label: "Hands", hint: "Every hand a player has been dealt" },
   { href: "/admin/audit", label: "Audit log" },
   { href: "/admin/settings", label: "Settings" },
 ];

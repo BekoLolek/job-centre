@@ -432,6 +432,49 @@ a list of hands cannot answer at all, which is why a seat with no hand has to be
 | R-242 | As an admin, I want to see when each hand was dealt, so that "I drew before you changed the list" can be settled from the screen. | Could | `hero_hands.dealt_at`, already stored. No new column and no migration |
 | R-243 | As an admin, I want a hand belonging to somebody who no longer holds a seat still shown and named as such, so that a withdrawal does not quietly erase what was dealt. | Should | Nothing deletes a hand, so the row stands after a withdrawal. A sheet that hid it would disagree with the table it was read from |
 
+### Looking back at what a player has rolled (added 2026-11-06)
+
+R-239's sheet answers "what does the room hold tonight". It cannot answer the question that
+follows a few weeks later - "has Bob had Hulk three weeks running?" - because every hand it
+reads belongs to one event. The rows to answer it are already stored; nothing reads them that
+way.
+
+Offered on 2026-11-06 and deferred in favour of the per-event sheet, then asked for.
+
+**Counted in nights, not in cards.** A hero dealt twice in one hand (Deadpool, playable in all
+three roles) came up on **one** night, and the question is about recurrence across nights. Both
+slots still show in that night's hand, where they belong.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-244 | As an admin, I want to see every hand one player has ever been dealt, so that I can answer "have they had this hero three weeks running?" | Should | Across every event, newest first, each naming the event it came from and when it was dealt |
+| R-245 | As an admin, I want to see on how many nights each hero has come up for that player, so that a run of repeats is a number rather than something I counted by eye | Should | Nights, not cards - see above. Most-repeated first |
+| R-246 | As an admin, I want to pick from the players who have actually drawn, so that the picker is not every member who ever signed up | Should | A member with no hand has no history to show. The count beside each name is how many nights they have drawn on |
+| R-247 | As an admin, I want this page to be admin-only rather than manager-scoped, so that a host who runs one event does not see every event's draws | Should | Deliberately narrower than R-239's sheet, which is manager scope because it is about the event that host runs. This page spans events, so it is not one host's - the same line `/admin/users` and `/admin/audit` already draw |
+
+### One number for the places on a team (added 2026-11-06, from a defect)
+
+Reported: "when I set the team size to be 3 players, the player view for the event still shows 6
+spots per team." It does. `roster.target` - the `x/6` and the six empty slots on the public team
+card - came from `draft_configs.roster_target`, which **defaults to 6 when no draft config row
+exists at all**. An event with teams and no draft has no such row, so a draft default was being
+drawn on a public page for an event that has no draft; and the only screen that can set that
+number, the Draft tab, is hidden for a non-draft event. The figure was both wrong and unreachable.
+
+`SIZING_MODES`' own docblock already argues the principle this breaks: storing both figures is
+"storing a disagreement waiting to happen". `roster_target` was a third stored copy of the same
+real-world quantity, beside the Format panel's sizing and the Teams tab's 6v6/3v3.
+
+**The decision: the Format panel owns it, everywhere.** The owner chose this over two cheaper
+fixes on 2026-11-06, knowing it was the largest of the three.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-248 | As an admin, I want the places on a team to be the figure I set on the Format panel wherever it is shown, so that the player view cannot disagree with the setup. | Must | The defect above. One fact, derived on read, never a second stored copy - the same rule `teamCountFrom` already applies to the sibling figure |
+| R-249 | As an admin, I want to be refused rather than obeyed when sizing the teams below a roster an awarded draft already filled, so that players nobody can un-buy do not fall off a roster. | Must | The refusal exists today on the Draft tab (`draft.ts`); it moves to where the number now lives. Outside a draft there is **no** refusal - an over-full roster shows the existing "Over target" badge, because an admin fixing a hand-built side must not be blocked |
+| R-250 | As a visitor, I want a team sized by team count to show what it holds rather than a number of places invented for it, so that the card never promises a place that may not exist. | Should | Sized by "how many teams", the per-team figure is derived and **uneven** - eighteen into four is 5, 5, 4, 4 - so the card reads "5 on the roster, up to 6" and draws no empty slots. A cap, not a target |
+| R-251 | As an admin, I want a stated night format that disagrees with the sizing shown where I can see it, so that a 3v3 night sized at six a side is visible rather than surprising. | Could | A note, never a refusal. R-215 is "stated, never enforced", and a 6v6 night with eight-player rosters and substitutes is legitimate - `MAX_PER_TEAM` is 32 for that reason |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -452,6 +495,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - **An event belongs to at most one championship**, so a result cannot count twice.
 - **A round score is a recorded fact; a total never is.** Somebody typed it, exactly as somebody types a match's maps, so it is stored. What stays derived is every number worked out *from* it - a player's total, the night's ranking, the championship places and the season standings - which is the same rule as "points are worked out from recorded places, never stored as a total" one layer down. Correcting a round re-scores everything above it.
 - **A bonus helps the player whichever way the event scores.** A bonus is points *in the player's favour*, so in a low-score-wins event it subtracts. Stated as a constraint because the obvious implementation adds in both directions, and in half of them that is a penalty dressed as a reward.
+- **The places on a team is one fact, owned by the Format panel.** Added 2026-11-06 with R-248, after a defect proved the alternative: the figure existed in three places and a public page drew the wrong one. It is derived on read from the event's sizing and never stored a second time, which is `SIZING_MODES`' own rule ("storing both is storing a disagreement waiting to happen") applied to the figure that had escaped it. Under `perTeam` it is an exact target; under `teams` it is a **cap**, because the per-team figure is then uneven by arithmetic and a single target would mark one team over and another short for holding the same players.
 - **A hand is shown to its owner and to a manager, and to nobody else.** Added 2026-11-06 with R-239. A participant's draw page reads their own hand and no other, which is the rule as it already stands; the manager's sheet is the one addition, and it is inside the editor every other management screen lives in. The site never shows one participant another's hand - that stays the room's own conversation on the night (UC-39 7).
 
 ## Out of scope
@@ -473,6 +517,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - Artificial delays or simulated mouse movement between actions.
 - Solo scoring: a formula language or any admin-authored expression for working out a score - the customisation is a stated set of choices, not arbitrary arithmetic. Also out: any combining rule other than the total of every round (dropping the worst round, counting the best N, averaging per round); weighting one round more than another; players entering their own scores; reading scores out of jklm.fun or Fall Guys; round scoring for an event that has teams, which has a bracket instead.
 - Championship: skill ratings or ELO; automatic results from game APIs; prizes, money or entry fees; leaderboards across other communities; more than one championship counting the same event; per-game separate championships running as their own competitions (one season, one table, games are just where the points came from).
+- Hero hands: a hero-centred history ("who has had Hulk?", "is Jeff coming up more often than chance?"). R-244 to R-247 are **player-centred** - one player, every night they drew. Reading the same rows the other way round is a second screen and a separate decision, and no requirement asks for it. Also out: anything that acts on a run of repeats - no reroll, no weighting, no excluding a hero from a player's next draw. The draw happens once and stands (R-212), and a draw that remembered last week would not be random.
 - Hero hands: a manager dealing, clearing or rerolling somebody's hand. R-212 is "my draw happens once and stands", and a button that undid it would be the feature failing rather than a convenience - so the sheet reads and never writes. Also out: hero-frequency history across events ("has Bob rolled Hulk three weeks running?"), offered on 2026-11-06 and deliberately deferred in favour of tonight's sheet alone; and any screen that shows one participant another's hand.
 
 ## Open questions

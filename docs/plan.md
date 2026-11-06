@@ -1986,3 +1986,234 @@ deal", which is the noise R-219 exists to remove.
   **`ResultsTab` was asking for a fat prop and reading one field of it**, which is why four test files with nothing to do with hero lists had to change. Narrowed to `Pick<TabVisibility, "teamEvent">`. Two more of the same shape were found and **left**: `Setup`'s prop and `tabs.ts`'s own panel functions, because narrowing `Setup` alone is pointless while `visibleSetup` still demands the whole type. One narrowing per review.
   **`dealtAt` crosses as an ISO string**, not a `Date`, following `LocalTime`'s `at: string` and `ApplicantView.answerConfirmedAt`: the time is formatted in the reader's own zone, which is this repo's rule. Only names, roles and that string cross - a strict subset of `handCards`' id/name/role standard, and nothing of `retired_at`, so the sheet cannot tell a reader which heroes have been retired.
   **No browser walk-through, and the reason is the safety rule rather than laziness.** `.env.local` carries no `DATABASE_URL` locally, so a dev server has nothing to render against, and `npm run build` is the command that migrates production. The page-level tests render the real `AdminEventPage` against PGlite instead, which is how the rail tests reach `?tab=hands` at all. An event whose `game_id` names a row that has gone needed no decision either: `events.game_id` is `on delete set null`, so `event.game` and `event.gameId` cannot disagree.
+
+## O. Looking back at what a player has rolled (R-244 to R-247 / UC-48)
+
+Added 2026-11-06, **Tier 2**. No migration and no schema change: this is the third way of reading
+`hero_hands`, after `handFor` (one seat, one event) and `handsFor` (one event, every seat). This
+one is one player, every event.
+
+**Admin-only, and that is a requirement rather than an oversight** (R-247). R-239's sheet is
+manager scope because it is about the event that host is running; a page that spans every event is
+not one host's, which is the line `/admin/users` and `/admin/audit` already draw with
+`requireAdmin`. UC-47 5b's lesson applies: the guard is what keeps somebody out, and it needs a
+test naming it.
+
+**Nights, not cards.** The tally counts the nights a hero came up, because Deadpool in two roles
+is one night and the question is about recurrence across nights. Both slots still show in that
+night's hand. This is the one place where this feature could quietly answer a different question
+than the one asked.
+
+### Task 101: Every hand one player has been dealt
+
+- **Serves:** R-244, R-246 / UC-48 2, 4, 4b
+- **Files:** `src/lib/hero-hands.ts`, `src/lib/__tests__/hero-hands.test.ts`
+- **Do:** `handsOfPlayer(userId, database)` - every hand this player has been dealt, newest first, each with the event it came from (id, title, slug) and `dealtAt`. Joined to `events` for the title, because a hand that cannot name its night answers nothing; ordered by `dealt_at desc`, which is the order the screen reads and not the screen's job to impose.
+  `playersWithHands(database)` - every user who holds at least one hand, with their display name and how many hands, most nights first. One grouped query rather than a read per player, following `loadAdminGames`' reason: forty members would otherwise be forty HTTP requests to Neon.
+  Both reuse the existing private `unflatten` and take no `retired_at` filter, for `handFor`'s reasons (UC-48 4b). Three readers of one table now share one slot-order function, which is what stops any of them disagreeing about which slot is which role.
+- **Acceptance criteria:**
+  - [x] Hands come back newest first, proven with three hands whose stored order is not their dealt order
+  - [x] Each hand names the event it came from
+  - [x] A player with no hands comes back empty; a user id that names nobody does too
+  - [x] Hands belonging to other players are not returned - two players at one event
+  - [x] `handsOfPlayer` agrees with `handFor` hand for hand, asserted, so a third reader cannot drift
+  - [x] A retired hero is still named and a renamed hero comes back under its new name
+  - [x] `playersWithHands` counts hands per player and excludes members with none, proven with a member who applied and never drew
+  - [x] `playersWithHands` is one query, not one per player
+- **Depends on:** nothing. Task 98 built the neighbours it sits beside.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The three-strikes rule came due, and the extraction is what proved itself.** This module now holds three hand readers - `handFor` (one seat, one event), `handsFor` (one event, every seat) and `handsOfPlayer` (one player, every event) - and all three wrote the same hero query: read the rows these hands name, de-duplicated for the `in` list, with no `retired_at` filter. Two of the three were identical character for character. Review ruled for extracting it, on a concrete failure rather than taste: a stray `retired_at` filter added to one reader would break "what was dealt stays dealt" **on one screen only**, and `unflatten` cannot catch that because it only ever sees the rows it is handed. The proof is the extraction's own point - one mutation inside `heroesNamedBy` now kills a test in **all three** readers at once, with stack frames in each.
+  **`handFor` passing `[row]` changes nothing**, which was the risk the extraction carried: its `if (!row) return null` still precedes the call, so the empty-`in` case never reaches the shared function, and the three early returns stayed where they were because each returns a different empty value.
+  **The determinism addition was accepted and then found incomplete**, which is the more useful half. `playersWithHands` sorts most nights first, and a tie-break was added beyond the criteria so the picker does not reshuffle between reads - accepted, because an unstated order is the same defect Task 102's tally was required to avoid. But it ordered on the raw `display_name` column while the name it *returns* is `displayName ?? name`, so a member with a null `displayName` sorted last whatever name they were shown under, and two such members had no defined order at all - the docblock's "holds still between loads" was untrue for exactly those rows. A terminal `asc(users.id)` fixes it, following `loadAdminUsers`, and the test that can see it inserts users with only a `discordId`, which the standard fixture helper cannot produce.
+  **A citation pointed at something a reader could not follow.** The docblock credited `displayNameOf` "as every admin read of a member does" - but that function is private and unexported, and the admin event page falls back to `discordId` rather than `name`, so both the citation and the word "every" were wrong. Now credits `loadAdminUsers`.
+  **The full suite was unusable as evidence while this ran**, and that is the lead's error rather than this task's: three tasks shared one working tree and one of them was deliberately test-first, so its red phase made every global run meaningless. Two agents waited on a suite that could not go green for reasons unconnected to their work. The file sets were disjoint, which is what made it look safe; the *suite* is not partitioned. Both reads were verified per-file and the tree was confirmed green by the lead afterwards at 190 files / 5066 tests.
+
+### Task 102: How many nights a hero has come up
+
+- **Serves:** R-245 / UC-48 5, 4c, 5a
+- **Files:** `src/lib/hand-history.ts` (new), `src/lib/__tests__/hand-history.test.ts` (new)
+- **Do:** `heroNights(hands)` - for one player's hands, every hero that has come up and on how many nights, most nights first. Pure, type-only imports, no database, so a client panel may hold it (`client-boundary.test.ts`'s rule), and a decision over plain data for the reason Task 99's `handSheet` is one.
+  **A hero in two slots of one hand counts that night once** (R-245 / UC-48 4c) - the one rule in this section that could silently answer a different question, so it is the one a mutation must kill.
+  Ties: heroes on equal nights keep a stated order rather than whatever the grouping produced. Pick one, write it down, and test it; an unstated order is a screen that reshuffles itself between reads.
+  A hero that has never come up is **absent**, not zero (UC-48 5a).
+- **Acceptance criteria:**
+  - [x] A hero in two slots of one hand counts one night, proven by a mutation that counts cards instead
+  - [x] Most nights first, and equal nights follow the stated tie order, both tested
+  - [x] A hero never dealt to this player is absent rather than zero
+  - [x] One hand gives every hero in it one night
+  - [x] No hands gives nothing rather than throwing
+  - [x] The module imports no value, asserted the way `client-boundary.test.ts` asserts it
+- **Depends on:** Task 101, for the hand type only.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **A mutation reported as killed had not been killed, and this is the one to remember.** The tie-order fixture derived every hero's id from its name (`hero-<name lowercased>`), so the ids sorted in exactly the same order as the names. Drop the name key and the output was **byte-identical** - the test whose stated purpose was to pin the name key could not fail without it, and two of the three "distinct kills" were the same test. The implementer had watched the id test die and credited the name mutation for it. Review caught it by **re-running the mutation** rather than reading the report, and proved the fix by deleting the incidental killer from a copy and showing the owning test still fails alone. The fixture now assigns ids in the reverse of the names' order.
+  **The lesson generalises beyond this task:** a mutation claim is evidence only when somebody watched the *owning* test fail. A kill credited to a neighbouring test is how a fixture that cannot distinguish two rules passes for proof.
+  **One refusal of a review suggestion, with the better argument.** Three other fixtures shared the id-tracks-name coincidence, and the implementer changed only one. For the "nights before name" fixture it argued that hostile ids would let an *id-first* mutant survive there, while mirrored ids kill it - so mirrored is the stronger choice at that spot. Review re-derived the mutant table and agreed.
+  **The comparator went back to the repo's.** `byCodePoint` was hand-rolled on `<`/`>` with the reason that a server page and a browser panel must sort identically regardless of ICU - but every name sort in `src/` uses `localeCompare` (26 of them, including three client components that hydrate on both sides and already run that hazard), so the argument did not single this module out, and the tally is computed server-side and rendered rather than re-sorted. The name was also wrong: `<` on strings compares UTF-16 **code units**, not code points, which diverge for astral characters. Both issues died with the comparator.
+
+### Task 103: The Hands page
+
+- **Serves:** R-244 to R-247 / UC-48 1, 2, 3, 2a, 3a, 1a, 5b
+- **Files:** `src/app/admin/hands/page.tsx` (new), `src/components/admin/AdminNav.tsx`, a new panel component under `src/components/admin/`, and its tests
+- **Do:** `/admin/hands`, behind **`requireAdmin`** (R-247), with a `Hands` entry in `AdminNav` beside Members and Audit. The player picker is the list from `playersWithHands`; the chosen player comes from the URL (`?player=`), so a link to one player's history is a link somebody can send, and the page stays a server component with no client state to lose.
+  Nobody is picked by default (UC-48 3a). Nothing is clickable except picking a player: no reroll, no clear, no acting on a run (R-212, UC-48 5b).
+  Only names, roles and the event each hand came from cross to the browser - `handCards`' standard in `src/app/events/[slug]/draw/draw.ts`, the same subset Task 100 settled on.
+- **Acceptance criteria:**
+  - [x] An admin sees the players who have drawn, with their counts, and no member who has not
+  - [x] Picking a player shows their hands newest first, each naming its event, and the per-hero tally
+  - [x] `?player=` naming somebody with no hands, or nobody at all, says so rather than throwing or showing another player's hands
+  - [x] With no player named, the page shows the picker and asks for one, and names nobody's hands
+  - [x] Nobody has ever drawn - the page says so instead of an empty picker (UC-48 2a)
+  - [x] **A host is turned away**, asserted at the page, and the mutation that downgrades `requireAdmin` to `requireEventManager` or `requireUser` kills that test (UC-48 1a / R-247)
+  - [x] The page contains no form, no button beyond the player links, and no import from an actions module
+  - [x] `client-boundary.test.ts` and the field-ordering sweep stay green
+- **Depends on:** Tasks 101, 102.
+- **Left over:** nothing from the criteria, and seven things worth keeping.
+  **The rule this page exists to show was unproven at the page**, and that is the finding to remember from this task. R-245 is "nights, not cards", and `hand-history.ts` proves it - but every page fixture used single-role heroes, so a page-level mutation tallying *cards across hands* produced the identical `Array(9).fill(2)` and passed. The page preserved the rule and nothing here would have noticed it stopping. It is the same shape of hole as Task 102's tie-order fixture: a fixture that cannot distinguish the rule it claims to test. Closed with a dual-role hero dealt into two slots of one hand, and the mutation now dies on that one test while the other twenty-seven pass under it.
+  **The guard test is the strong form.** The reader is made a **host of the very event the named player drew on**, not merely a signed-in member, and the test asserts the redirect, the `error=admin-only` digest, **zero reads through counted wrappers**, and then proves the counter is live with an admin render. Downgrading `requireAdmin` to either `requireUser` or `requireEventManager(event)` admits the host and fails all of it. This is UC-47 5b's lesson applied before the gap existed rather than after a reviewer found it.
+  **A type was redeclared rather than imported**, which review called blocking and was right to: `PlayerPick` was field-for-field `PlayerWithHands` with no mapping between them, so the two could drift and the eventual error would point at the wrong file. The client boundary is not a reason - type-only imports are allowed and `events/types.ts` already imports a lib type that way. The narrow local declaration that **is** justified stayed: `PlayerNight` is narrower by everything that must not cross.
+  **`NavMenu` was missing from the task's file list, and that was the lead's omission.** Review found the consequence rather than the omission: `AdminNav`'s own docblock promises "every one of these also lives in the account menu, which is where they are reachable from on a narrow screen", the bar is hidden below `lg`, so UC-48 1 was unreachable on a phone and that docblock sentence was false. One entry fixes both.
+  **The tap target was argued down from repo consistency.** The picker chips copied the audit page's chip classes exactly, at roughly 23px against the 44px non-negotiable. Review flagged it and left the call; the lead enlarged them, because the audit chip is one control beside a `<select>` while this is a wrapped list of a dozen that **is** the page's only navigation on a phone - and this project has already shipped one 16px control that only a browser sweep caught. A stated non-negotiable beats consistency with a case that is not the same case.
+  **A duplication was named, ruled on, and left - with its trigger written down.** The hand-row markup now exists twice (here and `HandsTab`). Review ruled **leave both**: the two rows are not the same component (the per-event row takes a nullable hand and a mark badge; this one a never-null hand and an event title), and content divergence is already caught because both test files assert the same nine-name sequence. What is genuinely identical is narrower than the row - the `<dl>` block and the `Dealt <LocalTime>` span. It also found a **stronger** duplication the task had not named: `DealtHand` in `events/types.ts` and the `dealt` mapper are verbatim in both pages, comment included. **The trigger:** a third static renderer of a hand (a player's own history, a public profile), or the first edit to one `<dl>` that the other must follow. At that point the type and the mapper go first - their home is `hero-hands.ts`, since the mapper reads `HERO_ROLES` and is server-only - and the markup follows as `HandRoles`.
+  **Three of this task's own sweeps caught it rather than a reader.** A `text-union/80` chip measured 3.5:1 against the contrast floor, a numeral class was unregistered, and an Alert was unclassified. All three were fixed by changing the new code; none by relaxing a sweep, which the spec review was asked to confirm specifically and did.
+
+## P. One number for the places on a team (R-248 to R-251 / UC-49)
+
+Added 2026-11-06 from a defect, **Tier 2**. The report is a user's: "I set the team size to 3 and
+the player view still shows 6 spots per team." The cause is in the requirements section; the fix
+the owner chose is the largest of the three offered, and this section is why that costs seven
+tasks rather than one line.
+
+**Four things the design pass corrected before any code**, each of which would have been a wrong
+turn:
+
+  - **The mid-draft shrink guard is already server-side**, at `draft.ts:1911-1915`, with the
+    whole-rules lock at `:1917` behind it and the client `min` at `DraftTab.tsx:512` in front. So
+    Task 107 **moves an existing refusal and ports its existing test** (`draft.test.ts:1289-1298`)
+    rather than writing a new one. Deleting that test would leave the new guard unproven.
+  - **`rosterTarget` is in `DRAFT_RULE_KEYS`**, which feeds UC-16 1a's "the rules are fixed once
+    the first lot opens". A **derived** figure moves when a player is accepted, so leaving the key
+    in that list would make accepting a player refuse the next save of any unrelated draft rule,
+    naming the roster size. That is a bug this change would *introduce*. It is caught by the
+    compiler rather than by luck - the list is declared
+    `satisfies ReadonlyArray<keyof DraftConfig>`, precisely so that "adding a field is a
+    deliberate decision about whether it locks" - so removing the field from `DraftConfig` makes
+    the list fail to typecheck until it is dealt with.
+  - **A per-team target matched by position must be rejected**, and not on taste. `dealSizes`
+    gives the remainder to the *first* positions and `readTeams` orders by `teams.sort`, so
+    reordering the teams would move which team is allowed five players - against the Teams tab's
+    own promise that "a team carries its identity with it". Accepting one more player re-deals
+    every position. And two teams holding the same five players would have one badged "Over
+    target" and the other not. Hence R-250's **cap**.
+  - **The public page cannot compute this at the screen.** `TeamCard` and `RosterList` receive a
+    `RosterState` and never see a config, and the public Teams tab receives only an `EventBoard`,
+    which carries no event config at all. So the figure must be computed server-side into
+    `roster`, which is why it is derived inside `readConfig` - the one place all three surfaces
+    (public card, admin tabs, redacted draft room) already pass through.
+
+**One cost accepted out loud.** Deriving inside `readConfig` means it must also read
+`events.config` and the accepted count: two extra reads, in a function called inside eight
+transactions. The alternative is threading the figure through every call site, which is more code
+and more places to forget. The reserve arithmetic also over-reserves by at most one minimum bid
+under a cap, which is conservative - it never costs anybody a player - and is documented rather
+than fixed.
+
+**What is deliberately not done: dropping the column.** `draft_configs.roster_target` stays, with
+nothing written to it and nothing reading it, because this repo's migrations are applied to
+production by hand and its house style for a drop (`drizzle/0026_event_dates_dropped.sql`) is a
+replay-safe block that audit-logs every value it discards. That is a task of its own with nothing
+to do with the number on the card, and `schema-drift.test.ts` requires `schema.ts` and `drizzle/`
+to agree until it is written. Recorded as Task 111, available and not taken.
+
+### Task 104: The figure, derived
+
+- **Serves:** R-248, R-250 / UC-49 2, 1a, 1b
+- **Files:** `src/lib/events-policy.ts`, `src/lib/__tests__/shape-sizing.test.ts`
+- **Do:** `rosterSizingFrom(shape, accepted)` beside `sizingConsequence`, returning the places on a team as `{ target: number | null; cap: number | null }` - a stated `target` under `perTeam` (equal to the `cap`), a `cap` alone under `teams`, both null when neither can be worked out. Built on `dealSizes`/`planSides` rather than its own arithmetic, so it cannot disagree with the panel's own stated consequence. Pure, no database.
+  **An `exact: boolean` third field was built, reviewed and removed, and the reason is worth keeping** because it is this section's own principle turned on itself. The flag said nothing `target !== null` does not. It made the call sites *worse* in this language - `if (places.exact)` leaves `target` typed `number | null`, so every consumer needed a `!`, where `if (places.target !== null)` narrows. It let the type represent a contradiction (`{ target: 3, cap: 3, exact: false }` type-checks) that five later tasks would be hand-building fixtures against, in a feature that had already shipped one silently wrong fixture. And `teamCountFrom`, the nearest sibling, already returns `number | null` and is read as `=== null`. R-248 exists because one quantity was stored in three places; shipping a type with two encodings of one fact, even computed together, is the same mistake one layer down.
+- **Acceptance criteria:**
+  - [ ] `perTeam` gives an exact target equal to the stated figure, whatever the accepted count, including zero accepted
+  - [ ] `teams` with an even split gives that size, marked exact or capped - state which and why in the docblock
+  - [ ] `teams` with an uneven split gives the **largest** side as the cap and no target, proven on eighteen into four
+  - [ ] `teams` with nobody accepted derives nothing rather than guessing
+  - [ ] The figure agrees with `sizingConsequence`'s own `sizes` for the same input, asserted, so the panel's words and this number cannot drift
+- **Depends on:** nothing.
+
+### Task 105: `RosterState` takes the figure
+
+- **Serves:** R-248, R-250 / UC-49 3, 1a
+- **Files:** `src/lib/draft-policy.ts`, `src/lib/__tests__/draft-policy.test.ts`
+- **Do:** `rosterState` takes Task 104's figure instead of reading `config.rosterTarget`. `DraftConfig` loses `rosterTarget` - the type, `DEFAULT_DRAFT_CONFIG`, `draftConfigFrom` and `DRAFT_RULE_KEYS` - and the compiler names every reader. The number the draft's arithmetic uses is the `cap`, which under `perTeam` equals the `target`; `draftComplete` contributes no `short` entries when `target === null`, because a team is short only against a target, or a capped draft never reports itself complete and the banner lies.
+- **Acceptance criteria:**
+  - [ ] `rosterState` derives `target`, `slotsLeft`, `full`, `overfilled` and `reserved` from the passed figure, with the existing cases re-pointed rather than rewritten
+  - [ ] Under a cap (no target), no team is reported `short` and a draft completes on an empty pool
+  - [ ] Under a cap, `overfilled` can still fire - and only on a roster larger than the largest legal side, which the cap is
+  - [ ] `changedRules` can no longer name the roster size, and the replacement test asserts the **opposite** of the old one: a moved derived figure cannot lock a draft
+  - [ ] The over-reserve under a cap is at most one minimum bid, asserted, and named in the docblock
+- **Depends on:** Task 104.
+
+### Task 106: The number the screens read - **this is where the reported bug dies**
+
+- **Serves:** R-248 / UC-49 2, 2a
+- **Files:** `src/lib/draft.ts`, `src/lib/__tests__/draft.test.ts`
+- **Do:** `readConfig` reads the event's shape and accepted count and derives the figure, so every `rosterState` call site gets it - `getTeams` (the public card), `getDraftSnapshot` (the room), `placeOnRoster`, `placeBid`, `awardLot`. `setDraftConfig` stops writing the column and the now-dead shrink refusal at `:1911` goes, because Task 107 is where it lives. `placeOnRoster`'s refusal stops saying "raise the roster size on the Draft tab" and points at Setup -> Format.
+- **Acceptance criteria:**
+  - [ ] **A `perTeam: 3` event with teams and no draft reports `getTeams(...)[0].roster.target === 3`** - the reported defect, as one assertion
+  - [ ] An event with no `draft_configs` row no longer reports a roster figure of 6 from the default
+  - [ ] The draft room's snapshot and the public card report the same figure for the same event
+  - [ ] The fixtures that set roster sizes through `setDraftConfig` now set them through a stored shape, and still exercise the read path rather than a hand-built config literal
+  - [ ] `placeOnRoster`'s refusal names Setup -> Format, asserted on the sentence
+- **Depends on:** Task 105.
+
+### Task 107: The refusal moves to where the number lives
+
+- **Serves:** R-249 / UC-49 1c, 3a
+- **Files:** `src/lib/events-policy.ts`, `src/app/admin/events/actions.ts`, `src/app/admin/events/__tests__/event-shape.test.ts`
+- **Do:** the refusal sentence beside its siblings in `events-policy.ts` (following `countFollowsFormatRefusal`, which already says "Change it there"), and the check in `saveEventShapeAction` **before** its first write - it already has the teams and the draft history in hand. Compare the new figure against **each** roster so the sentence can name the team. Outside a draft, no refusal at all (UC-49 3a).
+  `saveEventShapeAction` is not a transaction, which is decision 004's closing case - "a write with no transaction at all is the same bug" - so the refusal must precede `setTeams`.
+- **Acceptance criteria:**
+  - [ ] Shrinking the sizing below a roster filled by an **awarded** lot is refused, naming the team and what it holds
+  - [ ] The refusal leaves `events.config` holding the old sizing and every team untouched, asserted by comparing rows before and after
+  - [ ] `draft.test.ts:1289-1298` is **ported**, not deleted, and its new home fails if the guard is removed
+  - [ ] Outside a draft the same shrink is allowed and the roster reads over-full
+  - [ ] The panel can print the sentence before the round trip, as `ShapeTab` already requires of its refusals
+- **Depends on:** Tasks 104, 106.
+
+### Task 108: The card tells the truth
+
+- **Serves:** R-250 / UC-49 1a
+- **Files:** `src/components/draft/TeamCard.tsx`, `src/components/draft/RosterList.tsx`, `src/components/draft/__tests__/`
+- **Do:** a stated `target` reads `x/y` with the empty slots drawn, as now. A cap with no target reads "x on the roster, up to y" and passes **no** `target` to `RosterList`, so no phantom slot is drawn for a place that may not exist. "Over target" is unchanged. The screens read `places.target === null` to tell the two apart, which is the null check that replaced Task 104's removed `exact` flag.
+- **Acceptance criteria:**
+  - [ ] A roster with a stated target is unchanged - asserted as a byte digest or a byte-identical guard against pre-task markup
+  - [ ] A capped roster (no target) draws no "Empty slot" and no `x/y`
+  - [ ] A capped roster is not badged short or over for holding what another team holds
+  - [ ] The three surfaces that draw a roster agree, so a figure never looks like two things on two pages
+- **Depends on:** Task 105.
+
+### Task 109: The Draft tab shows it, and stops owning it
+
+- **Serves:** R-248 / UC-49 4, 4a
+- **Files:** `src/components/admin/events/DraftTab.tsx`, `src/components/admin/events/CaptainsTab.tsx`, `src/app/admin/events/draft-actions.ts`, tests
+- **Do:** the roster field becomes a readout naming Setup -> Format. `CaptainsTab`'s "each team drafts N-1 more" needs a capped variant, because under a cap there is no N. The audit summary and `detail` stop carrying `rosterTarget`, since the action no longer settles it; old audit rows keep working because `detail` is read generically and nothing parses that key by name.
+- **Acceptance criteria:**
+  - [ ] The Draft tab offers no way to type a roster size, and names where it is set
+  - [ ] The audit line for a draft-rules save no longer claims a roster size
+  - [ ] An existing audit row that carries the old key still renders
+  - [ ] `CaptainsTab` says something true under a cap, where there is no N for "N-1 more"
+- **Depends on:** Tasks 105, 106.
+
+### Task 110: The stated format and the sizing, side by side
+
+- **Serves:** R-251 / UC-49 1d
+- **Files:** `src/components/admin/events/ShapeTab.tsx`, tests
+- **Do:** where the Teams tab's stated 6v6 or 3v3 disagrees with the sizing, the Format panel says so in a note and **saves anyway**. R-215 is "stated, never enforced" and `MAX_PER_TEAM` is 32 because a 6v6 night fielding eight with substitutes is a real night.
+- **Acceptance criteria:**
+  - [ ] A 3v3 event sized at six a side renders the note and still saves
+  - [ ] An agreeing event renders no note
+  - [ ] No refusal exists on this path, asserted
+- **Depends on:** Task 104.
+
+### Task 111: Drop `draft_configs.roster_target` - **available, not taken**
+
+- **Serves:** nothing new; hygiene after R-248
+- **Why it is recorded rather than done:** the column is written by nothing and read by nothing after Task 106, and dropping it is a migration applied to production by hand. This repo's house style for a drop is `drizzle/0026_event_dates_dropped.sql` - a replay-safe block that audit-logs every value it discards - which is a task's worth of care with no bearing on the number a player sees. `schema-drift.test.ts` requires `schema.ts` and `drizzle/` to agree, so the column stays in both until the migration exists. A comment on the column points here.

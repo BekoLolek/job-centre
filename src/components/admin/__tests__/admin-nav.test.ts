@@ -28,6 +28,16 @@ describe("the admin bar's sections", () => {
     expect(hrefs).toContain("/admin/host");
   });
 
+  it("links the player hand history, beside Members and Audit (UC-48 1)", () => {
+    // UC-48 1 is "Admin opens Hands from the admin nav" — the same first step
+    // the two entries above were missing. Beside the other two admin-only
+    // pages, because that is the line R-247 draws: `/admin/users`,
+    // `/admin/hands` and `/admin/audit` are the three `requireAdmin` guards.
+    expect(hrefs).toContain("/admin/hands");
+    expect(hrefs.indexOf("/admin/hands")).toBe(hrefs.indexOf("/admin/users") + 1);
+    expect(hrefs.indexOf("/admin/audit")).toBe(hrefs.indexOf("/admin/hands") + 1);
+  });
+
   it("still links everything it linked before", () => {
     for (const href of [
       "/admin",

@@ -3,10 +3,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Database,
   type Hero,
+  applications,
   events as eventsTable,
   games,
   heroHands,
   heroes as heroesTable,
+  users,
 } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import {
@@ -17,6 +19,8 @@ import {
   dealFor,
   handFor,
   handsFor,
+  handsOfPlayer,
+  playersWithHands,
 } from "@/lib/hero-hands";
 import { HERO_ROLES, drawableByRole, hasHeroList, listHeroes } from "@/lib/heroes";
 import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
@@ -25,7 +29,7 @@ import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
  * Storing a hand: dealt once, and it stands (R-212 / UC-39 3a, 3b, 5a, 6a).
  *
  * `heroes-policy.test.ts` proves *which* nine with no database in sight. This
- * file proves the six things only a real Postgres can answer.
+ * file proves the seven things only a real Postgres can answer.
  *
  *  - **That the nine the policy returned are the nine that land**, in the order
  *    that makes position mean a role, and that they come back out that way.
@@ -44,6 +48,12 @@ import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
  *    from another, exactly what `handFor` returns — retired and renamed heroes
  *    included, Deadpool in every slot he was dealt in, and the same loud
  *    failure on a deleted row.
+ *  - **That one player's history is their hands, newest first** (R-244, R-246
+ *    / UC-48 2, 4, 4b): `handsOfPlayer` returns every hand that player holds
+ *    across every event and nobody else's, in `dealt_at` order rather than
+ *    storage order, each naming its event, and agreeing with `handFor` hand for
+ *    hand; and `playersWithHands` lists only the members who hold one, most
+ *    nights first, from a single statement.
  *  - **That `hasHeroList` answers yes-or-no from one row at most**, and says
  *    yes for a list whose every hero has been retired, because the tab it
  *    gates is about hands already dealt and not about the next draw.
@@ -403,6 +413,35 @@ function countingRows(): { database: Database; handedBack: () => number } {
     });
 
   return { database: wrap(db), handedBack: () => handedBack };
+}
+
+/**
+ * This file's database, except that every `select` it is asked to begin is
+ * counted.
+ *
+ * `playersWithHands` is one grouped statement for `loadAdminGames`' reason
+ * (`src/lib/admin-games.ts`): forty members read one at a time would be forty
+ * HTTP requests to Neon. `countingRows` above cannot tell that apart — a loop
+ * of forty single-row reads and one forty-row read hand back the same number
+ * of rows — so this counts statements instead. Only the handle's own `select`
+ * is watched, because that is where every read in `hero-hands.ts` begins; a
+ * read that reached Postgres some other way would not be counted, which is a
+ * reason to keep the module's reads on the one builder rather than a gap to
+ * close here.
+ */
+function countingSelects(): { database: Database; begun: () => number } {
+  let begun = 0;
+  const database = new Proxy(db, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (property !== "select") return value;
+      return (...args: unknown[]) => {
+        begun += 1;
+        return (value as (...of: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+  return { database, begun: () => begun };
 }
 
 /* ------------------------------------------------------------------ */
@@ -1022,6 +1061,280 @@ describe("every hand for one event", () => {
 
     expect(fromSheet).toMatch(/no longer in the heroes table/);
     expect(fromSheet).toBe(fromPage);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Every hand one player has been dealt (R-244 / UC-48 4, 4b)         */
+/* ------------------------------------------------------------------ */
+
+/** The three columns a hand names its night by, read straight off the row. */
+async function eventNamed(eventId: string) {
+  const [row] = await db
+    .select({ id: eventsTable.id, title: eventsTable.title, slug: eventsTable.slug })
+    .from(eventsTable)
+    .where(eq(eventsTable.id, eventId));
+  return row;
+}
+
+/** Move a stored hand's `dealt_at`, so that storage order and dealt order can differ. */
+async function dealtOn(fix: Fixture, at: Date): Promise<void> {
+  await db
+    .update(heroHands)
+    .set({ dealtAt: at })
+    .where(and(eq(heroHands.eventId, fix.eventId), eq(heroHands.userId, fix.userId)));
+}
+
+describe("every hand one player has been dealt", () => {
+  /**
+   * UC-48 4: newest first — and **by `dealt_at`, not by the order the rows
+   * went in**. Three hands are stored in one order and then dated in another,
+   * so a read that returned rows as Postgres happened to find them, or ordered
+   * by insertion, would put the middle-dated hand first and fail here. The
+   * dates are a week apart, which is the "three weeks running" R-244 asks
+   * about.
+   */
+  it("come back newest first by dealt_at, whatever order they were stored in", async () => {
+    const first = await fixture();
+    const second = { ...(await fixture()), userId: first.userId };
+    const third = { ...(await fixture()), userId: first.userId };
+    await dealFor(first.eventId, first.userId, fromList(SEQUENCE_A), db);
+    await dealFor(second.eventId, first.userId, fromList(SEQUENCE_B), db);
+    await dealFor(third.eventId, first.userId, fromList(SEQUENCE_A), db);
+    await dealtOn(first, new Date("2026-10-09T20:00:00Z"));
+    await dealtOn(second, new Date("2026-10-02T20:00:00Z"));
+    await dealtOn(third, new Date("2026-10-16T20:00:00Z"));
+
+    const history = await handsOfPlayer(first.userId, db);
+
+    expect(history.map((hand) => hand.event.id)).toEqual([
+      third.eventId,
+      first.eventId,
+      second.eventId,
+    ]);
+    expect(history.map((hand) => hand.dealtAt)).toEqual([
+      new Date("2026-10-16T20:00:00Z"),
+      new Date("2026-10-09T20:00:00Z"),
+      new Date("2026-10-02T20:00:00Z"),
+    ]);
+  });
+
+  /** UC-48 4: each hand names the night it came from — id, title and slug. */
+  it("name the event each hand came from", async () => {
+    const fix = await fixture();
+    const elsewhere = { ...(await fixture()), userId: fix.userId };
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(elsewhere.eventId, fix.userId, fromList(SEQUENCE_B), db);
+
+    const history = await handsOfPlayer(fix.userId, db);
+
+    const byEvent = Object.fromEntries(history.map((hand) => [hand.event.id, hand]));
+    expect(byEvent[fix.eventId].event).toEqual(await eventNamed(fix.eventId));
+    expect(byEvent[elsewhere.eventId].event).toEqual(await eventNamed(elsewhere.eventId));
+    expect(names(byEvent[fix.eventId])).toEqual(HAND_A);
+    expect(names(byEvent[elsewhere.eventId])).toEqual(HAND_B);
+  });
+
+  /**
+   * Only this player's. Two members draw on the same event, and the read for
+   * one of them must not carry the other's hand — a read keyed on the event
+   * instead of the member would return both and fail here on length, and one
+   * that returned the wrong member's would fail on the nine.
+   */
+  it("hold nobody else's hand, with two players at one event", async () => {
+    const fix = await fixture();
+    const other = await makeUser(db);
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(fix.eventId, other, fromList(SEQUENCE_B), db);
+
+    const mine = await handsOfPlayer(fix.userId, db);
+    const theirs = await handsOfPlayer(other, db);
+
+    expect(mine).toHaveLength(1);
+    expect(names(mine[0])).toEqual(HAND_A);
+    expect(theirs).toHaveLength(1);
+    expect(names(theirs[0])).toEqual(HAND_B);
+  });
+
+  it("is empty for a member who has never drawn", async () => {
+    expect(await handsOfPlayer(await makeUser(db), db)).toEqual([]);
+  });
+
+  it("is empty for an id that names nobody", async () => {
+    expect(await handsOfPlayer("00000000-0000-0000-0000-0000000000ff", db)).toEqual([]);
+  });
+
+  /**
+   * The third reader cannot drift from the first: for each event, the hand in
+   * the history *is* the hand `handFor` reads — rows, slots and `dealtAt`,
+   * asserted whole. One of the two is Deadpool's event, so the agreement is
+   * over nine slots rebuilt from seven rows and not only over the easy case.
+   */
+  it("agrees with handFor hand for hand, Deadpool's slots included", async () => {
+    const fix = await fixture();
+    const deadpool = { ...(await deadpoolFixture()), userId: fix.userId };
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(deadpool.eventId, fix.userId, fromList(DEADPOOL_SEQUENCE), db);
+
+    const history = await handsOfPlayer(fix.userId, db);
+
+    const byEvent = Object.fromEntries(history.map((hand) => [hand.event.id, hand]));
+    const bare = ({ heroes, dealtAt }: { heroes: Record<string, Hero[]>; dealtAt: Date }) => ({
+      heroes,
+      dealtAt,
+    });
+    expect(bare(byEvent[fix.eventId])).toEqual(await handFor(fix.eventId, fix.userId, db));
+    expect(bare(byEvent[deadpool.eventId])).toEqual(
+      await handFor(deadpool.eventId, fix.userId, db)
+    );
+    expect(names(byEvent[deadpool.eventId])).toEqual(DEADPOOL_HAND);
+  });
+
+  /**
+   * UC-48 4b, the same claim as UC-47 2b and 2c and for the same reason: a
+   * hand is the rows it was dealt, so a retirement leaves the hero named and a
+   * rename shows the new name. Bare updates, as the sheet's test uses.
+   */
+  it("still names a retired hero, and a renamed hero under its new name", async () => {
+    const fix = await fixture();
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await db
+      .update(heroesTable)
+      .set({ retiredAt: new Date("2026-10-23T12:00:00Z") })
+      .where(and(eq(heroesTable.gameId, fix.gameId), eq(heroesTable.name, "Duelist 3")));
+    await db
+      .update(heroesTable)
+      .set({ name: "Vanguard 2 (reworked)" })
+      .where(and(eq(heroesTable.gameId, fix.gameId), eq(heroesTable.name, "Vanguard 2")));
+
+    const [hand] = await handsOfPlayer(fix.userId, db);
+
+    expect(names(hand)).toEqual({
+      Vanguard: ["Vanguard 2 (reworked)", "Vanguard 3", "Vanguard 4"],
+      Duelist: HAND_A.Duelist,
+      Strategist: HAND_A.Strategist,
+    });
+    expect(hand.heroes.Duelist.find((hero) => hero.name === "Duelist 3")?.retiredAt).toEqual(
+      new Date("2026-10-23T12:00:00Z")
+    );
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Who has been dealt anything at all (R-246 / UC-48 2)               */
+/* ------------------------------------------------------------------ */
+
+describe("the players who hold a hand", () => {
+  /**
+   * UC-48 2: every member who holds at least one hand, with how many nights,
+   * and nobody else — proven with a member who **applied** to the event and
+   * never drew, since "applied" is the nearest thing to "drew" a picker built
+   * on the wrong table would list.
+   *
+   * This file's database is shared by every test above it, so the list is full
+   * of other members' hands by now. The assertions are about the members
+   * planted here and about the order of the whole list, not about an exact
+   * list.
+   */
+  it("lists each holder with their count, and not a member who applied and never drew", async () => {
+    const fix = await fixture();
+    const second = { ...(await fixture()), userId: fix.userId };
+    const once = await makeUser(db, { displayName: "Drew once" });
+    const never = await makeUser(db, { displayName: "Applied, never drew" });
+    await db.insert(applications).values({ eventId: fix.eventId, userId: never, status: "accepted" });
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(second.eventId, fix.userId, fromList(SEQUENCE_B), db);
+    await dealFor(fix.eventId, once, fromList(SEQUENCE_B), db);
+
+    const players = await playersWithHands(db);
+
+    const byId = Object.fromEntries(players.map((player) => [player.userId, player]));
+    expect(byId[fix.userId].hands).toBe(2);
+    expect(byId[once]).toEqual({ userId: once, displayName: "Drew once", hands: 1 });
+    expect(byId[never]).toBeUndefined();
+  });
+
+  /**
+   * R-246: most nights first. Asserted over the whole list rather than the two
+   * planted members, because a sort that happened to put these two the right
+   * way round by luck of insertion would still be no sort.
+   */
+  it("puts the player with the most nights first", async () => {
+    const fix = await fixture();
+    const second = { ...(await fixture()), userId: fix.userId };
+    const third = { ...(await fixture()), userId: fix.userId };
+    const fourth = { ...(await fixture()), userId: fix.userId };
+    const once = await makeUser(db);
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(second.eventId, fix.userId, fromList(SEQUENCE_B), db);
+    await dealFor(third.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(fourth.eventId, fix.userId, fromList(SEQUENCE_B), db);
+    await dealFor(fix.eventId, once, fromList(SEQUENCE_B), db);
+
+    const players = await playersWithHands(db);
+
+    const counts = players.map((player) => player.hands);
+    expect(counts).toEqual([...counts].sort((a, b) => b - a));
+    const rank = (userId: string) => players.findIndex((player) => player.userId === userId);
+    expect(rank(fix.userId)).toBeLessThan(rank(once));
+  });
+
+  /** Two members on the same number of nights come back by name, so the picker holds still. */
+  it("breaks a tie on nights by display name", async () => {
+    const fix = await fixture();
+    const zed = await makeUser(db, { displayName: "Zz tie" });
+    const abe = await makeUser(db, { displayName: "Aa tie" });
+    await dealFor(fix.eventId, zed, fromList(SEQUENCE_A), db);
+    await dealFor(fix.eventId, abe, fromList(SEQUENCE_B), db);
+
+    const players = await playersWithHands(db);
+
+    const rank = (userId: string) => players.findIndex((player) => player.userId === userId);
+    expect(rank(abe)).toBeLessThan(rank(zed));
+  });
+
+  /**
+   * And a tie on display name too — which both name columns being nullable
+   * makes possible — is broken by id, so the order is defined for every row.
+   * Written straight into `users` rather than through `makeUser`, which always
+   * sets both columns and so cannot reach this case. Postgres orders a uuid
+   * bytewise, which is the order of its canonical text, so the expectation can
+   * be computed from the two ids as strings.
+   */
+  it("breaks a tie on display name by id, for members with no name at all", async () => {
+    const fix = await fixture();
+    counter += 1;
+    const nameless = await db
+      .insert(users)
+      .values([{ discordId: `nameless-a-${counter}` }, { discordId: `nameless-b-${counter}` }])
+      .returning({ id: users.id });
+    const [lower, higher] = nameless.map((row) => row.id).sort();
+    await dealFor(fix.eventId, lower, fromList(SEQUENCE_A), db);
+    await dealFor(fix.eventId, higher, fromList(SEQUENCE_B), db);
+
+    const players = await playersWithHands(db);
+
+    const rank = (userId: string) => players.findIndex((player) => player.userId === userId);
+    expect(rank(lower)).toBeLessThan(rank(higher));
+    expect(players[rank(lower)].displayName).toBe("Unknown member");
+  });
+
+  /**
+   * One statement, however many members hold a hand (`loadAdminGames`' reason).
+   * Three holders are planted so that a read per holder would begin at least
+   * four selects — the list and then one each — against the one asserted.
+   */
+  it("is one query, not one per player", async () => {
+    const fix = await fixture();
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(fix.eventId, await makeUser(db), fromList(SEQUENCE_B), db);
+    await dealFor(fix.eventId, await makeUser(db), fromList(SEQUENCE_A), db);
+    const counting = countingSelects();
+
+    const players = await playersWithHands(counting.database);
+
+    expect(players.length).toBeGreaterThanOrEqual(3);
+    expect(counting.begun()).toBe(1);
   });
 });
 

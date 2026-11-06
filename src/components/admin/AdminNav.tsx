@@ -7,7 +7,7 @@ import { cx } from "@/components/ui";
 /**
  * The admin area's own navigation, sat in the top bar next to the session links.
  *
- * Ten sections as text links on the ground rather than ten bordered buttons:
+ * Eleven sections as text links on the ground rather than eleven bordered buttons:
  * side by side, boxes read as one object and the bar stops looking like
  * navigation at all. Only the current section is lit, and it carries a
  * hairline under it.
@@ -40,6 +40,9 @@ export const ADMIN_SECTIONS = [
   { href: "/admin/templates", label: "Templates" },
   { href: "/admin/games", label: "Games" },
   { href: "/admin/users", label: "Members" },
+  // R-247 / UC-48 1. Beside Members and Audit because it draws the same line
+  // they do: admin-only, not manager-scoped, since it spans every event.
+  { href: "/admin/hands", label: "Hands" },
   { href: "/admin/audit", label: "Audit" },
   { href: "/admin/settings", label: "Settings" },
 ] as const;
