@@ -20,7 +20,16 @@ import { playerHref, playerName } from "./types";
 export type RosterListProps = {
   members: readonly MemberLike[];
   players: PlayerBook;
-  /** Roster size *including* the captain. Empty slots are drawn up to it. */
+  /**
+   * Roster size *including* the captain. Empty slots are drawn up to it.
+   *
+   * A **stated** target only — `RosterState.target`, never its `cap`. A cap
+   * is the largest side a count of teams happens to deal, and drawing empty
+   * places up to it would promise a place that may not exist (R-250 / UC-49
+   * 1a): under 5, 5, 4, 4 the two teams of four would each show a gap that no
+   * player is ever going to fill. Leave it off and the list simply stops
+   * after the names it has.
+   */
   target?: number;
   /** Hide prices — the room does this for a viewer who may not see amounts. */
   hidePrices?: boolean;

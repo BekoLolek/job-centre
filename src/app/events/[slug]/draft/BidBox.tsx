@@ -23,11 +23,25 @@
  * §9's must-fill-your-roster rule is invisible until it bites, and a captain
  * whose 900 is refused mid-draft concludes the board is broken. So the figure
  * and the reason for it are on screen above the empty box.
+ *
+ * ## The places on the roster are the team card's figure, in the same words
+ *
+ * Two lines here name the places on a team — "your draft is done, x of y"
+ * once the roster is full, and the ceiling sentence under the balance — and
+ * they follow `TeamCard`'s three states (R-250 / UC-49 1a, 1b) so a captain
+ * never reads one figure on the rail and another in the box. A stated target
+ * reads "6 of 6"; a cap reads "5 on the roster, the most it may hold"; and a
+ * roster the panel has not sized gets `UNSIZED_ROSTER_NOTE` **in place of**
+ * the ceiling, because `ceilingFor`'s sentence for a roster with no cap would
+ * read "full at null" — a bid ceiling is a figure derived from the places, and
+ * there are none to derive it from. Between lots that note is the panel's
+ * only word on it; with a lot open, `canPlaceBid`'s `roster_unsized` refusal
+ * is already the alert, and the note is left off rather than said twice.
  */
 
 import { useEffect, useState } from "react";
 import { Alert, Button, Eyebrow, Field, Panel } from "@/components/ui";
-import { Money } from "@/components/draft";
+import { Money, UNSIZED_ROSTER_NOTE } from "@/components/draft";
 import type { BidRefusalReason } from "@/lib/draft-policy";
 import type { DraftRoomView } from "@/lib/draft";
 import type { BidOutcome } from "./actions";
@@ -89,6 +103,17 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
   const endsAt = view.lot?.endsAt ?? null;
   const closed = endsAt !== null && now >= endsAt;
 
+  // The must-fill ceiling in money — or, with no places to count, the one
+  // sentence every roster surface uses instead (see the module note).
+  const places = (above: boolean) =>
+    me.roster.cap === null ? (
+      <p className={`${above ? "mb-4" : "mt-4"} text-12 leading-relaxed text-muted`}>
+        {UNSIZED_ROSTER_NOTE}
+      </p>
+    ) : standing ? (
+      <Ceiling standing={standing} maxBid={view.you.maxBid} above={above} />
+    ) : null;
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (busy || amount.trim() === "") return;
@@ -147,7 +172,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
             ? "The wheel is running — bidding opens the moment it stops."
             : "Bidding opens once the wheel stops on a player."}
         </p>
-        {standing && <Ceiling standing={standing} maxBid={view.you.maxBid} />}
+        {places(false)}
       </Panel>
     );
   }
@@ -168,10 +193,24 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
         </div>
         {refusal.reason === "roster_full" && (
           <p className="mt-3 text-14 text-muted">
-            Your draft is done — {me.roster.size} of {me.roster.cap} on the roster.
+            {/* A stated target is "x of y". A cap is not "x on the roster, up
+                to y": full is measured against the cap, so the two numbers
+                could only ever be the same one, and a repeated number reads as
+                a glitch — the card's "4 on the roster, up to 5" is for a team
+                that is *not* full. The figure printed is `target`, which the
+                branch itself narrows to a number: this sentence must not lean
+                on `canPlaceBid` refusing a capless roster before it refuses a
+                full one, which is another module's ordering. */}
+            Your draft is done —{" "}
+            {me.roster.target !== null
+              ? `${me.roster.size} of ${me.roster.target} on the roster.`
+              : `${me.roster.size} on the roster, the most it may hold.`}
           </p>
         )}
-        {standing && <Ceiling standing={standing} maxBid={view.you.maxBid} />}
+        {/* On `roster_unsized` the alert above is already `canPlaceBid`'s own
+            sentence for the missing figure; the shared note under it would say
+            the one fact twice on one panel. */}
+        {refusal.reason !== "roster_unsized" && places(false)}
       </Panel>
     );
   }
@@ -187,7 +226,7 @@ export default function BidBox({ view, standing, spinning, onBlock, now, bid }: 
         </Eyebrow>
       </div>
 
-      {standing && <Ceiling standing={standing} maxBid={view.you.maxBid} above />}
+      {places(true)}
 
       <div className="flex gap-3">
         <Field

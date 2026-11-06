@@ -886,6 +886,14 @@ export type OpenLot = {
 export type DraftSnapshot = {
   now: number;
   config: DraftConfig;
+  /**
+   * The Format panel's figure for the places on a team (R-248 / R-250), the
+   * one every standing below was sized by. Carried here rather than left for
+   * a reader to recover off `teams[0].roster`, which encoded an invariant the
+   * type never stated — every team carries the same sizing — and had nothing
+   * to read for a room with no teams in it, although the panel had a figure.
+   */
+  sizing: RosterSizing;
   teams: TeamStanding[];
   lot: OpenLot | null;
   /** Newest first — the full record, because prices are the point. */
@@ -914,6 +922,8 @@ export type DraftView = {
   role: DraftRole;
   phase: DraftPhase;
   config: DraftConfig;
+  /** The snapshot's `sizing`, untouched: a public figure, never redacted. */
+  sizing: RosterSizing;
   teams: TeamCard[];
   lot: {
     id: string;
@@ -1095,6 +1105,7 @@ export function redactDraft(snapshot: DraftSnapshot, viewer: DraftViewer): Draft
     role: viewer.role,
     phase,
     config,
+    sizing: snapshot.sizing,
     teams,
     lot: lot
       ? {

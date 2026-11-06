@@ -1049,6 +1049,7 @@ describe("redactDraft", () => {
     return {
       now: T0 + SPIN_DURATION_MS + 1,
       config: cfg,
+      sizing: SIX,
       teams,
       lot,
       history,

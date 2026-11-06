@@ -18,7 +18,50 @@ import { playerName } from "./types";
  * Note what is *not* here: no bid, no "you", no lot. Those belong to the room
  * alone and putting them here would make every admin screen import a concept it
  * has no use for.
+ *
+ * ## The places on a team are said three ways, because they mean three things
+ *
+ * `rosterSizingFrom` answers in three states and the roster line below reads
+ * differently in each (R-250 / UC-49 1a, 1b):
+ *
+ *  - **A stated target** — the admin set "Players on a team", so `target`
+ *    and `cap` are the same number. The figure is a decision, so it reads
+ *    `4/6 on the roster`, counts what is left to fill, and the list draws
+ *    the empty places up to it. This is the overwhelmingly common case and it
+ *    renders exactly as it did before the other two existed —
+ *    `team-card.test.ts` holds it byte for byte.
+ *  - **A cap with no target** — the admin set "How many teams", and the
+ *    per-team figure is a consequence of how many are accepted, uneven by
+ *    arithmetic: eighteen into four is 5, 5, 4, 4, and the cap is the five.
+ *    It reads `4 on the roster, up to 5` and draws no empty place, because a
+ *    team of four under that deal is not short and has no gap to fill; the
+ *    "to fill" count is left off for the same reason. "Full" is still said at
+ *    the cap — a team at the most it may hold can hold no more — and "Over
+ *    target" still fires above it, because the cap is the largest legal side
+ *    and only a genuinely illegal roster can exceed it.
+ *  - **No figure at all** — a count of teams with fewer accepted than sides,
+ *    where `planSides` deals nothing and `cap` is null. Said in words, and
+ *    the words point at the panel. Before this the line read `0/ on the
+ *    roster`, which looks like a roster of nothing rather than a decision
+ *    nobody has made yet.
+ *
+ * The sentence for that third state is `UNSIZED_ROSTER_NOTE`, exported so the
+ * bid box and the room's header say the same words — a figure must never look
+ * like two things on two pages, and neither must its absence.
  */
+
+/**
+ * What every roster surface says when the Format panel has no figure for the
+ * places on a team (UC-49 1b).
+ *
+ * "An admin decides that", rather than the admin tabs' "Setup → Format is
+ * where that is decided": two of the three surfaces that say this — the draft
+ * room's header and a captain's bid box — are read by captains and observers
+ * who have no Setup → Format to open, so the sentence names who can act, the
+ * way the room already says "An admin sets captains on the event's Teams tab."
+ */
+export const UNSIZED_ROSTER_NOTE =
+  "The Format panel has not sized the teams yet. An admin decides that in Setup → Format.";
 
 export type TeamCardProps = {
   team: TeamLike;
@@ -86,17 +129,31 @@ export default function TeamCard({
       </div>
 
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-t border-hair/60 pt-2">
-        <span className="num text-12 text-muted">
-          {team.roster.size}/{team.roster.cap} on the roster
-        </span>
-        {team.roster.slotsLeft > 0 ? (
-          <span className="num text-12 text-body">
-            {team.roster.slotsLeft} to fill
-          </span>
+        {team.roster.cap === null ? (
+          <span className="text-12 text-muted">{UNSIZED_ROSTER_NOTE}</span>
+        ) : team.roster.target === null ? (
+          <>
+            <span className="num text-12 text-muted">
+              {team.roster.size} on the roster, up to {team.roster.cap}
+            </span>
+            {team.roster.full && <span className="num text-12 text-union">Full</span>}
+            {team.roster.overfilled && <Badge tone="flare">Over target</Badge>}
+          </>
         ) : (
-          <span className="num text-12 text-union">Full</span>
+          <>
+            <span className="num text-12 text-muted">
+              {team.roster.size}/{team.roster.cap} on the roster
+            </span>
+            {team.roster.slotsLeft > 0 ? (
+              <span className="num text-12 text-body">
+                {team.roster.slotsLeft} to fill
+              </span>
+            ) : (
+              <span className="num text-12 text-union">Full</span>
+            )}
+            {team.roster.overfilled && <Badge tone="flare">Over target</Badge>}
+          </>
         )}
-        {team.roster.overfilled && <Badge tone="flare">Over target</Badge>}
       </div>
 
       {children}
@@ -106,7 +163,9 @@ export default function TeamCard({
           <RosterList
             members={team.members}
             players={players}
-            target={team.roster.cap ?? undefined}
+            // The stated target, never the cap: under a count of teams the
+            // places drawn empty would be places that may not exist.
+            target={team.roster.target ?? undefined}
             hidePrices={hidePrices}
           />
         </div>

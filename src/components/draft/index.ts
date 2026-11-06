@@ -20,7 +20,7 @@ export type { PlayerChipProps } from "./PlayerChip";
 export { default as RosterList } from "./RosterList";
 export type { RosterListProps } from "./RosterList";
 
-export { default as TeamCard } from "./TeamCard";
+export { default as TeamCard, UNSIZED_ROSTER_NOTE } from "./TeamCard";
 export type { TeamCardProps } from "./TeamCard";
 
 export { ceilingFor, ceilingsFor } from "./ceiling";

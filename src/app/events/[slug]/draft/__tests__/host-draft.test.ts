@@ -157,6 +157,20 @@ describe("the draft room's role for a host", () => {
 
     expect(payload?.view.role).toBe("admin");
   });
+
+  it("carries the sizing every standing was built from, so the room need not read it off a team", async () => {
+    const whole = await getDraftSnapshot(a.eventId, {}, db);
+    const [user] = await db.select().from(users).where(eq(users.id, hostOfA));
+    const payload = await loadRoom(a.eventId, user);
+
+    // Two teams, both sized by the one figure the snapshot now names (R-250).
+    expect(whole?.teams).toHaveLength(2);
+    expect(typeof whole?.sizing.cap).toBe("number");
+    for (const team of whole?.teams ?? []) {
+      expect({ target: team.roster.target, cap: team.roster.cap }).toEqual(whole?.sizing);
+    }
+    expect(payload?.view.sizing).toEqual(whole?.sizing);
+  });
 });
 
 /* ------------------------------------------------------------------ */

@@ -44,7 +44,7 @@ import {
   cx,
   pageShell,
 } from "@/components/ui";
-import { completionSentence, playerName } from "@/components/draft";
+import { UNSIZED_ROSTER_NOTE, completionSentence, playerName } from "@/components/draft";
 import { tieNotice } from "@/lib/draft-policy";
 import type { DraftPoolKind } from "@/db/schema";
 import AdminConsole from "./AdminConsole";
@@ -279,10 +279,21 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
               {" · "}
               {/*
                 The places on a team are the Format panel's figure, not a draft
-                rule (R-248), and every team's roster carries the same one — so
-                the first team's cap is the event's. Empty with no teams.
+                rule (R-248), and the snapshot carries it as `sizing` — the one
+                every roster in the room was built from. Read from there rather
+                than off `teams[0]`, which went blank for a room with no teams
+                while the panel still had a figure.
+
+                Said in the team card's three states (R-250 / UC-49 1a, 1b): a
+                stated target is the places per roster, a cap is the most a
+                roster may hold, and no figure at all is said in the same words
+                every roster surface uses for it.
               */}
-              {view.teams[0]?.roster.cap} per roster
+              {view.sizing.cap === null
+                ? UNSIZED_ROSTER_NOTE
+                : view.sizing.target === null
+                  ? `up to ${view.sizing.cap} per roster`
+                  : `${view.sizing.cap} per roster`}
             </Eyebrow>
           }
         />

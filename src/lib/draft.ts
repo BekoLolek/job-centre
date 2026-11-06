@@ -3422,6 +3422,9 @@ export async function getDraftSnapshot(
   return {
     now,
     config,
+    // The figure the standings above were sized by, so the room reads it
+    // from here rather than off the first team.
+    sizing,
     teams: standings,
     lot,
     history,
