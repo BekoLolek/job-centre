@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  HERO_LIST_KEYS,
   PEOPLE_KEYS,
   SETUP_KEYS,
   SETUP_LABELS,
@@ -52,9 +53,17 @@ import { planTeams } from "@/lib/random-teams";
  *     other over every legal count instead of being assumed equal.
  */
 
-const TEAMS_WITH_DRAFT: TabVisibility = { teamEvent: true, draft: true };
-const TEAMS_NO_DRAFT: TabVisibility = { teamEvent: true, draft: false };
-const SOLO: TabVisibility = { teamEvent: false, draft: false };
+/*
+ * Every shape here is on a game with a hero list, so the only thing deciding
+ * a tab is the shape — which is what this file is about. The hero-list fact
+ * and the tab it decides are Task 100's, held in `hands-tabs.test.ts`; `NO_LIST`
+ * is here only so the sweep can classify that tab too.
+ */
+const WITH_LIST = { game: "Marvel Rivals", heroes: true } as const;
+const TEAMS_WITH_DRAFT: TabVisibility = { teamEvent: true, draft: true, heroList: WITH_LIST };
+const TEAMS_NO_DRAFT: TabVisibility = { teamEvent: true, draft: false, heroList: WITH_LIST };
+const SOLO: TabVisibility = { teamEvent: false, draft: false, heroList: WITH_LIST };
+const NO_LIST: TabVisibility = { teamEvent: true, draft: true, heroList: { game: null } };
 
 /**
  * The tabs R-219 keeps whatever kind of event this is, written out **as a
@@ -63,8 +72,8 @@ const SOLO: TabVisibility = { teamEvent: false, draft: false };
  * The sweep below reads the key list off the module, so a tab nobody thought
  * about is caught; this is the other half of that pair — the expected answer
  * has to be stated somewhere or the sweep is comparing the code against
- * itself. A seventh tab is in neither this list nor `TEAM_ONLY_KEYS`, and the
- * completeness test fails for it.
+ * itself. A new tab is in none of this list, `TEAM_ONLY_KEYS` and
+ * `HERO_LIST_KEYS`, and the completeness test fails for it.
  */
 const ALWAYS: readonly TabKey[] = ["setup", "schedule", "results", "publish", "applicants"];
 
@@ -151,24 +160,35 @@ describe("the tabs that apply", () => {
    * unfixed form.
    */
   it("classifies every tab the module knows about", () => {
-    expect(TAB_KEYS.length).toBeGreaterThanOrEqual(9);
+    expect(TAB_KEYS.length).toBeGreaterThanOrEqual(10);
     expect([...STEP_KEYS, ...PEOPLE_KEYS]).toEqual([...TAB_KEYS]);
     expect(TEAM_ONLY_KEYS.length).toBe(4);
+    expect(HERO_LIST_KEYS.length).toBe(1);
 
     for (const tab of TAB_KEYS) {
       const always = ALWAYS.includes(tab);
       const teamOnly = TEAM_ONLY_KEYS.includes(tab);
-      // Every key is in exactly one class. A new tab in neither fails here.
-      expect(always !== teamOnly, `${tab} is in neither class, or in both`).toBe(true);
+      const needsList = HERO_LIST_KEYS.includes(tab);
+      // Every key is in exactly one class. A new tab in none fails here.
+      expect(
+        [always, teamOnly, needsList].filter(Boolean).length,
+        `${tab} is in no class, or in more than one`
+      ).toBe(1);
 
-      // A full team event has every tab, whatever class it is in.
+      // A full team event on a game with a list has every tab, whatever class
+      // it is in.
       expect(tabHiddenBecause(tab, TEAMS_WITH_DRAFT), tab).toBeNull();
 
       if (always) {
         expect(tabHiddenBecause(tab, SOLO), tab).toBeNull();
         expect(tabHiddenBecause(tab, TEAMS_NO_DRAFT), tab).toBeNull();
-      } else {
+        expect(tabHiddenBecause(tab, NO_LIST), tab).toBeNull();
+      } else if (teamOnly) {
         expect(tabHiddenBecause(tab, SOLO), tab).not.toBeNull();
+        expect(tabHiddenBecause(tab, NO_LIST), tab).toBeNull();
+      } else {
+        expect(tabHiddenBecause(tab, SOLO), tab).toBeNull();
+        expect(tabHiddenBecause(tab, NO_LIST), tab).not.toBeNull();
       }
     }
   });
@@ -293,7 +313,7 @@ describe("the stored shape", () => {
       sizing: { mode: "perTeam", value: 6 },
     });
     expect(eventShapeFrom({})).toEqual(eventShapeFrom(null));
-    expect(visibleTabs(eventShapeFrom({}))).toEqual([...TAB_KEYS]);
+    expect(visibleTabs({ ...eventShapeFrom({}), heroList: WITH_LIST })).toEqual([...TAB_KEYS]);
   });
 
   it("takes the side size from the night's own format rather than inventing one", () => {
@@ -322,7 +342,7 @@ describe("the stored shape", () => {
     expect(shape.draft).toBe(true);
     // And it changes nothing about what is drawn: a solo event has no Draft tab
     // whatever the answer says.
-    expect(visibleTabs(shape)).not.toContain("draft");
+    expect(visibleTabs({ ...shape, heroList: WITH_LIST })).not.toContain("draft");
   });
 
   it("ignores rubbish rather than crashing on it", () => {

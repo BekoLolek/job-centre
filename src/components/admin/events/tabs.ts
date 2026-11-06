@@ -18,9 +18,12 @@
  *   - Six **steps**, in the order they actually happen: set the event up, run
  *     the draft, choose the format, lay out the schedule, record results,
  *     publish. Numbered, because the number is the answer to "where am I".
- *   - Three **people** screens — applicants, teams, captains — which are not
- *     steps at all. You visit them repeatedly, out of order, throughout. They
- *     sit apart on the same rail.
+ *   - Four **people** screens — applicants, teams, captains, hands — which are
+ *     not steps at all. You visit them repeatedly, out of order, throughout.
+ *     They sit apart on the same rail. Hands (R-239 / UC-47) is the fourth
+ *     for the same reason the first three are: a sheet of what every seat was
+ *     dealt is a reference you open again and again through the night, not a
+ *     stage in running one.
  *
  * Setup swallowed the four screens that were all "describe the event": basics,
  * days, questions, entry rules. They were four tabs holding one decision.
@@ -45,7 +48,9 @@
  * page and by a `"use client"` component, and the only way to be certain it
  * stays safe for both is for it to reach for nothing. {@link TabVisibility} is
  * declared structurally for that reason: `EventShape` from
- * `src/lib/events-policy.ts` satisfies it without this file knowing it exists.
+ * `src/lib/events-policy.ts` supplies two of its three members without this
+ * file knowing it exists, and the third ({@link HeroListFact}) is a plain
+ * object the server page builds.
  */
 
 export type TabKey =
@@ -57,7 +62,8 @@ export type TabKey =
   | "publish"
   | "applicants"
   | "teams"
-  | "captains";
+  | "captains"
+  | "hands";
 
 /**
  * The panels inside Setup.
@@ -95,7 +101,15 @@ export const STEP_KEYS: readonly TabKey[] = [
   "publish",
 ];
 
-export const PEOPLE_KEYS: readonly TabKey[] = ["applicants", "teams", "captains"];
+/**
+ * The people screens, as a tuple rather than a `readonly TabKey[]` so that
+ * {@link PeopleKey} can be read off it. The rail keeps a count per people
+ * screen, and a lookup keyed by `PeopleKey` is what makes a fifth screen
+ * arriving without a count a type error rather than a silently wrong number.
+ */
+export const PEOPLE_KEYS = ["applicants", "teams", "captains", "hands"] as const satisfies readonly TabKey[];
+
+export type PeopleKey = (typeof PEOPLE_KEYS)[number];
 
 export const TAB_KEYS: readonly TabKey[] = [...STEP_KEYS, ...PEOPLE_KEYS];
 
@@ -128,6 +142,7 @@ export const TAB_LABELS: Readonly<Record<TabKey, string>> = {
   applicants: "Applicants",
   teams: "Teams",
   captains: "Captains",
+  hands: "Hands",
 };
 
 /** What each Setup panel is called. `shape` is "Format"; see {@link SetupKey}. */
@@ -190,15 +205,58 @@ export function setupFrom(raw: string | string[] | undefined): SetupKey {
 /* ------------------------------------------------------------------ */
 
 /**
- * The two answers off the Format panel that decide what is drawn.
+ * Whether the event's game has a hero list to deal from — the fact the Hands
+ * tab hangs on (UC-47 preconditions, 1a, 1b).
  *
- * Declared structurally rather than imported: `EventShape` from
- * `src/lib/events-policy.ts` satisfies it, and this module imports nothing (see
- * the file's docblock).
+ * **Not a boolean**, because UC-47 1b's sentence has to *name the game*: a
+ * manager told "there is no hero list" needs to know which list to fill, and
+ * a manager told "there is no game" needs a different screen altogether. So
+ * the fact carries the game's name, or its absence, and whether that game has
+ * any heroes — and {@link tabHiddenBecause} derives both sentences from it.
+ *
+ * `heroes` counts retired heroes, deliberately (`hasHeroList` in
+ * `src/lib/heroes.ts` is where that is decided): an event whose game's roster
+ * has since been fully retired is exactly the event whose stored hands still
+ * matter. The tab is about those hands, not about the next draw.
+ */
+export type HeroListFact =
+  /** The event has no game, so there is nothing to deal from (UC-47 1a). */
+  | { game: null }
+  /** The event's game, and whether its hero list holds anything (UC-47 1b). */
+  | { game: string; heroes: boolean };
+
+/**
+ * The three facts that decide what is drawn.
+ *
+ * `teamEvent` and `draft` are answers off the Format panel, declared
+ * structurally rather than imported so that `EventShape` from
+ * `src/lib/events-policy.ts` supplies them without this module importing
+ * anything (see the file's docblock). `heroList` is a fact about **another
+ * table** — the game's hero list — so no stored config can supply it: the
+ * server page reads it (`hasHeroList`) and passes it in.
+ *
+ * ## Why the third member is required
+ *
+ * Two alternatives were weighed and rejected.
+ *
+ * An **optional** member would let a caller that forgot it hide the Hands tab
+ * wrongly with nothing complaining — a page that passed `{ teamEvent, draft }`
+ * would type-check and draw nine tabs for an event that has ten. This
+ * codebase's habit is to make the compiler hold the fact (`roundScores`,
+ * `announcements` and `maxDays` on `EventEditorProps` are all required for
+ * the same reason), and a required member makes the compiler name every
+ * caller, which is the point.
+ *
+ * A **second mechanism** beside {@link tabHiddenBecause} — a separate
+ * predicate for the Hands tab — would split "which tabs does this event have"
+ * across two places, which is the one property R-219's design rests on: one
+ * function answers the rail, the landing and the standing-on decision, so
+ * none of them can disagree about which tabs exist.
  */
 export type TabVisibility = {
   teamEvent: boolean;
   draft: boolean;
+  heroList: HeroListFact;
 };
 
 /**
@@ -213,14 +271,41 @@ export type TabVisibility = {
 export const TEAM_ONLY_KEYS: readonly TabKey[] = ["draft", "teams", "captains", "format"];
 
 /**
+ * The one tab that needs a hero list (R-239 / UC-47 preconditions).
+ *
+ * A list of its own rather than a fifth entry in {@link TEAM_ONLY_KEYS},
+ * because the two hang on different facts and come back from different
+ * screens: a team tab comes back from Setup → Format, Hands from Setup →
+ * Basics (where a game is chosen) or from the game's own hero list. The sweep
+ * in `shape-tabs.test.ts` classifies every key into exactly one of the three
+ * lists, so a tab in none of them fails there.
+ *
+ * Hands does **not** depend on the shape: a solo night deals hands as readily
+ * as a team night, and the draw page never asks. Nor on the event's status —
+ * the sheet is as true after the night as before it.
+ */
+export const HERO_LIST_KEYS: readonly TabKey[] = ["hands"];
+
+/**
  * Why this tab does not apply to this event, or null when it does
- * (R-219 / UC-42 5).
+ * (R-219 / UC-42 5; R-239 / UC-47 1a, 1b).
  *
  * A **sentence**, not a boolean, because UC-42 5a needs one: a link naming a
  * tab that no longer applies has to land somewhere real *and say why*, and a
  * predicate returning false gives the landing nothing to print. One function
  * answers both questions, so the rail cannot hide a tab the explanation does
  * not cover.
+ *
+ * ## Hands has two sentences, not one
+ *
+ * An event with no game and an event whose game has an empty hero list are
+ * both without a Hands tab, and are fixed on different screens: the first on
+ * Setup → Basics, where a game is chosen; the second on that game's hero list
+ * under Admin → Games, which the sentence names by the game's name so the
+ * manager knows which list to fill rather than which event to blame (UC-47
+ * 1b). One sentence covering both would send half its readers to a screen
+ * that cannot fix it, which is the standard UC-42 5a already holds these
+ * sentences to.
  *
  * ## This is not an authorisation
  *
@@ -233,6 +318,17 @@ export const TEAM_ONLY_KEYS: readonly TabKey[] = ["draft", "teams", "captains", 
  * in this module is consulted by an action and nothing should be.
  */
 export function tabHiddenBecause(tab: TabKey, shape: TabVisibility): string | null {
+  if (HERO_LIST_KEYS.includes(tab)) {
+    const list = shape.heroList;
+    if (list.game === null) {
+      return `${TAB_LABELS[tab]} is only for an event with a game, and this one has none. Setup → Basics is where a game is chosen.`;
+    }
+    if (!list.heroes) {
+      return `${TAB_LABELS[tab]} is only for a game with a hero list, and ${list.game} has no heroes yet. Admin → Games is where ${list.game}'s list is filled.`;
+    }
+    return null;
+  }
+
   if (!TEAM_ONLY_KEYS.includes(tab)) return null;
 
   if (!shape.teamEvent) {
@@ -315,6 +411,12 @@ export type TabLanding = {
  * A link to a Setup *panel* the event does not have — `?tab=scoring` on a team
  * event — lands the same way, on the Format panel with
  * {@link setupHiddenBecause}'s sentence (UC-44 6b).
+ *
+ * A link to **Hands** on an event that has none lands on Setup → Basics
+ * instead (UC-47 1a, 1b) — see {@link panelThatDecides}. The sentence it
+ * carries says which of the two reasons applies, and for an empty hero list it
+ * names the game, because the screen that fixes *that* is not in the editor
+ * at all.
  */
 export function landOn(
   raw: string | string[] | undefined,
@@ -322,13 +424,27 @@ export function landOn(
 ): TabLanding {
   const tab = tabFrom(raw);
   const why = tabHiddenBecause(tab, shape);
-  if (why !== null) return { tab: "setup", setup: "shape", asked: tab, why };
+  if (why !== null) return { tab: "setup", setup: panelThatDecides(tab), asked: tab, why };
 
   const setup = setupFrom(raw);
   const panelWhy = setupHiddenBecause(setup, shape);
   if (panelWhy !== null) return { tab: "setup", setup: "shape", asked: setup, why: panelWhy };
 
   return { tab, setup, asked: null, why: null };
+}
+
+/**
+ * The Setup panel a hidden tab comes back from — where a link to it lands.
+ *
+ * Format for the team-only tabs, because that is where sides and the draft
+ * are decided (UC-42 5a). Basics for Hands, because that is where a game is
+ * chosen (UC-47 1a); an empty hero list is fixed outside the editor entirely,
+ * and Basics is still the panel that shows which game the event is on, so it
+ * is the nearest screen that can say so. Nothing else is hidden, so nothing
+ * else lands anywhere.
+ */
+function panelThatDecides(tab: TabKey): SetupKey {
+  return HERO_LIST_KEYS.includes(tab) ? "basics" : "shape";
 }
 
 /**

@@ -24,6 +24,7 @@ import DaysTab from "./DaysTab";
 import DraftTab from "./DraftTab";
 import EntryRulesTab from "./EntryRulesTab";
 import FormatTab from "./FormatTab";
+import HandsTab from "./HandsTab";
 import PublishTab from "./PublishTab";
 import QuestionsTab from "./QuestionsTab";
 import ResultsTab from "./ResultsTab";
@@ -33,7 +34,9 @@ import ShapeTab from "./ShapeTab";
 import TeamsTab from "./TeamsTab";
 import UnsavedChangesProvider, { useIsDirty, useNavigationLock } from "./UnsavedChanges";
 import {
+  type HeroListFact,
   PEOPLE_KEYS,
+  type PeopleKey,
   SETUP_LABELS,
   STEP_KEYS,
   type SetupKey,
@@ -57,6 +60,7 @@ import type {
   DraftTabData,
   FormatTabData,
   GameOption,
+  HandsTabData,
   LinkableField,
 } from "./types";
 
@@ -84,7 +88,7 @@ import type {
  *
  * Twelve tabs in one row asked the admin to hold the whole event in their head
  * and pick. It is really a short sequence — set up, draft, format, schedule,
- * results, publish — with three reference screens that you open again and again
+ * results, publish — with four reference screens that you open again and again
  * throughout and that belong to no step at all. The rail says that: the steps
  * on the left, with the underline filling in as far as you have got, and the
  * people screens on the right past a divider, where nothing fills in.
@@ -130,6 +134,24 @@ type EventEditorProps = {
    * already happened, so it must not keep explaining it.
    */
   tabNotice?: string | null;
+  /**
+   * Whether the event's game has a hero list, with the game's name — the fact
+   * the Hands tab hangs on (R-239 / UC-47 preconditions, 1a, 1b).
+   *
+   * The only fact behind the rail that is **not** on `event.config`: it lives
+   * in the `heroes` table, so the server page reads it (`hasHeroList`) and
+   * hands it down. Required, not optional — `TabVisibility.heroList` says why
+   * at length, and the short form is that a required prop cannot be forgotten
+   * either: the compiler refuses a page that omits it.
+   */
+  heroList: HeroListFact;
+  /**
+   * Every hand dealt for this event, as the sheet the Hands tab draws
+   * (R-239 to R-243 / UC-47). Decided by `handSheet` and mapped down on the
+   * server page, for the reason `roundScores` is read there: `handsFor`
+   * reaches Postgres and this is a client component.
+   */
+  hands: HandsTabData;
   applicants: ApplicantView[];
   games: GameOption[];
   linkableFields: LinkableField[];
@@ -185,6 +207,8 @@ function EditorBody({
   initialTab = "setup",
   initialSetup = "basics",
   tabNotice = null,
+  heroList,
+  hands,
   applicants,
   games,
   linkableFields,
@@ -215,12 +239,18 @@ function EditorBody({
   const captains = draft.teams.filter((team) => team.captainUserId !== null).length;
 
   /*
-   * R-219. Derived from the event's own stored config rather than taken as a
-   * prop, because there is then no prop for a page to forget to pass: the
-   * editor and the Format panel read one function over one key, and the server
-   * page reads the same one to decide where a `?tab=` lands.
+   * R-219, R-239. Two of the three facts behind the rail are derived from the
+   * event's own stored config — the editor, the Format panel and the server
+   * page all read `eventShapeFrom` over one key, so they cannot disagree. The
+   * third, whether the game has a hero list, lives in another table and
+   * cannot be derived from anything this component holds: it arrives as the
+   * `heroList` prop. That is safe for the same reason an optional member on
+   * `TabVisibility` was rejected — a *required* prop cannot be forgotten
+   * either, because the compiler refuses a page that omits it. The page
+   * passes the same object to `landOn`, so the landing and the rail read one
+   * answer.
    */
-  const shape = eventShapeFrom(event.config);
+  const shape = { ...eventShapeFrom(event.config), heroList };
   const shown = visibleTabs(shape);
 
   /*
@@ -254,6 +284,28 @@ function EditorBody({
       setRedirected(null);
       setTab(next);
     });
+
+  /*
+   * What the rail prints beside each people screen. A lookup keyed by
+   * `PeopleKey` rather than a chain of ternaries, so a fifth screen arriving
+   * without an entry is a type error and not a silently wrong number — the
+   * chain this replaced fell through to the captains count for anything it
+   * did not name.
+   *
+   * Hands counts the hands dealt, former holders included: a hand dealt to
+   * somebody who has since withdrawn was still dealt (R-243). It carries no
+   * dot — "not everyone has drawn" is the sheet's own first line, and an
+   * attention mark for it is scope no requirement asks for.
+   */
+  const people: Record<PeopleKey, { count: number; dot: boolean }> = {
+    applicants: { count: applicants.length, dot: undecided > 0 },
+    teams: { count: draft.teams.length, dot: false },
+    captains: {
+      count: captains,
+      dot: draft.teams.length > 0 && captains < draft.teams.length,
+    },
+    hands: { count: hands.drawn + hands.former.length, dot: false },
+  };
 
   return (
     <div className="space-y-6">
@@ -315,34 +367,23 @@ function EditorBody({
 
         {/*
           The people screens. Same rail, same underline, but past a divider —
-          they are not steps you complete, they are three lists you keep coming
+          they are not steps you complete, they are four lists you keep coming
           back to while you work through the steps, so nothing about them fills
           in as you go.
 
           Drawn from `visibleTabs` rather than written out, so a solo event
-          loses Teams and Captains from here without this block knowing the rule
-          (R-219). Applicants is in every configuration — there is no event
-          whose applicants do not matter.
+          loses Teams and Captains from here, and an event with no hero list
+          loses Hands, without this block knowing either rule (R-219, R-239).
+          Applicants is in every configuration — there is no event whose
+          applicants do not matter.
         */}
         <div className="flex items-stretch gap-6 sm:border-l sm:border-hair sm:pl-8">
           {PEOPLE_KEYS.filter((key) => shown.includes(key)).map((key) => (
             <RailLink
               key={key}
               label={TAB_LABELS[key]}
-              count={
-                key === "applicants"
-                  ? applicants.length
-                  : key === "teams"
-                    ? draft.teams.length
-                    : captains
-              }
-              dot={
-                key === "applicants"
-                  ? undecided > 0
-                  : key === "captains"
-                    ? draft.teams.length > 0 && captains < draft.teams.length
-                    : false
-              }
+              count={people[key].count}
+              dot={people[key].dot}
               current={here === key}
               onClick={() => go(key)}
             />
@@ -393,6 +434,7 @@ function EditorBody({
               <ShapeTab
                 eventId={event.id}
                 shape={shape}
+                heroList={heroList}
                 accepted={accepted}
                 existingTeams={draft.teams.length}
                 draftStarted={draft.started}
@@ -471,6 +513,7 @@ function EditorBody({
         {here === "captains" && (
           <CaptainsTab eventId={event.id} event={event} applicants={applicants} data={draft} />
         )}
+        {here === "hands" && <HandsTab data={hands} />}
       </div>
     </div>
   );

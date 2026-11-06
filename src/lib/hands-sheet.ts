@@ -114,17 +114,25 @@ export type FormerRow = {
 /**
  * The whole tab, as data.
  *
- * `kind` is the one of three sentences the screen opens with (UC-47 2a, 4a),
+ * `kind` is the one of four sentences the screen opens with (UC-47 2a, 4, 4a),
  * decided here rather than derived from `seats.length` and `drawn` in the
- * component, for the reason the module note gives. Every other field means
- * the same thing in every state — `seats` is empty under `no_seats`, `drawn`
- * is zero under `nobody_drawn`, `former` may hold rows under any of the three
- * — so this is one shape rather than a union: there is no field a state must
- * not read.
+ * component, for the reason the module note gives. `all_drawn` is the fourth:
+ * "everyone has drawn" is the answer the manager came for, and a component
+ * working it out from `drawn === seats.length` would be deciding who has
+ * drawn in markup, where no mutation test can reach it. Every other field
+ * means the same thing in every state — `seats` is empty under `no_seats`,
+ * `drawn` is zero under `nobody_drawn` and equal to `seats.length` under
+ * `all_drawn`, `former` may hold rows under any of the four — so this is one
+ * shape rather than a union: there is no field a state must not read.
  */
 export type HandSheet = {
-  /** UC-47 4a: nothing is accepted, so there is no sheet to draw — only what `former` holds. */
-  kind: "no_seats" | "nobody_drawn" | "drawing";
+  /**
+   * `no_seats` — UC-47 4a: nothing is accepted, so there is no sheet to draw,
+   * only what `former` holds. `nobody_drawn` — UC-47 2a. `drawing` — some
+   * seats have drawn and some have not. `all_drawn` — every seat has, and
+   * there is at least one.
+   */
+  kind: "no_seats" | "nobody_drawn" | "drawing" | "all_drawn";
   /** UC-47 2: every seat, in the order it arrived. */
   seats: SeatRow[];
   /** UC-47 3a: after every seat, in the order the hands arrived. */
@@ -161,7 +169,14 @@ export function handSheet(applicants: readonly SheetApplicant[], hands: SheetHan
 
   const drawn = seats.filter((row) => row.hand !== null).length;
 
-  const kind = seats.length === 0 ? "no_seats" : drawn === 0 ? "nobody_drawn" : "drawing";
+  const kind =
+    seats.length === 0
+      ? "no_seats"
+      : drawn === 0
+        ? "nobody_drawn"
+        : drawn === seats.length
+          ? "all_drawn"
+          : "drawing";
 
   return { kind, seats, former, drawn };
 }

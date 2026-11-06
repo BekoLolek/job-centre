@@ -136,8 +136,13 @@ export default function ResultsTab({
    * can be sent to the Bracket tab, so the empty state has to know which it is
    * talking to. `format.teams.length` would not do — a team event has no teams
    * either until somebody fills them.
+   *
+   * Only `teamEvent` is read, so only `teamEvent` is asked for: a tab that
+   * took the whole of `TabVisibility` would have every fixture of this tab
+   * carrying facts it never reads, and would change every time that type
+   * grows a member about some other tab.
    */
-  shape: TabVisibility;
+  shape: Pick<TabVisibility, "teamEvent">;
   /**
    * The round sheet's bundle (UC-45). `scoring` null means the night is not
    * scored in rounds and no sheet is drawn — see `RoundScoresData`.

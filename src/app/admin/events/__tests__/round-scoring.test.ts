@@ -529,7 +529,8 @@ describe("the hidden panel's action", () => {
     const fixture = await hostedEvent(2, null);
     const shape = eventShapeFrom(await storedConfig(fixture.eventId));
     expect(shape.teamEvent).toBe(true);
-    expect(visibleSetup(shape)).not.toContain("scoring");
+    // The fixture creates no game, so that is the hero-list fact for it.
+    expect(visibleSetup({ ...shape, heroList: { game: null } })).not.toContain("scoring");
 
     state.userId = fixture.members[0];
     await expect(saveRoundScoringAction(fixture.eventId, SIX)).rejects.toThrow(/NEXT_REDIRECT/);
@@ -541,7 +542,12 @@ describe("the hidden panel's action", () => {
 
   it("and still succeeds for the manager, because hiding is not forbidding", async () => {
     const fixture = await hostedEvent(2, null);
-    expect(visibleSetup(eventShapeFrom(await storedConfig(fixture.eventId)))).not.toContain("scoring");
+    expect(
+      visibleSetup({
+        ...eventShapeFrom(await storedConfig(fixture.eventId)),
+        heroList: { game: null },
+      })
+    ).not.toContain("scoring");
 
     const saved = unwrap(await saveRoundScoringAction(fixture.eventId, SIX));
     expect(saved.scoring).toEqual(SIX);

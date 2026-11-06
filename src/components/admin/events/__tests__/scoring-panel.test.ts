@@ -356,7 +356,10 @@ describe("the rail the page builds", () => {
     const markup = await screen(eventId, host);
     const shape = eventShapeFrom({});
     expect(shape.teamEvent).toBe(true);
-    expect(setupRail(markup)).toEqual(visibleSetup(shape).map((key) => SETUP_LABELS[key]));
+    // `hostedEvent` creates no game, so that is the fact the page read.
+    expect(setupRail(markup)).toEqual(
+      visibleSetup({ ...shape, heroList: { game: null } }).map((key) => SETUP_LABELS[key])
+    );
     expect(setupRail(markup)).not.toContain("Scoring");
     // The rest of Setup is whole.
     expect(setupRail(markup)).toContain("Format");

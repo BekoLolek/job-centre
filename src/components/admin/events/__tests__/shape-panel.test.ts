@@ -131,6 +131,9 @@ function panel(
     createElement(ShapeTab, {
       eventId: "event-1",
       shape: eventShapeFrom(config ?? {}),
+      // An event on no game: the panel passes it through to `visibleTabs`
+      // and nothing it asks about depends on it.
+      heroList: { game: null },
       accepted: 18,
       existingTeams: 0,
       draftStarted: false,
@@ -387,8 +390,11 @@ describe("the rail the page builds", () => {
      */
     const { eventId, host } = await hostedEvent(12);
     const markup = await screen(eventId, host);
+    // `hostedEvent` creates no game, so that is the fact the page read.
     expect(setupRail(markup)).toEqual(
-      visibleSetup(eventShapeFrom({})).map((key) => SETUP_LABELS[key])
+      visibleSetup({ ...eventShapeFrom({}), heroList: { game: null } }).map(
+        (key) => SETUP_LABELS[key]
+      )
     );
     expect(setupRail(markup)).toContain("Format");
   });

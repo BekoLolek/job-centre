@@ -25,7 +25,13 @@ import {
 import { MAX_TEAMS, MIN_TEAMS } from "@/lib/draft-policy";
 import { saveEventShapeAction } from "@/app/admin/events/actions";
 import SaveRow, { type SaveState } from "./SaveRow";
-import { SETUP_LABELS, TAB_LABELS, TEAM_ONLY_KEYS, visibleTabs } from "./tabs";
+import {
+  type HeroListFact,
+  SETUP_LABELS,
+  TAB_LABELS,
+  TEAM_ONLY_KEYS,
+  visibleTabs,
+} from "./tabs";
 
 /**
  * Format — the Setup panel that says what kind of event this is
@@ -66,6 +72,7 @@ import { SETUP_LABELS, TAB_LABELS, TEAM_ONLY_KEYS, visibleTabs } from "./tabs";
 export default function ShapeTab({
   eventId,
   shape,
+  heroList,
   accepted,
   existingTeams,
   draftStarted,
@@ -73,6 +80,14 @@ export default function ShapeTab({
   eventId: string;
   /** As stored — `eventShapeFrom(event.config)`, read on the server. */
   shape: EventShape;
+  /**
+   * Whether the event's game has a hero list — the one fact `visibleTabs`
+   * needs that this panel does not decide. Required, because `TabVisibility`
+   * requires it (see that type for why), and this panel asks `visibleTabs`
+   * which tabs an edit would take away: it passes the real fact through
+   * rather than a guess, even though no answer here can change it.
+   */
+  heroList: HeroListFact;
   /** How many applicants are accepted, for the derived figure (UC-42 4). */
   accepted: number;
   /** How many teams the event already has, for UC-42 2a. */
@@ -116,7 +131,9 @@ export default function ShapeTab({
       ? teamsInTheWayRefusal(existingTeams)
       : (bounds ?? (teamEvent ? consequence.problem : null));
 
-  const dropping = TEAM_ONLY_KEYS.filter((tab) => !visibleTabs(edited).includes(tab));
+  const dropping = TEAM_ONLY_KEYS.filter(
+    (tab) => !visibleTabs({ ...edited, heroList }).includes(tab)
+  );
 
   const touch = () => {
     setState("dirty");

@@ -300,7 +300,11 @@ describe("what the save refuses", () => {
         .length
     ).toBe(0);
 
-    const shown = visibleTabs(eventShapeFrom(await storedConfig(fixture.eventId)));
+    // The fixture creates no game, so that is the hero-list fact for it.
+    const shown = visibleTabs({
+      ...eventShapeFrom(await storedConfig(fixture.eventId)),
+      heroList: { game: null },
+    });
     expect(shown).not.toContain("draft");
     expect(shown).not.toContain("teams");
     expect(shown).not.toContain("captains");
@@ -415,7 +419,10 @@ describe("a hidden tab's actions", () => {
     );
 
     // The Draft, Teams and Captains tabs are not drawn for this event at all.
-    const shown = visibleTabs(eventShapeFrom(await storedConfig(fixture.eventId)));
+    const shown = visibleTabs({
+      ...eventShapeFrom(await storedConfig(fixture.eventId)),
+      heroList: { game: null },
+    });
     expect(shown).not.toContain("draft");
     expect(shown).not.toContain("teams");
 

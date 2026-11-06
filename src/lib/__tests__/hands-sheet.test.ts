@@ -184,18 +184,52 @@ describe("handSheet states the empty cases rather than drawing an empty sheet", 
     expect(sheet.former.map((row) => row.userId)).toEqual(["wit"]);
   });
 
-  it("is a sheet once one seat has drawn", () => {
+  it("is a sheet once one seat has drawn and another has not", () => {
     const sheet = handSheet([applicant("amy"), applicant("bob")], { amy: hand("amy") });
 
     expect(sheet.kind).toBe("drawing");
     expect(sheet.drawn).toBe(1);
   });
 
-  it("is still a sheet when every seat has drawn", () => {
+  it("says everyone has drawn once every seat holds a hand (UC-47 4)", () => {
+    // The mutation this exists to kill: returning `drawing` when every seat
+    // has drawn, which would leave "everyone has drawn" for the screen to work
+    // out from `drawn === seats.length` — a who-has-drawn rule in markup.
+    const sheet = handSheet([applicant("amy"), applicant("bob")], {
+      amy: hand("amy"),
+      bob: hand("bob"),
+    });
+
+    expect(sheet.kind).toBe("all_drawn");
+    expect(sheet.drawn).toBe(2);
+  });
+
+  it("says everyone has drawn for a single seat that has, too", () => {
+    // One seat holding one hand is every seat holding a hand. This used to
+    // expect `drawing`, which was true only in the sense that something had
+    // been drawn; with the fourth kind it is the sharper answer.
     const sheet = handSheet([applicant("amy")], { amy: hand("amy") });
 
-    expect(sheet.kind).toBe("drawing");
+    expect(sheet.kind).toBe("all_drawn");
     expect(sheet.drawn).toBe(1);
+  });
+
+  it("keeps a former holder's hand readable when every remaining seat has drawn", () => {
+    const hands: SheetHands = { amy: hand("amy"), wit: hand("wit") };
+
+    const sheet = handSheet([applicant("amy"), applicant("wit", "withdrawn")], hands);
+
+    expect(sheet.kind).toBe("all_drawn");
+    expect(sheet.former.map((row) => row.userId)).toEqual(["wit"]);
+    // And the withdrawn hand did not make the count: one seat, one drawn.
+    expect(sheet.drawn).toBe(1);
+  });
+
+  it("is not everyone-has-drawn when nobody holds a seat, whatever hands remain", () => {
+    // `no_seats` wins over `all_drawn`: zero of zero is not everyone.
+    const sheet = handSheet([applicant("wit", "withdrawn")], { wit: hand("wit") });
+
+    expect(sheet.kind).toBe("no_seats");
   });
 });
 

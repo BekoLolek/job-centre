@@ -2,6 +2,7 @@ import type { PlayerBook, TeamLike } from "@/components/draft";
 import type {
   ChampionshipStatusValue,
   EventStatus,
+  HeroRole,
   ProfileFieldOption,
   ProfileFieldType,
 } from "@/db/schema";
@@ -14,6 +15,7 @@ import type { TeamsFill } from "@/lib/draft";
 import type { DraftConfig } from "@/lib/draft-policy";
 import type { RoundScoring, TeamFormat } from "@/lib/events-policy";
 import type { FormatView, ScheduleSettings } from "@/lib/format";
+import type { HandSheet } from "@/lib/hands-sheet";
 import type { RoundScoreRow } from "@/lib/round-scoring";
 
 /**
@@ -178,4 +180,65 @@ export type RoundScoresData = {
   seated: string[];
   /** For UC-09 6b's lock, so the sheet can say so before the server has to. */
   status: EventStatus;
+};
+
+/**
+ * One dealt hand as the Hands tab draws it (R-241, R-242 / UC-47 2).
+ *
+ * `handSheet` hands the page `StoredHand`s — full hero rows, `gameId`,
+ * `retiredAt` and `createdAt` included, and a `Date` — and none of that crosses
+ * to the browser. The standard is `handCards` in
+ * `src/app/events/[slug]/draw/draw.ts`: only what a card shows crosses, because
+ * a payload carrying `retiredAt` would be telling the reader which heroes have
+ * been retired, and UC-47 2b says a retired hero is named with no mark against
+ * it. A card on this sheet shows a name, so a name is what crosses; the role is
+ * the group it sits in. `dealtAt` is ISO rather than a `Date` for
+ * `ApplicationView.answerConfirmedAt`'s reason — the tab is a client component
+ * and `LocalTime` formats the instant in the reader's zone.
+ *
+ * The roles arrive **already grouped, in deal order** — `HERO_ROLES` order,
+ * three names each, as `StoredHand.heroes` holds them — so the panel draws what
+ * it is given and regroups nothing. `HERO_ROLES` lives in `src/lib/heroes.ts`,
+ * which reaches Postgres, so the page is the side that knows the order.
+ */
+export type DealtHand = {
+  roles: { role: HeroRole; names: string[] }[];
+  /** When Postgres stored it, ISO. */
+  dealtAt: string;
+};
+
+/** A seat on the sheet (UC-47 2, 3): named, and holding a hand or not yet. */
+export type SeatHandRow = {
+  userId: string;
+  name: string;
+  hand: DealtHand | null;
+};
+
+/**
+ * A hand whose holder no longer holds a seat (UC-47 3a). `name` is null when
+ * there is no application row to name them from — `FormerRow.member`'s case in
+ * `src/lib/hands-sheet.ts` — and the panel says so rather than printing an id.
+ */
+export type FormerHandRow = {
+  userId: string;
+  name: string | null;
+  hand: DealtHand;
+};
+
+/**
+ * Everything the Hands tab reads, in one bundle (R-239 to R-243 / UC-47).
+ *
+ * `handSheet` decided the rows, their order and the state the screen opens in
+ * (`kind`); the page mapped each hand down to {@link DealtHand}. The tab takes
+ * the result as one prop, the way the Results tab takes `RoundScoresData`, and
+ * decides nothing of its own.
+ */
+export type HandsTabData = {
+  kind: HandSheet["kind"];
+  /** UC-47 2: every seat, in the Applicants tab's order. */
+  seats: SeatHandRow[];
+  /** UC-47 3a: after every seat. */
+  former: FormerHandRow[];
+  /** UC-47 4: how many of `seats` have drawn. */
+  drawn: number;
 };

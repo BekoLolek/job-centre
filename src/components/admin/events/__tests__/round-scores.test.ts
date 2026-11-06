@@ -281,7 +281,7 @@ function resultsTab(scoring: RoundScoring | null): string {
     createElement(ResultsTab, {
       format: EMPTY_BOARD,
       matchIds: {},
-      shape: { teamEvent: false, draft: false },
+      shape: { teamEvent: false },
       rounds: { scoring, rows: [], players: PLAYERS, seated: ["alice"], status: "live" },
     })
   );
