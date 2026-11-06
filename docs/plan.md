@@ -1843,3 +1843,135 @@ label "Bracket changed" rather than "Format changed".
   **All three template routes go through the one function** — `createTemplate`, `updateTemplate` and `createTemplateFromEvent` — so a template saved on the admin screen and one captured from a hand-edited event row refuse in the same words. A test holds the capture path to that, which is the route a plan reading only the screen would have missed.
   **One line beyond the criteria, kept deliberately:** `describeTemplate` now prints `roundScoringSummary` when a setup is present. Not scope creep but the existing contract holding — that function's job is to say what a template carries, so a template that carries a scoring setup and a description that omits it would make the description wrong. The editor's "this template also carries…" paragraph was **not** extended, because that is client work with no criterion behind it.
   **What the second visit taught us about that function:** it is a pass-through with spot checks, so "knowing a key" means adding a check and never a whitelist; its `teams` range is still the only numeric bound it owns, and Task 79's open question about folding `teams`/`draft`/`bracket` into `eventShape` is untouched; and `admin-templates.ts` is **CRLF** while `admin-templates-policy.ts` and the test file are LF — a mutation anchor failed to match until spelled that way, which is Task 87's line-ending lesson one folder over.
+
+## N. Seeing what the room holds (R-239 to R-243 / UC-47)
+
+Added 2026-11-06, **Tier 2** - new behaviour over a table that already exists. No migration, no
+schema change, no domain-model change: `hero_hands` already stores the nine ids and `dealt_at`,
+and everything this section adds is a second way to read them. Phases 1, 2, 5, 6 and 7 only.
+
+**What the mapping found before any code.** Three facts shaped the tasks:
+
+  - **Every read of a hand today is single-user.** `handFor(eventId, userId)` is the only reader,
+    and its docblock says "`handFor` is asked for this user's, only ever". So this is a new read
+    rather than a widened one, and the new read has to be the *same* read nine times over - which
+    is why Task 98 reuses `unflatten` rather than writing a second flattener. A sheet that
+    disagreed with the player's own screen about which slot a hero sits in would be worse than no
+    sheet.
+  - **The hands are not secret.** UC-39 7 has the room deciding who plays what "knowing what
+    everyone holds". There is no fairness question to settle about a manager - who may themselves
+    be playing - seeing the sheet, because the room shares it anyway. This was the one thing worth
+    checking before building, and it checks out in the use case that already exists.
+  - **A seat and a hand are different sets, and neither contains the other.** A seat with no hand
+    is the question the sheet exists to answer (R-240); a hand with no seat is somebody who drew
+    and then withdrew (R-243), and the row stands because nothing on this site deletes a hand.
+    So the sheet is a join of two sets with both outer edges kept, which is Task 99's whole job
+    and the reason it is a pure function rather than a loop inside a `.tsx`.
+
+**The one judgement call, stated up front.** The tab is hidden for an event that cannot deal
+hands, and `TabVisibility` has to grow a third field to say so - see Task 100, which carries the
+argument and the two alternatives that were rejected. If that widening is unwelcome, the fallback
+is an always-drawn tab with an empty state, and it is a smaller change to one file; it was not
+chosen because a Fall Guys night would then carry a Hands tab that can only ever say "nothing to
+deal", which is the noise R-219 exists to remove.
+
+### Task 98: Every hand for one event
+
+- **Serves:** R-239, R-242 / UC-47 2, 2b, 2c, 2d
+- **Files:** `src/lib/hero-hands.ts`, `src/lib/heroes.ts`, `src/lib/__tests__/hero-hands.test.ts`
+- **Do:** `handsFor(eventId, database)` - every stored hand for one event, each as the `StoredHand`
+  `handFor` already returns, keyed by user id.
+  **Two queries, not a join, and for `handFor`'s own reason**: a hand of nine can name the same
+  hero twice (Deadpool in two roles), so a join hands back eight rows for nine cards and loses
+  which slot each belonged to. One `in` list over the de-duplicated ids of *every* hand on the
+  event, then `unflatten` per row - the same function the single-hand read uses, so the sheet and
+  the player's screen cannot drift about slot order.
+  **No `retired_at` filter**, again following `handFor`: what was dealt stays dealt (UC-40 4a,
+  UC-47 2b), and a rename comes through as the new name because a hand is the rows and not the
+  names they carried (UC-47 2c).
+  `hasHeroList(gameId, database)` in `heroes.ts` - a `limit 1` existence probe, because Task 100's
+  rail needs a yes-or-no and `listHeroes` would read fifty-four rows to answer it.
+- **Acceptance criteria:**
+  - [x] A hand naming one hero twice comes back in both slots, in `HERO_ROLES` order
+  - [x] A retired hero is still named; a renamed hero comes back under its new name
+  - [x] Hands belonging to another event are not returned - two events sharing one player
+  - [x] An event with no hands, and an id that names no event, each come back empty rather than throwing
+  - [x] `handsFor` and `handFor` agree hand for hand over the same event, asserted directly, so the two readers cannot drift
+  - [x] `unflatten`'s loud throw on a hero id with no row is reached from this path too, and is the same error
+  - [x] `hasHeroList` is true for a game with one hero and false for a game with none, and reads one row at most
+- **Depends on:** nothing.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **The retired-hero decision needed a test, not a comment, and review is what found that.** `hasHeroList` counts retired heroes deliberately - an event whose game's roster has since been fully retired is exactly the event whose stored hands still matter (UC-47 2b), and filtering them would hide the tab for it. But the criteria only pinned "one hero -> true" and "none -> false", so the decision lived purely in prose: an edit adding `retired_at is null` would have passed the entire suite while hiding the Hands tab on precisely that event. There is now a test for a game whose only hero is retired, and the mutation proves it is the **only** test that dies to it.
+  **Two mutations survived, both predicted before they were run, and both genuinely unkillable.** Removing the `in`-list de-duplication: Postgres accepts duplicate `IN` members and `unflatten` keys a `Map` by id anyway. Removing the early return on no hands: Drizzle compiles an empty `inArray` to `false`, so the second query runs and returns nothing either way. Only a SQL-text or query-count assertion could kill either, and both would pin spelling rather than behaviour. The de-dup is required by this entry's own text; the early return is discussed below.
+  **The early return's justification was rewritten, and that was the more useful half of the review.** It was documented as "a saved query, not a crash guard" - and a saved query on a path that is already two queries is exactly the speculative optimisation `kiss-solid.md` tells a reader to delete, so the docblock was arguing for its own deletion. The real reason it earns its place: it keeps the no-hands case off Drizzle's empty-list rule, which is Drizzle's to decide and which **Drizzle has decided more than once** - 0.45.2 compiles `[]` to `false` where earlier releases threw. It also mirrors `handFor`'s `if (!row) return null`. The paragraph now says the saved query is incidental and would not on its own be a reason to keep it.
+  **`DEADPOOL_HAND` was derived, not captured**, and the spec review re-derived it by hand from `shuffled`'s Fisher-Yates walk to prove it: the expected nine are worked out from the injected sequence, not copied from whatever the code emitted. The slot test fails on a reversed role read or a swapped slot.
+  **`countingRows()` counts rows, because the claim is about rows.** "Reads one row at most" cannot be proved by asserting SQL text without pinning spelling, and the `limit 1` is the whole reason `hasHeroList` exists rather than `listHeroes(...).length > 0` inline. Twelve heroes planted, one row expected. It follows two `Proxy` helpers the file already had (`insertingAfter`, `storingNothing`) rather than introducing a pattern.
+  **The module docblock had drifted and had to be rewritten**: "the two sentences in between" became three, "Task 76's page is the only caller" became two callers, and "one row of `hero_hands`" became "the rows". In a repo where the docblock is the design record, a reader who trusted the old one would have concluded `handsFor` was misplaced.
+
+### Task 99: The sheet, decided before it is drawn
+
+- **Serves:** R-240, R-241, R-243 / UC-47 2, 3, 4, 2a, 3a, 4a
+- **Files:** `src/lib/hands-sheet.ts` (new), `src/lib/__tests__/hands-sheet.test.ts` (new)
+- **Do:** `handSheet(seats, hands)` - the rows the tab draws, as a decision over plain data with
+  **no database and no value import**, so a `"use client"` panel may hold it
+  (`client-boundary.test.ts`'s rule).
+  Seats keep the order they arrive in, which is `getApplicationsForEvent`'s - accepted first, then
+  submission time - so the Hands tab reads in the same order as the Applicants tab rather than
+  inventing a second ordering nobody asked for. Each row is either the nine grouped by role with
+  the time they were dealt, or the stated absence R-240 asks for.
+  A hand whose player holds no seat comes **after** every seat, named as no longer holding one
+  (R-243, UC-47 3a). The drawn count covers seats only: a withdrawn player's hand is a record, not
+  a seat that has drawn.
+  A pure function for the reason `standingOn` (Task 80) and `roundScoringLosses` (Task 87) are
+  pure: the same two lines inside the component could not be mutation-proved in a node suite with
+  nothing to click, and here they decide what a manager believes about who has drawn.
+- **Acceptance criteria:**
+  - [x] Seats keep the order they arrive in; nothing is re-sorted
+  - [x] A seat with no hand is a row saying so, proven by a mutation that filters it out instead
+  - [x] A hand with no seat appears after every seat and is named as such, proven by a mutation that drops it
+  - [x] The drawn count counts seats that have drawn and ignores hands with no seat
+  - [x] No seats at all, and seats with nothing drawn at all, are each one stated state rather than an empty list (UC-47 2a, 4a)
+  - [x] The module imports no value, asserted the way the boundary test asserts it
+- **Depends on:** Task 98, for the hand type only.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **The two tasks met without an adapter, which was luck worth noticing rather than design.** This task ran beside Task 98 and had to declare the shape of the hands argument before `handsFor` existed - the way `draw.ts` declares `StoredHandReader` to `hero-hands.ts`'s published contract. Both independently chose `Record<string, StoredHand>` keyed by user id, so `SheetHands` is exactly `handsFor`'s return type. Had one chosen a `Map`, Task 100 would have carried a conversion; the brief should have fixed the shape rather than leaving two agents to agree.
+  **`handSheet` filters the seats itself**, taking the full application list and keeping `status === "accepted"`. Decided rather than defaulted, and for a reason the alternative loses: a caller that pre-filtered would throw away the rows that put a **name** on a withdrawn holder (`withdrawApplication` keeps the row as `withdrawn`), and R-243's row would then be a bare user id. It also makes the "pending is not a seat" rule - the same line as `holdsSeat` in `draw.ts` - provable here, which a mutation does.
+  **`kind` is a flat field, not a union, and `DrawPayload` is the contrast that explains why.** That type is a union precisely so a page cannot render the draw button on a screen that refused the draw. Nothing on this screen acts, and `former` must stay readable under `no_seats` - a withdrawn player's hand on an event with no seats left is a real row - so there is no field a state must not read, and a union would forbid a legal combination.
+  **The ordering fixture is deliberately hostile.** Seats arrive `zed, amy, mia` with hands on `mia` and `zed`, so the "keeps the order they arrive in" test dies under an alphabetical sort **and** under a drawn-first sort; the `former` fixture does the same. A fixture that happened to be in sorted order would have passed either mutation.
+  **"Accepted is a seat" now exists in two places** - a SQL predicate in `draw.ts`, an array predicate here - and cannot be collapsed: one of them would have to carry `@/db` across the client boundary. Two is not three, the docblocks cross-reference, and the rule is mutation-proved on this side.
+  **`FormerRow.member` tolerates `null` for a state the site cannot currently produce.** Hands are keyed by `user_id`, not by application id, so no foreign key makes the seat join total; the alternatives are a throw (a blank admin tab) or dropping the hand (exactly the failure R-243 forbids). One `?? null` and a test, and the comment says it is a gap in the keying rather than a case anybody has seen.
+
+### Task 100: The Hands tab
+
+- **Serves:** R-239 to R-243 / UC-47 1, 1a, 1b, 5, 5a
+- **Files:** `src/components/admin/events/tabs.ts`, `src/components/admin/events/HandsTab.tsx`
+  (new), `src/components/admin/events/EventEditor.tsx`,
+  `src/components/admin/events/types.ts`, `src/components/admin/events/ShapeTab.tsx`,
+  `src/app/admin/events/[id]/page.tsx`, and the tab tests named in the criteria
+- **Do:** `hands` joins **`PEOPLE_KEYS`**, beside Applicants, Teams and Captains - it is a
+  reference screen visited repeatedly through the night, not a step in running one, which is the
+  distinction `tabs.ts` already draws.
+  **`TabVisibility` gains a third required field, and this is the section's one judgement call.**
+  The existing two are answers off the Format panel, and `EventShape` satisfies the type
+  structurally; whether an event can deal hands is a fact about *another table* - the game's hero
+  list - so the server page reads it (Task 98's probe) and passes it in. Two alternatives were
+  weighed and rejected, and the docblock must say so: an **optional** field, which lets a caller
+  that forgets it hide a tab wrongly with nothing complaining, against a codebase whose habit is
+  to make the compiler hold the fact; and a **second mechanism** beside `tabHiddenBecause`, which
+  would split "which tabs does this event have" across two places - the one property R-219's
+  design rests on. A required field makes the compiler name every caller, which is the point.
+  **Two sentences, not one.** An event with no game points at Setup -> Basics, where a game is
+  chosen. An event whose game has no hero list **names the game** and points at that game's hero
+  list. A tab hidden for two reasons that said one thing would send half its readers to a screen
+  that cannot fix it, which is the standard UC-42 5a already holds these sentences to.
+  The panel draws the sheet and **offers nothing to click** (UC-47 5a): no form, no button, no
+  action import.
+- **Acceptance criteria:**
+  - [ ] The rail draws Hands for an event whose game has a hero list, and for no other
+  - [ ] `landOn("hands", ...)` on an event with no game lands on Setup -> Basics carrying the reason; on an event whose game has an empty hero list, the reason names the game
+  - [ ] `standingOn("hands", ...)` moves a manager off the tab when the fact changes under them, as it does for every other conditional tab
+  - [ ] A row shows nine names under three role headings, in deal order, and a not-drawn row says so - asserted over the markup
+  - [ ] The panel contains no `<form>`, no `<button>` and no import from an actions module, asserted
+  - [ ] `visibleTabs` for a team event with a draft and a hero list returns all ten keys, and every existing `TabVisibility` literal and caller is updated rather than defaulted
+  - [ ] `client-boundary.test.ts` and the field-ordering sweep stay green
+- **Depends on:** Tasks 98, 99.

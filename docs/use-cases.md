@@ -1613,3 +1613,37 @@ A season of two to four events a month across different games, with one running 
 **Error flows**
 - **5b.** A manager tries to type a finishing order by hand for a round-scored event - refused, pointing at the Results tab, because the table is the authority (R-236). The hand-typed order stays for events that are not round-scored.
 - **5c.** A round is corrected after the season recorded its result - the places are re-derived and the standings move, because nothing stored a total (Constraints).
+
+## UC-47: See what the room was dealt
+
+**Actor:** Manager (an admin, or this event's host)
+**Requirements covered:** R-239, R-240, R-241, R-242, R-243
+**Trigger:** A manager opens the editor of an event whose game has heroes, on or before the night.
+
+**Preconditions**
+1. The manager may manage this event.
+2. The event has a game, and that game has a hero list.
+
+**Main success path**
+1. Manager opens the event's Hands tab.
+2. System lists every participant holding a seat, in the order the Applicants tab lists them, with the nine heroes each holds grouped by role and when they were dealt.
+3. System names the seats that have not drawn.
+4. System says how many of the seats have drawn.
+5. Manager reads the sheet and runs the night.
+
+**Outcome**
+- The manager knows what every participant holds, and who still has to draw.
+
+**Alternate flows**
+- **1a.** The event has no game - the tab is not drawn, because there is no list to deal from. A link naming it lands on Setup -> Basics, where a game is chosen, carrying the reason (the rule R-219 / UC-42 5a already set).
+- **1b.** The event's game has no hero list - the tab is not drawn; the reason names the game, so the manager knows which list to fill rather than which event to blame.
+- **2a.** Nobody has drawn yet - every seat is listed as not drawn and the screen says so, rather than reading as an empty table.
+- **2b.** A hero in a hand has since been retired - still named, with no mark against it. What was dealt was dealt (UC-40 4a), and the sheet is a record of the deal rather than of the list.
+- **2c.** A hero in a hand has since been renamed - shown under its new name, because a hand is the rows it was dealt and not the names they carried at the time.
+- **2d.** One hand names the same hero twice - shown in both slots. Deadpool is playable in all three roles, so the slot is what carries the role (R-241).
+- **3a.** A hand belongs to somebody who no longer holds a seat - shown after the seats and named as no longer holding one (R-243). Withdrawing does not delete a hand, and a sheet that dropped the row would disagree with the table.
+- **4a.** The event has no accepted participants at all - the screen says so rather than drawing an empty sheet.
+
+**Error flows**
+- **5a.** A manager looks for a way to redeal, clear or draw on somebody's behalf - there is none, by design. The draw happens once and stands (R-212), so the sheet offers nothing to click; it is a screen that only reads.
+- **5b.** Somebody who is not a manager opens the tab's URL - the editor's own guard turns them away, as it does for every other tab. A hidden tab is not an authorisation (UC-42 5b): what keeps a member out is the page's guard, not the rail.

@@ -16,15 +16,16 @@ import {
   HAND_SIZE,
   dealFor,
   handFor,
+  handsFor,
 } from "@/lib/hero-hands";
-import { HERO_ROLES, drawableByRole, listHeroes } from "@/lib/heroes";
+import { HERO_ROLES, drawableByRole, hasHeroList, listHeroes } from "@/lib/heroes";
 import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
 
 /**
  * Storing a hand: dealt once, and it stands (R-212 / UC-39 3a, 3b, 5a, 6a).
  *
  * `heroes-policy.test.ts` proves *which* nine with no database in sight. This
- * file proves the four things only a real Postgres can answer.
+ * file proves the six things only a real Postgres can answer.
  *
  *  - **That the nine the policy returned are the nine that land**, in the order
  *    that makes position mean a role, and that they come back out that way.
@@ -38,6 +39,14 @@ import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
  *  - **That every refusal leaves no hand at all** — UC-39 5a, and
  *    `docs/decisions/004-refusals-inside-transactions.md` inverted: a stored
  *    hand reported as not stored would be the same lie the other way round.
+ *  - **That the manager's sheet is the players' hands** (R-239 / UC-47 2, 2b,
+ *    2c, 2d): `handsFor` returns, for every holder on one event and nobody
+ *    from another, exactly what `handFor` returns — retired and renamed heroes
+ *    included, Deadpool in every slot he was dealt in, and the same loud
+ *    failure on a deleted row.
+ *  - **That `hasHeroList` answers yes-or-no from one row at most**, and says
+ *    yes for a list whose every hero has been retired, because the tab it
+ *    gates is about hands already dealt and not about the next draw.
  *
  * ## No seed sweep
  *
@@ -161,6 +170,62 @@ async function fixture(perRole = 4): Promise<Fixture> {
 
   return { eventId: event.id, userId: await makeUser(db), gameId: game.id };
 }
+
+/**
+ * **Deadpool's** event: every pool is exactly three, and one hero holds all
+ * three roles, so the whole of each pool is dealt and that hero lands in all
+ * three of a player's role-sets. Nine ids of which seven are distinct.
+ *
+ * Shared by the single-hand test and the sheet test below, because the sheet
+ * has to rebuild the same nine slots from the same seven rows and the only
+ * honest way to say so is to deal the same hand.
+ */
+async function deadpoolFixture(): Promise<Fixture> {
+  counter += 1;
+  const [game] = await db
+    .insert(games)
+    .values({ key: `dp-game-${counter}`, name: `Deadpool game ${counter}` })
+    .returning({ id: games.id });
+  await db.insert(heroesTable).values([
+    { gameId: game.id, name: "Alpha", roles: ["Vanguard"] },
+    { gameId: game.id, name: "Bravo", roles: ["Vanguard"] },
+    { gameId: game.id, name: "Charlie", roles: ["Duelist"] },
+    { gameId: game.id, name: "Delta", roles: ["Duelist"] },
+    { gameId: game.id, name: "Echo", roles: ["Strategist"] },
+    { gameId: game.id, name: "Foxtrot", roles: ["Strategist"] },
+    { gameId: game.id, name: "Deadpool", roles: ["Vanguard", "Duelist", "Strategist"] },
+  ]);
+  const [event] = await db
+    .insert(eventsTable)
+    .values({
+      slug: `dp-event-${counter}`,
+      title: `Deadpool event ${counter}`,
+      gameId: game.id,
+      status: "published",
+    })
+    .returning({ id: eventsTable.id });
+  return { eventId: event.id, userId: await makeUser(db), gameId: game.id };
+}
+
+/** Three pools of three: two numbers each, six in all. */
+const DEADPOOL_SEQUENCE = [0, 0, 0, 0, 0, 0];
+
+/**
+ * What all zeroes deal over Deadpool's pools, worked the way `HAND_A` is.
+ *
+ * `listHeroes` orders by name, so the Vanguard pool is [Alpha, Bravo,
+ * Deadpool]; index 2 swaps with `floor(0 * 3) = 0` giving [Deadpool, Bravo,
+ * Alpha], index 1 swaps with `floor(0 * 2) = 0` giving [Bravo, Deadpool,
+ * Alpha], and the slice of three is the whole pool. The same two swaps on
+ * [Charlie, Deadpool, Delta] and [Deadpool, Echo, Foxtrot] give the other two
+ * rows. Deadpool sits in a different slot of each — which is what pins that a
+ * slot carries the role and the sheet reads the slots in `HERO_ROLES` order.
+ */
+const DEADPOOL_HAND = {
+  Vanguard: ["Bravo", "Deadpool", "Alpha"],
+  Duelist: ["Deadpool", "Delta", "Charlie"],
+  Strategist: ["Echo", "Foxtrot", "Deadpool"],
+};
 
 /** The hand as three lists of names, which is what the expectations are written in. */
 function names(hand: { heroes: Record<string, Hero[]> }): Record<string, string[]> {
@@ -291,6 +356,53 @@ function storingNothing(): Database {
       });
     },
   });
+}
+
+/**
+ * This file's database, except that every row a `select` hands back is counted.
+ *
+ * `hasHeroList` exists because `listHeroes` would read fifty-four rows to
+ * answer yes-or-no, and "reads one row at most" is the criterion that makes it
+ * worth a function of its own. Asserting on the SQL text would pin `limit 1`
+ * as spelling; what matters is how many rows came back, so that is what is
+ * counted. Every object a call on the chain returns is wrapped the same way,
+ * because `from` returns a new builder and `where`/`limit` return it again,
+ * and `await` reaches the builder through its own `then`.
+ */
+function countingRows(): { database: Database; handedBack: () => number } {
+  let handedBack = 0;
+
+  const wrap = <T extends object>(target: T): T =>
+    new Proxy(target, {
+      get(inner, property, receiver) {
+        if (property === "then") {
+          const then = Reflect.get(inner, "then", inner) as (
+            onFulfilled: (rows: unknown[]) => unknown,
+            onRejected?: (reason: unknown) => unknown
+          ) => Promise<unknown>;
+          return (
+            onFulfilled: (rows: unknown[]) => unknown,
+            onRejected?: (reason: unknown) => unknown
+          ) =>
+            then.call(
+              inner,
+              (rows: unknown[]) => {
+                handedBack += rows.length;
+                return onFulfilled(rows);
+              },
+              onRejected
+            );
+        }
+        const value = Reflect.get(inner, property, receiver);
+        if (typeof value !== "function") return value;
+        return (...args: unknown[]) => {
+          const out = (value as (...of: unknown[]) => unknown).apply(inner, args);
+          return out !== null && typeof out === "object" ? wrap(out) : out;
+        };
+      },
+    });
+
+  return { database: wrap(db), handedBack: () => handedBack };
 }
 
 /* ------------------------------------------------------------------ */
@@ -459,47 +571,20 @@ describe("the nine that are stored", () => {
    * refused, and nine slots that `handFor` has to rebuild from seven rows.
    */
   it("store one hero in several roles, nine slots from seven rows", async () => {
-    counter += 1;
-    const [game] = await db
-      .insert(games)
-      .values({ key: `dp-game-${counter}`, name: `Deadpool game ${counter}` })
-      .returning({ id: games.id });
-    await db.insert(heroesTable).values([
-      { gameId: game.id, name: "Alpha", roles: ["Vanguard"] },
-      { gameId: game.id, name: "Bravo", roles: ["Vanguard"] },
-      { gameId: game.id, name: "Charlie", roles: ["Duelist"] },
-      { gameId: game.id, name: "Delta", roles: ["Duelist"] },
-      { gameId: game.id, name: "Echo", roles: ["Strategist"] },
-      { gameId: game.id, name: "Foxtrot", roles: ["Strategist"] },
-      { gameId: game.id, name: "Deadpool", roles: ["Vanguard", "Duelist", "Strategist"] },
-    ]);
-    const [event] = await db
-      .insert(eventsTable)
-      .values({
-        slug: `dp-event-${counter}`,
-        title: `Deadpool event ${counter}`,
-        gameId: game.id,
-        status: "published",
-      })
-      .returning({ id: eventsTable.id });
-    const userId = await makeUser(db);
+    const fix = await deadpoolFixture();
 
-    // Three pools of three: two numbers each, six in all.
-    const result = dealt(await dealFor(event.id, userId, fromList([0, 0, 0, 0, 0, 0]), db));
+    const result = dealt(await dealFor(fix.eventId, fix.userId, fromList(DEADPOOL_SEQUENCE), db));
 
     for (const role of HERO_ROLES) {
       expect(result.hand.heroes[role].map((hero) => hero.name)).toContain("Deadpool");
     }
 
-    const [row] = await db
-      .select()
-      .from(heroHands)
-      .where(and(eq(heroHands.eventId, event.id), eq(heroHands.userId, userId)));
+    const [row] = await rowsFor(fix);
     expect(row.heroIds).toHaveLength(HAND_SIZE);
     expect(new Set(row.heroIds).size).toBe(7);
 
     // And the read rebuilds nine slots from the seven rows it fetched.
-    const held = await handFor(event.id, userId, db);
+    const held = await handFor(fix.eventId, fix.userId, db);
     expect(
       HERO_ROLES.flatMap((role) => (held as NonNullable<typeof held>).heroes[role])
     ).toHaveLength(HAND_SIZE);
@@ -805,5 +890,191 @@ describe("the source of randomness", () => {
     } finally {
       Math.random = real;
     }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Every hand for one event (R-239, R-242 / UC-47 2, 2b, 2c, 2d)      */
+/* ------------------------------------------------------------------ */
+
+describe("every hand for one event", () => {
+  /**
+   * UC-47 2: the sheet, keyed by who holds each hand, and **only this event's**.
+   *
+   * The shared player draws on both events, and the second event has a player
+   * of its own, so each half of the filter is caught separately: a read keyed
+   * on the wrong column would put the shared player's second hand where the
+   * first should be, and a read with no event filter at all would bring the
+   * third player onto a sheet they were never dealt on.
+   */
+  it("lists each hand under its holder, and nothing dealt on another event", async () => {
+    const fix = await fixture();
+    const other = await makeUser(db);
+    const elsewhere = await fixture();
+    const stranger = await makeUser(db);
+    const mine = dealt(await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db));
+    const theirs = dealt(await dealFor(fix.eventId, other, fromList(SEQUENCE_B), db));
+    await dealFor(elsewhere.eventId, fix.userId, fromList(SEQUENCE_B), db);
+    await dealFor(elsewhere.eventId, stranger, fromList(SEQUENCE_A), db);
+
+    const sheet = await handsFor(fix.eventId, db);
+
+    expect(Object.keys(sheet).sort()).toEqual([fix.userId, other].sort());
+    expect(names(sheet[fix.userId])).toEqual(HAND_A);
+    expect(names(sheet[other])).toEqual(HAND_B);
+    expect(sheet[fix.userId].dealtAt).toEqual(mine.hand.dealtAt);
+    expect(sheet[other].dealtAt).toEqual(theirs.hand.dealtAt);
+  });
+
+  /**
+   * The two readers cannot drift: the sheet's hand for a player *is* the hand
+   * the player's own page reads, asserted whole — rows, slots and `dealtAt`.
+   */
+  it("agrees with handFor hand for hand over the same event", async () => {
+    const fix = await fixture();
+    const other = await makeUser(db);
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await dealFor(fix.eventId, other, fromList(SEQUENCE_B), db);
+
+    const sheet = await handsFor(fix.eventId, db);
+
+    expect(sheet[fix.userId]).toEqual(await handFor(fix.eventId, fix.userId, db));
+    expect(sheet[other]).toEqual(await handFor(fix.eventId, other, db));
+  });
+
+  it("is empty for an event on which nobody has drawn", async () => {
+    const fix = await fixture();
+    expect(await handsFor(fix.eventId, db)).toEqual({});
+  });
+
+  it("is empty for an id that names no event", async () => {
+    expect(await handsFor("00000000-0000-0000-0000-0000000000ff", db)).toEqual({});
+  });
+
+  /**
+   * UC-47 2d: Deadpool in both slots — three, here — in `HERO_ROLES` order.
+   *
+   * The exact nine are pinned rather than "contains Deadpool", because the
+   * sheet reads nine slots out of seven rows and a read that collapsed the
+   * repeat, or put the roles back in the wrong order, would still contain him.
+   */
+  it("names one hero in every slot it was dealt in, in HERO_ROLES order", async () => {
+    const fix = await deadpoolFixture();
+    await dealFor(fix.eventId, fix.userId, fromList(DEADPOOL_SEQUENCE), db);
+
+    const sheet = await handsFor(fix.eventId, db);
+
+    expect(names(sheet[fix.userId])).toEqual(DEADPOOL_HAND);
+    expect(Object.keys(sheet[fix.userId].heroes)).toEqual([...HERO_ROLES]);
+  });
+
+  /**
+   * UC-47 2b and 2c together, because they are one claim about one read: a
+   * hand is the rows it was dealt, so a retirement leaves the hero named and a
+   * rename shows the new name. Both are bare updates for the reason the
+   * single-hand tests give — the storage is under test, not Task 77's writes.
+   */
+  it("still names a retired hero, and a renamed hero under its new name", async () => {
+    const fix = await fixture();
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await db
+      .update(heroesTable)
+      .set({ retiredAt: new Date("2026-10-23T12:00:00Z") })
+      .where(and(eq(heroesTable.gameId, fix.gameId), eq(heroesTable.name, "Duelist 3")));
+    await db
+      .update(heroesTable)
+      .set({ name: "Vanguard 2 (reworked)" })
+      .where(and(eq(heroesTable.gameId, fix.gameId), eq(heroesTable.name, "Vanguard 2")));
+
+    const sheet = await handsFor(fix.eventId, db);
+
+    expect(names(sheet[fix.userId])).toEqual({
+      Vanguard: ["Vanguard 2 (reworked)", "Vanguard 3", "Vanguard 4"],
+      Duelist: HAND_A.Duelist,
+      Strategist: HAND_A.Strategist,
+    });
+    expect(
+      sheet[fix.userId].heroes.Duelist.find((hero) => hero.name === "Duelist 3")?.retiredAt
+    ).toEqual(new Date("2026-10-23T12:00:00Z"));
+  });
+
+  /**
+   * The loud failure is reached from the sheet too, and it is the same
+   * sentence: the two readers share `unflatten`, and this is what shows it.
+   * A sheet that returned a hand of eight where the page throws would be the
+   * drift the shared function exists to prevent.
+   */
+  it("fails loudly when a hand names a deleted hero row, with handFor's error", async () => {
+    const fix = await fixture();
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    await db
+      .delete(heroesTable)
+      .where(and(eq(heroesTable.gameId, fix.gameId), eq(heroesTable.name, "Strategist 4")));
+
+    const fromPage = await handFor(fix.eventId, fix.userId, db).then(
+      () => "did not throw",
+      (error: Error) => error.message
+    );
+    const fromSheet = await handsFor(fix.eventId, db).then(
+      () => "did not throw",
+      (error: Error) => error.message
+    );
+
+    expect(fromSheet).toMatch(/no longer in the heroes table/);
+    expect(fromSheet).toBe(fromPage);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Whether a game has a hero list at all                              */
+/* ------------------------------------------------------------------ */
+
+describe("hasHeroList", () => {
+  it("is true for a game with one hero", async () => {
+    const fix = await fixture(1);
+    expect(await hasHeroList(fix.gameId, db)).toBe(true);
+  });
+
+  it("is false for a game with none", async () => {
+    const fix = await fixture(0);
+    expect(await hasHeroList(fix.gameId, db)).toBe(false);
+  });
+
+  /**
+   * Retired heroes count, and this is the test that keeps it so: an event whose
+   * game's whole roster has since been retired is exactly the event UC-47 2b is
+   * about — what was dealt stays dealt — and a `retired_at is null` added to
+   * the probe would pass the two tests above while hiding the hands tab for
+   * precisely that event. Exactly one hero, written retired, rather than
+   * `fixture(1)`'s three: the claim is about a list with nothing drawable left.
+   */
+  it("is true for a game whose only hero is retired", async () => {
+    counter += 1;
+    const [game] = await db
+      .insert(games)
+      .values({ key: `retired-game-${counter}`, name: `Retired game ${counter}` })
+      .returning({ id: games.id });
+    await db.insert(heroesTable).values({
+      gameId: game.id,
+      name: "Vanguard 1",
+      roles: ["Vanguard"],
+      retiredAt: new Date("2026-10-23T12:00:00Z"),
+    });
+
+    expect(await hasHeroList(game.id, db)).toBe(true);
+  });
+
+  /**
+   * The reason it is a function of its own: `listHeroes` answers the same
+   * question by reading the whole roster. Twelve heroes are planted so that a
+   * probe which read them all is told apart from one that stopped at the first.
+   */
+  it("reads one row at most, however long the list is", async () => {
+    const fix = await fixture(4);
+    const counting = countingRows();
+
+    expect(await hasHeroList(fix.gameId, counting.database)).toBe(true);
+
+    expect(counting.handedBack()).toBe(1);
   });
 });

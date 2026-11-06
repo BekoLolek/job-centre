@@ -5,12 +5,14 @@
  * The storage half of the draw, and the only half that touches Postgres.
  * `heroes-policy.ts` decides *which* nine (Task 74, no database, randomness
  * injected); `heroes.ts` supplies the catalogue and the pools; this file is the
- * two sentences in between — "what does this participant already hold" and
- * "deal them one if they hold nothing" — and Task 76's page is the only caller.
+ * three sentences in between — "what does this participant already hold",
+ * "deal them one if they hold nothing", and "what does everybody on this event
+ * hold" — with two callers: Task 76's draw page for the first two, and the
+ * manager's hands sheet (R-239 / UC-47) for the third.
  *
  * It is a module of its own rather than more of `heroes.ts` because the two
  * answer different questions about different tables: that file is the hero
- * *catalogue* and the admin screen underneath it, this one is one row of
+ * *catalogue* and the admin screen underneath it, this one is the rows of
  * `hero_hands`. The only thing shared is the direction of the import, which
  * runs one way.
  *
@@ -211,6 +213,58 @@ export async function handFor(
     .where(inArray(heroes.id, [...new Set(row.heroIds)]));
 
   return { heroes: unflatten(row.heroIds, rows), dealtAt: row.dealtAt };
+}
+
+/**
+ * Every hand dealt on one event, keyed by the user id that holds it — the
+ * manager's sheet (R-239, R-242 / UC-47 2, 2b, 2c, 2d).
+ *
+ * Each value is exactly what {@link handFor} returns for that participant, and
+ * the two are built the same way on purpose: one `in` list over the
+ * de-duplicated ids of every hand on the event, then {@link unflatten} per row.
+ * The sheet and the player's own screen read slots through one function, so
+ * they cannot disagree about which slot is which role (UC-47 2d — Deadpool in
+ * two slots is two cards, and a join would hand back one row for both).
+ *
+ * **No `retired_at` filter**, for {@link handFor}'s reason: what was dealt
+ * stays dealt (UC-40 4a, UC-47 2b), and a rename comes through as the new name
+ * because a hand is the rows it was dealt and not the names they carried
+ * (UC-47 2c). An id with no row throws, from the same line the single read
+ * throws from.
+ *
+ * Keyed by user rather than returned as a list because that is the question
+ * the sheet asks of it — "what does *this* seat hold" for each participant the
+ * Applicants tab lists, in that tab's order (UC-47 2). Who holds a seat is not
+ * decided here; this is every hand that exists, and an event nobody has drawn
+ * on, or an id that names no event, is an empty record rather than a refusal.
+ *
+ * The early return is what keeps the no-hands case off Drizzle's empty-list
+ * rule. What `inArray` does with `[]` is Drizzle's to decide and it has decided
+ * it more than once: the installed 0.45.2 compiles it to `false`
+ * (`node_modules/drizzle-orm/sql/expressions/conditions.js`, lines 73-76),
+ * where earlier releases threw. Returning before the `in` list is ever built
+ * means neither answer is this function's problem, and it is the shape the
+ * file already has — {@link handFor}'s `if (!row) return null` is the same
+ * line for one hand. That it also saves a query is incidental, and would not
+ * on its own be a reason to keep it.
+ */
+export async function handsFor(
+  eventId: string,
+  database: Database = defaultDb
+): Promise<Record<string, StoredHand>> {
+  const hands = await database.select().from(heroHands).where(eq(heroHands.eventId, eventId));
+  if (hands.length === 0) return {};
+
+  const rows = await database
+    .select()
+    .from(heroes)
+    .where(inArray(heroes.id, [...new Set(hands.flatMap((hand) => hand.heroIds))]));
+
+  const out: Record<string, StoredHand> = {};
+  for (const hand of hands) {
+    out[hand.userId] = { heroes: unflatten(hand.heroIds, rows), dealtAt: hand.dealtAt };
+  }
+  return out;
 }
 
 /**

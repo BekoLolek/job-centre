@@ -412,6 +412,26 @@ sub-0.5-second answer, a run that takes gold in every round.
 | R-237 | As an admin, I want a template to carry the scoring setup and the bonus list, so that every Popsauce night starts the same. | Should | Templates already copy `config` (R-22 / UC-28), so this is a consequence of storing the setup there rather than new machinery |
 | R-238 | As a manager, I want tied players to take the same championship points as well as the same place, so that a tie is a tie all the way through. | Must | Confirmed against the code rather than assumed: `placementValue` is `pointsTable[position - 1] ?? participationPoints`, so two players at place 1 each take the first row and nobody takes the second. The new work is that the **derived** order produces a shared place rather than inventing a split |
 
+### Seeing what the room holds (added 2026-11-06)
+
+The draw (R-209 to R-213) stores nine heroes against one participant and one event, and the
+only screen that has ever read one is the player's own: `handFor` is asked for one user's hand,
+only ever. A manager running the night can see who applied, who was accepted, who is on which
+team and how the night ended - and not what anybody was dealt.
+
+Nothing is being unsealed here. UC-39 7 already has the room deciding who plays what "knowing
+what everyone holds", so the hands are shared out loud on the night; what is missing is a sheet
+nobody can print. The question a manager actually asks - "has everyone drawn yet?" - is the one
+a list of hands cannot answer at all, which is why a seat with no hand has to be a row.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-239 | As an admin, I want to see every dealt hand for an event on one screen, so that I know what the room holds without asking nine people. | Should | Manager scope - an admin, or this event's host - the same as every other tab in the editor. The player's draw page is untouched: a participant still sees only their own hand |
+| R-240 | As an admin, I want a participant who has not drawn to be a row rather than an absence, so that I can chase them before the night starts. | Should | "Has everyone drawn?" is the question the sheet exists for, and a list of hands cannot answer it |
+| R-241 | As an admin, I want each hand grouped by role in the order it was dealt, so that the sheet reads the way the player's own screen does. | Could | `HERO_ROLES` order, three to a role - the order the cards turned in |
+| R-242 | As an admin, I want to see when each hand was dealt, so that "I drew before you changed the list" can be settled from the screen. | Could | `hero_hands.dealt_at`, already stored. No new column and no migration |
+| R-243 | As an admin, I want a hand belonging to somebody who no longer holds a seat still shown and named as such, so that a withdrawal does not quietly erase what was dealt. | Should | Nothing deletes a hand, so the row stands after a withdrawal. A sheet that hid it would disagree with the table it was read from |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -432,6 +452,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - **An event belongs to at most one championship**, so a result cannot count twice.
 - **A round score is a recorded fact; a total never is.** Somebody typed it, exactly as somebody types a match's maps, so it is stored. What stays derived is every number worked out *from* it - a player's total, the night's ranking, the championship places and the season standings - which is the same rule as "points are worked out from recorded places, never stored as a total" one layer down. Correcting a round re-scores everything above it.
 - **A bonus helps the player whichever way the event scores.** A bonus is points *in the player's favour*, so in a low-score-wins event it subtracts. Stated as a constraint because the obvious implementation adds in both directions, and in half of them that is a penalty dressed as a reward.
+- **A hand is shown to its owner and to a manager, and to nobody else.** Added 2026-11-06 with R-239. A participant's draw page reads their own hand and no other, which is the rule as it already stands; the manager's sheet is the one addition, and it is inside the editor every other management screen lives in. The site never shows one participant another's hand - that stays the room's own conversation on the night (UC-39 7).
 
 ## Out of scope
 
@@ -452,6 +473,7 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - Artificial delays or simulated mouse movement between actions.
 - Solo scoring: a formula language or any admin-authored expression for working out a score - the customisation is a stated set of choices, not arbitrary arithmetic. Also out: any combining rule other than the total of every round (dropping the worst round, counting the best N, averaging per round); weighting one round more than another; players entering their own scores; reading scores out of jklm.fun or Fall Guys; round scoring for an event that has teams, which has a bracket instead.
 - Championship: skill ratings or ELO; automatic results from game APIs; prizes, money or entry fees; leaderboards across other communities; more than one championship counting the same event; per-game separate championships running as their own competitions (one season, one table, games are just where the points came from).
+- Hero hands: a manager dealing, clearing or rerolling somebody's hand. R-212 is "my draw happens once and stands", and a button that undid it would be the feature failing rather than a convenience - so the sheet reads and never writes. Also out: hero-frequency history across events ("has Bob rolled Hulk three weeks running?"), offered on 2026-11-06 and deliberately deferred in favour of tonight's sheet alone; and any screen that shows one participant another's hand.
 
 ## Open questions
 
@@ -494,5 +516,6 @@ other assumptions stand.
 | Map | One round of play within a match, with its own score. Never called a "game" - Game means the catalogue entry. |
 | Block | Matches that start at the same time on a day. |
 | General availability | A member's usual weekly free times, independent of any event. |
+| Hand | The nine heroes one participant was dealt for one event - three Vanguard, three Duelist, three Strategist. Dealt once, and it stands. |
 | Announcement | A message posted to the Discord channel. |
 | Notification | A message to one member, in the site and optionally by Discord DM. |

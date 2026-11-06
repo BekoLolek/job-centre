@@ -117,6 +117,28 @@ export function drawableByRole(catalogue: readonly Hero[]): Record<HeroRole, Her
   return pools;
 }
 
+/**
+ * Whether this game has any heroes at all, retired ones counted.
+ *
+ * A `limit 1` existence probe rather than `listHeroes(...).length > 0`, because
+ * the caller that needs it is a tab rail deciding whether to show the hands
+ * tab for an event (UC-47), and that is a yes-or-no which `listHeroes` would
+ * read a fifty-four-row roster to answer. Retired heroes count: a game whose
+ * whole list has been retired still *has* a list, and the hands dealt from it
+ * still stand — the tab is about those hands, not about the next draw.
+ */
+export async function hasHeroList(
+  gameId: string,
+  database: Database = defaultDb
+): Promise<boolean> {
+  const [row] = await database
+    .select({ id: heroes.id })
+    .from(heroes)
+    .where(eq(heroes.gameId, gameId))
+    .limit(1);
+  return row !== undefined;
+}
+
 /** Every game's heroes at once, keyed by game id (Task 77's screen loads all of them). */
 export async function listHeroesByGame(
   database: Database = defaultDb
