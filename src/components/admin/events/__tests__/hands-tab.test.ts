@@ -47,6 +47,25 @@ vi.mock("@/lib/auth", () => ({
   auth: async () => (state.userId ? { user: { id: state.userId } } : null),
 }));
 
+/*
+ * UC-47 5b needs to know whether a hand was *read*, not only whether the page
+ * threw: the guard is what keeps a non-manager out, and the proof is that it
+ * runs before `handsFor` does. So the real `handsFor` is wrapped in a counter
+ * and otherwise untouched — every other test in this file reads through it.
+ */
+const heroHands = vi.hoisted(() => ({ reads: 0 }));
+
+vi.mock("@/lib/hero-hands", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/hero-hands")>();
+  return {
+    ...actual,
+    handsFor: (...args: Parameters<typeof actual.handsFor>) => {
+      heroHands.reads += 1;
+      return actual.handsFor(...args);
+    },
+  };
+});
+
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/server", () => ({ after: () => {} }));
 vi.mock("next/navigation", async (importOriginal) => ({
@@ -459,5 +478,42 @@ describe("the rail the page builds", () => {
     // that has — `handSheet`'s rule, printed.
     expect(text(markup)).toContain("Nobody has drawn yet.");
     expect(railCount(markup, TAB_LABELS.hands)).toBe("1");
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/* A hidden tab is not an authorisation (UC-47 5b)                       */
+/* --------------------------------------------------------------------- */
+
+describe("somebody who does not manage the event", () => {
+  it("is redirected to /me by the page's guard, before any hand is read", async () => {
+    /*
+     * The reader is the participant whose own hand is on the sheet — a seat
+     * holder, signed in, with the sharpest claim anybody short of a manager
+     * has. What keeps them out is `requireEventManager`, not the rail: the
+     * page throws Next's redirect before `handsFor` runs, which the counter
+     * around the real read is here to show. The host's render afterwards is
+     * what proves the counter is live rather than never wired.
+     */
+    const game = await makeGame(3);
+    const { eventId, host, members } = await hostedEvent(2, game.id);
+    expect((await dealFor(eventId, members[0], Math.random, db)).ok).toBe(true);
+    state.userId = members[0];
+    const before = heroHands.reads;
+
+    const attempt = AdminEventPage({
+      params: Promise.resolve({ id: eventId }),
+      searchParams: Promise.resolve({ tab: "hands" }),
+    });
+
+    await expect(attempt).rejects.toThrow(/NEXT_REDIRECT/);
+    // The rejection, read back for its destination: Next's redirect carries
+    // the path in the error's `digest`.
+    const thrown = (await attempt.catch((error: unknown) => error)) as { digest?: string };
+    expect(String(thrown.digest)).toContain("/me");
+    expect(heroHands.reads, "a hand was read before the guard refused").toBe(before);
+
+    await screen(eventId, host, "hands");
+    expect(heroHands.reads, "the counter never saw the host's read").toBe(before + 1);
   });
 });

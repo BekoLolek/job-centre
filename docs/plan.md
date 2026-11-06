@@ -1944,7 +1944,7 @@ deal", which is the noise R-219 exists to remove.
 
 ### Task 100: The Hands tab
 
-- **Serves:** R-239 to R-243 / UC-47 1, 1a, 1b, 5, 5a
+- **Serves:** R-239 to R-243 / UC-47 1, 1a, 1b, 5, 5a, 5b
 - **Files:** `src/components/admin/events/tabs.ts`, `src/components/admin/events/HandsTab.tsx`
   (new), `src/components/admin/events/EventEditor.tsx`,
   `src/components/admin/events/types.ts`, `src/components/admin/events/ShapeTab.tsx`,
@@ -1976,7 +1976,8 @@ deal", which is the noise R-219 exists to remove.
   - [x] `visibleTabs` for a team event with a draft and a hero list returns all ten keys, and every existing `TabVisibility` literal and caller is updated rather than defaulted
   - [x] `client-boundary.test.ts` and the field-ordering sweep stay green
 - **Depends on:** Tasks 98, 99.
-- **Left over:** nothing from the criteria, and eight things worth keeping.
+- **Left over:** nothing from the criteria, and nine things worth keeping.
+  **UC-47 5b claimed a guard nothing exercised.** `requireEventManager` on the page is pre-existing and runs before `getEventById`, `hasHeroList` and `handsFor`, but every suite that rendered `AdminEventPage` did so as the host, so the flow was claimed with no test behind it; `hands-tab.test.ts` ("is redirected to /me by the page's guard, before any hand is read") now opens `?tab=hands` as the participant whose own hand is on the sheet, asserts the `NEXT_REDIRECT` to `/me`, and asserts through a counter round the real `handsFor` that no hand was read before the refusal.
   **The widening was the right call, and the fallback this section offered up front was wrong.** Review weighed all three: the always-visible tab with an empty state contradicts UC-47 1a and 1b outright, an optional member lets a forgotten caller hide a tab with nothing complaining, and - the part the entry did not foresee - a flat `{ game: string | null; heroes: boolean }` would permit `{ game: null, heroes: true }`, a state nothing can produce. `HeroListFact` is a union for that reason, and the page builds it once and hands the same object to `landOn` and to the editor, so the rail and the landing cannot disagree.
   **The two sentences point at two different screens**, which is the whole reason one sentence could not serve: no game sends the reader to Setup -> Basics, where a game is chosen; a game with no heroes **names the game** and sends them to Admin -> Games, where that game's list is filled. A single sentence would have sent half its readers to a screen that cannot fix their problem, which is the standard UC-42 5a already holds these to.
   **`PEOPLE_KEYS` became a tuple so a missing rail entry is a compile error.** The rail's count and dot were a nested ternary whose last branch was the captains count, so a fourth people screen would have silently drawn the wrong number against it. It is now a `Record<PeopleKey, ...>`, and `TabKey` could not have given that - only the narrower key can.
