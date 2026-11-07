@@ -47,10 +47,10 @@
  */
 
 import { eq, inArray } from "drizzle-orm";
-import { type Database, db as defaultDb, events, users } from "@/db";
+import { type Database, type EventConfig, db as defaultDb, events, users } from "@/db";
 import type { PlayerBook } from "@/components/draft";
 import { type TeamWithRoster, getTeams } from "./draft";
-import { type RoundScoring, roundScoringFrom } from "./events-policy";
+import { type RoundScoring, eventShapeFrom, roundScoringFrom } from "./events-policy";
 import { ensureHandles } from "./players";
 import { type FormatView, formatFor } from "./format";
 import type { ResolvedMatch } from "./format-resolve";
@@ -156,6 +156,22 @@ export type EventBoard = {
   matches: ResolvedMatch[];
   /** The night's table, or null for an event that is not scored in rounds. */
   rounds: RoundTable | null;
+  /**
+   * Whether an auction was run for these teams — the Format panel's draft
+   * switch (R-254 / UC-51).
+   *
+   * Teams can be filled three ways (R-220), and on a night filled by hand or
+   * at random every price is zero and every balance is its starting figure.
+   * Those numbers describe an auction that never happened, so the public
+   * Teams tab prints no money on such a night. It keys on *this* and never on
+   * the figures: a drafted night whose captains all paid nothing is still a
+   * night that had an auction, and its zeros are its result.
+   *
+   * Read from `events.config` here rather than passed in by the page, because
+   * `getTeams` already reads the same column for the roster sizing and the
+   * page should make one call for the whole surface.
+   */
+  draft: boolean;
   /** Which tabs have something in them (§6.2). */
   has: {
     teams: boolean;
@@ -191,11 +207,12 @@ export async function getEventBoard(
   options: { days?: number } = {},
   database: Database = defaultDb
 ): Promise<EventBoard> {
-  const [teams, format, scoring] = await Promise.all([
+  const [teams, format, config] = await Promise.all([
     getTeams(eventId, database),
     formatFor(eventId, database),
-    roundScoringOf(eventId, database),
+    configOf(eventId, database),
   ]);
+  const scoring = roundScoringFrom(config);
   const rows = scoring ? await listRoundScores(eventId, database) : [];
   const players = await playerBookFor(
     [...namedBy(teams), ...rows.map((row) => row.userId)],
@@ -211,6 +228,7 @@ export async function getEventBoard(
     format,
     matches,
     rounds,
+    draft: eventShapeFrom(config).draft,
     has: {
       teams: teams.length > 0,
       schedule: matches.some((match) => match.scheduledAt) || (options.days ?? 0) > 0,
@@ -224,14 +242,20 @@ export async function getEventBoard(
   };
 }
 
-/** The stored scoring setup, or null for an event that is not scored in rounds — or gone. */
-async function roundScoringOf(eventId: string, database: Database): Promise<RoundScoring | null> {
+/**
+ * The event's stored config, or undefined for an event that is gone.
+ *
+ * Read once and resolved twice — the round scoring and the shape's draft
+ * switch both live on this one column, and either policy reads an absent
+ * config as its own default, so a missing row needs no special case here.
+ */
+async function configOf(eventId: string, database: Database): Promise<EventConfig | undefined> {
   const [row] = await database
     .select({ config: events.config })
     .from(events)
     .where(eq(events.id, eventId))
     .limit(1);
-  return roundScoringFrom(row?.config);
+  return row?.config;
 }
 
 function roundTable(scoring: RoundScoring, rows: RoundScoreRow[], players: PlayerBook): RoundTable {

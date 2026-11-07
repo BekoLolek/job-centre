@@ -2329,8 +2329,13 @@ then the other two in parallel. Each commits on its own so the site can deploy i
   The page needs to know whether the event has a draft, and `getEventBoard` **does not read `events.config` for the shape at all** - it reads it only for round scoring. So one field on `EventBoard`, from `eventShapeFrom(event.config).draft`.
   The question is "was an auction run", not "did it produce figures": a drafted night where every price is zero keeps its figures.
 - **Acceptance criteria:**
-  - [ ] A teams night with no draft shows no price, no balance, no spent total and no balances paragraph
-  - [ ] A drafted night is unchanged, pinned against pre-task markup
-  - [ ] A drafted night where every price is zero still shows its figures
-  - [ ] The signal is the event's draft flag, not an absence of prices, proven by the zero-price case
+  - [x] A teams night with no draft shows no price, no balance, no spent total and no balances paragraph
+  - [x] A drafted night is unchanged, pinned against pre-task markup
+  - [x] A drafted night where every price is zero still shows its figures
+  - [x] The signal is the event's draft flag, not an absence of prices, proven by the zero-price case
 - **Depends on:** nothing. **Must not run beside Task 114** - both edit the public event page's surfaces.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **Most of this was already built and never wired.** `hidePrices` has existed on `TeamCard` and `RosterList`, threading correctly through both, and **no call site had ever passed it** - so neither component needed an edit. The diff is one page, one board field and two test files.
+  **The pin was taken, used, and retired for a stated reason.** The drafted case was rendered at HEAD and hashed (`c28bc944...`) before a line changed, and the `toBe` against that digest passed afterwards, so "a drafted night is unchanged" is byte evidence rather than "it still says Total spent". Then it went: a digest over this tab hashes `PlayerChip` and `RosterList`, which the pictures task was editing in the same tree, so keeping it would have broken on their landing for a reason that is not this tab's decision. The digest and the reasoning live in the test's docblock. Same judgement as Task 108's pin, reached independently.
+  **The zero-price case is the test that proves the signal.** Keying the hiding on "every price is zero" rather than on the draft switch passes every obvious test - a hand-built night has no prices either way. Two boards tell them apart: a **priced** night with the switch off, and a **drafted** night where every price is zero. Both exist as fixtures, and the mutation dies on both.
+  **One conscious reading, flagged rather than buried:** `board.draft` is exactly the Format panel's switch and is not ANDed with `teamEvent`, so an event that has gone solo while still holding teams keeps its money if the switch is on. That is defensible - those prices came from an auction that really happened - but it is a reading rather than an inevitability.

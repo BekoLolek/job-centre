@@ -17,6 +17,23 @@ import type { EventBoard } from "@/lib/event-board";
  * except that there are no controls: everybody sees the same figures, because
  * by the time a team page exists there is nothing left to redact (§11).
  *
+ * ## No money on a night that had no auction (R-254 / UC-51)
+ *
+ * Teams can be filled three ways (R-220): from a draft, by hand, or at random.
+ * On the second and third every price is zero and every balance is its
+ * starting figure, so the figures above would describe an auction that never
+ * happened — a visitor shown "Left 1,000 of 1,000" on four cards is being
+ * handed a result they cannot interpret. So on a night with no draft the tab
+ * prints the teams and their rosters and none of the money: no price beside a
+ * player, no balance on a card, no spent total, no paragraph about balances.
+ *
+ * The switch is `board.draft`, the Format panel's own flag, and never "every
+ * price is zero". A drafted night where nobody paid anything is still a night
+ * that had an auction, and its zeros are what it produced; keying on the
+ * figures would strip that night of its result along with the rest. The card
+ * and the roster already know how to go quiet (`hidePrices`), so what is new
+ * here is only that somebody finally asks them to.
+ *
  * No instants are formatted anywhere in this file, which is why it can stay a
  * server component.
  */
@@ -26,7 +43,7 @@ export type TeamsTabProps = {
 };
 
 export default function TeamsTab({ board }: TeamsTabProps) {
-  const { teams, players } = board;
+  const { teams, players, draft } = board;
 
   if (teams.length === 0) {
     return (
@@ -59,7 +76,7 @@ export default function TeamsTab({ board }: TeamsTabProps) {
             {plural(teams.length, "team")} · {plural(drafted, "player")} drafted
           </Eyebrow>
 
-          {spent > 0 && (
+          {draft && spent > 0 && (
             <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
               <span className="flex items-baseline gap-2">
                 <Eyebrow as="span">Total spent</Eyebrow>
@@ -87,17 +104,25 @@ export default function TeamsTab({ board }: TeamsTabProps) {
       <ul className="grid gap-4 lg:grid-cols-2">
         {teams.map((team) => (
           <li key={team.id}>
-            <TeamCard team={team} players={players} showRoster warnNoCaptain />
+            <TeamCard
+              team={team}
+              players={players}
+              showRoster
+              warnNoCaptain
+              hidePrices={!draft}
+            />
           </li>
         ))}
       </ul>
 
-      <p className="text-12 leading-relaxed text-muted">
-        Every price is what that player actually went for at the draft, and a captain costs
-        nothing because they were never bid for. A team&apos;s remaining balance is worked out
-        from the lots it won rather than stored, so it can never disagree with the roster above
-        it — the figures add up to {formatMoney(spent)} spent across every team.
-      </p>
+      {draft && (
+        <p className="text-12 leading-relaxed text-muted">
+          Every price is what that player actually went for at the draft, and a captain costs
+          nothing because they were never bid for. A team&apos;s remaining balance is worked out
+          from the lots it won rather than stored, so it can never disagree with the roster above
+          it — the figures add up to {formatMoney(spent)} spent across every team.
+        </p>
+      )}
     </section>
   );
 }

@@ -178,6 +178,44 @@ describe("getEventBoard — rosters and prices", () => {
   });
 });
 
+/*
+ * Whether an auction was run (R-254 / UC-51).
+ *
+ * The public Teams tab hides every price and balance on a night that had no
+ * draft, and the signal it keys on is the Format panel's draft flag, read
+ * here from `events.config` rather than inferred from the figures: a drafted
+ * night whose prices all happen to be zero keeps its money. Absent reads as
+ * drafted, for `eventShapeFrom`'s reason — every event stored before the
+ * panel existed ran its draft.
+ */
+describe("getEventBoard — whether an auction was run", () => {
+  it("reads an event with no stated shape as drafted — the event that exists today", async () => {
+    const eventId = await makeEvent();
+    const board = await getEventBoard(eventId, {}, db);
+    expect(board.draft).toBe(true);
+  });
+
+  it("reads the Format panel's draft switch when it is off", async () => {
+    const eventId = await makeEvent({
+      eventShape: { teamEvent: true, draft: false, sizing: { mode: "perTeam", value: 6 } },
+    });
+    const board = await getEventBoard(eventId, {}, db);
+    expect(board.draft).toBe(false);
+  });
+
+  it("reads it on when the panel says so, whatever the rosters cost", async () => {
+    const eventId = await makeEvent({
+      eventShape: { teamEvent: true, draft: true, sizing: { mode: "perTeam", value: 6 } },
+    });
+    const [teamId] = await makeTeams(eventId, 2);
+    const free = await makeUser(db, { displayName: "Placed by hand" });
+    await db.insert(teamMembers).values({ teamId, eventId, userId: free, price: 0, isCaptain: false });
+
+    const board = await getEventBoard(eventId, {}, db);
+    expect(board.draft).toBe(true);
+  });
+});
+
 describe("podiumFor", () => {
   it("is empty while the tournament is still being played", async () => {
     const eventId = await makeEvent();
