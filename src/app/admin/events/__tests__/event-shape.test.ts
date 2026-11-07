@@ -664,43 +664,55 @@ describe("a hidden tab's actions", () => {
 });
 
 /* --------------------------------------------------------------------- */
-/* The audit row never carries a figure the panel does not have (R-248)  */
+/* The audit row never carries the places on a team (R-248 / UC-49 4a)   */
 /* --------------------------------------------------------------------- */
 
 describe("the draft-rules audit line", () => {
-  async function draftConfigLines(eventId: string): Promise<string[]> {
-    const rows = await db
-      .select({ summary: auditLog.summary })
+  async function draftConfigRows(eventId: string) {
+    return db
+      .select({ summary: auditLog.summary, detail: auditLog.detail })
       .from(auditLog)
       .where(and(eq(auditLog.eventId, eventId), eq(auditLog.action, "draft.config")));
-    return rows.map((row) => row.summary);
   }
 
-  it("names the places on a team when the panel has them", async () => {
+  it("names the rules and not the places on a team, even when the panel has a figure", async () => {
+    /*
+     * Task 106 kept a "rosters of N" clause so the line read as it always
+     * had. It no longer should: the line records what "Save draft rules"
+     * changed, and the places on a team are not something that save can
+     * change — the Format panel's own `event.shape` line logs them at the
+     * moment they are set. A permanent row claiming the draft rules included
+     * a roster size is the disagreement R-248 exists to end.
+     */
     const fixture = await hostedEvent(4);
     unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, value: 3 }));
 
     unwrap(await saveDraftConfigAction(fixture.eventId, { minBid: 5 }));
 
-    const [line] = await draftConfigLines(fixture.eventId);
-    expect(line).toBe("Changed the draft rules — 1000 each, sealed bidding, rosters of 3.");
+    const [row] = await draftConfigRows(fixture.eventId);
+    expect(row.summary).toBe("Changed the draft rules — 1000 each, sealed bidding.");
+    expect(row.summary).not.toContain("rosters of");
+    expect(Object.keys(row.detail ?? {})).not.toContain("rosterCap");
+    expect(Object.keys(row.detail ?? {})).not.toContain("rosterTarget");
   });
 
-  it("leaves the clause out, rather than writing 'rosters of null', when it has none", async () => {
+  it("and so cannot write 'rosters of null' when the panel has none", async () => {
     /*
      * A count of teams with fewer accepted than sides: `planSides` refuses the
      * deal, `rosterSizingFrom` derives nothing, and the cap is null. An audit
      * row is permanent, so a sentence with "null" in it is one nobody can go
-     * back and fix — the clause is omitted instead.
+     * back and fix. This is the case Task 106's conditional clause guarded;
+     * with no clause at all it holds by construction, and is kept because it
+     * is the case that was once wrong.
      */
     const fixture = await hostedEvent(1);
     unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, mode: "teams", value: 3 }));
 
     unwrap(await saveDraftConfigAction(fixture.eventId, { minBid: 5 }));
 
-    const [line] = await draftConfigLines(fixture.eventId);
-    expect(line).toBe("Changed the draft rules — 1000 each, sealed bidding.");
-    expect(line).not.toContain("null");
-    expect(line).not.toContain("rosters of");
+    const [row] = await draftConfigRows(fixture.eventId);
+    expect(row.summary).toBe("Changed the draft rules — 1000 each, sealed bidding.");
+    expect(row.summary).not.toContain("null");
+    expect(row.summary).not.toContain("rosters of");
   });
 });

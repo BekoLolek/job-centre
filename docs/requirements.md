@@ -475,6 +475,32 @@ fixes on 2026-11-06, knowing it was the largest of the three.
 | R-250 | As a visitor, I want a team sized by team count to show what it holds rather than a number of places invented for it, so that the card never promises a place that may not exist. | Should | Sized by "how many teams", the per-team figure is derived and **uneven** - eighteen into four is 5, 5, 4, 4 - so the card reads "5 on the roster, up to 6" and draws no empty slots. A cap, not a target |
 | R-251 | As an admin, I want a stated night format that disagrees with the sizing shown where I can see it, so that a 3v3 night sized at six a side is visible rather than surprising. | Could | A note, never a refusal. R-215 is "stated, never enforced", and a 6v6 night with eight-player rosters and substitutes is legitimate - `MAX_PER_TEAM` is 32 for that reason |
 
+### Faces, a private draft, and no money where there is no draft (added 2026-11-07)
+
+Three asks from the owner, in their order of priority.
+
+**The pictures were already there and almost nobody asked for them.** `users.avatar_url` is filled
+from Discord on every sign-in, `discordAvatarUrl` handles custom, animated and both default-avatar
+schemes, every player payload carries the URL, and `Avatar` renders it. But only **3 of 11** call
+sites pass one - the player profile, the podium and the standings. The other eight draw initials,
+including `PlayerChip`, which has no prop for a picture at all and is every roster, pool and lot
+stage on the site. Nothing needs fetching or storing; the figure is in hand and unused.
+
+**A draft is a spectacle, until it isn't.** An auction where everyone can see every bid is the
+point of the room - but some nights the owner wants the bidding kept to the people doing it.
+
+**And money is noise on a night that had no auction.** Teams can be filled three ways (R-220), and
+on a hand-built or random night every price is zero and every balance is its starting figure, so
+the public page's "spent" total, its dearest-player figure and its paragraph explaining balances
+describe an auction that never happened. `TeamCard` and `RosterList` already take `hidePrices`,
+and no call site has ever passed it.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-252 | As a member, I want to see people's Discord pictures wherever the site names a player, so that a roster reads like the people in it rather than a column of initials. | Should | The data is already stored and already in every payload. Initials stay as the fallback for a member with no picture, or whose picture fails to load - `Avatar` already handles both |
+| R-253 | As an admin, I want a draft nobody can watch except the captains and me, so that the bidding is not a public spectacle when I do not want it to be. | Should | Per event. The room, the pool and the lots go dark to everybody else; what a night produced - the teams and their rosters - stays public, because a hidden *result* is a different ask nobody made |
+| R-254 | As a visitor, I want no money on the page of a night that had no auction, so that a figure I cannot interpret is not presented as a result. | Should | Prices and balances only ever mean something on a drafted night. The controls exist (`hidePrices`); nothing passes them |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -517,6 +543,8 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - Artificial delays or simulated mouse movement between actions.
 - Solo scoring: a formula language or any admin-authored expression for working out a score - the customisation is a stated set of choices, not arbitrary arithmetic. Also out: any combining rule other than the total of every round (dropping the worst round, counting the best N, averaging per round); weighting one round more than another; players entering their own scores; reading scores out of jklm.fun or Fall Guys; round scoring for an event that has teams, which has a bracket instead.
 - Championship: skill ratings or ELO; automatic results from game APIs; prizes, money or entry fees; leaderboards across other communities; more than one championship counting the same event; per-game separate championships running as their own competitions (one season, one table, games are just where the points came from).
+- A private draft that also hides the **result**. R-253 darkens the bidding, not the teams: a night's rosters stay public, because "nobody may see who is on which team" is a different feature nobody asked for and would collide with the championship, the public event page and the player profiles.
+- Uploading a picture to this site, or editing one. R-252 shows what Discord already has; an avatar nobody can change here is a feature, not a gap.
 - Hero hands: a hero-centred history ("who has had Hulk?", "is Jeff coming up more often than chance?"). R-244 to R-247 are **player-centred** - one player, every night they drew. Reading the same rows the other way round is a second screen and a separate decision, and no requirement asks for it. Also out: anything that acts on a run of repeats - no reroll, no weighting, no excluding a hero from a player's next draw. The draw happens once and stands (R-212), and a draw that remembered last week would not be random.
 - Hero hands: a manager dealing, clearing or rerolling somebody's hand. R-212 is "my draw happens once and stands", and a button that undid it would be the feature failing rather than a convenience - so the sheet reads and never writes. Also out: hero-frequency history across events ("has Bob rolled Hulk three weeks running?"), offered on 2026-11-06 and deliberately deferred in favour of tonight's sheet alone; and any screen that shows one participant another's hand.
 

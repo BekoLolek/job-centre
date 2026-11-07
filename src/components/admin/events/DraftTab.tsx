@@ -27,11 +27,13 @@ import {
   Money,
   PlayerChip,
   SELECTION_MODES,
+  UNSIZED_ROSTER_NOTE,
   playerName,
 } from "@/components/draft";
 import type { DraftPoolKind } from "@/db/schema";
 import { type DraftConfig, draftConfigFrom } from "@/lib/draft-policy";
 import type { ApplicantView } from "@/lib/events";
+import type { RosterSizing } from "@/lib/events-policy";
 import {
   movePoolPlayerAction,
   saveDraftConfigAction,
@@ -68,9 +70,25 @@ import type { DraftTabData } from "./types";
  *
  * Likewise, once a lot has been awarded `setDraftConfig` stops rewriting
  * starting balances. The controls say so before they are touched instead of
- * offering a rejection. The roster size is not among the controls at all: the
- * places on a team are the Format panel's figure (R-248), read here as
- * `data.sizing` and never saved from this tab.
+ * offering a rejection.
+ *
+ * ## The places on a team are read here, not set here (R-248 / UC-49 4, 4a)
+ *
+ * The roster size is not among the controls at all. It used to be — a draft
+ * rule with a box on this tab, stored as `draft_configs.roster_target` and
+ * defaulting to six — and that second copy is how the player view came to
+ * show six places on a team the Format panel had sized at three. The places
+ * are the panel's figure now, derived on read and handed in as `data.sizing`,
+ * so this tab prints them as a readout (`RosterReadout`) that names where
+ * they are set and offers nothing to type into. A disabled stepper was tried
+ * first and was the wrong shape: a box that cannot be typed in still reads as
+ * a box somebody forgot to enable, and its `min`/`max` were promises nothing
+ * consulted. A figure in text under the same eyebrow says what it is.
+ *
+ * It stays a readout while a draft is running (4a). The rules lock when the
+ * first lot opens (UC-16 1a), and the places are not one of those rules
+ * because they are no longer stored as one — so the lock has nothing to say
+ * about them, and neither does the readout.
  *
  * ## The pool, and who is not in it
  *
@@ -195,6 +213,53 @@ function Number_({
         onChange={onChange}
       />
       {hint && <p className="text-12 leading-relaxed text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+/**
+ * The places on a team, as the Format panel has them — a readout, never a
+ * control (R-248 / UC-49 4).
+ *
+ * Said in the team card's three states (R-250 / UC-49 1a, 1b), because a
+ * figure must never look like two things on two pages: a stated target is
+ * the figure itself; a cap is "up to", since under a count of teams the
+ * sides come out uneven and the largest is all that can be promised; and no
+ * figure at all is the sentence every roster surface uses for that state.
+ * The "drafts N−1 more" arithmetic (§14: the captain holds a place) is said
+ * only where there is an N — under a cap the most a team drafts is a
+ * ceiling, not a count, and under no figure there is nothing to subtract
+ * from. The old box printed "drafts 0 more" there, which is a sum over null
+ * dressed as a fact.
+ *
+ * The figure is set the way `StatTile` sets one — `font-display text-24`,
+ * with no `.num` — because it is a standalone display figure, which
+ * `field-ordering.test.ts`'s `.num` sweep records as the one kind that does
+ * not wear the class.
+ */
+function RosterReadout({ sizing }: { sizing: RosterSizing }) {
+  return (
+    <div className="space-y-1.5">
+      <Eyebrow>Places on a team</Eyebrow>
+      {sizing.cap === null ? (
+        <p className="text-12 leading-relaxed text-muted">{UNSIZED_ROSTER_NOTE}</p>
+      ) : sizing.target === null ? (
+        <>
+          <p className="font-display text-24 leading-tight">up to {sizing.cap}</p>
+          <p className="text-12 leading-relaxed text-muted">
+            The most a roster holds, captain included (§14): Setup → Format sizes this event
+            by a count of teams, so the sides come out uneven. Change the sizing there.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="font-display text-24 leading-tight">{sizing.cap}</p>
+          <p className="text-12 leading-relaxed text-muted">
+            Including the captain (§14), so each team drafts {sizing.cap - 1} more. Set in
+            Setup → Format, not here.
+          </p>
+        </>
+      )}
     </div>
   );
 }
@@ -511,25 +576,7 @@ export default function DraftTab({
         <Eyebrow as="h2">Rosters</Eyebrow>
 
         <div className="grid gap-6 md:grid-cols-2">
-          {/*
-            A readout, not a control: the places on a team are the Format
-            panel's figure (R-248), read as `data.sizing.cap` and never saved
-            from this tab, so the stepper is disabled and its change handler
-            does nothing. The label and hint keep their old words; naming where
-            the figure is set is Task 109's.
-          */}
-          <Number_
-            label="Roster target"
-            value={data.sizing.cap}
-            min={1}
-            max={20}
-            disabled
-            onChange={() => {}}
-            hint={`Including the captain (§14), so each team drafts ${Math.max(
-              0,
-              (data.sizing.cap ?? 0) - 1
-            )} more.`}
-          />
+          <RosterReadout sizing={data.sizing} />
           <Switch
             label="Must fill your roster"
             value={form.mustFillRoster}
@@ -642,7 +689,7 @@ export default function DraftTab({
           <Alert tone="union" standing>
             There are {plural(slotsToFill, "slot")} to fill and only{" "}
             {plural(poolTotal, "player")} in the pool. The draft will end with teams short —
-            accept more applicants, or lower the roster target.
+            accept more applicants, or lower the places on a team in Setup → Format.
           </Alert>
         )}
 

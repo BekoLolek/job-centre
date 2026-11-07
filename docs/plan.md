@@ -2241,14 +2241,20 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Files:** `src/components/admin/events/DraftTab.tsx`, `src/components/admin/events/CaptainsTab.tsx`, `src/app/admin/events/draft-actions.ts`, tests
 - **Do:** the roster field becomes a readout naming Setup -> Format. `CaptainsTab`'s "each team drafts N-1 more" needs a capped variant, because under a cap there is no N. The audit summary and `detail` stop carrying `rosterTarget`, since the action no longer settles it; old audit rows keep working because `detail` is read generically and nothing parses that key by name.
 - **Acceptance criteria:**
-  - [ ] The Draft tab offers no way to type a roster size, and names where it is set
-  - [ ] **The readout stops being a disabled input.** Task 106 restored it as a `Number_` with `min`/`max` nothing consults (the stepper clamps only on change, and `MAX_PER_TEAM` is 32 regardless) and a mandatory no-op `onChange`. A figure in text under the same eyebrow is the simpler readout; this task is where it changes, since it owns the words (found reviewing Task 106)
-  - [ ] The audit line for a draft-rules save no longer claims a roster size
-  - [ ] An existing audit row that carries the old key still renders
-  - [ ] `CaptainsTab` says something true under a cap, where there is no N for "N-1 more"
-  - [ ] **`CaptainsTab` and `TeamsTab` say something true when there is no figure at all**, rather than "a roster target of 0" or "0 places a team" - the state is reachable with fewer accepted than teams, and it previously printed the draft default's 6
-  - [ ] The audit summary names no roster figure when there is none, which Task 106 made conditional rather than worded - this task decides whether the clause goes entirely
+  - [x] The Draft tab offers no way to type a roster size, and names where it is set
+  - [x] **The readout stops being a disabled input.** Task 106 restored it as a `Number_` with `min`/`max` nothing consults (the stepper clamps only on change, and `MAX_PER_TEAM` is 32 regardless) and a mandatory no-op `onChange`. A figure in text under the same eyebrow is the simpler readout; this task is where it changes, since it owns the words (found reviewing Task 106)
+  - [x] The audit line for a draft-rules save no longer claims a roster size
+  - [x] An existing audit row that carries the old key still renders
+  - [x] `CaptainsTab` says something true under a cap, where there is no N for "N-1 more"
+  - [x] **`CaptainsTab` and `TeamsTab` say something true when there is no figure at all**, rather than "a roster target of 0" or "0 places a team" - the state is reachable with fewer accepted than teams, and it previously printed the draft default's 6
+  - [x] The audit summary names no roster figure when there is none, which Task 106 made conditional rather than worded - this task decides whether the clause goes entirely
 - **Depends on:** Tasks 105, 106.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The audit clause went, and the reasoning is the file's own rule.** A draft-rules line records what that save changed, and the places on a team are not something it *can* change any more - `draft-actions.ts`'s habit is to log nothing that did not move. The figure is not lost to the log either: the Format panel writes it on its own `event.shape` entry, which review verified at `actions.ts:915-927` rather than taking on trust. Old rows carrying `rosterTarget`/`rosterCap` keep rendering because `/admin/audit` prints `summary` and reads no detail key by name, and a test writes a pre-existing-shape row to prove it.
+  **The shared sentence was reused rather than given an admin variant.** `CaptainsTab` already prints `UNSIZED_ROSTER_NOTE` through `TeamCard`, so a separate admin wording would have put two sentences for one fact on one tab. The slightly third-person "An admin decides that in Setup -> Format" is tolerable on an admin screen for that reason.
+  **A broken mutation harness was caught by its own author.** The first pass ran `python3`, which this machine lacks, so nothing applied and all five mutations "passed". It was re-run with node and every kill reported here is from that re-run. This repo has recorded the same trap before ("a mutation harness needs a negative control as much as a test suite does, and 'everything was caught' is exactly what a broken harness says") - the useful half is that the author noticed rather than the reviewer.
+  **No sweep floor moved**, because a `Number_` is a `Stepper` and the field sweep counts it once in the kit. The `.num` sweep *did* fail on the first draft, and was satisfied by matching `StatTile`'s pattern - a standalone display figure wears no `.num` - rather than by adding a table entry. Changing the new code to satisfy a sweep is the only honest direction.
+  **UC-49 4a needed a test even though it holds by construction.** `RosterReadout` does not consult `started`, so a running draft keeps its readout for free - but nothing stopped a later edit folding it into the `rulesLocked` block. One test, and a mutation that does exactly that folding, which only it catches.
 
 ### Task 110: The stated format and the sizing, side by side
 
@@ -2262,7 +2268,69 @@ to agree until it is written. Recorded as Task 111, available and not taken.
   - [ ] **Task 107's refusal is wired to print before the round trip**, which is `ShapeTab`'s own standard for its refusals and which Task 107 could not do: its criterion named the panel while its file list did not include it (the lead's contradiction). `rosterBelowAwardedRefusal` is pure and takes `{ name, size }` per team plus whether a lot is awarded - which the panel is not yet handed, so this is real wiring through the editor rather than one line
 - **Depends on:** Task 104.
 
+### Task 112: Two loose ends the chain left behind
+
+- **Serves:** R-250 / UC-49 1b; hygiene after R-248
+- **Files:** `src/components/draft/BidCeiling.tsx`, `src/app/events/[slug]/draft/BidBox.tsx`, and their tests
+- **Do:** two one-line leftovers, each found by the task that could not reach it.
+  **`BidCeiling` still prints the word "full" beside a team with no figure at all.** Found by Task 109, outside its file list. `slotsLeft` is 0 for an unsized roster (Task 105's decision: no place is offered when the panel has not sized the teams), so the ceiling block reads "full" for a roster that is not full of anything - the sentence beneath it is correct since Task 109 fixed `ceilingFor`, but the word above it is not.
+  **`BidBox`'s route-around is now redundant.** Task 108 branched on `cap === null` before reaching `ceilingFor` precisely because that function produced "full at null"; Task 109 fixed it at the source, so the guard now protects against a sentence that no longer exists. Dead logic that will read as load-bearing to the next person.
+- **Acceptance criteria:**
+  - [ ] A team with no figure is not described as "full" anywhere in the bid box or the ceiling block
+  - [ ] The redundant `cap === null` branch in `BidBox` is removed, and a test proves the unsized path still says the right thing without it
+  - [ ] State 1 and state 2 wording is untouched, asserted
+- **Depends on:** Tasks 108, 109.
+
 ### Task 111: Drop `draft_configs.roster_target` - **available, not taken**
 
 - **Serves:** nothing new; hygiene after R-248
 - **Why it is recorded rather than done:** the column is written by nothing and read by nothing after Task 106, and dropping it is a migration applied to production by hand. This repo's house style for a drop is `drizzle/0026_event_dates_dropped.sql` - a replay-safe block that audit-logs every value it discards - which is a task's worth of care with no bearing on the number a player sees. `schema-drift.test.ts` requires `schema.ts` and `drizzle/` to agree, so the column stays in both until the migration exists. A comment on the column points here.
+
+## Q. Faces, a private draft, and no money where there is no draft (R-252 to R-254 / UC-50, UC-51)
+
+Added 2026-11-07, **Tier 2**, at the owner's request and in their stated order: the pictures first,
+then the other two in parallel. Each commits on its own so the site can deploy it.
+
+### Task 113: The pictures that were already there
+
+- **Serves:** R-252
+- **Files:** `src/components/draft/PlayerChip.tsx`, `src/components/draft/types.ts`, `src/components/draft/RosterList.tsx`, the six `PlayerChip` call sites, `src/app/events/[slug]/page.tsx`, `src/app/me/page.tsx`, `src/app/me/profile/page.tsx`, `src/app/signin/page.tsx`, `src/components/admin/events/ApplicantsTab.tsx`, `src/components/admin/UsersManager.tsx`, `src/components/NavMenu.tsx`, and tests
+- **Do:** nothing is fetched and nothing is stored. `users.avatar_url` is already filled from Discord on every sign-in, every player payload already carries it, and `Avatar` already renders a picture with initials as its fallback. **Eight of eleven call sites simply never pass it.**
+  `PlayerChip` is the big one: it draws `<Avatar name={name} size="sm" />` with no image and has no prop for one, and it is every roster on the public Teams tab, the admin Teams tab, the live room, the pool and the lot stage. Give it an `avatarUrl` prop and a `playerAvatar(players, userId)` helper beside the existing `playerName` and `playerHref`, which read the same `PlayerBook` - so a call site that has the book needs no new plumbing.
+- **Acceptance criteria:**
+  - [ ] Every call site that names a player passes a picture when one is known, asserted by a sweep over the markup rather than site by site
+  - [ ] A member with no picture still draws initials, and a broken picture URL still falls back - `Avatar`'s existing behaviour, pinned so this change cannot have removed it
+  - [ ] `playerAvatar` returns null for an unknown id and for a member whose picture is null, tested
+  - [ ] No new network call, no new column, no new read: proven by the diff touching no file under `src/lib` that reaches Postgres
+  - [ ] The initials fallback is still reachable on a real screen, not only in a unit test
+- **Depends on:** nothing.
+
+### Task 114: A draft only its captains can watch
+
+- **Serves:** R-253 / UC-50
+- **Files:** `src/lib/draft-policy.ts` or `src/lib/events-policy.ts` for the rule, `src/lib/draft.ts`, `src/app/events/[slug]/draft/page.tsx`, `src/components/admin/events/DraftTab.tsx`, `src/lib/announce.ts`, and tests
+- **Do:** one stored flag, on `events.config` beside the rest of the event's shape rather than in a column, for `eventShapeFrom`'s stated reason - `updateEvent` merges a config patch one level deep and a key nested under `format` would be erased by the Schedule tab.
+  The guard is the page's, not the rail's: **a hidden link is not an authorisation.** Who may watch is "a captain of this event, or a manager of it", and both are already answerable - `teams.captain_user_id` and `requireEventManager`.
+  **UC-50 4a is the part that is easy to miss:** an announcement naming a price or a bid must not post while the draft is private, or the channel undoes the setting. The teams announcement still posts.
+- **Acceptance criteria:**
+  - [ ] A member who is not a captain is turned away from the room, and the mutation that drops the guard kills that test
+  - [ ] A captain of this event, and a manager, both get the room; a captain of a different event does not
+  - [ ] The teams and rosters stay public while the draft is private, asserted on the public page
+  - [ ] No announcement naming a price or a bid posts while the draft is private; the teams announcement still does
+  - [ ] Turning it off serves the room to everybody again, with nothing to backfill
+  - [ ] The control is not offered on an event with no draft
+- **Depends on:** nothing. May run beside Task 113 (disjoint files) but **not** beside Task 115, which also edits the public event page.
+
+### Task 115: No money on a night that had no auction
+
+- **Serves:** R-254 / UC-51
+- **Files:** `src/app/events/[slug]/TeamsTab.tsx`, `src/lib/event-board.ts`, `src/components/draft/TeamCard.tsx` (prop only, no wording), and tests
+- **Do:** `hidePrices` already exists on `TeamCard` and `RosterList` and **no call site has ever passed it**, so most of this is wiring the control that is already there. The public Teams tab additionally shows a spent total, a dearest-player figure and a paragraph explaining balances; all three go when the night had no auction.
+  The page needs to know whether the event has a draft, and `getEventBoard` **does not read `events.config` for the shape at all** - it reads it only for round scoring. So one field on `EventBoard`, from `eventShapeFrom(event.config).draft`.
+  The question is "was an auction run", not "did it produce figures": a drafted night where every price is zero keeps its figures.
+- **Acceptance criteria:**
+  - [ ] A teams night with no draft shows no price, no balance, no spent total and no balances paragraph
+  - [ ] A drafted night is unchanged, pinned against pre-task markup
+  - [ ] A drafted night where every price is zero still shows its figures
+  - [ ] The signal is the event's draft flag, not an absence of prices, proven by the zero-price case
+- **Depends on:** nothing. **Must not run beside Task 114** - both edit the public event page's surfaces.

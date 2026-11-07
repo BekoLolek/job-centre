@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_DRAFT_CONFIG, type DraftConfig } from "@/lib/draft-policy";
 import { type RosterSizing, eventShapeFrom, rosterSizingFrom } from "@/lib/events-policy";
+import { UNSIZED_ROSTER_NOTE } from "../TeamCard";
 import { ceilingFor, ceilingsFor } from "../ceiling";
 import { formatDelta, formatMoney } from "../money";
 import { playerName } from "../types";
@@ -57,6 +58,21 @@ function sized(places: number): RosterSizing {
       eventShape: { teamEvent: true, draft: true, sizing: { mode: "perTeam", value: places } },
     }),
     0
+  );
+}
+
+/**
+ * The other two of the three states (R-250 / UC-49 1a, 1b), through the same
+ * reader: a count of `teams` over `accepted` people. Eighteen into four is
+ * 5, 5, 4, 4 — a cap of five and no target; one person into four sides is a
+ * deal `planSides` refuses, so no figure at all.
+ */
+function counted(teams: number, accepted: number): RosterSizing {
+  return rosterSizingFrom(
+    eventShapeFrom({
+      eventShape: { teamEvent: true, draft: true, sizing: { mode: "teams", value: teams } },
+    }),
+    accepted
   );
 }
 
@@ -122,6 +138,46 @@ describe("ceilingFor", () => {
 
     expect(ceiling.max).toBe(0);
     expect(ceiling.sentence).toBe("Rivals Red is full at 2 — nothing left to buy.");
+  });
+
+  it("calls a roster full at its cap, which under a count of teams is the only figure there is", () => {
+    const sizing = counted(4, 18);
+    expect(sizing).toEqual({ target: null, cap: 5 });
+
+    const subject = team({
+      members: [
+        { teamId: "team-1", userId: "captain-1", price: 0, isCaptain: true },
+        ...["p1", "p2", "p3", "p4"].map((userId) => ({
+          teamId: "team-1",
+          userId,
+          price: 10,
+          isCaptain: false,
+        })),
+      ],
+    });
+
+    const ceiling = ceilingFor(subject, config(), sizing);
+
+    expect(ceiling.max).toBe(0);
+    expect(ceiling.sentence).toBe("Rivals Red is full at 5 — nothing left to buy.");
+  });
+
+  it("says the panel has no figure, in the words every roster surface uses, rather than 'full at null'", () => {
+    /*
+     * Task 108 found this sentence reading "Rivals Red is full at null" and
+     * routed around it in the bid box; the admin's Draft tab still reached it
+     * through `BidCeiling`. A roster with no cap is not full — nobody has been
+     * sized — so the sentence is the shared one, not the full one.
+     */
+    const sizing = counted(4, 1);
+    expect(sizing).toEqual({ target: null, cap: null });
+
+    const ceiling = ceilingFor(team(), config({ mustFillRoster: true }), sizing);
+
+    expect(ceiling.sentence).toBe(UNSIZED_ROSTER_NOTE);
+    expect(ceiling.sentence).not.toContain("null");
+    expect(ceiling.max).toBe(0);
+    expect(ceiling.stuck).toBe(false);
   });
 
   it("counts the captain against the target, per §14", () => {

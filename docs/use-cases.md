@@ -1677,6 +1677,53 @@ A season of two to four events a month across different games, with one running 
 
 **Error flows**
 - **1a.** Somebody who is not an admin opens the page - including a host, who manages one event and not the site - is turned away by the page's own guard, as every other `/admin` page turns them away.
+## UC-50: Keep a draft to the people in it
+
+**Actor:** Admin
+**Requirements covered:** R-253
+**Trigger:** An admin wants to run an auction without an audience.
+
+**Preconditions**
+1. The admin may manage this event, and the event has a draft (R-217).
+
+**Main success path**
+1. Admin marks the draft private on the Draft tab.
+2. System stops serving the draft room, the pool and the lots to anybody who is not a captain of this event or a manager of it.
+3. Captains and managers see the room exactly as before.
+4. The event's teams and their rosters stay public throughout.
+
+**Outcome**
+- The bidding is seen by the people doing it; the result is seen by everyone.
+
+**Alternate flows**
+- **2a.** A member who is not a captain opens the room's URL - turned away by the page's own guard, told the draft is private rather than shown an empty room. A hidden link is not an authorisation.
+- **2b.** A captain of a *different* event - not a captain here, so turned away. Captaincy is per event.
+- **2c.** The draft is made public again - the room is served to everybody from that moment, with nothing to backfill.
+- **3a.** A manager who is also a captain - one person, two reasons to be let in, no special case.
+- **4a.** An announcement that would name a price or a bid - **not posted** while the draft is private, because a channel is public and posting the figure would undo the setting. The teams announcement still posts.
+
+**Error flows**
+- **1a.** Marking a draft private on an event with no draft - the control is not offered, for the reason the Draft tab is not offered.
+
+## UC-51: A night with no auction says nothing about money
+
+**Actor:** Visitor
+**Requirements covered:** R-254
+
+**Preconditions**
+1. The event has teams and **no** draft (R-217 / UC-42).
+
+**Main success path**
+1. Visitor opens the event's Teams tab.
+2. System shows each team and its roster, with no price beside a player, no balance on a card, no spent total and no paragraph explaining balances.
+
+**Outcome**
+- The page describes the night that happened rather than an auction that did not.
+
+**Alternate flows**
+- **1a.** The event **has** a draft - every figure stays exactly as it is today, asserted.
+- **2a.** A drafted night where every price happens to be zero - the figures stay. The question is whether an auction was *run*, not what it produced.
+
 - **5b.** An admin looks for a way to act on a run of repeats - to reroll it, or to keep a hero out of somebody's next draw - there is none. The draw happens once and stands (R-212), and a draw that remembered last week would not be random (Out of scope).
 
 ## UC-49: Size the sides once, and have every screen say it

@@ -17,7 +17,7 @@ import {
   Stepper,
   plural,
 } from "@/components/ui";
-import { Money, PlayerChip, playerName } from "@/components/draft";
+import { Money, PlayerChip, UNSIZED_ROSTER_NOTE, playerName } from "@/components/draft";
 // A type only: `src/lib/draft.ts` reaches Postgres, and a value import here
 // would drag Drizzle and PGlite into the browser bundle.
 import type { TeamsFill } from "@/lib/draft";
@@ -145,6 +145,17 @@ import type { DraftTabData } from "./types";
  * The night's 6v6/3v3 chip is left to do the one thing R-215 asks of it: state
  * the comp. It no longer sizes anything, which is why the shuffle no longer
  * waits for an unsaved chip to be saved.
+ *
+ * ## The places on a team are said in the team card's three states (R-248)
+ *
+ * Three surfaces here print the Format panel's figure — the Rosters eyebrow,
+ * the badge on each roster, and the "on the roster" line under each named
+ * team — and `rosterSizingFrom` has three answers for it (R-250 / UC-49 1a,
+ * 1b): a stated target, a cap with no target, or nothing at all. Each
+ * surface says all three, in `TeamCard`'s words for the second and third,
+ * because a figure must never look like two things on two screens. Before
+ * this an event the panel had not sized read "0 places a team" over badges
+ * reading "1/" — a roster of nothing rather than a decision nobody has made.
  *
  * ## The decisions are functions, and the handlers obey them
  *
@@ -1043,7 +1054,11 @@ export default function TeamsTab({
                   {existing && (
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pl-10 text-12 text-muted">
                       <span className="num">
-                        {existing.roster.size}/{existing.roster.cap} on the roster
+                        {existing.roster.cap === null
+                          ? `${existing.roster.size} on the roster`
+                          : existing.roster.target === null
+                            ? `${existing.roster.size} on the roster, up to ${existing.roster.cap}`
+                            : `${existing.roster.size}/${existing.roster.cap} on the roster`}
                       </span>
                       <span>
                         {existing.captainUserId ? (
@@ -1103,7 +1118,11 @@ export default function TeamsTab({
         <div className="flex flex-wrap items-baseline gap-3">
           <Eyebrow>Rosters</Eyebrow>
           <Eyebrow as="span">
-            {plural(data.sizing.cap ?? 0, "place")} a team, captain included
+            {data.sizing.cap === null
+              ? UNSIZED_ROSTER_NOTE
+              : data.sizing.target === null
+                ? `Up to ${plural(data.sizing.cap, "place")} a team, captain included`
+                : `${plural(data.sizing.cap, "place")} a team, captain included`}
           </Eyebrow>
         </div>
 
@@ -1132,7 +1151,11 @@ export default function TeamsTab({
                   <div className="mb-2 flex flex-wrap items-baseline gap-2">
                     <span className="font-display text-16">{team.name}</span>
                     <Badge tone={full ? "union" : "default"}>
-                      {on.length}/{data.sizing.cap}
+                      {data.sizing.cap === null
+                        ? on.length
+                        : data.sizing.target === null
+                          ? `${on.length} of up to ${data.sizing.cap}`
+                          : `${on.length}/${data.sizing.cap}`}
                     </Badge>
                   </div>
 

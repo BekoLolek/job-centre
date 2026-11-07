@@ -352,3 +352,42 @@ describe("a filter that names no event", () => {
     expect(optionValues(page)).toContain("");
   });
 });
+
+/* ------------------------------------------------------------------ */
+/* Rows written under keys the writer no longer uses (R-248 / UC-49 4a) */
+/* ------------------------------------------------------------------ */
+
+describe("a draft-rules row from before the roster size left the rules", () => {
+  it("still renders, sentence intact, with the old roster keys in its detail", async () => {
+    /*
+     * `saveDraftConfigAction` used to write "rosters of N" into the sentence
+     * and a `rosterTarget` (later `rosterCap`) key into the detail. Neither is
+     * written now, and the rows that carry them are permanent. The page
+     * prints the sentence that was true then and reads no detail key by
+     * name — this is the row that proves it, because a renderer that started
+     * reaching into `detail` for the roster figure would meet these first.
+     */
+    const eventId = await anEvent("Old Draft");
+    const summary = "Changed the draft rules — 1000 each, sealed bidding, rosters of 6.";
+    await recordAudit(
+      {
+        action: "draft.config",
+        summary,
+        eventId,
+        detail: {
+          defaultBalance: 1000,
+          biddingMode: "sealed",
+          balanceMode: "uniform",
+          rosterTarget: 6,
+          rosterCap: 6,
+          rebalanced: 0,
+        },
+      },
+      db
+    );
+
+    const page = await render({ event: eventId });
+
+    expect(textOf(page)).toContain(summary);
+  });
+});

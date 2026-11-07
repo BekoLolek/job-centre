@@ -23,6 +23,7 @@ import {
   rosterState,
 } from "@/lib/draft-policy";
 import type { RosterSizing } from "@/lib/events-policy";
+import { UNSIZED_ROSTER_NOTE } from "./TeamCard";
 import { formatMoney } from "./money";
 import type { TeamLike } from "./types";
 
@@ -85,10 +86,18 @@ function slots(count: number): string {
 /**
  * The sentence itself.
  *
- * Four cases, and they are genuinely different situations rather than one
+ * Five cases, and they are genuinely different situations rather than one
  * situation with different numbers in it, which is why none of them is phrased
  * as a template of the others:
  *
+ *  - a roster the Format panel has not sized has no ceiling *yet*, which is
+ *    not the same as being full — nobody has been sized, so the sentence is
+ *    the one every roster surface uses for that state (UC-49 1b), not the
+ *    full one. `rosterState` gives such a roster no slots, so without this
+ *    case it fell through to the next and read "full at null"; Task 108
+ *    found that and routed around it in the bid box, but the admin's Draft
+ *    tab still reached it through `BidCeiling`, which is why it is fixed here
+ *    at the source;
  *  - a full roster is not a small ceiling, it is no ceiling at all;
  *  - with the rule off the ceiling *is* the balance, and saying so is how an
  *    admin sees that switching it off changed something;
@@ -104,6 +113,9 @@ function ceilingSentence(
   roster: RosterState,
   config: DraftConfig
 ): string {
+  if (roster.cap === null) {
+    return UNSIZED_ROSTER_NOTE;
+  }
   if (roster.slotsLeft <= 0) {
     // The cap, not the target: full is measured against the cap, and under a
     // count of teams there is no target to name.

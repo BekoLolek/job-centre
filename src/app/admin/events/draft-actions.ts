@@ -58,7 +58,6 @@ import {
   getDraftConfig,
   getDraftHistory,
   getDraftPool,
-  getRosterSizing,
   getTeams,
   placeOnRoster,
   removeFromRoster,
@@ -739,6 +738,24 @@ export async function saveCaptainsAction(
  *
  * `rebalanced` is the other surprise worth surfacing — under a uniform balance
  * mode, changing the default rewrites every team's starting balance.
+ *
+ * ## The log line no longer names the places on a team (R-248 / UC-49 4a)
+ *
+ * It did, as "rosters of N", from the days when the roster size was one of
+ * these rules; Task 106 kept the clause conditional so an unsized event could
+ * not write "rosters of null" into a permanent row. The clause is gone now,
+ * and the `rosterTarget`/`rosterCap` detail key with it, for the reason
+ * `team.count` and `event.format` log nothing when nothing moved: this line
+ * records what "Save draft rules" changed, and the places on a team are not
+ * something that save *can* change. A row claiming the draft rules included
+ * a roster size is exactly the disagreement R-248 exists to end — and the
+ * figure is not lost to the log, because the Format panel's own `event.shape`
+ * line names "sized by N per team" or "N teams" at the moment it is set,
+ * which is the moment worth recording.
+ *
+ * Rows already written under the old keys are untouched and still render:
+ * `/admin/audit` prints the sentence that was true then and reads no detail
+ * key by name (`audit.test.ts` holds one such row against the page).
  */
 export async function saveDraftConfigAction(
   eventId: string,
@@ -749,15 +766,7 @@ export async function saveDraftConfigAction(
   const result = await setDraftConfig(eventId, patch);
   if (!result.ok) return result;
 
-  // The roster size is the Format panel's figure, not one of these rules
-  // (R-248); the summary still names it so the line reads as it always did.
-  // Except when the panel has no figure — a count of teams with fewer accepted
-  // than sides derives nothing — where the clause is left out rather than
-  // written as "rosters of null": an audit row is permanent, and nobody can
-  // go back and fix a sentence in one.
-  const sizing = await getRosterSizing(eventId);
   const rules = `${result.data.config.defaultBalance} each, ${result.data.config.biddingMode} bidding`;
-  const rosters = sizing.cap === null ? "" : `, rosters of ${sizing.cap}`;
 
   await recordAudit({
     action: "draft.config",
@@ -765,13 +774,12 @@ export async function saveDraftConfigAction(
     eventId,
     summary:
       result.data.rebalanced > 0
-        ? `Changed the draft rules — ${rules}${rosters}. ${result.data.rebalanced} team balances were reset.`
-        : `Changed the draft rules — ${rules}${rosters}.`,
+        ? `Changed the draft rules — ${rules}. ${result.data.rebalanced} team balances were reset.`
+        : `Changed the draft rules — ${rules}.`,
     detail: {
       defaultBalance: result.data.config.defaultBalance,
       biddingMode: result.data.config.biddingMode,
       balanceMode: result.data.config.balanceMode,
-      rosterCap: sizing.cap,
       rebalanced: result.data.rebalanced,
     },
   });

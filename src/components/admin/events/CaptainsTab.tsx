@@ -15,7 +15,7 @@ import {
   cx,
   plural,
 } from "@/components/ui";
-import { RosterList, TeamCard } from "@/components/draft";
+import { RosterList, TeamCard, UNSIZED_ROSTER_NOTE } from "@/components/draft";
 import type { ApplicantView, EventDetail } from "@/lib/events";
 import { saveCaptainsAction } from "@/app/admin/events/draft-actions";
 import { waiveEntryRuleAction } from "@/app/admin/events/waiver-actions";
@@ -33,6 +33,15 @@ import type { DraftTabData } from "./types";
  * changes every number on the Draft tab, so this screen states it in figures
  * ("roster target 6, so each captain leaves 5 to draft") and shows the captain
  * sitting on the roster the moment they are chosen.
+ *
+ * The figure it counts down from is the Format panel's (R-248 / UC-49 4), in
+ * the team card's three states: a stated target gives the sentence its N; a
+ * cap — a count of teams, where the sides are uneven — gives it "up to", since
+ * the most a team drafts is a ceiling rather than a count; and no figure at
+ * all gives it the sentence every roster surface uses for that state, in
+ * place of the arithmetic. It used to print "a roster target of 0, each team
+ * drafts 0 more players" there, which is `null − 1` clamped and dressed as a
+ * fact about the event.
  *
  * ## The rank gate is enforced by the server, and the override is a waiver
  *
@@ -75,11 +84,11 @@ export default function CaptainsTab({
 }) {
   const router = useRouter();
   const { players } = data;
-  // The places on a team are the Format panel's cap (R-248), not a draft
-  // rule. Kept nullable here, and collapsed only where a number is printed,
-  // so the sentence for "the panel has no figure yet" (Task 108's) has one
-  // `cap === null` to branch on.
-  const cap = data.sizing.cap;
+  // The places on a team are the Format panel's (R-248), not a draft rule.
+  // `cap` is kept nullable and collapsed only where a number is printed, so
+  // the sentence for "the panel has no figure yet" has one `cap === null` to
+  // branch on; `target` is what tells a stated figure from a derived one.
+  const { cap, target } = data.sizing;
 
   const accepted = applicants.filter((row) => row.status === "accepted");
 
@@ -199,10 +208,22 @@ export default function CaptainsTab({
         <p className="text-14 leading-relaxed">
           A captain is on their team from the moment you choose them — a roster row costing{" "}
           <span className="num text-union">0</span> — and they{" "}
-          <span className="text-chalk">never enter the draft pool</span>. With a roster target
-          of <span className="num text-union">{cap ?? 0}</span>, each team drafts{" "}
-          <span className="num text-union">{Math.max(0, (cap ?? 0) - 1)}</span> more
-          {(cap ?? 0) - 1 === 1 ? " player" : " players"}.
+          <span className="text-chalk">never enter the draft pool</span>.{" "}
+          {cap === null ? (
+            UNSIZED_ROSTER_NOTE
+          ) : target === null ? (
+            <>
+              With up to <span className="num text-union">{cap}</span> on a team, each team
+              drafts up to <span className="num text-union">{cap - 1}</span> more
+              {cap - 1 === 1 ? " player" : " players"}.
+            </>
+          ) : (
+            <>
+              With a roster target of <span className="num text-union">{cap}</span>, each team
+              drafts <span className="num text-union">{cap - 1}</span> more
+              {cap - 1 === 1 ? " player" : " players"}.
+            </>
+          )}
         </p>
         <p className="text-12 text-muted">
           Settled in plan §13 and recorded in §14. Choosing a captain takes them out of the
