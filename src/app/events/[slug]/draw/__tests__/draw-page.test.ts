@@ -439,7 +439,8 @@ describe("loadDraw picks the screen", () => {
   });
 
   /**
-   * UC-39 7a, and R-215's "stated, never enforced".
+   * UC-39 2, and R-215's "stated, never enforced" — the behaviour, which is
+   * unchanged, rather than the removed sentence that used to describe it.
    *
    * The comp comes off `teamFormatFrom` — the same reader the admin's Teams tab
    * and the random-teams write use — so the sentence a player reads and the
@@ -591,14 +592,16 @@ describe("the page before the draw (UC-39 2)", () => {
     expect(warning).toBeLessThan(markup.indexOf("Draw my 9"));
   });
 
-  it("states the comp, and that it is stated rather than enforced (UC-39 7a)", async () => {
+  it("states the comp, and no longer explains that it is not enforced", async () => {
     const fix = await fixture();
     state.userId = fix.userId;
     const text = words(await render(fix.slug));
     // Through the page, so this also proves `format` is handed to the client —
     // the prop a deleted `roles={roles}` was lost from on this project.
     expect(text).toContain("6v6 states a 2-2-2 comp");
-    expect(text).toContain("The comp is stated, never enforced");
+    // Removed at the owner's request (2026-11-08). UC-39 7a is untouched: it
+    // says the site does not enforce the comp, not that the page explains so.
+    expect(text).not.toContain("never enforced");
   });
 
   it("states the admin's other choice when that is the one they made", async () => {

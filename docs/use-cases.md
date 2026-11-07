@@ -1395,7 +1395,7 @@ A season of two to four events a month across different games, with one running 
 - **4a.** A player's three in a role are distinct from each other; across players they may repeat, which the pool sizes force (13 Strategists against six players needing three each).
 - **5a.** The storing write fails - nothing is shown as drawn and the participant may click again. A hand that was never stored is not a hand.
 - **6a.** Returning later - the stored hand is shown, with no button to draw.
-- **7a.** The comp is **stated, never enforced**. The site does not assign roles and does not refuse a team that fields three Duelists.
+- **7a.** The comp is **stated, never enforced**. The site does not assign roles and does not refuse a team that fields three Duelists. The draw screen says the comp and nothing about this, at the owner's request (2026-11-08): 7a is a fact about what the site does, not a disclaimer a player is owed. The admin's Teams tab still spells it out, because the admin choosing 6v6 is the one who might expect it to be policed (UC-41 2).
 
 ## UC-40: Keep the hero list current
 

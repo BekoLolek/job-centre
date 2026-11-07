@@ -308,10 +308,12 @@ function reveal(initialHand: RevealCard[] | null): string {
  *
  * Read off the `<h3>`s rather than by looking for the words in the text, which
  * was the first version of this and was wrong: the comp sentence above the hand
- * says "a team that fields three Duelists is not refused", so `indexOf`
- * found "Duelist" in the prose and reported the columns out of order. A test
- * satisfied — or broken — by neighbouring copy is the `toContain("Withdraw")`
- * shape this project keeps catching, and it fails in both directions.
+ * used to say "a team that fields three Duelists is not refused", so `indexOf`
+ * found "Duelist" in the prose and reported the columns out of order. That
+ * sentence has since gone (2026-11-08) and the `<h3>` read stays, because the
+ * reason outlives the copy that proved it: a test satisfied — or broken — by
+ * neighbouring words is the `toContain("Withdraw")` shape this project keeps
+ * catching, and it fails in both directions.
  */
 function roleHeadings(markup: string): string[] {
   return [...markup.matchAll(/<h3[^>]*>([^<]*)<\/h3>/g)].map((match) => match[1]);
@@ -355,10 +357,19 @@ describe("before the click (UC-39 2)", () => {
     expect(markup).toContain("<button");
   });
 
-  it("states the comp the admin chose, and that it is not enforced (UC-39 7a)", () => {
+  /*
+   * The comp, and no explanation of what is not done with it. The note saying
+   * so was removed at the owner's request (2026-11-08); UC-39 7a is unchanged
+   * because it was never about this sentence — nothing enforces a comp, and
+   * that stays true with nothing on screen about it. Pinned in the negative as
+   * well as the positive: the words are what went, so the words are what must
+   * not come back by accident.
+   */
+  it("states the comp the admin chose, and explains nothing about it (UC-39 2)", () => {
     expect(text).toContain("6v6 states a 2-2-2 comp");
-    expect(text).toContain("The comp is stated, never enforced");
-    expect(text).toContain("a team that fields three Duelists is not refused");
+    expect(text).toContain("Who plays what is yours to settle");
+    expect(text).not.toContain("never enforced");
+    expect(text).not.toContain("is not refused");
   });
 
   it("says the draw happens once before the button rather than after it", () => {

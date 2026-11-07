@@ -29,6 +29,15 @@
  * what is the team's conversation (R-215), and the site's job is to make sure
  * everybody can see what everybody holds before it happens (R-211).
  *
+ * **The screen no longer explains any of that**, at the owner's request
+ * (2026-11-08). It states the comp, which UC-39 2 asks for, and leaves the
+ * conversation to the team, which is step 7. UC-39 7a is a fact about what the
+ * site does — nothing is enforced here or anywhere — and never a disclaimer a
+ * player is owed; the admin's Teams tab still says it in as many words, because
+ * the person choosing 6v6 is the person who might expect it to be policed. The
+ * two tests that asserted the sentence are now negative pins, so it cannot
+ * return without somebody deciding to.
+ *
  * ## Reduced motion
  *
  * A nine-step reveal on a timer is exactly what `prefers-reduced-motion` is
@@ -150,9 +159,8 @@ export default function HandReveal({
         <Eyebrow>The night&rsquo;s format</Eyebrow>
 
         <p className="max-w-prose text-14 leading-relaxed text-muted">
-          {format.format} states a {format.comp} comp. The comp is stated, never enforced
-          — nobody is assigned a role, and a team that fields three Duelists is not
-          refused. Who plays what is yours to settle once you can all see what you hold.
+          {format.format} states a {format.comp} comp. Who plays what is yours to settle
+          once you can all see what you hold.
         </p>
 
         <h2 className="font-display text-24 leading-tight">
