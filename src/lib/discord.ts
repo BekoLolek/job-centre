@@ -96,7 +96,7 @@ import { seasonOfEvent, seasonPage } from "./championship-season";
 import { recordAudit } from "./audit";
 import { eventIdOfApplication, eventIdOfMatch } from "./event-scope";
 import { readDatesFor } from "./events";
-import { capacityState } from "./events-policy";
+import { capacityState, privateDraftFrom } from "./events-policy";
 import { formatFor } from "./format";
 
 /* ------------------------------------------------------------------ */
@@ -901,7 +901,18 @@ export function announceApplicationDecision(
   );
 }
 
-/** A lot settled with a winner and a price. */
+/**
+ * A lot settled with a winner and a price.
+ *
+ * **Not while the draft is private** (R-253 / UC-50 4a). This is the one kind
+ * that names a price — `draft-privacy.test.ts` sweeps the placeholders to
+ * prove it — and a channel is public, so posting the figure would undo the
+ * setting for everybody the room was just closed to. Decided here, in the
+ * gather, against the flag as it stands when the callback runs: the same
+ * moment the voided-lot check below is made at, and for the same reason. The
+ * switch (`draft_lot_sold`) is left alone — an admin who reopens the draft
+ * should find the sales posting again without touching the settings screen.
+ */
 export function announceLotSold(lotId: string, database: Database = defaultDb): void {
   announceGathered(
     ["draft_lot_sold"],
@@ -916,6 +927,7 @@ export function announceLotSold(lotId: string, database: Database = defaultDb): 
           team: teams.name,
           eventTitle: events.title,
           slug: events.slug,
+          config: events.config,
         })
         .from(draftLots)
         .innerJoin(users, eq(draftLots.playerUserId, users.id))
@@ -927,6 +939,9 @@ export function announceLotSold(lotId: string, database: Database = defaultDb): 
       // A lot voided in the seconds between the award and the callback must not
       // be announced as a sale — the undo is the whole reason lots are rows.
       if (!row || row.status !== "awarded") return null;
+
+      // UC-50 4a: the price stays in the room while the room is closed.
+      if (privateDraftFrom(row.config)) return null;
 
       return {
         kind: "draft_lot_sold",

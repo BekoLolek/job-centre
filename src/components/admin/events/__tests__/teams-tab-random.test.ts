@@ -101,6 +101,7 @@ function tabData(over: Partial<DraftTabData> = {}): DraftTabData {
     // screen and the rule it prints drift apart.
     teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
     fill: { route: "empty" },
+    privateDraft: false,
     ...over,
   };
 }

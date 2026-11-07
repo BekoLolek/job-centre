@@ -38,6 +38,7 @@ import type { RosterSizing } from "@/lib/events-policy";
 import {
   movePoolPlayerAction,
   saveDraftConfigAction,
+  saveDraftPrivacyAction,
   seedDraftPoolAction,
 } from "@/app/admin/events/draft-actions";
 import SaveRow, { type SaveState } from "./SaveRow";
@@ -99,6 +100,22 @@ import type { DraftTabData } from "./types";
  * usually goes unbuilt and is the half an admin actually needs: somebody
  * accepted after the pool was seeded is otherwise never drafted and nobody
  * notices until the wheel runs out of names.
+ *
+ * ## Who can watch is above the rules, and outside their lock (R-253 / UC-50)
+ *
+ * The one control on this tab that is not a draft rule. It saves the moment
+ * it is chosen, through its own action, rather than riding on "Save draft
+ * rules": that button posts the whole `DraftConfig` to `setDraftConfig`, which
+ * refuses once the first lot has opened (UC-16 1a), and closing the doors is
+ * exactly the thing an admin reaches for mid-draft. So it stands apart, at the
+ * top, enabled while every rule beneath it is greyed — and
+ * `draft-tab-privacy.test.ts` holds it there, because passing
+ * `disabled={rulesLocked}` to it like its neighbours is the obvious drift.
+ *
+ * It is offered here and not on the Format panel because it is a fact about
+ * running the draft, not about describing the event — and because this tab is
+ * only drawn for an event that has a draft (`tabHiddenBecause`), which is
+ * UC-50 1a for free: no draft, no tab, no control.
  */
 
 /* ------------------------------------------------------------------ */
@@ -348,6 +365,40 @@ export default function DraftTab({
     }
   };
 
+  /* --- Who can watch (R-253 / UC-50) ------------------------------ */
+
+  const [privateDraft, setPrivateDraft] = useState(data.privateDraft);
+  const [privacyBusy, setPrivacyBusy] = useState(false);
+  const [privacyError, setPrivacyError] = useState<string | null>(null);
+  const [privacyNote, setPrivacyNote] = useState<string | null>(null);
+
+  const savePrivacy = async (next: boolean) => {
+    if (next === privateDraft) return;
+    setPrivacyBusy(true);
+    setPrivacyError(null);
+    setPrivacyNote(null);
+    try {
+      const result = await saveDraftPrivacyAction(eventId, next);
+      if (!result.ok) {
+        setPrivacyError(result.error);
+        return;
+      }
+      // What was stored, not what was clicked — the action reads it back
+      // through the same reader the room's door uses.
+      setPrivateDraft(result.data.privateDraft);
+      setPrivacyNote(
+        result.data.privateDraft
+          ? "Saved — from now the room is served to this event's captains and managers only."
+          : "Saved — the room is open to everybody again."
+      );
+      router.refresh();
+    } catch {
+      setPrivacyError("Could not reach the server. Nothing was changed.");
+    } finally {
+      setPrivacyBusy(false);
+    }
+  };
+
   /* --- The pool ------------------------------------------------- */
 
   const [pool, setPool] = useState(data.pool);
@@ -470,6 +521,40 @@ export default function DraftTab({
           </span>
         </Alert>
       )}
+
+      {/* --- Who can watch (R-253 / UC-50) ---------------------------- */}
+      {/*
+        Above the rules and outside their lock — see the component comment.
+        Not `disabled={rulesLocked}`: this is the one control that has to
+        work after the first lot has opened.
+      */}
+      <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">
+        <Eyebrow as="h2">Watching</Eyebrow>
+
+        {privacyError && <Alert>{privacyError}</Alert>}
+        {privacyNote && <Alert tone="success">{privacyNote}</Alert>}
+
+        <div className="grid gap-6 md:grid-cols-2">
+          <Switch
+            label="Who can watch the draft"
+            value={privateDraft}
+            onChange={(value) => void savePrivacy(value)}
+            disabled={privacyBusy}
+            onLabel="Captains and managers only"
+            offLabel="Everyone"
+            hint={
+              privateDraft
+                ? "The room, the pool and the lots are served only to this event's captains and the people running it; anybody else who opens the room is told the draft is private. The teams and their rosters stay public on the event page, and a lot selling is not posted to Discord while this is on."
+                : "Anybody with the link can watch the room, signed out included — the way every draft has run so far."
+            }
+          />
+          <p className="text-12 leading-relaxed text-muted md:self-end">
+            Saved the moment you choose it, and not fixed by the draft starting: if an
+            auction is going badly in public, you can close the doors mid-draft and open
+            them again afterwards. Nothing already sold changes either way.
+          </p>
+        </div>
+      </Panel>
 
       {/* --- Money --------------------------------------------------- */}
       <Panel as="section" padding="none" className="space-y-5 border-t border-hair pt-12 first:border-t-0 first:pt-0">

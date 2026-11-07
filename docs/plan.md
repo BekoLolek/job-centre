@@ -2320,13 +2320,21 @@ then the other two in parallel. Each commits on its own so the site can deploy i
   The guard is the page's, not the rail's: **a hidden link is not an authorisation.** Who may watch is "a captain of this event, or a manager of it", and both are already answerable - `teams.captain_user_id` and `requireEventManager`.
   **UC-50 4a is the part that is easy to miss:** an announcement naming a price or a bid must not post while the draft is private, or the channel undoes the setting. The teams announcement still posts.
 - **Acceptance criteria:**
-  - [ ] A member who is not a captain is turned away from the room, and the mutation that drops the guard kills that test
-  - [ ] A captain of this event, and a manager, both get the room; a captain of a different event does not
-  - [ ] The teams and rosters stay public while the draft is private, asserted on the public page
-  - [ ] No announcement naming a price or a bid posts while the draft is private; the teams announcement still does
-  - [ ] Turning it off serves the room to everybody again, with nothing to backfill
-  - [ ] The control is not offered on an event with no draft
+  - [x] A member who is not a captain is turned away from the room, and the mutation that drops the guard kills that test
+  - [x] A captain of this event, and a manager, both get the room; a captain of a different event does not
+  - [x] The teams and rosters stay public while the draft is private, asserted on the public page
+  - [x] No announcement naming a price or a bid posts while the draft is private; the teams announcement still does
+  - [x] Turning it off serves the room to everybody again, with nothing to backfill
+  - [x] The control is not offered on an event with no draft
 - **Depends on:** nothing. May run beside Task 113 (disjoint files) but **not** beside Task 115, which also edits the public event page.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **Two doors, asking the same pair of questions.** The page turns a reader away, and `loadRoom` returns null independently - which also closes the once-a-second poll, so a watcher shut out mid-draft lands on the sentence rather than a frozen frame. Mutation 5 drops only the `loadRoom` guard and the page tests stay green, which is the proof the two are tested independently rather than one standing in for the other.
+  **The brief's premise about announcements was wrong, and the task checked rather than complied.** It said "the teams announcement still posts"; **there is no teams announcement kind** - nothing in `announce.ts`, `announce-manual.ts` or `discord.ts` posts the teams at all. The teams are public because they are on the event page, which is what the test asserts instead.
+  **Which announcements leak money is proved by a sweep, not a reading.** Of the ten kinds, only `draft_lot_sold` names a price; the test scans `ANNOUNCEMENT_PLACEHOLDERS` for `price|bid` and asserts the result is **exactly** that one kind, so a future kind that names a figure fails this test rather than quietly posting it. The suppression is decided at post time beside the voided-lot check, and the switch is untouched, so sales post again on reopening.
+  **Privacy is deliberately not a draft rule.** `DRAFT_RULE_KEYS` freezes every listed rule once the first lot opens, and an admin watching an auction go badly must be able to close the doors mid-draft. The flag is not a `DraftConfig` key at all, which the task noted makes its fourth mutation incapable of changing behaviour - so it named the real behavioural proof separately: open a lot, watch `saveDraftConfigAction` refuse and `saveDraftPrivacyAction` land.
+  **With no teams there are no captains**, so a private draft is served to managers alone. Stated as the rule rather than special-cased, and a player in the pool is turned away too - "captains and admins" were the owner's words.
+  **Two repo sweeps caught the new work and were satisfied by changing it**, not by relaxing them: the Alert sweep counted eight Alerts on a tab recorded as having six, and the page-header sweep caught the draft route rendering its own header when it delegates. The refusal screen moved into its own component as a result.
+  **One honest process note:** a `git checkout` used to revert a mutation reset the page to HEAD and the patch did not re-apply, so the file was rewritten from the task's own version and re-verified green before continuing; every later revert used an edit rather than a checkout.
 
 ### Task 115: No money on a night that had no auction
 

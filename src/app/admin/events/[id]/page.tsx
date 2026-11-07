@@ -48,7 +48,7 @@ import {
   getApplicationsForEvent,
   getEventById,
 } from "@/lib/events";
-import { eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
+import { eventShapeFrom, privateDraftFrom, teamFormatFrom } from "@/lib/events-policy";
 import { MAX_STAGES, formatFor, matchIdsFor, scheduleSettingsFrom } from "@/lib/format";
 import { handSheet } from "@/lib/hands-sheet";
 import { type StoredHand, handsFor } from "@/lib/hero-hands";
@@ -266,6 +266,8 @@ export default async function AdminEventPage({
     teamFormat: teamFormatFrom(event.config),
     // R-220 / UC-42 6a: over the rows already read above, so no extra query.
     fill: teamsFillOf(teams, event.config),
+    // R-253 / UC-50: the same top-level key the room's door reads.
+    privateDraft: privateDraftFrom(event.config),
   };
 
   // One `formatFor` for all three format tabs. It cannot be null here — the

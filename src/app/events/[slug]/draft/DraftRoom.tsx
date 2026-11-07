@@ -109,7 +109,20 @@ export default function DraftRoom({ event, initial, signedIn, nav }: DraftRoomPr
 
   const apply = useCallback((next: RoomPayload | null) => {
     if (!next) {
+      /*
+       * `null` is not a blip — a failed poll throws and is caught in
+       * `refresh` below. It is the server saying there is no room for this
+       * viewer any more: the event has gone, or the draft was made private
+       * while they were watching and they are not a captain or a manager
+       * (R-253 / UC-50 2). Either way the page is the thing with the answer
+       * — a 404, or the sentence saying the draft is private — so the page is
+       * reloaded rather than the last frame left standing under a red light
+       * for the rest of the night. A full reload rather than `router.refresh`
+       * because this component is rendered in tests outside a router, and
+       * because what comes back is a different page, not this one re-fetched.
+       */
       setOffline(true);
+      window.location.reload();
       return;
     }
     clockOffset.current = next.view.now - Date.now();

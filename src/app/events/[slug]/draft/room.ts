@@ -36,9 +36,22 @@
  * would save the read and cost the redaction — including the rule that the
  * player's name is withheld from *everyone* mid-spin — so it is not a trade
  * worth making. Everybody else's poll is one read.
+ *
+ * ## The door is here, not only on the page (R-253 / UC-50 2)
+ *
+ * A private draft's room, pool and lots are served to its captains and its
+ * managers and to nobody else — and "served" means every payload, not every
+ * page. The page at `./page.tsx` guards itself so it can *say* the draft is
+ * private; this guards the data, because `loadRoomAction` is the poll the
+ * browser calls once a second and a server action is a public endpoint. A
+ * guard on the page alone would turn a member away at the URL and hand them
+ * every lot and every bid the moment they called the poll directly. Next's own
+ * guidance for this is to check "close to your data source", and every payload
+ * the room is ever built from comes through {@link loadRoom}.
  */
 
-import type { User } from "@/db";
+import { eq } from "drizzle-orm";
+import { type User, db, events } from "@/db";
 import {
   type DraftRoomView,
   type DraftViewer,
@@ -46,7 +59,8 @@ import {
   getDraftView,
   viewerFor,
 } from "@/lib/draft";
-import { type BidCheck, canPlaceBid } from "@/lib/draft-policy";
+import { type BidCheck, canPlaceBid, mayWatchPrivateDraft } from "@/lib/draft-policy";
+import { privateDraftFrom } from "@/lib/events-policy";
 // The pure module rather than the barrel: this runs on the server and has no
 // business dragging every draft component into the graph for one sentence.
 import { ceilingFor } from "@/components/draft/ceiling";
@@ -123,12 +137,18 @@ export async function checkBid(
 }
 
 /**
- * The whole room for one viewer.
+ * The whole room for one viewer, or `null` when there is none for them.
  *
  * `viewerFor` decides the role — admin, captain, player or observer — and the
  * signed-out visitor is an observer, which §11 puts in the same row as everyone
  * else for watching. The "admin" role is the console, and a host of this event
  * gets it too; `viewerFor` asks `canManageEvent`, not `isAdmin`.
+ *
+ * `null` for two reasons, which a caller cannot tell apart and does not need
+ * to: the event has gone, or the draft is private and this viewer is not one
+ * of the people it is served to (R-253 / UC-50 2; see the module comment). The
+ * page distinguishes them *before* calling this, by asking the same two
+ * questions, because it has a sentence to choose; the poll just stops.
  */
 export async function loadRoom(
   eventId: string,
@@ -136,10 +156,31 @@ export async function loadRoom(
   now: Date = new Date()
 ): Promise<RoomPayload | null> {
   const viewer: DraftViewer = await viewerFor(eventId, user?.id ?? null, user?.isAdmin ?? false);
+  if (await closedTo(eventId, viewer)) return null;
+
   const view = await getDraftView(eventId, viewer, { now });
   if (!view) return null;
 
   return { view, standing: await standingFor(eventId, viewer, view, now) };
+}
+
+/**
+ * Whether a private draft's doors are shut to this viewer (R-253 / UC-50 2).
+ *
+ * One small read of `events.config` per payload, made only for the viewers
+ * the flag can turn away: a manager or a captain is let in whatever it says,
+ * so for them nothing is read. The read is the flag *as it stands now*, which
+ * is what lets 2c hold with nothing to backfill — the next poll after the
+ * doors reopen is served, and the next poll after they close is not.
+ */
+async function closedTo(eventId: string, viewer: DraftViewer): Promise<boolean> {
+  if (mayWatchPrivateDraft(viewer)) return false;
+  const [row] = await db
+    .select({ config: events.config })
+    .from(events)
+    .where(eq(events.id, eventId))
+    .limit(1);
+  return privateDraftFrom(row?.config);
 }
 
 async function standingFor(

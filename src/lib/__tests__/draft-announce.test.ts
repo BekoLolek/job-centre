@@ -53,7 +53,7 @@ const { announceLotSold, setAnnouncementSettings, setIntegrationSetting } = awai
 const { defaultAnnouncementSettings } = await import("@/lib/announce");
 const { awardLot, openLot, placeBid, setCaptains, setDraftPool, setTeams, voidLot } =
   await import("@/lib/draft");
-const { applyToEvent, createEvent, publishEvent } = await import("@/lib/events");
+const { applyToEvent, createEvent, publishEvent, updateEvent } = await import("@/lib/events");
 
 let handle: TestDatabase;
 let db: Database;
@@ -199,5 +199,40 @@ describe("a draft sale (R-150 / UC-26 E1)", () => {
     await announced(sale.lotId);
 
     expect(fetchStub).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * R-253 / UC-50 4a: "An announcement that would name a price or a bid is not
+ * posted while the draft is private, because a channel is public and posting
+ * the figure would undo the setting."
+ *
+ * The sale is the one kind that names a price (`draft-privacy.test.ts` sweeps
+ * the placeholders to prove it), so it is the one kind withheld. Decided at
+ * post time, by the gather, against the flag as it stands when the callback
+ * runs — the same moment the undo above is decided at, and for the same
+ * reason: the room's state when the hammer fell is not the state when the
+ * message goes out.
+ */
+describe("a draft sale while the draft is private (R-253 / UC-50 4a)", () => {
+  it("posts nothing, even with the draft-sales switch on", async () => {
+    await switches({ draft_lot_sold: true });
+    const sale = await aSale(300);
+    unwrap(await updateEvent(sale.event.id, { config: { privateDraft: true } }, db));
+
+    await announced(sale.lotId);
+
+    expect(fetchStub).not.toHaveBeenCalled();
+  });
+
+  it("posts again once the draft is public — the setting, not the switch, was what held it", async () => {
+    await switches({ draft_lot_sold: true });
+    const sale = await aSale(300);
+    unwrap(await updateEvent(sale.event.id, { config: { privateDraft: true } }, db));
+    unwrap(await updateEvent(sale.event.id, { config: { privateDraft: false } }, db));
+
+    await announced(sale.lotId);
+
+    expect(posted()[0].embeds?.[0]?.description).toContain("300");
   });
 });

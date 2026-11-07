@@ -89,6 +89,14 @@ export const AUDIT_ACTIONS = {
   "team.roster": "Roster changed by hand",
   "team.captains": "Captains changed",
   "draft.config": "Draft rules changed",
+  /*
+   * Who may watch the draft — everyone, or its captains and managers only
+   * (R-253 / UC-50). Its own row rather than a `draft.config` detail, because
+   * it is not a draft rule (it does not lock when the first lot opens) and
+   * because "who closed the doors, and when" is the line a member who was
+   * turned away mid-draft will ask an admin to find.
+   */
+  "draft.privacy": "Draft privacy changed",
   "draft.pool": "Draft pool changed",
   "draft.awarded": "Lot awarded",
   "draft.voided": "Lot voided",

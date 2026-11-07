@@ -74,6 +74,7 @@ import {
   type TeamFormat,
   eventShapeFrom,
   isNightFormat,
+  privateDraftFrom,
   teamFormatFrom,
 } from "@/lib/events-policy";
 import {
@@ -786,6 +787,62 @@ export async function saveDraftConfigAction(
 
   refresh(eventId);
   return { ok: true, data: result.data };
+}
+
+/* ------------------------------------------------------------------ */
+/* Who can watch (R-253 / UC-50)                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Close the room to everybody but its captains and managers, or open it again
+ * — UC-50 1 and 2c, the admin's call, saved the moment it is made.
+ *
+ * Written through `updateEvent` onto `events.config` as the top-level key
+ * `privateDraft`, and **not** through `setDraftConfig`: `privateDraftFrom`
+ * explains why it is not a draft rule, and the practical consequence is here —
+ * `setDraftConfig` refuses every rule change once the first lot has opened
+ * (UC-16 1a), and this must still go through then. An admin watching an
+ * auction go badly in public closes the doors mid-draft; the lock is not
+ * consulted and must not be. `private-draft.test.ts` opens a lot and proves
+ * both halves: the rule save is refused, this one lands.
+ *
+ * Nothing is backfilled when it is opened again (2c). The flag is read on
+ * every payload, so the next poll after this write is served to everybody.
+ *
+ * The value is read **back** through the same reader the room's door uses, so
+ * the tab shows what was stored rather than what was sent — `saveNightFormatAction`'s
+ * rule. Nothing is logged when nothing moved, for the reason `team.count` and
+ * `event.shape` log nothing then: a re-save of the answer already stored should
+ * not leave a line claiming the doors moved.
+ */
+export async function saveDraftPrivacyAction(
+  eventId: string,
+  privateDraft: boolean
+): Promise<DraftResult<{ privateDraft: boolean }>> {
+  const admin = await requireEventManager(eventId);
+
+  const before = privateDraftFrom((await getEventById(eventId))?.config);
+  // `=== true` rather than trusting the argument: a server action is a public
+  // endpoint, and the one value that closes the doors is a real boolean.
+  const result = await updateEvent(eventId, { config: { privateDraft: privateDraft === true } });
+  if (!result.ok) return { ok: false, error: result.error };
+
+  const stored = privateDraftFrom(result.data.config);
+
+  if (before !== stored) {
+    await recordAudit({
+      action: "draft.privacy",
+      actor: admin,
+      eventId,
+      summary: stored
+        ? `Made "${result.data.title}"'s draft private — its captains and managers can watch it, and nobody else.`
+        : `Made "${result.data.title}"'s draft public again — anybody can watch it.`,
+      detail: { privateDraft: stored },
+    });
+  }
+
+  refresh(eventId);
+  return { ok: true, data: { privateDraft: stored } };
 }
 
 /* ------------------------------------------------------------------ */

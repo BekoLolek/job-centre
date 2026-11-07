@@ -99,6 +99,7 @@ function text(shape: EventShape, accepted: number): string {
     started: false,
     teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
     fill: { route: "empty" },
+    privateDraft: false,
   };
   return renderToStaticMarkup(
     createElement(TeamsTab, { eventId: "event-1", applicants, data, shape })

@@ -707,6 +707,52 @@ export function eventShapeFrom(config: EventConfig | null | undefined): EventSha
   };
 }
 
+/**
+ * Whether this event's draft is private — watchable by its captains and its
+ * managers and nobody else (R-253 / UC-50).
+ *
+ * ## One top-level key on `events.config`, for `eventShapeFrom`'s reasons
+ *
+ * `config.privateDraft`, read here and written by `saveDraftPrivacyAction`.
+ * Not a column: migrations in `drizzle/` are applied to production by hand,
+ * and `events.config` ends in an index signature so a key costs no migration.
+ * Not inside `config.format`: `saveScheduleSettingsAction` rewrites that
+ * object whole, so a key nested there is erased the first time anybody opens
+ * the Schedule tab. And **not inside `config.eventShape` either**, although
+ * that is where the draft's other facts live: `saveEventShapeAction` writes
+ * that object whole too, so a flag inside it would have to be *preserved* by
+ * the Format panel's save — a drift waiting to happen, and one the panel has
+ * no reason to know about. A sibling key is replaced only by its own writer.
+ *
+ * ## Not a draft rule, deliberately
+ *
+ * `DRAFT_RULE_KEYS` in `draft-policy.ts` freezes every listed rule once the
+ * first lot opens (UC-16 1a). This is not on that list and is not a key of
+ * `DraftConfig` at all, because privacy must **not** freeze: an admin watching
+ * an auction go badly in public has to be able to close the doors mid-draft.
+ *
+ * ## Not `bidVisibility`
+ *
+ * `DraftConfig.bidVisibility` already exists and governs who sees the
+ * *amounts* while a lot is live — the admin, the captains, or everyone — for
+ * a room everybody may enter. This governs who may enter the room at all.
+ * The two compose: a private draft with `bidVisibility: "captains"` is a room
+ * only captains and managers can open, in which captains see each other's
+ * bids. Repurposing the one for the other would make "everyone sees the
+ * amounts" mean two different things.
+ *
+ * ## Absent reads as public
+ *
+ * Every draft stored before the flag existed was watchable by anybody with
+ * the link (§11's "watch the live draft" row), and a default of private would
+ * close every one of them at once. Only a real `true` closes the doors — a
+ * row written by hand holding `"true"` is read as "not said", the way
+ * `announcementSettingsFrom` reads anything that is not a boolean.
+ */
+export function privateDraftFrom(config: EventConfig | null | undefined): boolean {
+  return config?.privateDraft === true;
+}
+
 /** Whether a string off the wire names a sizing mode — the action's guard. */
 export function isSizingMode(raw: unknown): raw is SizingMode {
   return raw === "teams" || raw === "perTeam";

@@ -36,6 +36,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/app/admin/events/draft-actions", () => ({
   movePoolPlayerAction: vi.fn(),
   saveDraftConfigAction: vi.fn(),
+  saveDraftPrivacyAction: vi.fn(),
   seedDraftPoolAction: vi.fn(),
 }));
 
@@ -79,6 +80,7 @@ function tabData(sizing: RosterSizing): DraftTabData {
     started: false,
     teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
     fill: { route: "empty" },
+    privateDraft: false,
   };
 }
 

@@ -109,6 +109,17 @@ export type DraftTabData = {
    * which `TeamLike` deliberately does not carry to the client.
    */
   fill: TeamsFill;
+  /**
+   * Whether the room is served to captains and managers only (R-253 / UC-50),
+   * from `privateDraftFrom(event.config)` — the same read the room's page and
+   * `loadRoom` make, so the tab shows the answer the door is enforcing.
+   *
+   * Required rather than optional, for `TabVisibility.heroList`'s reason: a
+   * caller that forgot it would draw the control as "Everyone" on a draft the
+   * server is keeping private, and the compiler naming every caller is what
+   * stops that.
+   */
+  privateDraft: boolean;
 };
 
 /**

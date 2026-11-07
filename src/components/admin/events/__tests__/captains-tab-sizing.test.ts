@@ -72,6 +72,7 @@ function tabData(sizing: RosterSizing): DraftTabData {
     started: false,
     teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
     fill: { route: "empty" },
+    privateDraft: false,
   };
 }
 

@@ -328,6 +328,11 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   "src/components/admin/events/DraftTab.tsx": [
     "announced",
     "standing",
+    // The who-can-watch control's error and "saved" note (R-253 / UC-50):
+    // both set by its handler and nothing else, so neither is on the page at
+    // arrival.
+    "announced",
+    "announced",
     "announced",
     "announced",
     "standing",

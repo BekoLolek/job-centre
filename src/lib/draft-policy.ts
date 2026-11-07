@@ -125,6 +125,15 @@ export const DEFAULT_DRAFT_CONFIG: DraftConfig = {
  * would move it — and the next save of any unrelated rule would be refused,
  * naming a roster size nobody touched. Whether the figure may still shrink
  * once a lot has been awarded is a question for where the figure now lives.
+ *
+ * **Whether the draft is private is not here either** (R-253 / UC-50), and
+ * could not be: it is a key on `events.config` (`privateDraftFrom` in
+ * `events-policy.ts`), not of `DraftConfig`. That is deliberate rather than
+ * incidental. The lock exists so that no bid already placed changes in worth
+ * — a minimum, a timer, a visibility moved under a captain. Who may *watch*
+ * changes the worth of nothing, and an admin watching an auction go badly in
+ * public must be able to close the doors mid-draft. A key here would freeze
+ * it with the rest. {@link mayWatchPrivateDraft} is the rule it has instead.
  */
 export const DRAFT_RULE_KEYS = [
   "balanceMode",
@@ -842,6 +851,32 @@ export type DraftViewer = {
   /** The team this viewer captains. Null for everybody else. */
   teamId: string | null;
 };
+
+/**
+ * Whether this viewer may have a *private* draft's room at all (R-253 / UC-50
+ * 2, 3, 3a) — "a captain of this event, or a manager of it", in the words of
+ * the role `viewerFor` already computed.
+ *
+ * Two roles pass and two do not. `admin` is a manager — an admin, or a host of
+ * this one event, which is `canManageEvent`'s answer and not `isAdmin`'s.
+ * `captain` is a captain *of this event*: `viewerFor` reads
+ * `teams.captain_user_id` against this event's teams, so a captain elsewhere
+ * is an `observer` here and is turned away (2b). A manager who is also a
+ * captain is simply `admin` — one person, two reasons, no special case (3a).
+ *
+ * `player` is the one worth saying out loud: somebody in the pool is *in* the
+ * draft and is still not a captain of it. The owner's words were "captains and
+ * admins", and a player who could watch would be a player who could read
+ * every other team's roster filling while they wait to be sold.
+ *
+ * A pure function over the role, with no `privateDraft` argument, so that
+ * every caller asks the same two questions in the same order: is the draft
+ * private (`privateDraftFrom`), and if so is this viewer let in. The page asks
+ * them to choose a sentence; `loadRoom` asks them to withhold the payload.
+ */
+export function mayWatchPrivateDraft(viewer: Pick<DraftViewer, "role">): boolean {
+  return viewer.role === "admin" || viewer.role === "captain";
+}
 
 export type DraftPhase = "idle" | "spinning" | "bidding" | "resolved";
 

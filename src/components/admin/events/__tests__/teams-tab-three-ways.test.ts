@@ -119,6 +119,7 @@ function tabData(over: Partial<DraftTabData> = {}): DraftTabData {
     started: false,
     teamFormat: teamFormatFrom({ teamFormat: "6v6" }),
     fill: EMPTY,
+    privateDraft: false,
     ...over,
   };
 }
