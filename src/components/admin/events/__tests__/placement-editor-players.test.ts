@@ -118,34 +118,29 @@ describe("a teamed event's finishing order", () => {
     expect(markup).toMatch(/aria-label="Ana(?:&#x27;|')s place"[^>]*value="1"/);
   });
 
-  it("groups the players under the team they played for", () => {
+  it("gives each player their team as the line under their name, not as a heading", () => {
+    // Task 116 grouped the players under a heading per team; Task 117 took
+    // the headings away, because a finishing order across teams cannot also
+    // be grouped by team. The team is the row's second line instead, which is
+    // what `placement-editor-order.test.ts` asserts in full. Held here too so
+    // the subject tests cannot pass against a heading coming back.
     const markup = editor(TEAMED, [{ id: "ana", position: 1, kind: "member", name: "Ana" }]);
 
-    // Each team is a heading, and its players' boxes follow it: Red, then
-    // Ana and Ben, then Blue, then Cal. A box before its heading, or under the
-    // wrong one, puts an index out of order.
-    const red = markup.indexOf(">Red<");
-    const ana = markup.search(/aria-label="Ana(?:&#x27;|')s place"/);
+    expect(markup).not.toContain('<h3 class="eyebrow text-dim">Red</h3>');
     const ben = markup.search(/aria-label="Ben(?:&#x27;|')s place"/);
-    const blue = markup.indexOf(">Blue<");
     const cal = markup.search(/aria-label="Cal(?:&#x27;|')s place"/);
-    expect(red).toBeGreaterThan(-1);
-    expect(ana).toBeGreaterThan(red);
-    expect(ben).toBeGreaterThan(ana);
-    expect(blue).toBeGreaterThan(ben);
-    expect(cal).toBeGreaterThan(blue);
-    // Headings, not rows: the team has no box of its own in this mode.
-    expect(markup).toContain('<h3 class="eyebrow text-dim">Red</h3>');
+    expect(markup.slice(ben, cal)).toContain(">Red</p>");
   });
 
-  it("draws no heading for a team with nobody on it", () => {
-    // Nothing to place under it: an empty list with a title would be a question.
+  it("places nothing for a team with nobody on it", () => {
+    // Task 116's "draws no heading for a team with nobody on it" retired with
+    // the headings. What is left to hold is that an empty roster adds no box.
     const markup = editor(
       { ...TEAMED, rows: [...TEAMED.rows, { id: "grey", name: "Grey", members: [] }] },
       [{ id: "ana", position: 1, kind: "member", name: "Ana" }]
     );
 
-    expect(markup).toContain('<h3 class="eyebrow text-dim">Blue</h3>');
+    expect(boxesIn(markup)).toEqual(["Ana", "Ben", "Cal"]);
     expect(markup).not.toContain(">Grey<");
   });
 
@@ -182,14 +177,17 @@ describe("an event with no teams", () => {
     expect(markup).toContain("No longer in the event");
   });
 
-  it("still draws the list, empty, when everyone placed has since withdrawn", () => {
-    // Pinned byte-for-byte: no rows and one place left over rendered an empty
-    // list above "No longer in the event" before UC-52, and still does.
+  it("still shows who has left when everyone placed has since withdrawn", () => {
+    // Task 116 pinned the literal empty `<ul>` this case used to draw above
+    // "No longer in the event". Task 117 retired that pin: the list is now two
+    // zones, drawn only when there is somebody to drag between them
+    // (`placement-editor-order.test.ts`). What this case must still do is show
+    // the place, with its box, and not call the event empty.
     const markup = editor({ teamed: false, rows: [] }, [
       { id: "dee", position: 1, kind: "member", name: "Dee" },
     ]);
 
-    expect(markup).toContain('<ul class="divide-y divide-hair border-y border-hair"></ul>');
+    expect(markup).not.toContain("Nobody took part yet");
     expect(markup).toContain("No longer in the event");
     expect(boxesIn(markup)).toEqual(["Dee"]);
   });

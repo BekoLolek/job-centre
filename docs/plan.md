@@ -2433,16 +2433,85 @@ other**: both end in `PlacementEditor.tsx`.
 - **Files:** `src/components/admin/events/PlacementEditor.tsx` (and one small component beside it), tests
 - **Do:** the boxes stay. `PlacementEditor`'s own docblock argues against a dragged list on the
   grounds that a tie and a blank have no gesture - that argument is still true, and it is why
-  this is an **addition**: a drag writes 1, 2, 3 into the boxes, and a tie is still two boxes
-  holding the same number.
-  The placed rows read in place order and the unplaced sit under them; a drop renumbers the
-  placed rows sequentially, and a row dragged out clears its box. No dependency: HTML5
-  `draggable` and a pair of keyboard controls, which the 44px floor applies to.
+  this is an **addition**: a tie is still two boxes holding the same number, and a blank is still
+  a row with no number.
+  **The shape, decided here rather than left to the implementer, because Task 116 put a layout
+  in the way.** Task 116 groups the players of a teamed event under a heading per team, and a
+  finishing order across teams cannot be grouped by team at the same time. So the headings go,
+  and each player row carries its team on the second line instead - the `pays` slot, which
+  already renders exactly that, muted, under the name. One flat list, teammates still adjacent
+  because the rows come team by team.
+  Then two zones, and dragging between them is the whole feature:
+    - **In the order** - the rows with a place, in place order.
+    - **Took part, not placed** - the rest, in participant order. This is UC-33 3b, which the
+      screen has always supported and never named.
+  A drop inside the order renumbers it 1, 2, 3 by list position. A row dragged in from below is
+  inserted and the order renumbers. A row dragged out has its place cleared. **A number typed
+  into a box in the order sets that row's place and moves nothing**, which is how a tie is
+  still reachable; a number typed into a row below moves it into the order at that place, which
+  is the "enter" half of what the owner asked for.
+  No dependency: HTML5 `draggable` plus a pair of keyboard controls per row, which the 44px
+  floor applies to. Nothing is saved until Save, as on every other typed panel here.
+  **Two pins from Task 116 are retired by this, deliberately:** the literal empty `<ul>` a
+  non-teamed event drew when everybody placed had withdrawn, and "draws no heading for a team
+  with nobody on it" - the headings are gone and the markup is a different shape. Retire them in
+  the same commit rather than leaving guards that pass for a reason nobody holds any more.
 - **Acceptance criteria:**
-  - [ ] A drop at a new index renumbers the placed rows 1, 2, 3 in the order they now read
-  - [ ] A row dragged out of the order clears its place, which is "took part, finished nowhere"
-  - [ ] The same move is reachable without a mouse, from a visible control that meets the 44px floor
-  - [ ] A tie is still reachable by typing after a drag, asserted
-  - [ ] Nothing is saved until Save is pressed, as every other typed panel here
-  - [ ] No new dependency
+  - [x] A drop at a new index inside the order renumbers the placed rows 1, 2, 3 in the order they now read
+  - [x] A row dragged out of the order clears its place, and a row dragged in from below gains one
+  - [x] A number typed into a row already in the order changes that row only and moves nothing, so two rows can hold the same place - the draw, asserted after a drag
+  - [x] Every move is reachable without a mouse, from a visible control that meets the 44px floor, and the control says which row it moves
+  - [x] A teamed event's players read as one list with their team on the second line, and teammates stay adjacent
+  - [x] Nothing is saved until Save is pressed, and the order sent is the order shown
+  - [x] The two Task 116 pins this replaces are retired rather than left passing, and the retirement is named
+  - [x] No new dependency
 - **Depends on:** Task 116.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **A test that could not fail for the reason it claimed, caught by a reviewer writing the
+  opposing mutant.** The pin on "a number typed into a row already in the order moves nothing"
+  used a pristine 1, 2, 3 and typed the second row to 1. The opposite rule - pull the row out and
+  re-insert it where its number sorts, ties after - produces the identical sequence, because a
+  row sorting level with the first lands straight back where it was. The reviewer wrote that
+  mutant and **all fourteen tests passed**. The implementer's kill was real but narrower than
+  claimed: it was the duplicate-insert variant, which pins "do not insert twice". The fixture now
+  drags first and then types a number that a re-sort would relocate, and both mutants die in that
+  one test. This is the second time in this project a fixture has been unable to distinguish the
+  rule it claimed to pin (Task 102's hero ids tracked their names), and the shape is the same
+  both times: **the fixture's incidental symmetry did the work the rule was supposed to do.**
+  **The interaction bug was real, and no test could have seen it.** The two zones were two
+  `<ul>`s, and React does not reconcile keys across parents - so a row crossing between them was
+  unmounted and remounted, and its `<input>` destroyed mid-keystroke. Typing "12" into an
+  unplaced row committed the "1", the row jumped up, and the "2" landed nowhere: **a two-digit
+  place could not be typed from below**, which is the "enter" half of what the owner asked for,
+  and on a phone the keyboard dismissed. Found by review reasoning about React's semantics, not
+  by the suite, which has no DOM. Fixed **by construction** - one `<ul>` with the boundary as an
+  `<li>` - so the node is moved rather than recreated, which very likely takes the focus drop
+  after an arrow press with it.
+  **A rejected instruction of the lead's, with the better argument.** The lead's drop mapping had
+  the boundary heading mean "land last in the order". The implementer refused it: that `<li>` is
+  the one that says "Took part, not placed", and a drop onto words saying "not placed" must not
+  place a row. "Last in the order" became a dashed slot that exists only while a drag is in
+  flight - a drop target that appears when there is a drop. Accepted; the heading means release.
+  **Three justifications were replaced, and all three were the opposite-justifying kind.** The
+  reason given for not renumbering when a row leaves the order was "closing the gap would break a
+  tie" - but a competition-style renumber (1, 1, 3) preserves ties, and `dropped` destroys them
+  two functions up, so the argument would equally justify the opposite. The module's "changed
+  together by the functions below and nowhere else, so they cannot disagree" was false: `set`
+  writes the boxes alone, safely, and the sentence invited the "simplification" of routing it
+  through `typed`, which would put a departed player into the sequence for the next drop to
+  renumber. And the module's stated reason for existing was the `"use client"` directive, citing
+  `announcement-posting.ts` - except the directive stops nothing in this suite, as the task's own
+  test proves by importing the client component directly. The honest reason was `readiness.ts`'s,
+  in the same folder. Right code, wrong argument, three times in one file; this plan has now
+  recorded six.
+  **The non-move was a bug the new drop target exposed.** With a "land last" slot, dropping the
+  last placed row onto it is a non-move - and `dropped` renumbered anyway, breaking a typed tie
+  for a gesture that changed nothing. It now returns the same object when the sequence would be
+  identical, which also stops `change` raising the unsaved-changes bar and `beforeunload` for an
+  edit that did not happen.
+  **Left open, and named rather than quietly accepted:** after a move the row's DOM node moves or
+  the button disables at an end, so nothing is announced to a screen reader and there is no live
+  region saying what happened. This matches the repo's nine sibling move controls, which is why
+  it was ruled Minor rather than fixed here - but the whole set wants one pass with a
+  `role="status"` and focus kept on the pressed control. The keyboard path to 3f is the box, and
+  the lower zone's placeholder now says so.
