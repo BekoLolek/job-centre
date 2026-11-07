@@ -96,3 +96,25 @@ export function playerHref(
   const handle = players[userId]?.handle;
   return handle ? `/players/${handle}` : null;
 }
+
+/**
+ * The Discord picture for a user id, or `null`.
+ *
+ * The third reader of the same book as `playerName` and `playerHref`, so a
+ * screen that can already name a player can picture them with no new plumbing
+ * — every payload that builds a `PlayerBook` has carried `avatarUrl` since the
+ * draft was built; what was missing was anybody reading it (R-252).
+ *
+ * `null`, never `undefined`, in both the cases where there is no picture: an
+ * id the book does not hold, and a member whose Discord has none on file.
+ * `Avatar` happens to draw initials for either, but `playerHref` answers
+ * "nothing" with `null` and a caller should not have to know that two of the
+ * three readers mean the same thing by two different values.
+ */
+export function playerAvatar(
+  players: PlayerBook,
+  userId: string | null | undefined
+): string | null {
+  if (!userId) return null;
+  return players[userId]?.avatarUrl ?? null;
+}

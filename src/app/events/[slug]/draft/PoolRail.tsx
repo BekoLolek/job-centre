@@ -15,7 +15,7 @@
  */
 
 import { Button, EmptyState, Eyebrow, Panel } from "@/components/ui";
-import { PlayerChip, playerName } from "@/components/draft";
+import { PlayerChip, playerAvatar, playerName } from "@/components/draft";
 import type { DraftPoolKind } from "@/db/schema";
 import type { DraftRoomView } from "@/lib/draft";
 import type { PoolPlayer } from "@/lib/draft-policy";
@@ -129,6 +129,7 @@ function List({
               <PlayerChip
                 index={index + 1}
                 name={playerName(view.players, entry.userId)}
+                avatarUrl={playerAvatar(view.players, entry.userId)}
                 meta={entry.userId === onBlockId ? "on the block" : undefined}
                 dimmed={entry.userId === onBlockId}
                 actions={

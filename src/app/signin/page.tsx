@@ -251,6 +251,7 @@ export default async function SignInPage({
           ) : user ? (
             <SignedIn
               name={user.displayName ?? user.name ?? "Member"}
+              avatarUrl={user.avatarUrl}
               isAdmin={user.isAdmin}
               from={from}
               endSession={endSession}
@@ -335,11 +336,13 @@ function Ready({ startSignIn }: { startSignIn: () => Promise<void> }) {
 /** Already signed in. */
 function SignedIn({
   name,
+  avatarUrl,
   isAdmin,
   from,
   endSession,
 }: {
   name: string;
+  avatarUrl: string | null;
   isAdmin: boolean;
   /** Where "Continue" goes: the page they started from, already sanitised. */
   from: string;
@@ -349,7 +352,7 @@ function SignedIn({
     <>
       <Panel padding="md" className="mb-6">
         <div className="flex items-center gap-3">
-          <Avatar name={name} size="lg" />
+          <Avatar name={name} src={avatarUrl} size="lg" />
           <div className="min-w-0">
             <div className="truncate font-medium">{name}</div>
             <div className="mt-1 flex items-center gap-2">

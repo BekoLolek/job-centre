@@ -17,7 +17,13 @@ import {
   Stepper,
   plural,
 } from "@/components/ui";
-import { Money, PlayerChip, UNSIZED_ROSTER_NOTE, playerName } from "@/components/draft";
+import {
+  Money,
+  PlayerChip,
+  UNSIZED_ROSTER_NOTE,
+  playerAvatar,
+  playerName,
+} from "@/components/draft";
 // A type only: `src/lib/draft.ts` reaches Postgres, and a value import here
 // would drag Drizzle and PGlite into the browser bundle.
 import type { TeamsFill } from "@/lib/draft";
@@ -1169,6 +1175,7 @@ export default function TeamsTab({
                           <li key={member.userId}>
                             <PlayerChip
                               name={playerName(players, member.userId)}
+                              avatarUrl={playerAvatar(players, member.userId)}
                               trailing={
                                 member.isCaptain ? (
                                   <Badge tone="union">Captain</Badge>
@@ -1239,6 +1246,7 @@ export default function TeamsTab({
                 <li key={userId}>
                   <PlayerChip
                     name={playerName(players, userId)}
+                    avatarUrl={playerAvatar(players, userId)}
                     dimmed={moving === userId}
                     actions={
                       <Select
@@ -1434,6 +1442,7 @@ export default function TeamsTab({
                         <li key={userId}>
                           <PlayerChip
                             name={playerName(players, userId)}
+                            avatarUrl={playerAvatar(players, userId)}
                             meta={userId === team.captainUserId ? "Captain" : undefined}
                           />
                         </li>

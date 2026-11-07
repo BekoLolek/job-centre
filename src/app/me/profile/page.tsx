@@ -77,21 +77,17 @@ export default async function ProfilePage() {
         {/* --- Identity, read-only ---------------------------------- */}
         <PageHeader
           lead={
-            user.avatarUrl ? (
-              // A plain <img>: next/image would want the Discord CDN in a
-              // remotePatterns allowlist for a 128px avatar that is already
-              // exactly the size it is displayed at.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={user.avatarUrl}
-                alt=""
-                width={72}
-                height={72}
-                className="h-[72px] w-[72px] shrink-0 rounded-full border border-hair"
-              />
-            ) : (
-              <Avatar name={name} size="lg" className="h-16 w-16 text-16" />
-            )
+            // `Avatar` rather than the bare <img> this used to branch to: a
+            // picture Discord has since dropped falls back to initials here as
+            // it does everywhere else, instead of a broken-image icon over the
+            // name. The disc is the 72px the picture always was; the initials
+            // used to be a 64px disc, so the two branches no longer differ.
+            <Avatar
+              name={name}
+              src={user.avatarUrl}
+              size="lg"
+              className="h-[72px] w-[72px] text-16"
+            />
           }
           eyebrow="Your Discord identity"
           title={name}

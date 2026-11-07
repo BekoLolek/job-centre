@@ -2,7 +2,7 @@ import { Badge, EmptyState, Eyebrow } from "@/components/ui";
 import Money from "./MoneyFigure";
 import PlayerChip from "./PlayerChip";
 import type { MemberLike, PlayerBook } from "./types";
-import { playerHref, playerName } from "./types";
+import { playerAvatar, playerHref, playerName } from "./types";
 
 /**
  * A team's roster, captain first, with the empty slots drawn in.
@@ -68,6 +68,7 @@ export default function RosterList({
             // here is what makes §4's player profiles reachable from all three
             // at once rather than from whichever page somebody remembered.
             href={playerHref(players, member.userId)}
+            avatarUrl={playerAvatar(players, member.userId)}
             trailing={
               member.isCaptain ? (
                 <Badge tone="union">Captain</Badge>

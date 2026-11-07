@@ -416,7 +416,11 @@ export default async function EventPage({
                     key={row.id}
                     className="flex items-center gap-3 rounded-lg border border-hair bg-raised px-3 py-2"
                   >
-                    <Avatar name={row.member.displayName ?? "Member"} size="sm" />
+                    <Avatar
+                      name={row.member.displayName ?? "Member"}
+                      src={row.member.avatarUrl}
+                      size="sm"
+                    />
                     <span className="min-w-0 truncate text-14">
                       {row.member.displayName ?? "Unknown member"}
                     </span>

@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import { Avatar, Eyebrow, cx } from "@/components/ui";
 
 /**
- * One person, on a line: initials, name, whatever the screen wants to say about
- * them, and whatever it wants done to them.
+ * One person, on a line: their picture (or initials), name, whatever the
+ * screen wants to say about them, and whatever it wants done to them.
  *
  * Used for a pool entry, a roster row and a lot's player, which are three
  * different screens showing the same thing — a name with a fact attached. The
@@ -19,6 +19,11 @@ export type PlayerChipProps = {
    * which is what a member with no handle yet gets. See `playerHref`.
    */
   href?: string | null;
+  /**
+   * Their Discord picture. Omitted — or null — draws their initials, which
+   * is what a member whose Discord has no picture gets. See `playerAvatar`.
+   */
+  avatarUrl?: string | null;
   /** Small mono line under the name — a rank, a price, a reason. */
   meta?: ReactNode;
   /** To the right of the name, before the actions — badges, a figure. */
@@ -35,6 +40,7 @@ export type PlayerChipProps = {
 export default function PlayerChip({
   name,
   href,
+  avatarUrl,
   meta,
   trailing,
   actions,
@@ -54,7 +60,7 @@ export default function PlayerChip({
         <span className="num w-6 shrink-0 text-right text-11 text-muted">{index}</span>
       )}
 
-      <Avatar name={name} size="sm" />
+      <Avatar name={name} src={avatarUrl} size="sm" />
 
       <span className="min-w-0 flex-1">
         {href ? (

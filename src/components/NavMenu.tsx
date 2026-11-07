@@ -124,7 +124,7 @@ export default function NavMenu({
         )}
       >
         <span className="relative">
-          <Avatar name={name} size="sm" />
+          <Avatar name={name} src={user.avatarUrl} size="sm" />
           {/*
             A dot, not a number. The count is on the notifications page; what
             the header has to answer is "is there anything", and a badge that

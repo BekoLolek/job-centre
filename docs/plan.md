@@ -2298,12 +2298,19 @@ then the other two in parallel. Each commits on its own so the site can deploy i
 - **Do:** nothing is fetched and nothing is stored. `users.avatar_url` is already filled from Discord on every sign-in, every player payload already carries it, and `Avatar` already renders a picture with initials as its fallback. **Eight of eleven call sites simply never pass it.**
   `PlayerChip` is the big one: it draws `<Avatar name={name} size="sm" />` with no image and has no prop for one, and it is every roster on the public Teams tab, the admin Teams tab, the live room, the pool and the lot stage. Give it an `avatarUrl` prop and a `playerAvatar(players, userId)` helper beside the existing `playerName` and `playerHref`, which read the same `PlayerBook` - so a call site that has the book needs no new plumbing.
 - **Acceptance criteria:**
-  - [ ] Every call site that names a player passes a picture when one is known, asserted by a sweep over the markup rather than site by site
-  - [ ] A member with no picture still draws initials, and a broken picture URL still falls back - `Avatar`'s existing behaviour, pinned so this change cannot have removed it
-  - [ ] `playerAvatar` returns null for an unknown id and for a member whose picture is null, tested
-  - [ ] No new network call, no new column, no new read: proven by the diff touching no file under `src/lib` that reaches Postgres
+  - [x] Every call site that names a player passes a picture when one is known, asserted by a sweep over the markup rather than site by site
+  - [x] A member with no picture still draws initials, and a broken picture URL still falls back - `Avatar`'s existing behaviour, pinned so this change cannot have removed it
+  - [x] `playerAvatar` returns null for an unknown id and for a member whose picture is null, tested
+  - [x] No new network call, no new column, no new read: proven by the diff touching no file under `src/lib` that reaches Postgres
   - [ ] The initials fallback is still reachable on a real screen, not only in a unit test
 - **Depends on:** nothing.
+- **Left over:** criterion 5 handed to a browser pass, and five things worth keeping.
+  **Nothing was missing from the data, and that is the whole finding.** Discord avatars are written on every sign-in, `discordAvatarUrl` already handles custom, animated and both default-avatar schemes, every payload already carried the URL, and `Avatar` already rendered one with initials as its fallback. **Eight of eleven call sites simply never passed it**, and `PlayerChip` - every roster, pool and lot stage on the site - had no prop to pass. A whole feature's worth of visible change, and not one new read, column or request.
+  **The sweep is what makes this stay fixed.** A per-site test would pass while the ninth site, written next month, quietly drew initials. So a source sweep walks every `.tsx`, finds every `<Avatar` and `<PlayerChip` opening tag, and asserts the picture prop is present **and** that its value either names a picture or is literally `{null}` - so a wrong value and an `undefined` fail too, with the file and line in the failure name. Floors and self-tests stop it passing silently.
+  **Two mutations prove the sweep rather than the tests.** `NavMenu` passing `displayName` as the picture, and `RosterList` forgetting the prop entirely, were each caught **only** by the sweep: `avatar.test.ts` asserts the accessible tree rather than the picture, and `team-card.test.ts` renders the roster path without noticing. That is the gap a site-by-site test would have left.
+  **Two hand-rolled fallbacks were folded into `Avatar`.** `/me/profile` and the admin members list each had their own `<img>`-or-initials ternary, so a *broken* Discord picture gave them a broken-image icon where every other screen degrades to initials. Both use `Avatar` for both branches now; on `/me/profile` the picture was 72px and the initials disc 64px, and both are 72px, so the common case is unchanged and the branches no longer differ.
+  **The sweep's walker had to skip comments**, unlike `field-ordering`'s: `RosterList` already carries a `//` comment with an apostrophe inside its `<PlayerChip` tag, and a plain quote tracker swallows the rest of the file from there.
+  **Criterion 5 is honestly unmet here**, not quietly dropped: no dev server was started, because `.env.local` names a database and three agents shared one tree. The handover is specific - with `DATABASE_URL` unset and `DEV_LOGIN=1`, a `/dev-login` user has no Discord picture, so `/me`, `/signin` and the nav menu must show initials while any Discord member shows a photograph.
 
 ### Task 114: A draft only its captains can watch
 

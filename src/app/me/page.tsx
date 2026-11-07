@@ -236,7 +236,7 @@ export default async function MePage() {
       <Page className="space-y-6">
         {/* --- Who --------------------------------------------------- */}
         <PageHeader
-          lead={<Avatar name={name} size="lg" />}
+          lead={<Avatar name={name} src={user.avatarUrl} size="lg" />}
           eyebrow="Signed in"
           title={name}
           intro={

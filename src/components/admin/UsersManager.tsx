@@ -258,21 +258,12 @@ function MemberRow({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-3 py-5">
-      {member.avatarUrl ? (
-        // A plain <img>, as on /me/profile: next/image would want the Discord
-        // CDN in a remotePatterns allowlist for a 128px avatar already shown at
-        // exactly its own size.
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={member.avatarUrl}
-          alt=""
-          width={40}
-          height={40}
-          className="h-10 w-10 shrink-0 rounded-full border border-hair"
-        />
-      ) : (
-        <Avatar name={member.displayName} size="lg" />
-      )}
+      {/*
+        `Avatar` rather than the bare <img> this used to branch to: a picture
+        Discord has since dropped falls back to initials here as it does
+        everywhere else, instead of a broken-image icon over the name.
+      */}
+      <Avatar name={member.displayName} src={member.avatarUrl} size="lg" />
 
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">

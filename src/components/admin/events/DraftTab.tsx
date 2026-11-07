@@ -28,6 +28,7 @@ import {
   PlayerChip,
   SELECTION_MODES,
   UNSIZED_ROSTER_NOTE,
+  playerAvatar,
   playerName,
 } from "@/components/draft";
 import type { DraftPoolKind } from "@/db/schema";
@@ -786,6 +787,7 @@ export default function DraftTab({
                 <li key={`${entry.reason}-${entry.userId}`} className="px-3">
                   <PlayerChip
                     name={playerName(players, entry.userId)}
+                    avatarUrl={playerAvatar(players, entry.userId)}
                     meta={rankOf(entry.userId)}
                     dimmed={entry.reason !== "captain"}
                     trailing={
@@ -862,6 +864,7 @@ function PoolList({
               <PlayerChip
                 index={index + 1}
                 name={playerName(players, userId)}
+                avatarUrl={playerAvatar(players, userId)}
                 meta={rankOf(userId)}
                 dimmed={dimmed || busy === `move-${userId}`}
                 actions={

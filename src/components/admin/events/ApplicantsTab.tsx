@@ -647,7 +647,7 @@ function ApplicantRow({
             className="flex min-w-0 items-center gap-2 text-left"
           >
             <span className="font-mono text-12 text-muted">{open ? "▾" : "▸"}</span>
-            <Avatar name={name} size="sm" />
+            <Avatar name={name} src={row.member.avatarUrl} size="sm" />
             <span className="min-w-0">
               <span className="block truncate text-14">{name}</span>
               {row.waitlistPosition !== null && (
