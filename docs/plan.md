@@ -2354,3 +2354,95 @@ then the other two in parallel. Each commits on its own so the site can deploy i
   **The pin was taken, used, and retired for a stated reason.** The drafted case was rendered at HEAD and hashed (`c28bc944...`) before a line changed, and the `toBe` against that digest passed afterwards, so "a drafted night is unchanged" is byte evidence rather than "it still says Total spent". Then it went: a digest over this tab hashes `PlayerChip` and `RosterList`, which the pictures task was editing in the same tree, so keeping it would have broken on their landing for a reason that is not this tab's decision. The digest and the reasoning live in the test's docblock. Same judgement as Task 108's pin, reached independently.
   **The zero-price case is the test that proves the signal.** Keying the hiding on "every price is zero" rather than on the draft switch passes every obvious test - a hand-built night has no prices either way. Two boards tell them apart: a **priced** night with the switch off, and a **drafted** night where every price is zero. Both exist as fixtures, and the mutation dies on both.
   **One conscious reading, flagged rather than buried:** `board.draft` is exactly the Format panel's switch and is not ANDed with `teamEvent`, so an event that has gone solo while still holding teams keeps its money if the switch is on. That is defensible - those prices came from an auction that really happened - but it is a reading rather than an inevitability.
+
+## R. A place for each player, typed or dragged (R-255, R-256 / UC-52, UC-33 3e-3f)
+
+Added 2026-11-07, **Tier 2**, at the owner's request. Two tasks, and they run **one after the
+other**: both end in `PlacementEditor.tsx`.
+
+### Task 116: A place for each player in a team event
+
+- **Serves:** R-255 / UC-52
+- **Files:** `src/lib/championship-results.ts`, `src/components/admin/events/PlacementEditor.tsx`, and tests
+- **Do:** nothing is added to the database. `championship_placements` already holds one of
+  `user_id` and `team_id`, and `duplicateMemberIn` already refuses the member placed both ways.
+  What is missing is a way for the editor to send a player's id for an event that has teams,
+  because two lines decide the subject *per event*:
+  `eventParticipants` returns the teams outright when there are any, and `setPlacements` reads
+  `kind` off `participants.teamed`.
+  So: `setPlacements` decides the kind **per entry**, from what the id names - a team row, or
+  one of that row's `members`. `rows` is not touched at all, and nothing is added beside it:
+  `scoringInputFor` builds the taking-part list from `rows.flatMap(members)`, so a player
+  stated anywhere a second time would take part twice. (This paragraph first told the
+  implementer to add a second list of players; see the write-up below for why that was wrong.)
+  The mode the editor opens in is **read from what is recorded** - a member place on a teamed
+  event means players - rather than stored anywhere. There is no new column and no new config
+  key, because the ids in the order already say which it is.
+- **Acceptance criteria:**
+  - [x] A teamed event can have a place recorded against one player, and that player scores it alone - asserted through the real scoring path, not the editor
+  - [x] Two players from the same team hold different places, and two players share one place with the next left empty (the draw)
+  - [x] Who took part is unchanged: the taking-part points still come from the team rosters, pinned on a teamed event whose order is players
+  - [x] A player placed directly and through their team is still refused by name, and the refusal is `duplicateMemberIn`'s rather than a second copy of the rule
+  - [x] Saving a player order on an event that had a team order replaces it - no team place survives, proven by a read after the write
+  - [x] The editor opens on players when a player place is recorded, on teams otherwise, and the control is not offered for an event with no teams
+  - [x] A non-teamed event's editor and writes are unchanged, pinned against the current behaviour
+- **Depends on:** nothing. **Must not run beside Task 117.**
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The lead prescribed a second list, and the deletion test killed it.** This entry told the
+  implementer to add `EventParticipants.players` - every rostered player, each carrying their
+  team - and they built it, correctly, with tests and mutations. Quality review then applied the
+  one question the lead had not: delete it and see what dies. Nothing did. `players` was
+  `rows.flatMap(team => team.members.map(...))`, a flat copy of a roster `rows` already held,
+  and the `teamId` whose stated purpose was "so the editor can group them" was never what
+  grouped them - the editor iterated `rows` and *filtered* `players` by it, which is
+  `team.members` with extra steps. **The reasoning error is exact and worth naming:** the
+  argument in this entry was "a player added to `rows` would take part twice", which argues
+  against adding a player to `rows` and says nothing in favour of adding a list. Adding nothing
+  satisfies it too, and adding nothing is what R-248 asks for - one quantity, one home. The
+  fixtures were already paying the rent: `TEAMED` spelled the roster out twice and
+  `table-order.test.ts` had been edited solely to satisfy the new field. The removal took
+  `championship-results.ts`'s diff from 92 lines to 56 and left `participantsFor` byte-identical
+  to before the task.
+  **What survived the removal is the whole of the feature:** one line, `kind = row ? (teamed ?
+  "team" : "member") : already?.kind`, became a map filled from the rows *and* their members, so
+  the subject is decided per entry rather than per event. The database needed nothing - a place
+  has held either a `user_id` or a `team_id` since the table was written, and
+  `duplicateMemberIn` has always refused the one incoherent pair.
+  **A dropped test was checked for what it was pinning before it went.** One of the two tests
+  about the deleted list was also the only assertion that a teamed event's placeable ids come
+  from the *rosters* and not from the applications - the exclusivity `eventParticipants`'s
+  docblock claims. It was replaced rather than lost: an accepted applicant nobody drafted is now
+  refused by name with `NOT_IN_EVENT`. The other was pinning `players: []` and nothing else, and
+  went with no replacement.
+  **The mode is stored nowhere, and that is the point.** Which subject the editor opens on is
+  read off what is recorded - any member place on a teamed event means the players - so there is
+  no new column, no new `config` key and nothing in the payload. The ids in the order already
+  say which it is, which is also why switching the chips and saving *replaces* the other
+  subject's places rather than adding to them: `setPlacements` has always deleted the lot and
+  inserted what it was sent.
+  **And a markup regression caught by spec review rather than by a pin.** Grouping the rows
+  introduced `groups.filter(rows.length > 0)`, which silently dropped the empty bordered list a
+  non-teamed event draws when everybody placed has since withdrawn. The criterion said "a
+  non-teamed event's editor is unchanged" and the three solo pins asserted boxes and headings, so
+  none of them could see it. The filter now drops only a *headed* group - a team with nobody on
+  it - and the literal empty `<ul>` is pinned.
+
+### Task 117: Dragging the order
+
+- **Serves:** R-256 / UC-33 3e, 3f
+- **Files:** `src/components/admin/events/PlacementEditor.tsx` (and one small component beside it), tests
+- **Do:** the boxes stay. `PlacementEditor`'s own docblock argues against a dragged list on the
+  grounds that a tie and a blank have no gesture - that argument is still true, and it is why
+  this is an **addition**: a drag writes 1, 2, 3 into the boxes, and a tie is still two boxes
+  holding the same number.
+  The placed rows read in place order and the unplaced sit under them; a drop renumbers the
+  placed rows sequentially, and a row dragged out clears its box. No dependency: HTML5
+  `draggable` and a pair of keyboard controls, which the 44px floor applies to.
+- **Acceptance criteria:**
+  - [ ] A drop at a new index renumbers the placed rows 1, 2, 3 in the order they now read
+  - [ ] A row dragged out of the order clears its place, which is "took part, finished nowhere"
+  - [ ] The same move is reachable without a mouse, from a visible control that meets the 44px floor
+  - [ ] A tie is still reachable by typing after a drag, asserted
+  - [ ] Nothing is saved until Save is pressed, as every other typed panel here
+  - [ ] No new dependency
+- **Depends on:** Task 116.

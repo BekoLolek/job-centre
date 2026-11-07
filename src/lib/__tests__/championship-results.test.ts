@@ -645,6 +645,220 @@ describe("a participant list that moved after the order was saved", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* UC-52: a place for each player in a team event                     */
+/* ------------------------------------------------------------------ */
+
+describe("a place for each player in a team event", () => {
+  it("refuses a place for an accepted applicant nobody drafted onto a team", async () => {
+    // UC-33 3d, on the players of a teamed event: who may be placed is who is
+    // on a roster. Dee applied and was accepted, and was on no team, so she did
+    // not play — exactly as she is no participant for the taking-part points.
+    const { eventId } = await counting();
+    const ana = await accepted(eventId, "Ana drafted");
+    const dee = await accepted(eventId, "Dee not drafted");
+    await aTeam(eventId, "Red drafted", [ana]);
+
+    const result = await setPlacements(
+      eventId,
+      [
+        { id: ana, position: 1 },
+        { id: dee, position: 2 },
+      ],
+      db
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "One of those places is for somebody who did not take part in this event.",
+    });
+    expect(await listPlacements(eventId, db)).toEqual([]);
+  });
+
+  it("records a place against one player of a team, and that player scores it alone", async () => {
+    // UC-52 3-5, through the real scoring path. Ben played beside Ana and is
+    // placed nowhere, so he scores nothing from her place.
+    const { seasonId, eventId } = await counting();
+    const ana = await accepted(eventId, "Ana alone");
+    const ben = await accepted(eventId, "Ben alone");
+    await aTeam(eventId, "Red alone", [ana, ben]);
+
+    const saved = await setPlacements(eventId, [{ id: ana, position: 1 }], db);
+
+    expect(saved.ok).toBe(true);
+    expect(await listPlacements(eventId, db)).toEqual([
+      { id: ana, position: 1, kind: "member", name: "Ana alone" },
+    ]);
+    const rows = await standings(seasonId);
+    expect(pointsFor(rows, ana)).toBe(25);
+    expect(pointsFor(rows, ben)).toBe(0);
+  });
+
+  it("lets two players from the same team hold different places", async () => {
+    // UC-52's outcome: one team, two different points for the night.
+    const { seasonId, eventId } = await counting();
+    const ana = await accepted(eventId, "Ana first");
+    const ben = await accepted(eventId, "Ben second");
+    await aTeam(eventId, "Red split", [ana, ben]);
+
+    expect(
+      (
+        await setPlacements(
+          eventId,
+          [
+            { id: ana, position: 1 },
+            { id: ben, position: 2 },
+          ],
+          db
+        )
+      ).ok
+    ).toBe(true);
+
+    const rows = await standings(seasonId);
+    expect(pointsFor(rows, ana)).toBe(25);
+    expect(pointsFor(rows, ben)).toBe(18);
+  });
+
+  it("lets two players share a place and leaves the next one empty", async () => {
+    // UC-52 3a: 1, 1, 3, as two teams would (UC-33 3a).
+    const { seasonId, eventId } = await counting();
+    const ana = await accepted(eventId, "Ana drew");
+    const ben = await accepted(eventId, "Ben drew");
+    const cal = await accepted(eventId, "Cal drew");
+    await aTeam(eventId, "Red drew", [ana, ben]);
+    await aTeam(eventId, "Blue drew", [cal]);
+
+    expect(
+      (
+        await setPlacements(
+          eventId,
+          [
+            { id: ana, position: 1 },
+            { id: ben, position: 1 },
+            { id: cal, position: 3 },
+          ],
+          db
+        )
+      ).ok
+    ).toBe(true);
+
+    const rows = await standings(seasonId);
+    expect(pointsFor(rows, ana)).toBe(25);
+    expect(pointsFor(rows, ben)).toBe(25);
+    expect(pointsFor(rows, cal)).toBe(15);
+  });
+
+  it("still takes who took part from the team rosters when the order is the players'", async () => {
+    // UC-52 3b. Ben and Cal are on rosters and placed nowhere: taking-part
+    // points. Dee was accepted and drafted by nobody: she did not play, so
+    // she scores nothing — the rosters decide, not the applications.
+    const seasonId = await seasonIn("published", { participationPoints: 1 });
+    const eventId = await anEvent();
+    expect((await addCountingEvent(seasonId, eventId, db)).ok).toBe(true);
+    const ana = await accepted(eventId, "Ana placed");
+    const ben = await accepted(eventId, "Ben played");
+    const cal = await accepted(eventId, "Cal played");
+    const dee = await accepted(eventId, "Dee undrafted");
+    await aTeam(eventId, "Red took part", [ana, ben]);
+    await aTeam(eventId, "Blue took part", [cal]);
+
+    expect((await setPlacements(eventId, [{ id: ana, position: 1 }], db)).ok).toBe(true);
+
+    const rows = await standings(seasonId);
+    expect(pointsFor(rows, ana)).toBe(25);
+    expect(pointsFor(rows, ben)).toBe(1);
+    expect(pointsFor(rows, cal)).toBe(1);
+    expect(rows.some((row) => row.userId === dee)).toBe(false);
+  });
+
+  it("refuses a player placed directly and through their team, naming the player", async () => {
+    // UC-52 3c — UC-33 3c's rule, `duplicateMemberIn`, spanning the two lists.
+    const { eventId } = await counting();
+    const ana = await accepted(eventId, "Ana both ways");
+    const ben = await accepted(eventId, "Ben both ways");
+    const red = await aTeam(eventId, "Red both ways", [ana, ben]);
+
+    const result = await setPlacements(
+      eventId,
+      [
+        { id: red, position: 1 },
+        { id: ana, position: 2 },
+      ],
+      db
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: "Ana both ways is in that order twice. Somebody finishes in one place.",
+    });
+    expect(await listPlacements(eventId, db)).toEqual([]);
+  });
+
+  it("replaces a team order with a player order, leaving no team place behind", async () => {
+    // UC-52 4, proven by a read after the write.
+    const { eventId } = await counting();
+    const ana = await accepted(eventId, "Ana replaced");
+    const ben = await accepted(eventId, "Ben replaced");
+    const cal = await accepted(eventId, "Cal replaced");
+    const red = await aTeam(eventId, "Red replaced", [ana, ben]);
+    const blue = await aTeam(eventId, "Blue replaced", [cal]);
+    expect(
+      (
+        await setPlacements(
+          eventId,
+          [
+            { id: red, position: 1 },
+            { id: blue, position: 2 },
+          ],
+          db
+        )
+      ).ok
+    ).toBe(true);
+
+    const saved = await setPlacements(
+      eventId,
+      [
+        { id: ben, position: 1 },
+        { id: ana, position: 2 },
+      ],
+      db
+    );
+
+    expect(saved.ok).toBe(true);
+    expect(await listPlacements(eventId, db)).toEqual([
+      { id: ben, position: 1, kind: "member", name: "Ben replaced" },
+      { id: ana, position: 2, kind: "member", name: "Ana replaced" },
+    ]);
+  });
+
+  it("replaces a player order with a team order when the admin goes back to the teams", async () => {
+    // UC-52 4a: one event's order has one subject.
+    const { eventId } = await counting();
+    const ana = await accepted(eventId, "Ana back");
+    const ben = await accepted(eventId, "Ben back");
+    const red = await aTeam(eventId, "Red back", [ana, ben]);
+    expect(
+      (
+        await setPlacements(
+          eventId,
+          [
+            { id: ana, position: 1 },
+            { id: ben, position: 2 },
+          ],
+          db
+        )
+      ).ok
+    ).toBe(true);
+
+    const saved = await setPlacements(eventId, [{ id: red, position: 1 }], db);
+
+    expect(saved.ok).toBe(true);
+    expect(await listPlacements(eventId, db)).toEqual([
+      { id: red, position: 1, kind: "team", name: "Red back" },
+    ]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* UC-33 5: the admin home stops asking                               */
 /* ------------------------------------------------------------------ */
 

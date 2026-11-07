@@ -97,14 +97,22 @@ export type ParticipantRow = {
   members: Array<{ userId: string; name: string }>;
 };
 
-/** Everyone who took part in one event (UC-33 2). */
+/**
+ * Everyone who took part in one event (UC-33 2).
+ *
+ * `rows` is the whole of it: the teams with their rosters, or the accepted
+ * applicants. On a teamed event a place may be a team's or one of its
+ * members' (R-255 / UC-52), and the members are already on the rows — there
+ * is no second list, because `rows` is what the taking-part points are
+ * counted from, and a player stated twice would take part twice.
+ */
 export type EventParticipants = {
-  /** True when the event had teams, and a place is therefore a team's (UC-33 2a). */
+  /** True when the event had teams, and a row is therefore a team (UC-33 2a). */
   teamed: boolean;
   rows: ParticipantRow[];
 };
 
-/** One place as it is stored — `ParticipantRow.id`, and which column holds it. */
+/** One place as it is stored — the id it is recorded against, a team's or a member's, and which column holds it. */
 export type RecordedPlacement = {
   id: string;
   position: number;
@@ -122,7 +130,7 @@ export type RecordedPlacement = {
 
 /** One line of an order being saved. */
 export type PlacementEntry = {
-  /** A team's id when the event had teams, a member's user id otherwise. */
+  /** A `ParticipantRow.id`, or on a teamed event one of a row's members' user ids (UC-52). */
   id: string;
   /** 1 or more. Two entries may share one, and the next is then empty (UC-33 3a). */
   position: number;
@@ -182,8 +190,9 @@ function twiceIn(name: string): string {
  * finished as teams, and R-180 makes a team's place score for every member, so
  * an accepted applicant nobody drafted is not a second kind of participant
  * sitting alongside them — they are somebody who did not end up playing. The
- * two lists are therefore exclusive rather than merged, which is also what
- * makes a placement's subject unambiguous.
+ * two lists are therefore exclusive rather than merged. A player's own place on
+ * a teamed event (UC-52) is one of a team row's `members` — the same roster,
+ * never an applicant nobody drafted.
  */
 export async function eventParticipants(
   eventId: string,
@@ -652,13 +661,21 @@ function subjectsFor(
  *
  * ## Who may appear in it
  *
- * Anybody in the participant list, plus anybody already recorded. The second
- * half is not laxity: somebody who finished third and has since withdrawn, or
- * been dropped from a roster, still *took part*, and UC-33 3d refuses the
- * player who was never in the event rather than the one who has since left it.
+ * Anybody in the participant list — a row, or on a teamed event one of a row's
+ * members (UC-52) — plus anybody already recorded. The second half is
+ * not laxity: somebody who finished third and has since withdrawn, or been
+ * dropped from a roster, still *took part*, and UC-33 3d refuses the player
+ * who was never in the event rather than the one who has since left it.
  * Without it, an admin correcting one typo would silently delete the place of
  * everybody who had moved on since — the sort of quiet destruction this
  * codebase refuses everywhere else.
+ *
+ * Which column a place lands in is decided **per entry**, by what its id names:
+ * a team row's is a team's, a roster member's is a member's. Nothing says
+ * which an order as a whole is, because nothing needs to — the ids do, and
+ * the next read (`placementsFor`) answers the editor from them. A player placed
+ * directly and through their team is one person placed twice, and
+ * `duplicateMemberIn` below refuses it by name as it always has.
  *
  * ## Refused while the season is finished
  *
@@ -698,7 +715,16 @@ export async function setPlacements(
   if (roundScoringFrom(event?.config)) return fail(ROUND_SCORED_REFUSAL);
 
   const participants = await eventParticipants(eventId, database);
-  const known = new Map(participants.rows.map((row) => [row.id, row]));
+  // Everything a place may be recorded against, with the column it goes in:
+  // each row, and on a teamed event each member of each row (UC-52).
+  const known = new Map<string, Pick<RecordedPlacement, "kind" | "name">>();
+  for (const row of participants.rows) {
+    known.set(row.id, { kind: participants.teamed ? "team" : "member", name: row.name });
+    if (!participants.teamed) continue;
+    for (const member of row.members) {
+      known.set(member.userId, { kind: "member", name: member.name });
+    }
+  }
   const recorded = new Map(
     (await listPlacements(eventId, database)).map((row) => [row.id, row])
   );
@@ -711,21 +737,21 @@ export async function setPlacements(
     const problem = positionProblem(entry.position);
     if (problem) return fail(problem);
 
-    const row = known.get(entry.id);
+    const listed = known.get(entry.id);
     const already = recorded.get(entry.id);
-    const kind = row ? (participants.teamed ? "team" : "member") : already?.kind;
+    const kind = listed?.kind ?? already?.kind;
     if (!kind) return fail(NOT_IN_EVENT);
 
     // Kept rather than returned at once, so a member doubled through a team is
     // named by `duplicateMemberIn` below in preference to the row's own name.
-    if (seen.has(entry.id) && doubled === null) doubled = row?.name ?? UNKNOWN_PLAYER;
+    if (seen.has(entry.id) && doubled === null) doubled = listed?.name ?? UNKNOWN_PLAYER;
     seen.add(entry.id);
 
     entries.push({
       id: entry.id,
       position: entry.position,
       kind,
-      name: row?.name ?? already?.name ?? UNKNOWN_PLAYER,
+      name: listed?.name ?? already?.name ?? UNKNOWN_PLAYER,
     });
   }
 

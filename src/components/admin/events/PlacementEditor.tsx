@@ -2,7 +2,16 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Alert, EmptyState, Eyebrow, Field, Panel, plural } from "@/components/ui";
+import {
+  Alert,
+  ChoiceChip,
+  ChoiceRow,
+  EmptyState,
+  Eyebrow,
+  Field,
+  Panel,
+  plural,
+} from "@/components/ui";
 import {
   CHAMPIONSHIP_LOCKED_REFUSAL,
   positionProblem,
@@ -19,7 +28,7 @@ import SaveRow, { type SaveState } from "./SaveRow";
 /**
  * Where everyone finished — UC-33, "record the event's result for the season".
  *
- * ## Why a place per player, and not a list you drag
+ * ## Why a typed box per row, and not a list you drag
  *
  * Because two of the three things UC-33 asks for are impossible in a dragged
  * list and free here. A genuine tie (3a) is two rows holding the same number;
@@ -33,12 +42,23 @@ import SaveRow, { type SaveState } from "./SaveRow";
  * server checks anyway (`duplicateMemberIn`), because a server action is a
  * public endpoint and a roster can move under a page that is ten minutes old.
  *
- * ## Teams or players, never both
+ * ## Teams or players, never both at once
  *
- * `eventParticipants` decides which, not this component: the teams when the
- * event had them, otherwise the accepted applicants. A team's place scores for
- * everybody on it (R-180), so each team row says who that is — the manager is
- * handing out points to those names, and should be able to see them.
+ * `eventParticipants` decides what there is to place, not this component: the
+ * teams when the event had them, otherwise the accepted applicants. A team's
+ * place scores for everybody on it (R-180), so each team row says who that is
+ * — the manager is handing out points to those names, and should be able to
+ * see them.
+ *
+ * A teamed event has a second way (UC-52): a place for each rostered player,
+ * grouped under the team they played for. Which of the two the screen opens on
+ * is **read off what is recorded** — a player's place means the players — and
+ * is stored nowhere, because the ids in the order already say which it is. The
+ * choice is a pair of chips, offered only when there are teams (UC-52 2a). The
+ * two never mix: the boxes are one subject's, and the other subject's recorded
+ * places are not boxes but a sentence saying the save replaces them (UC-52 4,
+ * 4a). `setPlacements` decides each place's column from its id, so the payload
+ * carries nothing about the choice either.
  *
  * ## Somebody who has since left
  *
@@ -54,7 +74,7 @@ export type PlacementEditorProps = {
   /** The season, its table and its weight — everything a place is worth. */
   counting: EventChampionship;
   participants: EventParticipants;
-  /** What is already recorded, by `ParticipantRow.id`. */
+  /** What is already recorded, by the id it is recorded against — a team's or a member's. */
   placements: RecordedPlacement[];
 };
 
@@ -78,6 +98,13 @@ type Row = {
   pays: string[];
 };
 
+/** The rows under one heading — a team's players (UC-52), or everybody under none. */
+type Group = {
+  id: string;
+  heading: string | null;
+  rows: Row[];
+};
+
 export default function PlacementEditor({
   eventId,
   counting,
@@ -90,20 +117,60 @@ export default function PlacementEditor({
   const [places, setPlaces] = useState<Record<string, string>>(() =>
     Object.fromEntries(placements.map((place) => [place.id, String(place.position)]))
   );
+  /*
+   * Whose the places are: the teams', or a member's each. Read off what is
+   * recorded — one player's place means the players — and otherwise the teams
+   * when there are any. An event without teams has only members to place.
+   */
+  const [subject, setSubject] = useState<RecordedPlacement["kind"]>(() =>
+    participants.teamed && !placements.some((place) => place.kind === "member")
+      ? "team"
+      : "member"
+  );
 
   const season = counting.season;
   const closed = season.status === "closed";
   const table = counting.pointsTable?.length ? counting.pointsTable : season.pointsTable;
 
-  const rows: Row[] = participants.rows.map((row) => ({
-    id: row.id,
-    name: row.name,
-    pays: participants.teamed ? row.members.map((member) => member.name) : [],
-  }));
+  const groups: Group[] =
+    participants.teamed && subject === "member"
+      ? participants.rows.map((team) => ({
+          id: team.id,
+          heading: team.name,
+          rows: team.members.map((member) => ({
+            id: member.userId,
+            name: member.name,
+            pays: [],
+          })),
+        }))
+      : [
+          {
+            id: "everybody",
+            heading: null,
+            rows: participants.rows.map((row) => ({
+              id: row.id,
+              name: row.name,
+              pays: participants.teamed ? row.members.map((member) => member.name) : [],
+            })),
+          },
+        ];
+  const rows = groups.flatMap((group) => group.rows);
 
+  /*
+   * Recorded for somebody with no box above. On a teamed event the other
+   * subject's places are not that — they are what this save replaces — so
+   * they are counted below instead of listed here.
+   */
   const left: Row[] = placements
-    .filter((place) => !participants.rows.some((row) => row.id === place.id))
+    .filter(
+      (place) =>
+        !rows.some((row) => row.id === place.id) &&
+        (!participants.teamed || place.kind === subject)
+    )
     .map((place) => ({ id: place.id, name: place.name, pays: [] }));
+  const replaced = participants.teamed
+    ? placements.filter((place) => place.kind !== subject).length
+    : 0;
 
   /*
    * The server's own rule, asked here as it is typed — `positionProblem` and
@@ -119,6 +186,14 @@ export default function PlacementEditor({
 
   const set = (id: string, value: string) => {
     setPlaces({ ...places, [id]: value });
+    setState("dirty");
+    setError(null);
+  };
+
+  // Dirty, because the save now writes a different order: the other subject's
+  // places go with it (UC-52 4, 4a).
+  const pick = (next: RecordedPlacement["kind"]) => {
+    setSubject(next);
     setState("dirty");
     setError(null);
   };
@@ -155,7 +230,7 @@ export default function PlacementEditor({
       <div>
         <Eyebrow className="mb-2">Where everyone finished</Eyebrow>
         <p className="max-w-[62ch] text-14 leading-relaxed text-muted">
-          Type each {participants.teamed ? "team" : "player"}&apos;s place. Leave it blank
+          Type each {subject === "team" ? "team" : "player"}&apos;s place. Leave it blank
           for anyone who took part and finished outside the table — they get the taking-part
           points. Two who genuinely tied share a place, and the next one stays empty.
         </p>
@@ -169,23 +244,62 @@ export default function PlacementEditor({
         </p>
       </div>
 
+      {participants.teamed && (
+        <div className="space-y-3">
+          <ChoiceRow>
+            <ChoiceChip
+              selected={subject === "team"}
+              disabled={closed}
+              onClick={() => pick("team")}
+            >
+              A place for each team
+            </ChoiceChip>
+            <ChoiceChip
+              selected={subject === "member"}
+              disabled={closed}
+              onClick={() => pick("member")}
+            >
+              A place for each player
+            </ChoiceChip>
+          </ChoiceRow>
+          <p className="max-w-[62ch] text-12 leading-relaxed text-muted">
+            A team&apos;s place pays everybody on it. A player&apos;s place pays that player
+            alone, so two who played together can finish apart. One or the other, never both
+            {replaced > 0
+              ? `: saving replaces the ${plural(replaced, "place")} recorded for the ${
+                  subject === "team" ? "players" : "teams"
+                }.`
+              : "."}
+          </p>
+        </div>
+      )}
+
       {rows.length === 0 && left.length === 0 ? (
         <EmptyState>
           Nobody took part yet. {participants.teamed ? "Teams" : "Accepted applicants"} show up
           here, and a place can be recorded for each of them.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-hair border-y border-hair">
-          {rows.map((row) => (
-            <PlaceRow
-              key={row.id}
-              row={row}
-              value={places[row.id] ?? ""}
-              disabled={closed}
-              onChange={(value) => set(row.id, value)}
-            />
-          ))}
-        </ul>
+        groups
+          // A team with nobody on it has nothing to place under its heading.
+          // The unheaded list is drawn whether or not it has rows, as it always was.
+          .filter((group) => group.heading === null || group.rows.length > 0)
+          .map((group) => (
+            <div key={group.id} className="space-y-2">
+              {group.heading && <Eyebrow as="h3">{group.heading}</Eyebrow>}
+              <ul className="divide-y divide-hair border-y border-hair">
+                {group.rows.map((row) => (
+                  <PlaceRow
+                    key={row.id}
+                    row={row}
+                    value={places[row.id] ?? ""}
+                    disabled={closed}
+                    onChange={(value) => set(row.id, value)}
+                  />
+                ))}
+              </ul>
+            </div>
+          ))
       )}
 
       {left.length > 0 && (

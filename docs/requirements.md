@@ -501,6 +501,32 @@ and no call site has ever passed it.
 | R-253 | As an admin, I want a draft nobody can watch except the captains and me, so that the bidding is not a public spectacle when I do not want it to be. | Should | Per event. The room, the pool and the lots go dark to everybody else; what a night produced - the teams and their rosters - stays public, because a hidden *result* is a different ask nobody made |
 | R-254 | As a visitor, I want no money on the page of a night that had no auction, so that a figure I cannot interpret is not presented as a result. | Should | Prices and balances only ever mean something on a drafted night. The controls exist (`hidePrices`); nothing passes them |
 
+### A place for each player, typed or dragged (added 2026-11-07)
+
+The owner's ask, in their words: *"editing the order per person after an event. Team games
+should still give different points, with draw allowed, I'll enter or drag these manually."*
+
+**Today a team event pays one place to a whole roster.** `eventParticipants` returns the teams
+when an event has any, and R-180 makes that team's place score for every member of it - so five
+players who played together are five identical rows in the standings. That is right for a night
+whose result *was* the team's, and wrong for a night where the admin watched individuals finish
+in different orders and wants the season to say so.
+
+**The schema has always allowed it.** `championship_placements` holds exactly one of `user_id`
+and `team_id`, two subjects already, and `duplicateMemberIn` exists precisely to refuse the one
+combination that is incoherent - a member placed directly *and* through their team. Nothing is
+being added to the database here; what is being added is a way to reach the column that is
+already there.
+
+**A draw is already possible and must stay possible.** There is no unique constraint on the
+position, and 1, 1, 3 is a correct order rather than a collision (UC-33 3a). Per-player places
+inherit that for free, and the point is asserted rather than assumed.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-255 | As an admin, I want to give each player on a team their own finishing place, so that two players who played together can score differently in the season. | Should | Per event, and a choice: the places are the teams', or they are the players'. Never both at once - a member placed twice is already refused by name |
+| R-256 | As an admin, I want to drag the finishing order into shape instead of typing a number for every place, so that ordering a dozen players is one pass rather than a dozen boxes. | Could | An addition to the boxes, not a replacement for them. A drag produces a strict 1, 2, 3; a genuine tie and a blank are still typed, because neither has a gesture |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -545,6 +571,8 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - Championship: skill ratings or ELO; automatic results from game APIs; prizes, money or entry fees; leaderboards across other communities; more than one championship counting the same event; per-game separate championships running as their own competitions (one season, one table, games are just where the points came from).
 - A private draft that also hides the **result**. R-253 darkens the bidding, not the teams: a night's rosters stay public, because "nobody may see who is on which team" is a different feature nobody asked for and would collide with the championship, the public event page and the player profiles.
 - Uploading a picture to this site, or editing one. R-252 shows what Discord already has; an avatar nobody can change here is a feature, not a gap.
+- A points figure typed straight onto a person. The owner opened this with "let's start with editing the order per person", and R-255 is that start: the order is the recorded fact and the points stay derived from it (R-179). Setting somebody's season total by hand - an adjustment, a penalty, a bonus - is a separate decision, not built here.
+- A per-player place on a night scored in rounds. Its order is its table (R-236, decision 006), and R-255 changes who a *typed* place may belong to, not which nights have one.
 - Hero hands: a hero-centred history ("who has had Hulk?", "is Jeff coming up more often than chance?"). R-244 to R-247 are **player-centred** - one player, every night they drew. Reading the same rows the other way round is a second screen and a separate decision, and no requirement asks for it. Also out: anything that acts on a run of repeats - no reroll, no weighting, no excluding a hero from a player's next draw. The draw happens once and stands (R-212), and a draw that remembered last week would not be random.
 - Hero hands: a manager dealing, clearing or rerolling somebody's hand. R-212 is "my draw happens once and stands", and a button that undid it would be the feature failing rather than a convenience - so the sheet reads and never writes. Also out: hero-frequency history across events ("has Bob rolled Hulk three weeks running?"), offered on 2026-11-06 and deliberately deferred in favour of tonight's sheet alone; and any screen that shows one participant another's hand.
 

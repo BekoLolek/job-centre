@@ -1185,7 +1185,7 @@ A season of two to four events a month across different games, with one running 
 ## UC-33: Record where everyone finished
 
 **Actor:** Manager
-**Requirements covered:** R-178, R-179, R-180, R-195
+**Requirements covered:** R-178, R-179, R-180, R-195, R-256
 **Trigger:** A counting event has been played.
 
 **Preconditions**
@@ -1205,6 +1205,8 @@ A season of two to four events a month across different games, with one running 
 - **2a.** The event had teams - a team's place scores for every member of that team (R-180).
 - **3a.** Two players genuinely tie - Manager puts them in the same place; System gives each the place's points and leaves the next place empty.
 - **3b.** Somebody took part but is not placed - System gives them the taking-part points.
+- **3e.** Manager drags a row to a new position in the order - System renumbers the placed rows 1, 2, 3 in the order they now read. A tie is typed afterwards, because a drag cannot express one.
+- **3f.** Manager drags a row out of the order - System clears its place, which is 3b: took part, finished nowhere.
 - **4a.** Manager corrects the order later - System re-scores the season, and every standing that depended on it moves.
 
 **Error flows**
@@ -1613,6 +1615,37 @@ A season of two to four events a month across different games, with one running 
 **Error flows**
 - **5b.** A manager tries to type a finishing order by hand for a round-scored event - refused, pointing at the Results tab, because the table is the authority (R-236). The hand-typed order stays for events that are not round-scored.
 - **5c.** A round is corrected after the season recorded its result - the places are re-derived and the standings move, because nothing stored a total (Constraints).
+
+## UC-52: Give each player on a team their own place
+
+**Actor:** Admin
+**Requirements covered:** R-255
+**Trigger:** A team event has been played and the admin wants the individuals ranked, not the sides.
+
+**Preconditions**
+1. The event is in a championship, has teams, and is not scored in rounds.
+
+**Main success path**
+1. Admin opens the event's result for the championship.
+2. System offers two ways to record it: a place for each team, or a place for each player.
+3. Admin chooses the players and puts them in finishing order, two in the same place where they drew.
+4. System saves those places against the players, discarding any places previously recorded against the teams.
+5. Standings score each player their own place rather than their team's.
+
+**Outcome**
+- Two players who played on one team hold different points for that night.
+
+**Alternate flows**
+- **2a.** The event had no teams - the choice is not offered, because every place is already a player's.
+- **3a.** Two players drew - they share a place and the next one stays empty, exactly as two teams do (UC-33 3a).
+- **3b.** A player took part and is not placed - taking-part points, as UC-33 3b, and the team roster is still what decides who took part.
+- **4a.** Admin goes back to placing the teams - the player places go and the team places replace them. One event's order has one subject.
+- **5a.** Admin corrects it later - UC-33 4a, unchanged: the season re-scores and nothing was stored as a total.
+
+**Error flows**
+- **3c.** A player is placed and their team is placed too - System rejects and names the player, which is UC-33 3c's rule already (`duplicateMemberIn`); it is reachable from a stale page rather than from the screen.
+- **1a.** The night is scored in rounds - refused, as UC-33 is: its order is its table.
+- **1b.** The championship is closed - refused until it is reopened.
 
 ## UC-47: See what the room was dealt
 
