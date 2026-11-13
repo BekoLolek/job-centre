@@ -15,10 +15,11 @@ import { applyToHost, canManageEvent, getHostApplication } from "@/lib/hosting";
  * pointed at this file's database the same way `host-scope.test.ts` does it.
  *
  * Two questions are asked of every action here: does it do the step the use
- * case describes, and can anybody who is not an admin reach it. The second one
- * matters because every export of a `"use server"` module is a POST endpoint
- * (Next.js, "Server Actions and Mutations" → Security): the screen is behind
- * `requireAdmin()`, and that is not what protects the action.
+ * case describes, and can anybody reach it who holds neither the admin flag nor
+ * the power. The second one matters because every export of a `"use server"`
+ * module is a POST endpoint (Next.js, "Server Actions and Mutations" →
+ * Security): the screen has a guard of its own, and that is not what protects
+ * the action. What the powers themselves give is `powers.test.ts`, beside this.
  */
 const state = vi.hoisted(() => ({
   db: undefined as unknown as Database,
@@ -249,7 +250,7 @@ describe("declining", () => {
 /* UC-27 1a, UC-21 5b: none of this is a host's to reach              */
 /* ------------------------------------------------------------------ */
 
-describe("somebody who is not an admin", () => {
+describe("somebody who holds neither the flag nor the power", () => {
   it("cannot create, approve or decline, and nothing is written", async () => {
     // A host of their own event is the sharpest case: they are trusted with an
     // evening, and deciding who else gets one is exactly the power that must

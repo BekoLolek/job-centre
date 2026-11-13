@@ -730,7 +730,14 @@ describe("one host per event (drizzle/0025)", () => {
      * `canManageEvent` plus a redirect, so a grant this migration orphaned
      * would turn a working permission into a bounce to `/me`. Asked of the real
      * permission function, over this throwaway database.
+     *
+     * Today's function, so it is given the one later table it reads: since
+     * Task 126 "not a host" is only an answer once `user_permissions` has been
+     * asked about `events.manage`, and this schema is ten migrations short of
+     * it (drizzle/0035). The real file, not a stand-in, and empty - so what is
+     * asked below is still only whether the host rows survived.
      */
+    await run("0035_user_permissions");
     const db = createPgliteDatabase(client);
     const eventIds = new Map(
       (

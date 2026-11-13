@@ -72,7 +72,9 @@
  *
  * That the guard is the *right* one of the five - `requireUser` on an action
  * that wanted `requireAdmin` passes here. Which guard belongs on which action
- * is what each action's own behaviour tests are for.
+ * is what each action's own behaviour tests are for. The one exception is
+ * `src/app/admin/events/actions.ts` and `src/app/admin/host/actions.ts`, whose
+ * guards a test below lists action by action (Task 126).
  *
  * And it reads only what it can find. Where a form of entry point is not read
  * - a route group, a script that is not TypeScript, an admin `loading` or
@@ -864,13 +866,14 @@ describe("every entry point is gated", () => {
   });
 
   /*
-   * And it reads them rightly: known sites of each kind, and each guard that
-   * has a call site at least once. `requirePermission` has none in the tree
-   * yet, so there is no row for it: until one exists, the sweep recognising
-   * the sixth guard is proven only against the fixture above.
+   * And it reads them rightly: known sites of each kind, and each guard at
+   * least once. `requirePermission` had no call site until Task 126 gave
+   * `createEventAction` one, so its row is the first to show the sweep
+   * recognising the sixth guard in the tree and not only in the fixture above.
    */
   it.each([
     ["src/app/admin/games/actions.ts#createGameAction", "requireAdmin"],
+    ["src/app/admin/events/actions.ts#createEventAction", "requirePermission"],
     ["src/app/admin/events/actions.ts#saveBasicsAction", "requireEventManager"],
     ["src/app/admin/events/format-actions.ts#recordGamesAction", "requireManagerOfChild"],
     ["src/app/me/profile/actions.ts#saveProfileSectionAction", "requireUser"],
@@ -880,6 +883,49 @@ describe("every entry point is gated", () => {
     ["src/app/admin/events/[id]/page.tsx#generateMetadata", "requireEventManager"],
   ])("finds %s behind %s, with nothing ahead of it", (site, guard) => {
     expect(SITES.find((found) => found.site === site)).toMatchObject({ guard, before: [], unreadable: false });
+  });
+
+  /*
+   * Task 126 moved these two files onto powers, and only part of them: one
+   * action in each direction, with everything else left behind the event's own
+   * guard. Listed whole, so an action that drifts to another guard - or a new
+   * one that arrives behind the wrong one - changes this list in the same diff.
+   *
+   * `postAnnouncementByHandAction` reads `requireUser` because that is its
+   * first line; "manages this event, or holds announce.post" is the line after
+   * it, and `admin/events/__tests__/powers.test.ts` is what holds it to that.
+   * `createEventFromApplicationAction` reads the first of its two.
+   */
+  it("finds the events and host-application actions behind the guards Task 126 left them", () => {
+    const moved = ["src/app/admin/events/actions.ts", "src/app/admin/host/actions.ts"];
+    const guards = SITES.filter((found) => moved.includes(found.site.split("#")[0])).map(
+      (found) => `${found.site.slice("src/app/admin/".length)}: ${found.guard}`
+    );
+    expect(guards).toEqual([
+      "events/actions.ts#createEventAction: requirePermission",
+      "events/actions.ts#saveBasicsAction: requireEventManager",
+      "events/actions.ts#setEventStatusAction: requireEventManager",
+      "events/actions.ts#publishEventAction: requireEventManager",
+      "events/actions.ts#postAnnouncementByHandAction: requireUser",
+      "events/actions.ts#previewEventDaysAction: requireEventManager",
+      "events/actions.ts#saveEventDaysAction: requireEventManager",
+      "events/actions.ts#saveEventQuestionsAction: requireEventManager",
+      "events/actions.ts#saveEntryRulesAction: requireEventManager",
+      "events/actions.ts#saveEventShapeAction: requireEventManager",
+      "events/actions.ts#saveRoundScoringAction: requireEventManager",
+      "events/actions.ts#clearRoundScoringAction: requireEventManager",
+      "events/actions.ts#saveRoundAction: requireEventManager",
+      "events/actions.ts#addEventToChampionshipAction: requireEventManager",
+      "events/actions.ts#saveEventChampionshipAction: requireEventManager",
+      "events/actions.ts#removeEventFromChampionshipAction: requireEventManager",
+      "events/actions.ts#saveEventPlacementsAction: requireEventManager",
+      "events/actions.ts#decideApplicationAction: requireManagerOfChild",
+      "events/actions.ts#saveApplicationNoteAction: requireManagerOfChild",
+      "events/actions.ts#setApplicantAvailabilityAction: requireManagerOfChild",
+      "host/actions.ts#createEventFromApplicationAction: requirePermission",
+      "host/actions.ts#approveHostApplicationAction: requirePermission",
+      "host/actions.ts#declineHostApplicationAction: requirePermission",
+    ]);
   });
 
   it("recognises only guards that session-guards really exports", () => {

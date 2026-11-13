@@ -2663,18 +2663,47 @@ anything.
   name. That is accepted: marking stale roles would be a type change in `events.ts`, not
   something this component can add, and no criterion here needs the distinction.
 - **Acceptance criteria:**
-  - [ ] Name, picture, rank and roles all render, and the initials fallback still appears for a member with no picture
-  - [ ] "No rank recorded" uses the repo's existing wording, asserted against the Captains tab's string rather than a copy
-  - [ ] A player who answered no roles, and a game with no roles field, produce different markup
-  - [ ] The component takes no action and no drag prop - proven by its props, so the next task cannot be tempted to merge them
-  - [ ] It meets the design-token and contrast sweeps, and any control it contains meets the 44px floor
+  - [x] Name, picture, rank and roles all render, and the initials fallback still appears for a member with no picture
+  - [x] "No rank recorded" uses the repo's existing wording, asserted against the Captains tab's string rather than a copy
+  - [x] A player who answered no roles, and a game with no roles field, produce different markup
+  - [x] The component takes no action and no drag prop - proven by its props, so the next task cannot be tempted to merge them
+  - [x] It meets the design-token and contrast sweeps, and any control it contains meets the 44px floor
 - **Depends on:** Task 119.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **A second pattern where the repo already had one.** The "No rank recorded" test read
+  `CaptainsTab.tsx` with `fs` and a regex to extract the string - while `UNSIZED_ROSTER_NOTE` has
+  been exported from `TeamCard.tsx`, re-exported through the barrel and imported by `CaptainsTab`
+  all along. The repo already shares a sentence between a draft component and an admin tab, with a
+  constant. Worse, the regex pinned a **JSX shape** - `<Badge>{row.rank ?? "..."}</Badge>` - so a
+  `tone` prop or a line wrap would have failed two tests in another folder with a message telling
+  the reader to import a constant that did not exist.
+  **The replacement left a hole and the implementer named it.** With one shared constant there is
+  no second literal to compare, so nothing would notice the tab typing the words back. Closed with
+  a pin that the phrase appears exactly **once** in non-test source - deliberately a phrase count,
+  not a shape, so it fails only when somebody genuinely writes the words twice. Its failure names
+  the offending file. Its own limits are written beside it: it counts comments too, and it does
+  not prove the tab still prints the words.
+  **One criterion cannot be held by this suite at all.** The tab's own Badge sits inside an
+  override `Modal` that is closed on first render and opens only from a click handler, so
+  `renderToStaticMarkup` cannot reach it. That is recorded next to the pin rather than papered
+  over, and it is exactly the shape of thing a browser pass exists for.
+  **A mutant became unkillable by design, and was replaced rather than left in the table.** Once
+  the constant was shared there was no second spelling to reword, so "reword the constant" could
+  no longer die. The implementer swapped it for "the card prints its own literal, not `NO_RANK`"
+  and said so. And moving three renders out of the describe block turned the likeliest regression
+  here - dropping the `roles !== null` guard - from a file-level collection error into two named
+  test failures.
+  **Not proven:** nothing was seen in a browser, so layout, long-name truncation and the phone
+  width are untested. The closed-prop-list criterion is held by `tsc`, not vitest, so it is only
+  real when the typecheck is green.
 
 ### Task 121: The board
 
 - **Serves:** R-257, R-260 / UC-53
 - **Files:** `src/components/admin/events/TeamsTab.tsx`, a rules module beside it, and tests
-- **Do:** the Rosters panel already places and removes by `<select>`, writing immediately through
+- **Do:** `PlayerCard` and `NO_RANK` are exported from `src/components/draft/index.ts` as of
+  Task 120's review, so import through the barrel as `TeamsTab` already does.
+  The Rosters panel already places and removes by `<select>`, writing immediately through
   `placeOnRosterAction` / `removeFromRosterAction`, which return every roster for the tab to
   adopt. **Keep the selects.** They are the keyboard path and the phone path, exactly as Task
   117's arrow buttons are, and a drag-only board would be unusable on a touch screen.
@@ -2713,11 +2742,41 @@ anything.
   Deliberately *not* folded into Task 118: a defect fixed inside a feature is a defect nobody
   can find afterwards, and this one changes who gets into events.
 - **Acceptance criteria:**
-  - [ ] A retired rank field is not read, proven by a gate decision that changes when the field is retired
-  - [ ] An active rank field sorted after a retired one becomes the one that is read
-  - [ ] A member with an answer only on the retired field reads as having no rank, not as having that answer
-  - [ ] Every existing rank test still passes unchanged - this is a filter, not a rewrite
+  - [x] A retired rank field is not read, proven by a gate decision that changes when the field is retired
+  - [x] An active rank field sorted after a retired one becomes the one that is read
+  - [x] A member with an answer only on the retired field reads as having no rank, not as having that answer
+  - [x] Every existing rank test still passes unchanged - this is a filter, not a rewrite
 - **Depends on:** nothing. Independent of section S's other tasks.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **This one changed who gets into events, and the fixture said so out loud.** With the retired
+  field holding Diamond I and the active one Gold I, a member was **admitted**; reversed, they
+  were refused with "you are Gold I". Both directions from one fixture shape. Every other profile
+  read in the repo already dropped retired fields; the rank read never had, so people were being
+  admitted or refused on answers to a question the site had stopped asking - and could not
+  correct them, because the form no longer shows the field.
+  **The implementer departed from the lead's instruction and was right.** Told to copy the
+  `.filter(field => field.retiredAt === null)` form four sibling reads use, it used the `where`
+  form `rolesFieldFor` uses instead, because both rank queries select only `{ id }` and one sits
+  inside a `Promise.all` - the JS form would have meant widening the projection to carry
+  `retiredAt` to arrive where it already was. Review confirmed the two are behaviourally
+  identical: removing rows in `where` cannot reorder the survivors, and the retired field's id
+  never enters `fieldIds`.
+  **A comment claimed coverage the fixture did not have.** The "sorted after" block was said to
+  rule out "last field wins". It does not - the active field is last in **both** directions, so a
+  read that sorts retired fields last passes all four of those tests. It dies in the blocks either
+  side. The comment now says what the block proves, what it does not, and where the reorder
+  mutant actually dies, with a warning not to delete those neighbours on the strength of it.
+  That warning is the point: an overclaiming comment is how somebody later deletes the test doing
+  the real work.
+  **Two tests were cut and the asymmetry explained rather than assumed.** The refuse halves of the
+  "sorted after" block restate a refusal the first block already forces. The **admit** halves do
+  not: they are the only tests where a game with a retired field still yields a rank, so they alone
+  kill "any retired rank field means no rank at all". The implementer wrote two new mutants to
+  check that reasoning rather than take it, and each died to exactly one admit half.
+  **Recorded, not fixed:** `previewRankLadder` is the one remaining rank query without the filter.
+  It feeds no gate, so it is correctly out of scope - but it overcounts, and review found a second
+  mismatch in the **opposite** direction, so the number cleared can exceed the number previewed as
+  well as fall short. That is Task 138.
 
 ## T. Permissions, so authority is not one switch (R-261 to R-267 / UC-55, UC-56, UC-57)
 
@@ -2966,16 +3025,49 @@ every action checks.
   every event.
   Everything else in these files stays `requireEventManager`, and the sweep proves it.
 - **Acceptance criteria:**
-  - [ ] An `events.create` holder creates an event and can do nothing else in the file
-  - [ ] An `events.manage` holder manages an event they do not host, and a host still manages theirs
-  - [ ] An `announce.post` holder posts an announcement by hand on an event they neither host nor manage, and still cannot change what the announcement says
-  - [ ] A `hosts.approve` holder approves and declines, and does not thereby create events
-  - [ ] **A `hosts.approve` holder cannot approve their own application**, refused by name - without this the power is an escalation path, because an `event_hosts` row is "within this event the holder can do what an admin can", and `approveInside` has never checked that the decider is not the applicant. Harmless while only admins could approve; a hole the moment it is grantable
-  - [ ] An admin approving their own application is unchanged, because an admin already manages every event and the refusal would be theatre
-  - [ ] Every audit line names the holder as actor
-  - [ ] **The sign-in page stops telling a power-holder the wrong thing.** `requirePermission` refuses with `error=admin-only`, by design (Task 125), and `src/app/signin/page.tsx` renders that as "your account doesn't have the admin flag" - true today, false the moment a member holds powers and is turned away from one they lack. Found in Task 125's review; it becomes user-visible here, which is why it is fixed here. The copy must be true for a holder and for a plain member alike, without inventing a second vocabulary of refusals
-  - [ ] The sweep still passes, **and gains its first real-tree row for `requirePermission`** - until a call site exists the sixth guard is proven only against a fixture, which `every-action-is-gated.test.ts` says in a comment Task 125 had to amend
+  - [x] An `events.create` holder creates an event and can do nothing else in the file
+  - [x] An `events.manage` holder manages an event they do not host, and a host still manages theirs
+  - [x] An `announce.post` holder posts an announcement by hand on an event they neither host nor manage, and still cannot change what the announcement says
+  - [x] A `hosts.approve` holder approves and declines, and does not thereby create events
+  - [x] **A `hosts.approve` holder cannot approve their own application**, refused by name - without this the power is an escalation path, because an `event_hosts` row is "within this event the holder can do what an admin can", and `approveInside` has never checked that the decider is not the applicant. Harmless while only admins could approve; a hole the moment it is grantable
+  - [x] An admin approving their own application is unchanged, because an admin already manages every event and the refusal would be theatre
+  - [x] Every audit line names the holder as actor
+  - [x] **The sign-in page stops telling a power-holder the wrong thing.** `requirePermission` refuses with `error=admin-only`, by design (Task 125), and `src/app/signin/page.tsx` renders that as "your account doesn't have the admin flag" - true today, false the moment a member holds powers and is turned away from one they lack. Found in Task 125's review; it becomes user-visible here, which is why it is fixed here. The copy must be true for a holder and for a plain member alike, without inventing a second vocabulary of refusals
+  - [x] The sweep still passes, **and gains its first real-tree row for `requirePermission`** - until a call site exists the sixth guard is proven only against a fixture, which `every-action-is-gated.test.ts` says in a comment Task 125 had to amend
 - **Depends on:** Tasks 124, 125.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **The escalation was watched happening before it was closed.** With the guards moved onto powers
+  and no check in `approveInside`, both self-approval tests returned `{ ok: true }`: the holder
+  had approved their own application, and an `event_hosts` row is, in the schema's own words,
+  authority to do within that event what an admin can. Decision 007 claimed there was "no
+  escalation path to reason about" and was wrong; this is what being wrong looked like.
+  **The third answer doubled the reads on the hottest path in the app.** `canManageEvent` first
+  asked `event_hosts`, then `powersOf`. An admin paid nothing and a host paid one read, but every
+  **other** signed-in viewer paid two - and `viewerFor` is called from `loadRoom` on every poll of
+  a draft room, which polls once a second. Twenty people watching a draft would have been twenty
+  extra `user_permissions` selects a second, for a power almost nobody holds. Now one
+  `UNION ALL ... LIMIT 1` for every path, pinned by a test that a non-host viewer costs no more
+  than a host. Found by quality review, not by the criteria, which say nothing about cost.
+  **The measurement would have lied, and the implementer caught it.** `countingSelects`, the
+  wrapper this repo uses and the one the lead told it to use, counts selects **begun on the
+  handle** - so a union built from two selects reads as two even though one statement is sent.
+  It counted at the client's `query` instead and said why in the test. Following the instruction
+  would have produced a confident "no improvement" over a real improvement.
+  **A mutant that dies of the wrong cause is not a kill.** M13 crashed on a missing import rather
+  than exercising the guard. The implementer threw it out, said so, and wrote a working
+  replacement rather than counting it.
+  **Two dead ends this task creates, by following its own criteria.** An `events.create`-only
+  holder is pushed to `/admin/events/[id]` the moment they create an event and bounced to `/me`;
+  a `hosts.approve`-only holder gets the same after approving. Both are "can do nothing else in
+  the file" working as written. They are recorded on Task 130 with the rule that the answer is
+  **not** to widen a guard.
+  **What is not proven, and one deploy fact.** Nothing was seen in a browser - `.env.local` holds
+  no `DATABASE_URL`, so the new sign-in copy is verified only through the rendered element tree.
+  "Wrote nothing on a refusal" is a proxy: audit-line and event counts unchanged, with the guard
+  first, not a table-by-table diff. And **this is the first code that requires migration 0035 to
+  be applied for an ordinary member to be served at all** - it was applied two commits ago, so
+  the order is already safe, but the coupling is real and will recur every time `canManageEvent`
+  gains a read. The `0025` migration test already had to run `0035` for that reason.
 
 ### Task 127: The catalogue moves onto powers
 
@@ -3047,10 +3139,19 @@ every action checks.
   away by the page.
   `AdminNav`'s docblock promises every entry also lives in the account menu - keep that true, or
   the whole thing is unreachable on a phone, which is a bug this repo has already shipped once.
+  **Two dead ends Task 126 created, which land here.** They follow from "can do nothing else in
+  the file" and are not defects in that task, but a holder meets them as a broken screen:
+  an `events.create`-only holder is pushed to `/admin/events/[id]` the moment they create an
+  event (`EventsManager.tsx:100`), and that page is `requireEventManager`, which bounces them to
+  `/me`; a `hosts.approve`-only holder gets the same bounce after approving
+  (`HostQueue.tsx:169`). The answer is **not** to widen a guard. Either the screen does not send
+  them where they cannot go, or the landing says plainly what they may do next - but a holder
+  must never be thrown to `/me` by a button the site itself just gave them.
 - **Acceptance criteria:**
   - [ ] A holder of one power sees exactly the cards and nav entries their powers reach, and an admin sees everything
   - [ ] A member with no powers gets the refusal they get today, unchanged
   - [ ] A holder reaching a page their powers do not cover is turned away by the page, not merely unlinked
+  - [ ] **No screen sends a holder somewhere their powers cannot follow.** An `events.create`-only holder creating an event, and a `hosts.approve`-only holder approving one, both end somewhere that makes sense without widening any guard - proven by walking both flows
   - [ ] Every nav entry still appears in the account menu, pinned
   - [ ] The sweep still passes
 - **Depends on:** Tasks 126, 127, 128.
@@ -3308,3 +3409,30 @@ somebody made by hand. If it is ever seen, it is a task of its own and the fix i
   - [ ] A failing `resequenceSection` cannot leave a durable write unlogged, proven by making it throw
   - [ ] The four profile-field actions log from what the library returned, not from a catalogue read taken before the write, and the three race fallbacks Task 132 accepted are gone because the race is
 - **Depends on:** Task 132.
+
+### Task 138: The ladder warning counts answers it will not touch
+
+- **Serves:** a defect found by Task 122's spec review. No requirement asks for it.
+- **Files:** `src/lib/admin-games.ts` (`previewRankLadder`, `clearInvalidAnswers`), and tests
+- **Do:** `previewRankLadder` (`:521-524`) is the one remaining `type = 'rank'` query with no
+  `retired_at` filter. It feeds no gate, which is why Task 122 correctly left it - but it
+  **overcounts**: it includes answers on retired fields, and `clearInvalidAnswers` (`:591`) then
+  deliberately skips exactly those. So the admin is warned that editing a ladder will orphan N
+  answers, agrees to it, and a smaller number is touched. A warning that overstates its own
+  consequence teaches people to ignore warnings.
+  Check which of the two is right before changing either. If retired answers *should* be cleared,
+  the fix is in `clearInvalidAnswers`, not here.
+  **And there is a second mismatch, in the opposite direction, that the clause does not fix.**
+  The preview counts only rank answers naming a **removed ladder entry**. `clearInvalidAnswers`
+  deletes every answer failing `valueStillValid` on **any active field of the game** - which
+  takes in non-rank answers left stale since `updateField` stopped clearing, and rank answers
+  that were already off-ladder. So `clearedAnswers` can **exceed** the previewed figure as well
+  as fall short of it. Making the two agree means either the preview running `valueStillValid`
+  over the same field set, or the clear being narrowed to rank fields and removed names. Decide
+  which, and say why, before writing either.
+- **Acceptance criteria:**
+  - [ ] The preview count and the number of answers actually cleared agree, proven by a fixture with a retired rank field holding an answer the ladder edit would invalidate
+  - [ ] Whichever of the two changed, the other is asserted to match it rather than left to drift
+  - [ ] A ladder edit with no retired fields counts exactly as it does today, pinned
+  - [ ] The preview and the clear agree on **which answers they are about**, not only on the retired ones, proven by a fixture holding a stale non-rank answer and an already-off-ladder rank answer
+- **Depends on:** Task 122.

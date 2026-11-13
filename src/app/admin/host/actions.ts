@@ -24,13 +24,26 @@
  *
  * ## Authorisation
  *
- * `requireAdmin()`, every time and first. A host is not a small admin: UC-27 1a
- * says a host reaching any of `/admin` is refused, and that includes the
- * actions behind it — deciding who gets to host is exactly the power a host
- * must not be able to hand themselves. Beyond that, the library authorises on
- * the rows it writes: `approveHostApplication` re-reads the application and the
- * event inside its own transaction and refuses an event somebody already hosts,
- * because `eventId` arrives from the browser.
+ * `requirePermission("hosts.approve")`, every time and first: an admin, or a
+ * member an admin gave that power to (R-261 / UC-56). A host is not a small
+ * admin: UC-27 1a says a host reaching any of `/admin` is refused, and that
+ * includes the actions behind it — deciding who gets to host is exactly the
+ * power a host must not be able to hand themselves.
+ *
+ * **Nor may a holder of the power hand it to themselves.** Approving writes an
+ * `event_hosts` row, so a holder approving their own application would be
+ * making themselves a host. `approveHostApplication` refuses that on the row
+ * it reads inside its transaction (R-264); an admin is exempt, because an admin
+ * already manages every event.
+ *
+ * **The power decides applications; it does not create events.** Building the
+ * event an application describes is creating an event, so
+ * `createEventFromApplicationAction` asks for `events.create` as well.
+ *
+ * Beyond that, the library authorises on the rows it writes:
+ * `approveHostApplication` re-reads the application and the event inside its
+ * own transaction and refuses an event somebody already hosts, because
+ * `eventId` arrives from the browser.
  */
 
 import { revalidatePath } from "next/cache";
@@ -44,7 +57,7 @@ import {
   questionsFromApplication,
 } from "@/lib/hosting";
 import { notifyHostDecision } from "@/lib/notify-events";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 function refresh(): void {
   revalidatePath("/host");
@@ -72,7 +85,10 @@ function refresh(): void {
 export async function createEventFromApplicationAction(
   id: string
 ): Promise<HostResult<{ eventId: string; questions: number; note: string | null }>> {
-  const admin = await requireAdmin();
+  // Two powers, because it is two things: acting on a host application, and
+  // creating an event. Either alone is refused.
+  await requirePermission("hosts.approve");
+  const admin = await requirePermission("events.create");
 
   const application = await getHostApplication(id);
   if (!application) return { ok: false, error: "That application has gone." };
@@ -126,14 +142,15 @@ export async function createEventFromApplicationAction(
  * Approve, linking the event (UC-21 3, 4).
  *
  * The event id comes from the admin's screen and is checked against the row it
- * is about to write — see `approveHostApplication`. Nothing is granted, logged
+ * is about to write — see `approveHostApplication`, which is also where a
+ * holder approving their own application is refused. Nothing is granted, logged
  * or notified unless that write went through.
  */
 export async function approveHostApplicationAction(
   id: string,
   input: { eventId: string; note?: string }
 ): Promise<HostResult<{ eventId: string }>> {
-  const admin = await requireAdmin();
+  const admin = await requirePermission("hosts.approve");
 
   const application = await getHostApplication(id);
   if (!application) return { ok: false, error: "That application has gone." };
@@ -180,7 +197,7 @@ export async function declineHostApplicationAction(
   id: string,
   note: string
 ): Promise<HostResult<null>> {
-  const admin = await requireAdmin();
+  const admin = await requirePermission("hosts.approve");
 
   const application = await getHostApplication(id);
   if (!application) return { ok: false, error: "That application has gone." };

@@ -22,10 +22,10 @@
  * That is a narrower claim than "nobody here can hand out authority", and one
  * power is why. `hosts.approve` confers authority of a different kind:
  * approving an application writes an `event_hosts` row, and within that one
- * event a host can do what an admin can. Nothing in `src/lib/hosting.ts` stops
- * the decider being the applicant, so a holder approving their own application
- * would be an escalation. Refusing that is an acceptance criterion of Task 126
- * in docs/plan.md, the task that makes the power reachable.
+ * event a host can do what an admin can. A holder approving their own
+ * application would therefore be an escalation, so `approveHostApplication` in
+ * `src/lib/hosting.ts` refuses it (`OWN_APPLICATION`) for anybody but an admin,
+ * who manages every event already.
  *
  * ## The admin flag is not in here either
  *

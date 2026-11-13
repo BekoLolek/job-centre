@@ -14,6 +14,9 @@ export type { BidCeilingProps } from "./BidCeiling";
 export { default as Money } from "./MoneyFigure";
 export type { MoneyProps, MoneySize, MoneyTone } from "./MoneyFigure";
 
+export { default as PlayerCard, NO_RANK } from "./PlayerCard";
+export type { PlayerCardProps } from "./PlayerCard";
+
 export { default as PlayerChip } from "./PlayerChip";
 export type { PlayerChipProps } from "./PlayerChip";
 

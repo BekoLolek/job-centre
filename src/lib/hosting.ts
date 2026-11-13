@@ -7,10 +7,12 @@ import {
   events,
   games,
   hostApplications,
+  userPermissions,
   users,
 } from "@/db";
 // One constant, so the prefill cannot write a question set the event refuses.
 import { MAX_EVENT_QUESTIONS } from "./events";
+import type { Power } from "./permissions-policy";
 
 /**
  * Applying to run an event, and the permission that comes with being approved.
@@ -80,10 +82,27 @@ export type HostResult<T> =
  * May this person manage this event?
  *
  * Admins may manage every event. A host may manage exactly the one they were
- * given. There is no third answer, and no partial one — "full permissions to
- * manage that one event" is the grant, so a host publishing their own event is
- * within it. What they cannot do is touch anybody else's, reach `/admin`, or
- * change who is an admin.
+ * given. Neither is partial — "full permissions to manage that one event" is
+ * the grant, so a host publishing their own event is within it. What they
+ * cannot do is touch anybody else's, reach `/admin`, or change who is an admin.
+ *
+ * The third answer is `events.manage` (R-261 / UC-56): a member an admin gave
+ * that power to manages every event, as a host manages their own one. It adds
+ * a way in and takes nothing from the other two.
+ *
+ * ## What it costs: nothing for an admin, one statement for everybody else
+ *
+ * The flag still answers before anything is read. For anybody else the host
+ * row and the grant are asked for **in one statement** — a `UNION ALL` of the
+ * two, stopped at the first row — and not one after the other. This is asked
+ * for every signed-in viewer of a draft room on every poll, once a second
+ * (`viewerFor` in `draft.ts`), and nearly all of them are neither host nor
+ * holder: a second read on "not a host" would be one more statement per
+ * viewer per second, for a power almost nobody holds. `hosting.test.ts` counts
+ * the statements, so a second one fails there.
+ *
+ * It does mean a host's answer now reads `user_permissions` too, so only the
+ * admin is independent of that table existing.
  */
 export async function canManageEvent(
   user: { id: string; isAdmin: boolean } | null,
@@ -93,10 +112,18 @@ export async function canManageEvent(
   if (!user) return false;
   if (user.isAdmin) return true;
 
+  const everyEvent: Power = "events.manage";
   const [row] = await database
     .select({ userId: eventHosts.userId })
     .from(eventHosts)
-    .where(and(eq(eventHosts.eventId, eventId), eq(eventHosts.userId, user.id)));
+    .where(and(eq(eventHosts.eventId, eventId), eq(eventHosts.userId, user.id)))
+    .unionAll(
+      database
+        .select({ userId: userPermissions.userId })
+        .from(userPermissions)
+        .where(and(eq(userPermissions.userId, user.id), eq(userPermissions.power, everyEvent)))
+    )
+    .limit(1);
   return Boolean(row);
 }
 
@@ -235,6 +262,22 @@ export const ALREADY_PENDING =
  * else, so they must not differ on screen.
  */
 export const ALREADY_HOSTED = "Somebody else already hosts that event.";
+
+/**
+ * Nobody approves their own application to host (R-264, decision 007).
+ *
+ * Approving writes an `event_hosts` row, and that row is "within this event the
+ * holder can do what an admin can". So a member who holds `hosts.approve` and
+ * could approve their own application would be handing themselves authority -
+ * the one way a power in the vocabulary could be turned into more than it is.
+ * Refused inside {@link approveHostApplication}'s transaction, on the
+ * application row it reads there.
+ *
+ * An admin is not refused: an admin already manages every event, so the row
+ * gives them nothing and the refusal would be theatre.
+ */
+export const OWN_APPLICATION =
+  "You cannot approve your own application to host. Somebody else has to decide it.";
 
 const ALREADY_HOSTED_FIELD =
   "A host is one grant per event. Create this applicant an event of their own.";
@@ -492,13 +535,16 @@ export async function declineHostApplication(
  * is marked with the event it became. Half of that happening would leave either
  * an event nobody can edit or a host of nothing.
  *
- * Two things are checked against the row about to be written, not against what
- * the browser sent:
+ * Three things are checked against the rows about to be written, not against
+ * what the browser sent or what the caller already looked at:
  *
+ *  * the decider is not the applicant, unless they are an admin
+ *    ({@link OWN_APPLICATION}) - asked of the application row and the decider's
+ *    own `users` row, inside the transaction,
  *  * the event exists, and
  *  * nobody else already hosts it (R-86 — one grant per event).
  *
- * The second is the one that matters. `eventId` arrives from a select on an
+ * The last is the one that matters day to day. `eventId` arrives from a select on an
  * admin's screen, so without it an approval could be aimed at an event that is
  * already somebody's, and the person holding it would silently gain a co-host
  * with full rights over their evening.
@@ -558,6 +604,15 @@ function approveInside(
     if (!application) return { ok: false as const, error: "That application has gone." };
     if (application.status !== "pending") {
       return { ok: false as const, error: "That application has already been decided." };
+    }
+
+    // Before any write: a refusal returned from here commits (decision 004).
+    if (application.userId === decidedByUserId) {
+      const [decider] = await tx
+        .select({ isAdmin: users.isAdmin })
+        .from(users)
+        .where(eq(users.id, decidedByUserId));
+      if (!decider?.isAdmin) return { ok: false as const, error: OWN_APPLICATION };
     }
 
     const [event] = await tx

@@ -579,6 +579,11 @@ async function readApplications(
  * wins. Returns null when the game has no rank field, the member has not
  * answered it, or the event has no game at all — all three of which mean the
  * same thing to the gate in §8.3: nothing to compare.
+ *
+ * A retired rank field is not one of them, here or in `memberRanksAndRoles`:
+ * the site has stopped asking it, so its answer is one the member can no
+ * longer see or correct, and it neither passes a gate nor stands in front of
+ * the field that replaced it.
  */
 async function memberRank(
   database: Database,
@@ -590,7 +595,13 @@ async function memberRank(
   const rankFields = await database
     .select({ id: profileFields.id })
     .from(profileFields)
-    .where(and(eq(profileFields.gameId, gameId), eq(profileFields.type, "rank")))
+    .where(
+      and(
+        eq(profileFields.gameId, gameId),
+        eq(profileFields.type, "rank"),
+        isNull(profileFields.retiredAt)
+      )
+    )
     .orderBy(asc(profileFields.sort), asc(profileFields.createdAt));
   if (rankFields.length === 0) return null;
 
@@ -636,7 +647,7 @@ function rolesAnswered(field: ProfileField, value: unknown): string[] {
  * trip per member or per kind of answer.
  *
  * They are not resolved alike, and the difference is kept. Rank walks *every*
- * rank question of the game and, member by member, takes the first in
+ * rank question the game still asks and, member by member, takes the first in
  * catalogue order that member has answered. Roles are read from exactly one
  * question — the one `rolesFieldFor` names for the whole game — and a member
  * who has not answered that one has no roles, whatever else they answered.
@@ -657,7 +668,13 @@ async function memberRanksAndRoles(
     database
       .select({ id: profileFields.id })
       .from(profileFields)
-      .where(and(eq(profileFields.gameId, gameId), eq(profileFields.type, "rank")))
+      .where(
+        and(
+          eq(profileFields.gameId, gameId),
+          eq(profileFields.type, "rank"),
+          isNull(profileFields.retiredAt)
+        )
+      )
       .orderBy(asc(profileFields.sort), asc(profileFields.createdAt)),
     rolesFieldFor(gameId, database),
   ]);

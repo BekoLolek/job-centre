@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { type Database, eventHosts, hostApplications } from "@/db";
 import {
@@ -10,6 +10,7 @@ import {
   makeUser,
 } from "@/db/__tests__/helpers";
 import { createEvent, getEventById, publishEvent, updateEvent } from "@/lib/events";
+import { grantPower } from "@/lib/permissions";
 import {
   ALREADY_HOSTED,
   ALREADY_PENDING,
@@ -204,6 +205,48 @@ describe("canManageEvent", () => {
 
     await db.delete(eventHosts).where(eq(eventHosts.eventId, eventId));
     expect(await canManageEvent(host, eventId, db)).toBe(false);
+  });
+
+  /*
+   * What the third answer costs (Task 126). `viewerFor` asks this for every
+   * signed-in viewer of a draft room, and the room polls once a second - so a
+   * second statement for "not a host, then do they hold events.manage" is one
+   * more read per viewer per second, for a power almost nobody holds.
+   *
+   * Counted where a statement actually leaves for Postgres, the client's own
+   * `query`, rather than with `countingSelects` from `hero-hands.test.ts`:
+   * that counts selects *begun* on the handle, and one statement built from
+   * two selects would read as two.
+   */
+  async function statementsToAsk(
+    user: { id: string; isAdmin: boolean },
+    eventId: string
+  ): Promise<number> {
+    const query = vi.spyOn(handle.client, "query");
+    try {
+      await canManageEvent(user, eventId, db);
+      return query.mock.calls.length;
+    } finally {
+      query.mockRestore();
+    }
+  }
+
+  it("asks no more of the database for a member who hosts nothing than for a host", async () => {
+    const eventId = await anEvent();
+    const host = { id: await makeUser(db), isAdmin: false };
+    await makeHost(db, eventId, host.id);
+    const member = { id: await makeUser(db), isAdmin: false };
+    const holder = { id: await makeUser(db), isAdmin: false };
+    await grantPower({ userId: holder.id, power: "events.manage", grantedByUserId: host.id }, db);
+
+    const asked = {
+      admin: await statementsToAsk({ id: member.id, isAdmin: true }, eventId),
+      host: await statementsToAsk(host, eventId),
+      member: await statementsToAsk(member, eventId),
+      holder: await statementsToAsk(holder, eventId),
+    };
+
+    expect(asked).toEqual({ admin: 0, host: 1, member: 1, holder: 1 });
   });
 });
 

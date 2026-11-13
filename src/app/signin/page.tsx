@@ -93,10 +93,21 @@ const EXPLANATIONS: Record<string, Explanation> = {
       "not something you did.",
   },
   [SIGN_IN_ERRORS.guildLookupFailed]: UNREACHABLE,
+  /*
+   * One sentence for two refusals. `requireAdmin` sends a non-admin here, and
+   * `requirePermission` sends a member who lacks the power it asked about -
+   * with the same code, on purpose, so there is one refusal to learn. So this
+   * cannot say what they are missing: "your account doesn't have the admin
+   * flag" is the wrong diagnosis for somebody who holds three powers and
+   * needed a fourth. What is true of everybody who lands here is that the
+   * page was not theirs, and that an admin is who decides that.
+   */
   [SIGN_IN_ERRORS.adminOnly]: {
     tone: "union",
-    title: "That page is admin-only",
-    body: "You're signed in, but your account doesn't have the admin flag.",
+    title: "That page is not open to your account",
+    body:
+      "You're signed in, but your account has not been given access to that part of " +
+      "the site. If you think it should have been, ask an admin.",
   },
   // Discord's own `access_denied`, and the wrapper Auth.js reports it as.
   OAuthCallbackError: CANCELLED,

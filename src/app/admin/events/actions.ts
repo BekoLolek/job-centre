@@ -3,15 +3,29 @@
 /**
  * The server actions behind `/admin/events` and `/admin/events/[id]`.
  *
- * Thin on purpose, exactly like `/admin/games`'s. Each one proves the caller is
- * an admin, hands its arguments to `src/lib/events.ts` — which owns every rule
- * and is tested against real Postgres — and revalidates the pages whose content
- * just changed. There is no business logic in this file and there must not be:
- * a second copy of "can this event be published" is a second copy that drifts.
+ * Thin on purpose, exactly like `/admin/games`'s. Each one proves the caller
+ * may do this, hands its arguments to `src/lib/events.ts` — which owns every
+ * rule and is tested against real Postgres — and revalidates the pages whose
+ * content just changed. There is no business logic in this file and there must
+ * not be: a second copy of "can this event be published" is a second copy that
+ * drifts.
  *
- * `requireAdmin()` runs inside every action rather than being trusted from the
- * page that rendered the button. A server action is a public endpoint; the
- * page's guard proves nothing about who is calling it five minutes later.
+ * A guard runs inside every action rather than being trusted from the page
+ * that rendered the button. A server action is a public endpoint; the page's
+ * guard proves nothing about who is calling it five minutes later.
+ *
+ * ## Who may call what (R-261 / UC-56)
+ *
+ *  - **Creating an event** is `events.create`: an admin, or a member given
+ *    that power. It reaches nothing else here — not even the event it made.
+ *  - **Posting an announcement by hand** is whoever manages the event, or
+ *    whoever holds `announce.post`.
+ *  - **Everything else** is whoever manages the event (`requireEventManager`,
+ *    `requireManagerOfChild`): an admin, its host, or a holder of
+ *    `events.manage`, which is `canManageEvent`'s answer and decided there.
+ *
+ * `src/app/__tests__/every-action-is-gated.test.ts` lists this file's guards
+ * action by action, so one moving is a visible change.
  *
  * ## Why times cross the boundary as strings
  *
@@ -27,8 +41,8 @@
  * Phase 5 adds two side effects to some of these actions. Both belong at this
  * layer and nowhere below it:
  *
- *  - `recordAudit` needs to know **who** is acting, and `requireAdmin()`'s
- *    return value is the only place that is known. `src/lib/events.ts` takes a
+ *  - `recordAudit` needs to know **who** is acting, and the guard's return
+ *    value is the only place that is known. `src/lib/events.ts` takes a
  *    `Database` and is called by tests and by seeds; an insert down there would
  *    log a phantom for every fixture and nothing for the person who clicked.
  *  - `announce*` is fire-and-forget by construction. It returns `void`, the
@@ -140,10 +154,12 @@ import {
   eventIdOfMatch,
   eventIdOfStage,
 } from "@/lib/event-scope";
+import { canManageEvent } from "@/lib/hosting";
 import {
-  requireAdmin,
   requireEventManager,
   requireManagerOfChild,
+  requirePermission,
+  requireUser,
 } from "@/lib/session-guards";
 import { parseStamp } from "@/lib/time";
 
@@ -174,11 +190,15 @@ export type CreateEventFields = {
 /**
  * Create an event. Title only, in practice — everything else is the editor's
  * job, which is why a new event is a draft and therefore invisible.
+ *
+ * `events.create`, and that power alone: creating an event does not make its
+ * creator a manager of it, so a holder with nothing else has made a draft for
+ * somebody who manages events to pick up.
  */
 export async function createEventAction(
   input: CreateEventFields
 ): Promise<EventResult<{ id: string; slug: string }>> {
-  const admin = await requireAdmin();
+  const admin = await requirePermission("events.create");
 
   const result = await createEvent({
     title: input.title,
@@ -440,8 +460,8 @@ export type PostByHandResult =
 /**
  * Post one of an event's five announcements now (R-221 to R-223 / UC-43).
  *
- * Thin like everything else here: `requireEventManager`, then
- * `postAnnouncementByHand`, then the log. Every decision about *whether* a kind
+ * Thin like everything else here: the guard, then `postAnnouncementByHand`,
+ * then the log. Every decision about *whether* a kind
  * can be posted is in `src/lib/discord.ts` and `src/lib/announce-manual.ts`,
  * including the ones the screen also makes — a server action is a public
  * endpoint (Next's own guidance), so what the button believes about a switch, a
@@ -459,13 +479,23 @@ export type PostByHandResult =
  * before 4a) and is only observable to a call the screen cannot make: a row
  * whose message cannot be built honestly has no enabled button to press. Either
  * answer is honest; this one costs one read.
+ *
+ * ## Who may press it: a manager of this event, or a holder of `announce.post`
+ *
+ * The one action here with two ways in. `announce.post` reaches any event's
+ * announcements **without reaching the event** — which is why it is a power of
+ * its own rather than part of `events.manage`: its holder can say that an
+ * event exists, and cannot change a word of what is said about it, because
+ * every action that could is still `requireEventManager`. Somebody who is
+ * neither is refused as `requirePermission` refuses anybody.
  */
 export async function postAnnouncementByHandAction(
   eventId: string,
   kind: string,
   options: { confirmed?: boolean } = {}
 ): Promise<PostByHandResult> {
-  const admin = await requireEventManager(eventId);
+  const admin = await requireUser();
+  if (!(await canManageEvent(admin, eventId))) await requirePermission("announce.post");
 
   // Arrives from the browser. The other five announcers take an application, a
   // lot or a match id, so a kind that is not one of the five would be a message

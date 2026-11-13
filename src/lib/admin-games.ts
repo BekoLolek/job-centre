@@ -739,21 +739,23 @@ export async function createField(
  * without touching the marker — and a caller is owed a field whose answers
  * are lists.
  *
- * ## Two ways this is NOT the rank lookup — do not copy one onto the other
+ * ## This is NOT the rank lookup — do not copy one onto the other
  *
  * The idea is the rank field's — find the question by what it is, not by what
- * it is called — and nothing else is. `memberRank` / `memberRanksAndRoles` in
- * `events.ts` differ twice:
+ * it is called — and both skip a retired field. `memberRank` /
+ * `memberRanksAndRoles` in `events.ts` differ in the one way that matters:
  *
- *  1. **One field for the whole game, not the first one each member
- *     answered.** The rank lookup reads *every* rank field of the game and,
- *     member by member, falls through to the next when the first is
- *     unanswered. This is `limit 1`: the first marked field is the game's roles
- *     field even for a member who answered only the second.
- *  2. **Retired fields are skipped here and not there.** The rank lookup does
- *     not filter `retired_at`, so a retired rank field is still read. That is
- *     a defect in the rank lookup with a task of its own (docs/plan.md, Task
- *     122), not a behaviour to match.
+ * **One field for the whole game, not the first one each member answered.**
+ * The rank lookup reads *every* rank field the game still asks and, member by
+ * member, falls through to the next when the first is unanswered. This is
+ * `limit 1`: the first marked field is the game's roles field even for a
+ * member who answered only the second.
+ *
+ * Where the retired filter goes: a read that narrows by kind, like this one
+ * and the two rank reads, drops retired fields in its `where`, while a read
+ * that loads a game's whole catalogue with a bare `select()` drops them in JS
+ * afterwards — filtering a narrowed read in JS would mean widening its
+ * projection just to carry `retiredAt`.
  */
 export async function rolesFieldFor(
   gameId: string,

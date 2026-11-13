@@ -203,6 +203,27 @@ describe("what a refused sign-in says", () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* UC-56 3a, 4a — turned away from a page that is not theirs          */
+/* ------------------------------------------------------------------ */
+
+describe("what a signed-in member turned away from a page is told", () => {
+  /*
+   * `requireAdmin` and `requirePermission` both refuse with `error=admin-only`
+   * (Task 125, on purpose: one refusal, not a second vocabulary). So the one
+   * sentence has to be true of a member with no powers and of a member who
+   * holds some and was turned away from one they lack. "Your account doesn't
+   * have the admin flag" was true of the first and is the wrong diagnosis for
+   * the second, who was never going to need the flag.
+   */
+  it("says the page is not open to their account, without naming the admin flag as what they lack", async () => {
+    const message = await messageFor("admin-only");
+
+    expect(message).toMatch(/not open to your account/i);
+    expect(message).not.toMatch(/admin flag|admin-only/i);
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* UC-01 6 and 8 — back to the page they started from                 */
 /* ------------------------------------------------------------------ */
 

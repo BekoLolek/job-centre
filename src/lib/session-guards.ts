@@ -279,7 +279,9 @@ export async function requirePermission(power: Power): Promise<User> {
  * The signed-in person's row, if they may manage this event — otherwise a
  * redirect.
  *
- * Admins pass for every event; a host passes for the one they were given. This
+ * Admins pass for every event; a host passes for the one they were given; a
+ * holder of `events.manage` passes for every event, as an admin does (R-261 /
+ * UC-56). All three are `canManageEvent`'s answers and are decided there. This
  * is the only door into an event's admin screens, so a host who wanders to
  * somebody else's event id lands on the members' hub rather than on an editor
  * they can half use.

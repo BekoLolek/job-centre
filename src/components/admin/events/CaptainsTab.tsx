@@ -15,7 +15,7 @@ import {
   cx,
   plural,
 } from "@/components/ui";
-import { RosterList, TeamCard, UNSIZED_ROSTER_NOTE } from "@/components/draft";
+import { NO_RANK, RosterList, TeamCard, UNSIZED_ROSTER_NOTE } from "@/components/draft";
 import type { ApplicantView, EventDetail } from "@/lib/events";
 import { saveCaptainsAction } from "@/app/admin/events/draft-actions";
 import { waiveEntryRuleAction } from "@/app/admin/events/waiver-actions";
@@ -451,7 +451,7 @@ export default function CaptainsTab({
                 <li key={row.id} className="rounded-lg border border-hair p-3">
                   <div className="flex flex-wrap items-baseline gap-2">
                     <span className="text-14 text-chalk">{nameOf(row)}</span>
-                    <Badge>{row.rank ?? "No rank recorded"}</Badge>
+                    <Badge>{row.rank ?? NO_RANK}</Badge>
                   </div>
                   <p className="mt-1 text-12 text-union">{row.eligibility.captainReason}</p>
                 </li>
