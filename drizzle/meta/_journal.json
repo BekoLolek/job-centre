@@ -246,6 +246,13 @@
       "when": 1794574891152,
       "tag": "0034_holds_roles",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1794579646132,
+      "tag": "0035_user_permissions",
+      "breakpoints": true
     }
   ]
 }

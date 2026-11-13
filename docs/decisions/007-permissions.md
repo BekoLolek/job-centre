@@ -50,8 +50,17 @@ list is the person's own. Editing a preset later changes nobody. The owner chose
   the whole grant. No jsonb: every piece of authority on this site today is a typed column or its
   own table, and this follows.
 - **Presets live in code**, beside the vocabulary that defines the powers.
-- **Granting is not a power.** Only the admin flag reaches the granting screen, so no holder can
-  widen their own authority, and there is no escalation path to reason about.
+- **Granting is not a power.** Only the admin flag reaches the granting screen, so no holder of
+  these powers can grant a power from this vocabulary, or the admin flag, to anybody.
+- **One power confers authority of a different kind, and pretending otherwise would be the bug.**
+  `hosts.approve` approves an application to host, and that writes an `event_hosts` row - which
+  the schema itself describes as "within this event the holder can do what an admin can".
+  Worse, `approveInside` has no check that the decider is not the applicant, so without one a
+  `hosts.approve` holder could apply to host and approve themselves. That was harmless while only
+  admins could approve, because an admin already has everything; it stops being harmless the
+  moment the power is grantable. **Task 126 refuses self-approval.** The claim this record
+  originally made - "no escalation path to reason about" - was false, and it was found by review
+  of Task 123 rather than by writing it down carefully enough.
 - **An event host's grant is untouched** and stays whole.
 - **The destructive set gets teeth**: the actions the audit log already calls destructive require
   a power of their own, in addition to the power over that area.

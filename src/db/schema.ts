@@ -662,6 +662,42 @@ export const adminAllowlist = pgTable("admin_allowlist", {
   updatedAt: instant("updated_at").notNull().defaultNow(),
 });
 
+/**
+ * A power one member has been given (R-261 / UC-55, decision 007).
+ *
+ * A row is the whole grant: the member, the power, who granted it, when. A
+ * member with no rows holds nothing, which is where every member starts.
+ *
+ * **The admin flag is never a row here.** `users.is_admin` is a superuser
+ * above the vocabulary; an admin holds every power with this table empty, and
+ * `holds` in `src/lib/permissions-policy.ts` takes the flag beside the list.
+ *
+ * `power` is text, not an enum, and has no CHECK: the vocabulary is the list
+ * in `src/lib/permissions-policy.ts`, and growing it must not need a
+ * migration — the convention `audit_log.action` follows. `grantPower` is what
+ * refuses a name outside it.
+ *
+ * The primary key is the pair, so a member cannot hold one power in two rows:
+ * a second plain insert of the same grant is an error, not a no-op. It is
+ * `grantPower` that turns that refusal into nothing happening, with a conflict
+ * clause aimed at this key. The key leads with `user_id`, which is the only
+ * way the table is read, so there is no second index.
+ */
+export const userPermissions = pgTable(
+  "user_permissions",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    power: text("power").notNull(),
+    grantedByUserId: uuid("granted_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    grantedAt: instant("granted_at").notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.power] })]
+);
+
 /* ------------------------------------------------------------------ */
 /* Hosting                                                            */
 /* ------------------------------------------------------------------ */

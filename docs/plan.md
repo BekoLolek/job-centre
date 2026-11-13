@@ -2723,6 +2723,48 @@ the screen that grants (Task 131) last, because a grant that reaches nothing is 
 not offer something is never what stops it. Every action checks for itself, and the sweep proves
 every action checks.
 
+### Task 133: Two admin pages name themselves to a stranger
+
+- **Serves:** a defect found by Task 124 on its first run. No requirement asks for it.
+- **Files:** `src/app/admin/events/[id]/page.tsx`, `src/app/admin/championships/[id]/page.tsx`, `src/app/admin/events/actions.ts`, `src/app/admin/championships/actions.ts`, the sweep's allowlist
+- **Do:** `generateMetadata` on both pages reads by id with **no guard**, to title the tab. The page
+  component redirects a stranger - but on a `redirect()` Next sends the 307 **and** renders an
+  error-document body whose head is built from the page's own resolved metadata, so the title
+  reaches the wire. Invisible in a browser, plain to `curl`.
+  What leaks: the title of any event in any status including unpublished, the name of any
+  championship including hidden ones, and an existence oracle for ids. Ids are random uuids, so
+  the visitor must already hold one - a mitigation, not a gate.
+  One line per file: await the page's own guard first, or use a static title as the other eleven
+  admin pages do.
+  **While here**, move the guard above the argument validation in `setEventStatusAction` and
+  `setChampionshipStatusAction`. Both check a status string before gating; harmless today, but it
+  costs two standing exceptions in the sweep, and fewer exceptions beats better-justified ones.
+  The allowlist then drops from twelve entries to eight.
+- **Acceptance criteria:**
+  - [x] Neither `generateMetadata` reads anything a stranger may not see, proven by a test that asserts the read does not happen for a signed-out caller
+  - [x] The page still titles correctly for somebody who may see it
+  - [x] Both status actions gate before they validate, and refuse a stranger with the redirect rather than a sentence about statuses
+  - [x] The sweep's allowlist is down to eight entries and its pinned length is updated
+  - [x] No other admin page has the same shape - swept, not spot-checked
+- **Depends on:** Task 124.
+- **Left over:** nothing from the criteria, and three things worth keeping.
+  **The exposure was established from Next's source, never observed on the wire.** On a page
+  `redirect()`, Next sends the 307 **and** renders an error-document body whose head is built
+  from the page's own resolved metadata (`app-render.js:2386-2416`, `metadata.js:151-153` maps
+  `'redirect'` to the page's metadata), so `<title>` went out in the 307 body - invisible in a
+  browser, plain to `curl`. Nobody ran a server to watch it happen. **The fix does not depend on
+  the answer**: an unguarded database read on an admin page is wrong whether or not its result
+  escapes, and it is recorded this way rather than as a confirmed observation.
+  **What was exposed, and what was not.** The title of any event in any status including
+  unpublished, the name of any hidden championship, and an existence oracle - but only to
+  somebody already holding a random uuid, which is a mitigation and not a gate. Review confirmed
+  the oracle is now gone for a non-admin: a real id and a fake one give the identical `/me`
+  redirect.
+  **The cost is one extra guard per request on two pages**, since the guard now runs in
+  `generateMetadata` and again in the component. Confirmed harmless - the guards write nothing,
+  audit nothing, and both calls throw the same redirect to the same place - and taken knowingly
+  so the pages keep their real titles rather than falling back to static ones.
+
 ### Task 123: The vocabulary, and one row per grant
 
 - **Serves:** R-261 / UC-55
@@ -2740,13 +2782,42 @@ every action checks.
   can represent an admin as a bundle of powers.
   **No call site changes in this task.** It ends with a vocabulary, a table, a reader, and tests.
 - **Acceptance criteria:**
-  - [ ] A member with no rows holds nothing, and an admin with no rows holds everything - asserted through the same function
-  - [ ] A power not in the vocabulary cannot be stored or asked about, and the refusal names it
-  - [ ] Applying a preset yields exactly the powers that preset names, asserted name by name rather than by count
-  - [ ] Granting the same power twice leaves one row and does not move `granted_at`
-  - [ ] The migration is additive only, and running it twice changes nothing the second time
-  - [ ] Nothing in the pure module imports a database handle, pinned by the client-boundary sweep
+  - [x] A member with no rows holds nothing, and an admin with no rows holds everything - asserted through the same function
+  - [x] A power not in the vocabulary cannot be stored or asked about, and the refusal names it
+  - [x] Applying a preset yields exactly the powers that preset names, asserted name by name rather than by count
+  - [x] Granting the same power twice leaves one row and does not move `granted_at`
+  - [x] The migration is additive only, and running it twice changes nothing the second time
+  - [x] Nothing in the pure module imports a database handle - pinned by **its own test**, not by the client-boundary sweep, which only catches a server file importing a value from a `"use client"` module and would stay green here. The pin must catch a bare `import "@/db";` as well as the named forms
 - **Depends on:** nothing.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **A test was dead for part of this task and nothing but a human eye found it.** The implementer's
+  edit script wrote the boundary pin's `\b` as literal backspace characters, so the regex could
+  match nothing and the test passed **vacuously**. They caught it by reading the file, replaced
+  it, scanned every file they had touched for control characters, and then re-proved the pin by
+  watching it fail under four import forms. A test that passes because it can no longer match
+  anything reads as evidence and supplies none - this plan has recorded fixtures that could not
+  distinguish the rule they pinned (Tasks 102, 117) and this is the same disease in a new organ.
+  **The set was typed as strings, and the lie would have been believed two tasks later.**
+  `powersOf` returned `ReadonlySet<string>`, defended by "a stale row grants nothing because
+  `holds` checks the vocabulary" - true only for callers that go through `holds`. Task 130 is
+  specced as "`/admin` admits anybody holding anything", which anybody would write as
+  `powers.size > 0`, and one stale or hand-inserted row would then be an admin-area pass. Now
+  `isPower` filters at the read and the type is `ReadonlySet<Power>`, so the hazard is gone at
+  the type level rather than by convention. Found by review, and independently flagged by the
+  other reviewer as a note for Task 125.
+  **The escalation claim was false, and it was the lead's sentence.** Decision 007 said "no
+  escalation path to reason about". `hosts.approve` writes an `event_hosts` row - "within this
+  event the holder can do what an admin can" - and `approveInside` has never checked that the
+  decider is not the applicant. Harmless while only admins could approve, because an admin
+  already has everything; a hole the moment the power is grantable. The record, R-264's note and
+  Task 126's criteria now carry the refusal.
+  **Two comments described a mechanism that does not exist.** The primary key was said to make
+  "the same grant written twice one row"; it makes a second plain insert an **error**, and it is
+  one row only because `grantPower` says `ON CONFLICT DO NOTHING`. Task 131 writing its own
+  set-replacing insert on the strength of that sentence would throw on a double submit. And
+  `grantPower` returned `void`, which cannot satisfy Task 131's "a save that changes nothing
+  writes none" without a racy read; it now returns `{ created }`, the shape `waiveEntryRule`
+  already uses.
 
 ### Task 124: The sweep that proves nothing is ungated
 
@@ -2762,12 +2833,38 @@ every action checks.
   through a helper, say) goes in an allowlist **with a written reason per entry**, and the
   allowlist is asserted to be exactly as long as it says it is, so adding to it is deliberate.
 - **Acceptance criteria:**
-  - [ ] It passes against the current tree, unchanged, before any permission work lands
-  - [ ] An action with its guard deleted fails it, and the message names the action and the file
-  - [ ] An action whose guard is called after a database read fails it - the guard is first or it is not a guard
-  - [ ] Every allowlist entry carries a reason, and the count is pinned
-  - [ ] A newly added action with no guard fails it, proven by adding one in a mutation
+  - [x] It passes against the current tree, unchanged, before any permission work lands
+  - [x] An action with its guard deleted fails it, and the message names the action and the file
+  - [x] An action whose guard is called after a database read fails it - the guard is first or it is not a guard
+  - [x] Every allowlist entry carries a reason, and the count is pinned
+  - [x] A newly added action with no guard fails it, proven by adding one in a mutation
 - **Depends on:** nothing. **Must land before Tasks 126-129.**
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **It found two genuinely ungated reads on its first run**, which is the whole argument for
+  writing it before moving any call site. `generateMetadata` on two admin pages read by id with
+  no guard. See Task 133.
+  **The sweep had a hole exactly where the migration happens.** `getCurrentUser` counts as a
+  guard and refuses nobody, so any of the 61 `requireAdmin` first lines or 13 admin pages could
+  have become `getCurrentUser` during Tasks 126-130 with the sweep still green. It is now
+  recognised **only to be refused by name**, with two pinned sites that need it, and refused
+  outright under `src/app/admin` even if somebody lists one there.
+  **And a second hole exactly where Task 130 will build.** The file matcher ended in `.tsx`, but
+  Next's default page extensions include `.ts`, and a gate-only layout needs no JSX at all - it
+  returns its children. An unguarded `src/app/admin/gate/layout.ts` produced no site, no offence
+  and no "unread" line. Task 130 adds an admin layout, and a layout is where somebody naturally
+  puts a gate. The matcher now takes `.tsx?`, and the admin files Next serves outside a page's
+  guard - `loading`, `not-found`, `opengraph-image` and their kin - are asserted absent rather
+  than silently unread.
+  **A session-minting endpoint had no behavioural test at all.** `opensWith` pins that a
+  substitute gate is present and first, not that its condition still means anything - so
+  `if (!devLoginEnabled() && false) notFound()` passed the sweep *and the entire suite*, because
+  nothing called `devSignInAction` or `devSignOutAction`; only the helper was covered. For the
+  cron route the same limitation is harmless, since its own tests assert 401 for a missing, wrong
+  and bare secret. Dev login now has seven tests: shut in production, shut with the switch off,
+  shut against a remote database, and a control proving the open case really opens.
+  **The lead verified the sweep independently rather than on three agents' word.** Removing one
+  `await requireAdmin()` failed it in two places, naming the file and the action. For the test
+  that guards 105 self-gating call sites, reading the report was not enough.
 
 ### Task 125: The guard
 
@@ -2809,6 +2906,8 @@ every action checks.
   - [ ] An `events.manage` holder manages an event they do not host, and a host still manages theirs
   - [ ] An `announce.post` holder posts an announcement by hand on an event they neither host nor manage, and still cannot change what the announcement says
   - [ ] A `hosts.approve` holder approves and declines, and does not thereby create events
+  - [ ] **A `hosts.approve` holder cannot approve their own application**, refused by name - without this the power is an escalation path, because an `event_hosts` row is "within this event the holder can do what an admin can", and `approveInside` has never checked that the decider is not the applicant. Harmless while only admins could approve; a hole the moment it is grantable
+  - [ ] An admin approving their own application is unchanged, because an admin already manages every event and the refusal would be theatre
   - [ ] Every audit line names the holder as actor
   - [ ] The sweep still passes
 - **Depends on:** Tasks 124, 125.

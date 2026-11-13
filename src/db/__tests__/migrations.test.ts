@@ -121,6 +121,10 @@ describe("migrations", () => {
       "team_members",
       "teams",
       "user_notes",
+      // R-261 / UC-55: a power one member has been given, one row per grant.
+      // drizzle/0035 — empty on every install, because nobody holds a power
+      // until an admin gives one and the admin flag is never a row here.
+      "user_permissions",
       "users",
       "verification_tokens",
     ]);
@@ -299,11 +303,11 @@ describe("migrations", () => {
       `select count(*)::text as count from drizzle.__drizzle_migrations`
     );
     expect(after.rows[0].count).toBe(before.rows[0].count);
-    // 48 since drizzle/0033 added `event_round_scores`. The list itself is
+    // 49 since drizzle/0035 added `user_permissions`. The list itself is
     // asserted by name in the first test in this file, which is the one to read
     // on a mismatch; this count is here so a second pass that *created*
     // something cannot hide behind a list that was updated to expect it.
-    expect(await tableNames(ctx.client)).toHaveLength(48);
+    expect(await tableNames(ctx.client)).toHaveLength(49);
   });
 
   it("ships the default points table a new championship starts with", async () => {
@@ -2358,6 +2362,153 @@ describe("a marker for the field that holds a game's preferred roles (drizzle/00
 
     await runFile(client, TAG);
 
+    expect(await state()).toEqual(once);
+  });
+});
+
+describe("one row per grant (drizzle/0035)", () => {
+  /**
+   * R-261 / UC-55: `user_permissions` arrives, and nothing else moves.
+   *
+   * The file has no data statement. Nobody holds a power until an admin gives
+   * one, and the admin flag is never written here, so there is nothing to
+   * backfill — which leaves two claims to hold it to.
+   *
+   * **Additive only.** A push to main applies this file while instances of the
+   * previous build are still serving, so everything they read has to be where
+   * it was: `shape()` is the whole public schema, taken either side of the
+   * file, and the members who exist are counted either side of it too.
+   *
+   * **Run twice.** Not true of what `npm run db:generate` wrote: a plain
+   * `CREATE TABLE` stops a second run at "already exists", and so does each
+   * `ADD CONSTRAINT`, for which Postgres has no `IF NOT EXISTS`. The second
+   * run here happens over grants that were written after the first, so a file
+   * that got through by dropping and recreating the table would lose them.
+   *
+   * `shape()` is the 0034 describe's, copied. Two users is not yet a reason to
+   * hoist it out of a describe that closes over its own client.
+   */
+  let client: PGlite;
+  let before: Awaited<ReturnType<typeof shape>>;
+  let after: Awaited<ReturnType<typeof shape>>;
+  let membersBefore: string[];
+
+  const TAG = "0035_user_permissions";
+
+  /** Everything the public schema declares, as text, in a stable order. */
+  const shape = async () => ({
+    columns: (
+      await client.query<{ at: string }>(
+        `select table_name || '.' || column_name || ' ' || udt_name || ' null=' || is_nullable
+                || ' default=' || coalesce(column_default, '-') as at
+         from information_schema.columns where table_schema = 'public'
+         order by table_name, column_name`
+      )
+    ).rows.map((row) => row.at),
+    constraints: (
+      await client.query<{ at: string }>(
+        `select c.conrelid::regclass::text || ' ' || c.conname || ' ' || pg_get_constraintdef(c.oid) as at
+         from pg_constraint c join pg_namespace n on n.oid = c.connamespace
+         where n.nspname = 'public' order by 1`
+      )
+    ).rows.map((row) => row.at),
+    indexes: (
+      await client.query<{ at: string }>(
+        `select indexdef as at from pg_indexes where schemaname = 'public' order by indexname`
+      )
+    ).rows.map((row) => row.at),
+    enums: (
+      await client.query<{ at: string }>(
+        `select t.typname || '.' || e.enumlabel as at from pg_enum e
+         join pg_type t on t.oid = e.enumtypid order by t.typname, e.enumsortorder`
+      )
+    ).rows.map((row) => row.at),
+  });
+
+  /** Every member, whole, as text — the one table this file points at. */
+  const members = async () =>
+    (await client.query<{ at: string }>(`select u::text as at from users u order by u.name`)).rows.map(
+      (row) => row.at
+    );
+
+  /** Every grant, whole, as text. */
+  const grants = async () =>
+    (
+      await client.query<{ at: string }>(
+        `select p::text as at from user_permissions p order by p.user_id, p.power`
+      )
+    ).rows.map((row) => row.at);
+
+  const only = (from: string[], notIn: string[]) => from.filter((entry) => !notIn.includes(entry));
+
+  beforeAll(async () => {
+    client = new PGlite();
+    await replayUpTo(client, "0035");
+    await client.exec(`insert into users (name, display_name, is_admin) values
+      ('ada', 'Ada', true),
+      ('vera', 'Vera', false)`);
+
+    before = await shape();
+    membersBefore = await members();
+
+    await runFile(client, TAG);
+
+    after = await shape();
+  }, PGLITE_BOOT_BUDGET_MS);
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  it("adds four columns, all on the new table, and takes none away", () => {
+    expect(only(after.columns, before.columns)).toEqual([
+      "user_permissions.granted_at timestamptz null=NO default=now()",
+      "user_permissions.granted_by_user_id uuid null=YES default=-",
+      "user_permissions.power text null=NO default=-",
+      "user_permissions.user_id uuid null=NO default=-",
+    ]);
+    expect(only(before.columns, after.columns)).toEqual([]);
+  });
+
+  it("keys a grant on the member and the power, and ties both people to users", () => {
+    expect(only(after.constraints, before.constraints)).toEqual([
+      "user_permissions user_permissions_granted_at_not_null NOT NULL granted_at",
+      "user_permissions user_permissions_granted_by_user_id_users_id_fk FOREIGN KEY (granted_by_user_id) REFERENCES users(id) ON DELETE SET NULL",
+      "user_permissions user_permissions_power_not_null NOT NULL power",
+      "user_permissions user_permissions_user_id_not_null NOT NULL user_id",
+      "user_permissions user_permissions_user_id_power_pk PRIMARY KEY (user_id, power)",
+      "user_permissions user_permissions_user_id_users_id_fk FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE",
+    ]);
+    expect(only(before.constraints, after.constraints)).toEqual([]);
+  });
+
+  it("adds no index but the key's own, and no enum value", () => {
+    expect(only(after.indexes, before.indexes)).toEqual([
+      "CREATE UNIQUE INDEX user_permissions_user_id_power_pk ON public.user_permissions USING btree (user_id, power)",
+    ]);
+    expect(only(before.indexes, after.indexes)).toEqual([]);
+    expect(after.enums).toEqual(before.enums);
+  });
+
+  it("leaves every member as they were, the admin flag included", async () => {
+    expect(await members()).toEqual(membersBefore);
+  });
+
+  it("starts empty: nobody is given a power by the file, an admin least of all", async () => {
+    expect(await grants()).toEqual([]);
+  });
+
+  it("changes nothing when the whole file is run a second time, over grants made since", async () => {
+    await client.exec(`insert into user_permissions (user_id, power, granted_by_user_id, granted_at) values
+      ((select id from users where name = 'vera'), 'polls.manage',
+       (select id from users where name = 'ada'), '2026-11-13T10:00:00Z'),
+      ((select id from users where name = 'vera'), 'audit.read', null, '2026-11-13T11:00:00Z')`);
+    const state = async () => ({ shape: await shape(), members: await members(), grants: await grants() });
+    const once = await state();
+
+    await runFile(client, TAG);
+
+    expect(once.grants).toHaveLength(2);
     expect(await state()).toEqual(once);
   });
 });

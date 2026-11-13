@@ -176,4 +176,41 @@ describe("ending the season", () => {
     expect(row.status).toBe("published");
     expect(await auditFor(id, "championship.status")).toEqual([]);
   });
+
+  /*
+   * The guard is first (Task 133): the action used to check its arguments
+   * before it asked who was calling, so a stranger was answered with a sentence
+   * about statuses rather than turned away.
+   */
+  it("sends a signed-out caller to sign in before it looks at what they sent", async () => {
+    const id = await seasonIn("published");
+    state.userId = null;
+
+    const attempt = setChampionshipStatusAction(
+      id,
+      "published",
+      "archived" as unknown as ChampionshipStatusValue,
+      {}
+    );
+
+    await expect(attempt).rejects.toMatchObject({
+      digest: expect.stringMatching(/^NEXT_REDIRECT;[a-z]+;\/signin/),
+    });
+  });
+
+  it("turns away a member who is not an admin before it looks at what they sent", async () => {
+    const id = await seasonIn("published");
+    state.userId = await makeUser(db, { displayName: "A member" });
+
+    const attempt = setChampionshipStatusAction(
+      id,
+      "published",
+      "archived" as unknown as ChampionshipStatusValue,
+      {}
+    );
+
+    await expect(attempt).rejects.toMatchObject({
+      digest: expect.stringMatching(/^NEXT_REDIRECT;[a-z]+;\/signin\?error=/),
+    });
+  });
 });

@@ -21,6 +21,11 @@ import { requireAdmin } from "@/lib/session-guards";
 export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  // The page's own guard, first. This runs for the same request as the page,
+  // and Next puts the title it resolves into the body of the redirect a
+  // stranger is answered with - so an unguarded read here names the season,
+  // hidden or not, to anybody holding its id.
+  await requireAdmin();
   const { id } = await params;
   const season = await getChampionship(id);
   return { title: season ? `${season.name} · Admin` : "Championship · Admin" };

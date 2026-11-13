@@ -192,4 +192,32 @@ describe("the status control", () => {
     const [row] = await db.select().from(events).where(eq(events.id, eventId));
     expect(row.status).toBe("draft");
   });
+
+  /*
+   * The guard is first (Task 133). The action used to check its arguments
+   * before it asked who was calling, so a stranger was answered with a sentence
+   * about statuses - harmless in itself, and the one shape in this file where
+   * something ran ahead of the gate.
+   */
+  it("sends a signed-out caller to sign in before it looks at what they sent", async () => {
+    const eventId = await eventIn("published");
+    state.userId = null;
+
+    const attempt = setEventStatusAction(eventId, "archived" as unknown as EventStatus, "cancelled");
+
+    await expect(attempt).rejects.toMatchObject({
+      digest: expect.stringMatching(/^NEXT_REDIRECT;[a-z]+;\/signin/),
+    });
+  });
+
+  it("turns away a member who does not manage the event before it looks at what they sent", async () => {
+    const eventId = await eventIn("published");
+    state.userId = await makeUser(db, { displayName: "Somebody else" });
+
+    const attempt = setEventStatusAction(eventId, "archived" as unknown as EventStatus, "cancelled");
+
+    await expect(attempt).rejects.toMatchObject({
+      digest: expect.stringMatching(/^NEXT_REDIRECT;[a-z]+;\/me;/),
+    });
+  });
 });

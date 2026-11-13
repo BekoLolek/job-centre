@@ -60,6 +60,11 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // The page's own guard, first. This runs for the same request as the page,
+  // and Next puts the title it resolves into the body of the redirect a
+  // stranger is answered with - so an unguarded read here names the event to
+  // anybody holding its id, whatever the component below goes on to refuse.
+  await requireEventManager(id);
   const event = await getEventById(id);
   return { title: event ? `${event.title} · Admin` : "Event · Admin" };
 }

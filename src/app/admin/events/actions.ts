@@ -348,13 +348,13 @@ export async function setEventStatusAction(
   from: EventStatus,
   status: EventStatus
 ): Promise<EventResult<{ status: EventStatus }>> {
+  const admin = await requireEventManager(eventId);
   // Both arrive from the browser; anything that is not a status is refused
   // before it can reach a write, a log line or a notification.
   const statuses: readonly string[] = eventStatus.enumValues;
   if (!statuses.includes(from) || !statuses.includes(status)) {
     return fail("That is not an event status.");
   }
-  const admin = await requireEventManager(eventId);
   if (from === status) return fail(`The event is already ${status}.`);
 
   const result = await updateEvent(eventId, { from, status });

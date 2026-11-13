@@ -132,13 +132,13 @@ export async function setChampionshipStatusAction(
   status: ChampionshipStatusValue,
   options: StatusMoveOptions = {}
 ): Promise<ChampionshipResult<{ status: ChampionshipStatusValue }>> {
+  const admin = await requireAdmin();
   // Both arrive from the browser; anything that is not a status is refused
   // before it can reach a write or a log line.
   const statuses: readonly string[] = championshipStatus.enumValues;
   if (!statuses.includes(from) || !statuses.includes(status)) {
     return { ok: false, error: "That is not a championship status." };
   }
-  const admin = await requireAdmin();
 
   const result = await setChampionshipStatus(championshipId, from, status, {
     confirm: options.confirm === true,
