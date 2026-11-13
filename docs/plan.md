@@ -3028,3 +3028,147 @@ every action checks.
   - [ ] The three unnamed actions appear in `AUDIT_ACTIONS` and render as sentences
   - [ ] No existing audit line changes wording, pinned
 - **Depends on:** nothing.
+
+## U. A stage that was never built (R-268 / UC-18 9b, 9c)
+
+The Bracket tab reports what the server decided and holds one button, for the one state the
+server deliberately will not touch on its own. There is a second: a saved stage with no matches
+at all. The screen says saving builds them, and the save bar is only on the screen while
+something is unsaved - so the sentence names a button nobody can press. The action it needs has
+existed since Task 21 and has never had a caller.
+
+**One case is deliberately left alone**, and it is the same lie wearing a different number: a
+clean tab whose stage holds *some* of its rows but not all still says "saving builds them". It
+stays out because R-268 says "when it has none" and because `writeStageMatches` writes a stage's
+slots in one transaction, so a part-written stage is not a state this build can reach - only one
+somebody made by hand. If it is ever seen, it is a task of its own and the fix is one condition.
+
+### Task 134: A stage with no matches, and nothing on the screen that builds them
+
+- **Serves:** R-268 / UC-18 9b, 9c
+- **Files:** `src/components/admin/events/FormatTab.tsx`, `src/components/admin/events/__tests__/format-tab-out-of-date.test.ts`, one new test file
+- **Do:** The matches line on the Bracket tab has four answers and one button. A saved stage
+  with real teams and no stored rows gets the fourth: **"0 matches in the database. This shape
+  wants 6, and saving builds them."** That sentence is true only while the tab is dirty - and
+  `SaveRow` publishes to `UnsavedChanges`, which puts the save bar up **only while something is
+  dirty**. So in the one state that needs an action, the screen names an action that is not on
+  it. Give that state a **"Generate matches"** button calling `generateStageAction`, which
+  already exists, is already gated by `requireManagerOfChild`, already audits
+  `format.generated`, and today has **no caller outside a test**.
+  **Narrow the existing pin, do not delete it.** `format-tab-out-of-date.test.ts` asserts the
+  file does not contain `generateStageAction` at all. What Task 21 removed was an **effect** that
+  generated whenever this tab happened to be open (R-73) - a button a human presses is not that
+  effect, and the pin must keep saying so: `useEffect` still absent, and the generate reachable
+  only from a click handler.
+  **And stop the sentence lying in the other direction.** When the real team count does not fit
+  the stage's shape, print `teamCountRefusal`'s own sentence - it is pure, and this file already
+  imports from `format-policy` - instead of promising a save that `syncStages` will refuse.
+  **The sentence beside the button drops its last clause.** Where "Generate matches" shows,
+  the line reads **"0 matches in the database. This shape wants 6."** and stops - naming a save
+  beside a button that is not a save is the same wrong turn in a shorter sentence. Everywhere
+  else the old wording stands verbatim, the dirty state included.
+  **"Nothing unsaved" is not "not dirty".** The tab's save state is
+  `idle | dirty | saving | saved | error`, and three of those hold edits nobody has stored:
+  `dirty`, `saving` - the save path sets it and never sets `busy`, so a button gated on `dirty`
+  alone comes back *enabled* mid-save - and `error`, where a failed save leaves the drafts on
+  screen. Generating in either would build the **stored** shape while the typed one is still
+  pending. The gate is the three of them, by name.
+  No server change. `generateMatches` already refuses a stage carrying results, which is
+  belt-and-braces here because the button is offered only where there are no rows at all.
+- **Acceptance criteria:**
+  - [x] A saved stage with real teams and no stored matches offers "Generate matches", and pressing it calls `generateStageAction` with that stage's id
+  - [x] The stored count on the screen follows a successful generate without a hand reload, by the same `router.refresh()` the rebuild path uses
+  - [x] It is **not** offered while the stage is out of date - "Rebuild anyway" stays the only button in that state
+  - [x] It is **not** offered on placeholder teams, and the placeholder sentence is unchanged
+  - [x] It is **not** offered while the tab is dirty, where saving really does build them and the bar is up to be pressed
+  - [x] It is **not** offered while a save is in flight, nor after one has failed - both hold unsaved edits, and generating there would build the stored shape instead of the typed one
+  - [x] A failed **generate** still leaves the button on the screen, where a failed **save** takes it away - the two are different states and the line says so
+  - [x] A real team count the stage's shape cannot take prints the range refusal and offers no button, proven against a kind whose range it misses
+  - [x] The tab still holds no `useEffect`, pinned, and the generate call is reachable only from a click handler - the old blanket pin narrowed rather than dropped, with its reason carried over
+  - [x] A failed generate says so and leaves the line as it was
+- **Depends on:** nothing.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **A test pinned the lie.** `format-tab-out-of-date.test.ts` asserted the exact sentence "This
+  shape wants 6, and saving builds them" and passed for as long as it existed, because it asked
+  what the markup *said* and not what the reader could *do*. The save control is published to
+  `UnsavedChanges` and the bar is only on the screen while something is unsaved, so in the one
+  state the sentence addresses there was no save to make. A rendering test cannot see that, and
+  the whole defect lived in the gap between the two questions.
+  **"Not dirty" was not "nothing unsaved", and the difference was two states.** The first build
+  gated the button on `state === "dirty"`. The save path sets `"saving"` and never sets `busy`,
+  so pressing Save made the button appear **enabled mid-save**; and after a failed save,
+  `"error"` left every edit on screen with the button back, where a press would have built the
+  **stored** shape while the typed one was still pending. Found by spec review, which quoted
+  R-268's own words back at it; the implementer had called it an acceptable edge, and it was the
+  exact condition the requirement names.
+  **A reviewer offered two fixes as equivalent and only one was right.** On a dead
+  `placeholders ? null :` guard, quality review suggested either dropping the ternary or keeping
+  it and dropping `!placeholders` from `generates`. The second would have forced `refusal` to
+  null on placeholder teams and put the button on them - breaking a criterion the same review
+  had just passed. Checked before dispatch rather than after. **Review output is a claim, not a
+  patch**, and this plan has now recorded the same lesson from the other direction (Task 118,
+  where both reviews passed something unshippable).
+  **The tap-target finding was repo-wide and is not this button's.** `.btn` is 13px at
+  `line-height: 1` with `0.5rem` padding - about 31px - and since `.btn` was moved into a layer
+  so utilities could beat it, `size="sm"`'s `px-3 py-1.5` now **wins** where it used to lose,
+  taking every compact control to about 27px. **257** `size="sm"` call sites, **none** carrying
+  `min-h-11`. The new button was floored anyway, because a new control under a stated
+  non-negotiable is a new offence; the class itself is Task 135 rather than 257 edits smuggled
+  into this diff.
+  **The guard was pinned against narrowing three ways and against widening not at all.** Each of
+  `dirty`, `saving` and `error` had a test that died when it was removed, and `state !== "idle"`
+  - one condition *added* - survived every one of them, restoring the original lie after every
+  successful save. Worth remembering as a shape: a guard of N conditions tends to get N tests
+  for removal and none for addition.
+  **What is not proven, plainly.** Nothing here was walked in a browser - `.env.local` holds no
+  `DATABASE_URL`, so there is no local database to run one against. The click is proven by
+  wrapping `Button`, `Field`, `SaveRow` and `useState`: it shows the tab's own handler calls the
+  action once with that stage's id and refreshes only on success, and it cannot show a real
+  click reaching that handler, nor the count changing after the refresh, which is a server
+  re-render. `min-h-11` is proven as a class the button is given, not as a rendered height. The
+  `live !== null` guard has no test. And a clean tab holding *some* of its rows but not all
+  still says "saving builds them" - see the note above this task.
+
+### Task 135: Every button in the app is below the tap-target floor
+
+- **Serves:** the 44px non-negotiable this plan has already enforced twice (Tasks 113, 120)
+- **Files:** `src/app/globals.css`, `src/components/ui/Button.tsx`, a new sweep test
+- **Do:** Found while reviewing Task 134, and it is not about that button. `.btn`
+  (`globals.css:497`) is `font-size: 13px`, `line-height: 1`, `padding: 0.5rem 0.85rem` and a
+  1px border - **about 31px**. And since `.btn` was moved into a layer so utilities could beat
+  it, `Button`'s `size="sm"` (`px-3 py-1.5`) now wins where it used to lose, which makes every
+  compact control **about 27px**. There are **257** `size="sm"` call sites in `src/` and
+  **none** carries `min-h-11`. So the floor this plan calls non-negotiable is met by almost no
+  button in the product, and the two places that do meet it (`PlacementEditor`, `Checkbox`) got
+  there one review at a time.
+  The fix belongs in `.btn`, not in 257 call sites: a `min-height` on the class, with the
+  padding kept so nothing reflows, and `sm` floored the same way. Then a sweep so the next one
+  cannot ship under it - the project has already shipped one 16px control that only a browser
+  pass caught (Task 113).
+  **Check before changing the class:** a floor on `.btn` reaches icon-only buttons, buttons
+  inside table rows and the `href` form that renders a `next/link`. Any of those that would
+  grow a row needs looking at, which is why this is its own task rather than a line in another.
+- **Acceptance criteria:**
+  - [ ] `.btn` and `size="sm"` both render at least 44px tall, proven from the compiled stylesheet rather than from the class names
+  - [ ] A sweep fails on a clickable that renders below the floor, and is watched failing
+  - [ ] No row, header or toolbar in the admin area grows a scrollbar or wraps differently, checked in a browser at phone and desktop widths
+  - [ ] The two call sites that floor themselves by hand lose their now-redundant classes, or keep them with a reason
+- **Depends on:** nothing.
+
+### Task 136: A write in flight overwrites an edit made while it runs
+
+- **Serves:** R-260's promise that the screen never lies about what is saved
+- **Files:** `src/components/admin/events/FormatTab.tsx`, tests
+- **Do:** Found in review of Task 134 and fixed there **only for the new handler**. `rebuild()`
+  does `setState("saved")` on success, and `busy` disables buttons but not fields - so a
+  keystroke typed while the rebuild is in flight sets `dirty`, the success path overwrites it,
+  the unsaved bar comes down and the edit is gone with nothing said. `generate()` now uses the
+  functional form and holds `dirty` when it finds it; `rebuild()` still does not.
+  **Look wider before fixing.** The same `setState("saved")`-after-an-await shape is worth
+  grepping for across the admin tabs: anywhere a tab both tracks its own dirtiness and runs a
+  write that does not block typing, this is the same bug with a different noun.
+- **Acceptance criteria:**
+  - [ ] An edit typed while a rebuild is in flight survives it, and the unsaved bar stays up
+  - [ ] Watched failing against the current code before the fix
+  - [ ] Every other tab with the same shape is either fixed or named with a reason it is safe
+- **Depends on:** nothing.

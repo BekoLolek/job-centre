@@ -48,6 +48,7 @@ import {
   TIEBREAKERS,
   modesFor,
   normaliseStageConfig,
+  teamCountRefusal,
 } from "@/lib/format-policy";
 // Type-only: `src/lib/format.ts` reaches Postgres, and a value import here
 // would drag Drizzle and PGlite into the browser bundle.
@@ -58,6 +59,7 @@ import { resolveMatches } from "@/lib/format-resolve";
 import { formatWhen } from "@/lib/time";
 import {
   type StageFields,
+  generateStageAction,
   previewStagesAction,
   rebuildStageAction,
   saveStagesAction,
@@ -87,8 +89,15 @@ import SaveRow, { type SaveState } from "./SaveRow";
  * Both are now the server's answer: `syncStages` runs inside whichever action
  * changed the teams or the stages, compares the whole generated shape against
  * the stored rows, and rebuilds or marks out of date. So this screen *reports*:
- * `stage.outOfDateSince` is the one state it has a button for, and the button
- * is "Rebuild anyway", which says what it will clear and then clears it.
+ * `stage.outOfDateSince` has a button, and the button is "Rebuild anyway",
+ * which says what it will clear and then clears it.
+ *
+ * One other state has one (R-268 / UC-18 9b): a saved stage with real teams and
+ * no rows at all, on a tab with nothing to save. Nothing the sync runs inside
+ * is about to happen there, and the save bar is only up while something is
+ * dirty — so "Generate matches" is the action that state would otherwise name
+ * and not have. It is a button somebody presses, never an effect: what R-73
+ * removed was a write made because a tab was open, and that stays removed.
  *
  * ## The preview is the generator, not a drawing of it
  *
@@ -420,6 +429,35 @@ export default function FormatTab({
     }
   };
 
+  /**
+   * Build a stage's matches where there are none (UC-18 9b).
+   *
+   * No preview and no confirm token, unlike {@link rebuild}: the button is only
+   * offered where the stage holds no rows, so there is nothing to list and
+   * nothing to clear. The server still refuses a stage carrying results.
+   */
+  const generate = async (stage: DraftStage) => {
+    if (!stage.id) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await generateStageAction(stage.id);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setNote(`${plural(result.data.created, "match", "matches")} generated`);
+      // The button is busy while this runs and the fields are not. An edit
+      // typed meanwhile is still unsaved, and it outranks the note.
+      setState((was) => (was === "dirty" ? was : "saved"));
+      router.refresh();
+    } catch {
+      setError("Could not reach the server. Nothing was generated.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {error && <Alert>{error}</Alert>}
@@ -471,11 +509,13 @@ export default function FormatTab({
               live={stage.id ? (format.stages.find((row) => row.id === stage.id) ?? null) : null}
               matchIds={matchIds}
               busy={busy}
+              unsaved={state === "dirty" || state === "saving" || state === "error"}
               onPatch={(change) => patch(stage.key, change)}
               onConfig={(change) => setConfig(stage.key, change)}
               onMove={(direction) => move(index, direction)}
               onRemove={() => remove(stage.key)}
               onRebuild={() => void attemptRebuild(stage)}
+              onGenerate={() => void generate(stage)}
               placeholders={usingPlaceholders}
             />
           ))}
@@ -677,11 +717,13 @@ function StagePanel({
   live,
   matchIds,
   busy,
+  unsaved,
   onPatch,
   onConfig,
   onMove,
   onRemove,
   onRebuild,
+  onGenerate,
   placeholders,
 }: {
   stage: DraftStage;
@@ -694,12 +736,22 @@ function StagePanel({
   live: FormatView["stages"][number] | null;
   matchIds: Record<string, string>;
   busy: boolean;
+  /**
+   * The tab holds edits the server does not have, so saving is what builds the
+   * matches. Wider than "dirty" on purpose: a save **in flight** has not landed,
+   * and one that **failed** left every edit exactly where it was — in both the
+   * stored shape is not the one on the screen, and generating would build the
+   * stored one.
+   */
+  unsaved: boolean;
   onPatch: (change: Partial<DraftStage>) => void;
   onConfig: (change: Partial<StageConfig>) => void;
   onMove: (direction: "up" | "down") => void;
   onRemove: () => void;
   /** Ask what rebuilding this stage would clear. The only destructive button. */
   onRebuild: () => void;
+  /** Build the matches of a stage that has none. */
+  onGenerate: () => void;
   /** The team list is stand-ins, so nothing is written for this stage yet. */
   placeholders: boolean;
 }) {
@@ -731,6 +783,18 @@ function StagePanel({
   // Rows, not resolved slots — see the note on the prop.
   const generated = live?.matches.filter((match) => matchIds[match.slot]).length ?? 0;
   const dirtyShape = live ? live.kind !== stage.kind : false;
+
+  // Only read once the teams are real — the placeholder line comes first.
+  const refusal = teamCountRefusal(stage.kind, teams.length, stage.config);
+  // The one state that needs an action and has no other: stored, current, real
+  // teams that fit, nothing to save — and not one row. See `MatchesState`.
+  const generates =
+    live !== null &&
+    !live.outOfDateSince &&
+    !placeholders &&
+    !unsaved &&
+    refusal === null &&
+    generated === 0;
 
   return (
     /*
@@ -850,9 +914,10 @@ function StagePanel({
 
       {/*
         The matches line. It reports rather than asks — see the note at the top
-        of the file. The only button here is for the one case the server
-        deliberately will not touch on its own: a stage the sync has marked out
-        of date because it is carrying work a rebuild would clear.
+        of the file. One button is for the case the server deliberately will
+        not touch on its own: a stage the sync has marked out of date because
+        it is carrying work a rebuild would clear. The other is for a stage
+        with no rows and nothing on the screen that would build them.
       */}
       <div className="flex flex-wrap items-center gap-3 pt-2">
         <MatchesState
@@ -862,10 +927,23 @@ function StagePanel({
           outOfDateSince={live?.outOfDateSince ?? null}
           handEdited={Boolean(live?.handEditedAt)}
           placeholders={placeholders}
+          refusal={refusal}
+          generates={generates}
         />
         {live?.outOfDateSince && (
           <Button size="sm" variant="flare" disabled={busy} onClick={onRebuild}>
             Rebuild anyway
+          </Button>
+        )}
+        {generates && (
+          <Button
+            size="sm"
+            variant="union"
+            className="min-h-11"
+            disabled={busy}
+            onClick={onGenerate}
+          >
+            Generate matches
           </Button>
         )}
       </div>
@@ -943,8 +1021,15 @@ function StagePanel({
  * Four states, and the difference matters: nothing saved yet, placeholder
  * teams so nothing is written at all, **out of date** — the server found the
  * rows no longer match and would not replace them, because the stage is
- * carrying work (UC-18 9a) — and current. Only the out-of-date one is a
- * decision for the manager, and only it has a button.
+ * carrying work (UC-18 9a) — and current. The out-of-date one is a decision
+ * for the manager and has a button.
+ *
+ * What is left is a stage whose rows and shape disagree without the server
+ * having said so, and that is three different things (R-268). A team count the
+ * shape cannot take is told so, in `teamCountRefusal`'s own words, because a
+ * save would be refused. A stage with no rows on a clean tab gets "Generate
+ * matches" beside this line (`generates`) and is not told to save. Anything
+ * else is the tab between an edit and its save, where saving does build them.
  *
  * `outOfDateSince` is the server's answer, not a comparison made here. The
  * version of this line that compared `rows` against `wanted` itself could not
@@ -958,6 +1043,8 @@ function MatchesState({
   outOfDateSince,
   handEdited,
   placeholders,
+  refusal,
+  generates,
 }: {
   saved: boolean;
   rows: number;
@@ -966,6 +1053,10 @@ function MatchesState({
   outOfDateSince: string | null;
   handEdited: boolean;
   placeholders: boolean;
+  /** Why the real team count does not fit this shape, or null when it does. */
+  refusal: string | null;
+  /** "Generate matches" stands beside this line, so it must not name a save. */
+  generates: boolean;
 }) {
   if (!saved) {
     return (
@@ -997,6 +1088,16 @@ function MatchesState({
     return (
       <span className="text-12 text-muted">
         {plural(rows, "match", "matches")} in the database, matching this shape.
+      </span>
+    );
+  }
+  if (refusal) {
+    return <span className="text-12 text-union">{refusal}</span>;
+  }
+  if (generates) {
+    return (
+      <span className="text-12 text-muted">
+        {plural(rows, "match", "matches")} in the database. This shape wants {wanted}.
       </span>
     );
   }

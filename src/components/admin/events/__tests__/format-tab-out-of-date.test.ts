@@ -32,6 +32,7 @@ import { resolveMatches } from "@/lib/format-resolve";
  */
 
 const actions = vi.hoisted(() => ({
+  generateStageAction: vi.fn(),
   previewStagesAction: vi.fn(async () => []),
   rebuildStageAction: vi.fn(),
   saveStagesAction: vi.fn(),
@@ -136,20 +137,52 @@ function renderFormat(stage: StageView): string {
 /* ------------------------------------------------------------------ */
 
 describe("FormatTab reports what the server decided (UC-18 9a)", () => {
-  it("no longer generates matches from the client at all (R-73)", () => {
+  it("generates matches from a click and from nothing else (R-73, R-268)", () => {
     /*
-     * The plan's words are "the client effect goes". It went, and this is what
-     * stops it coming back: the tab holds no effect and cannot reach the
-     * generate action, so "the matches follow the teams" cannot quietly become
-     * "the matches follow the teams while this tab is open" again.
+     * The plan's words for Task 21 are "the client effect goes". It went, and
+     * this is what stops it coming back: the tab holds no effect, so "the
+     * matches follow the teams" cannot quietly become "the matches follow the
+     * teams while this tab is open" again.
+     *
+     * This used to ban the generate action from the file outright. Task 134
+     * narrowed it, because what R-73 removed was an *effect* — a write nobody
+     * asked for, made because a tab happened to be open — and a button a
+     * manager presses is not that. So the action may be here, **once**, and
+     * the whole path to it is spelled out: one call, inside one handler, which
+     * one prop hands down, which one `onClick` spends. Anything else that
+     * reaches it — a second call, a call from the render body, the handler
+     * passed anywhere but a click — changes one of these counts.
+     *
+     * Comments are stripped first: this file's own docblocks discuss effects.
      */
-    const source = fs.readFileSync(
-      path.resolve(__dirname, "../FormatTab.tsx"),
-      "utf8"
+    const source = fs
+      .readFileSync(path.resolve(__dirname, "../FormatTab.tsx"), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/^[ \t]*\/\/.*$/gm, "");
+    const count = (pattern: RegExp) => (source.match(pattern) ?? []).length;
+
+    // No effect of any kind — `useLayoutEffect` would do the same damage.
+    expect(source).not.toMatch(/\buse\w*Effect\b/);
+
+    // The import and one call. The call awaits, so it is not in a render body.
+    expect(count(/\bgenerateStageAction\b/g)).toBe(2);
+    expect(source).toContain("const result = await generateStageAction(stage.id);");
+    // That call is the body of `generate`, and nothing else is between them.
+    expect(source).toMatch(
+      /const generate = async \(stage: DraftStage\) => \{(?:(?!\n  \};)[\s\S])*generateStageAction\(stage\.id\)/
     );
-    expect(source).not.toContain("useEffect");
-    expect(source).not.toContain("generateStageAction");
-    // And the destructive write it does keep is the confirmed one, handed the
+    // `generate` is invoked from exactly one place, and that place is a prop.
+    expect(count(/\bgenerate\(/g)).toBe(1);
+    // And it is not handed anywhere uncalled — `setTimeout(generate)` has no
+    // `(` after the name. The declaration and that one call are all there is.
+    expect(count(/\bgenerate\b/g)).toBe(2);
+    expect(source).toContain("onGenerate={() => void generate(stage)}");
+    // And the prop is spent exactly once, on a click: passed, destructured,
+    // typed, pressed.
+    expect(count(/\bonGenerate\b/g)).toBe(4);
+    expect(source).toContain("onClick={onGenerate}");
+
+    // And the destructive write it keeps is the confirmed one, handed the
     // token the preview carried rather than a flag.
     expect(source).toContain("rebuildStageAction(stage.id, impact.confirm)");
   });
@@ -182,7 +215,13 @@ describe("FormatTab reports what the server decided (UC-18 9a)", () => {
     expect(html).toContain("results or hand-moved times in the way");
   });
 
-  it("says a stage with no rows is built by saving", () => {
+  it("does not tell a clean tab that saving builds a stage's missing rows", () => {
+    /*
+     * It used to: "This shape wants 6, and saving builds them", on a tab with
+     * nothing to save and so no save bar to press (R-268). The button that
+     * state has instead, and every state that must not have it, are in
+     * `format-tab-generate.test.ts`.
+     */
     const view = formatView(stageView());
     const html = renderToStaticMarkup(
       createElement(FormatTab, {
@@ -195,7 +234,9 @@ describe("FormatTab reports what the server decided (UC-18 9a)", () => {
       })
     );
 
-    expect(html).toContain("This shape wants 6, and saving builds them.");
+    expect(html).toContain("0 matches in the database. This shape wants 6.");
+    expect(html).not.toContain("saving builds them");
+    expect(html).toContain("Generate matches");
     expect(html).not.toContain("Rebuild anyway");
   });
 });

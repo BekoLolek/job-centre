@@ -606,6 +606,7 @@ better answer than inventing a delete permission per area.
 | R-265 | As a member with some powers, I want the admin area to show me what I may do and nothing else, so that I am not offered screens that will turn me away. | Should | And the refusal still happens at the action, because hiding is not permission |
 | R-266 | As the site admin, I want every grant and revoke recorded with who did it, so that a change in authority is answerable afterwards. | Must | The audit log already records `user.admin.granted` and `user.admin.revoked`; this joins them |
 | R-267 | As the site admin, I want the dangerous actions to need a power of their own, so that somebody who may run polls cannot delete one by accident of scope. | Should | Over the `DESTRUCTIVE` set the audit log already names, which today only colours a row |
+| R-268 | As a manager, I want to build a stage's matches from the Bracket tab when it has none, so that a stage that was never built is not waiting on a button that is not on the screen. | Must | The generate is a press, never an effect (R-73). Offered only where nothing else will do it: real teams, no stored rows, not out of date, nothing unsaved |
 
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 

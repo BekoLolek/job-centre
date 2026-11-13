@@ -615,9 +615,11 @@ path of each use case is its acceptance test; every alternate and error flow get
 **Alternate flows**
 - **1a.** Groups then playoff - Manager sets group count and how many advance.
 - **9a.** A stage has recorded results or manual changes - System does not regenerate it, marks it out of date, and offers "rebuild anyway" with a warning of what is lost.
+- **9b.** A saved stage holds no matches, the teams are real and nothing is unsaved - System offers "Generate matches"; Manager presses it and System builds them (R-268). Nothing else on the screen would: the save bar exists only while something is unsaved, so step 5's regeneration never comes.
 
 **Error flows**
 - **2a.** Kind does not support the team count - System names the valid range; nothing generated.
+- **9c.** The stage holds no matches and the team count does not fit its shape - System prints the range rather than promising that a save would build them, and offers no generate.
 - **7a.** Day overruns midnight or the next day - System warns; it is allowed.
 - **5a.** Event complete - System refuses.
 
