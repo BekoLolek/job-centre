@@ -527,6 +527,86 @@ inherit that for free, and the point is asserted rather than assumed.
 | R-255 | As an admin, I want to give each player on a team their own finishing place, so that two players who played together can score differently in the season. | Should | Per event, and a choice: the places are the teams', or they are the players'. Never both at once - a member placed twice is already refused by name |
 | R-256 | As an admin, I want to drag the finishing order into shape instead of typing a number for every place, so that ordering a dozen players is one pass rather than a dozen boxes. | Could | An addition to the boxes, not a replacement for them. A drag produces a strict 1, 2, 3; a genuine tie and a blank are still typed, because neither has a gesture |
 
+### Building the teams by moving people (added 2026-11-13)
+
+The owner's ask: *"a manual team builder with draggable cards - name, preferred role(s) and
+current rank displayed on the cards."*
+
+**The hand-built route already exists** (R-220): the Teams tab's Rosters panel has a "Move to..."
+`<select>` beside every player and a "Place on..." `<select>` under the unplaced list, and each
+choice writes immediately. What it does not have is a gesture, or anything on the row to decide
+*with* - the rank is in the tab's own props and never printed, and nothing reads a preferred
+role anywhere on the admin side.
+
+**Rank is free; roles are not.** A player's rank is already carried on `ApplicantView`, found by
+asking the game for its profile field of type `rank` - which is why renaming "Rank" to "Division"
+does not break it. Preferred roles have no such anchor. The only thing that exists is a seeded
+multiselect for one game, keyed `roles`, which an admin may rename or retire; finding it by that
+key would break silently the day somebody did. So the roles field gets an anchor of its own, and
+a game that has not marked one simply shows no roles.
+
+**The anchor is a marker on the field, not a new field type** - decided 2026-11-13, after the
+type was built and then taken out. The `rank` type earns its place: it draws its options from the
+game's ladder, renders its own control and validates differently. A `roles` type would differ
+from `multiselect` in exactly one way, that it can be found by a query - and that one difference
+cost a replacement of the `profile_field_type` enum, a re-typing of both columns that use it, a
+cascade into every event question and template question that prefills from the field (because a
+link whose types disagree is refused), and a "Preferred roles" entry in pickers where it means
+nothing. **Pushing to main applies migrations to production**, and `docs/plan.md`'s own risk
+register answers that with "additive-first migrations; drops in a later commit" - which a
+type replacement cannot be, because both columns change type in the one deploy that old
+instances are still serving through. A boolean column is one `ADD COLUMN` and one `UPDATE`,
+the field stays a `multiselect`, and nothing linked to it sees any change at all.
+
+**The selects stay.** They are the no-mouse path, and HTML5 drag does nothing on a touch screen -
+so a board that only dragged would be a board an admin could not use on a phone. This is Task
+117's rule applied a second time: a drag is an addition to a control that already works.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-257 | As an admin, I want to build the teams by moving players directly, so that filling six teams is a handful of gestures rather than a dropdown for every person. | Should | The existing selects stay as the path for a keyboard and a phone |
+| R-258 | As an admin, I want to see each player's name, preferred roles and current rank while I am sorting them, so that I can balance the sides without opening anybody's profile. | Should | The picture comes free (R-252). A player with no rank, or no roles, says so rather than showing a gap |
+| R-259 | As an admin, I want to mark which of a game's profile fields holds its preferred roles, so that the right answers are read whatever that game calls the field. | Should | The anchor the rank field already has. Each game names its own roles; a game that marks none shows none |
+| R-260 | As an admin, I want a move to take effect the moment I make it, and to be told plainly when it cannot, so that I am never unsure whether the teams on the screen are the teams that are saved. | Should | What the Rosters panel does today. A refused move puts the player back where they were, with the server's own sentence |
+
+### Permissions, so authority is not one switch (added 2026-11-13, Tier 3 - awaiting Gate 1)
+
+The owner's ask: *"a permission system, with me as the site admin so I can set others
+permissions to create events, trigger webhooks, delete etc."*
+
+**Today the site has exactly three kinds of authority**, and only one of them can be given away
+piecemeal - which is to say none of them can. `users.is_admin` is a single site-wide switch,
+seeded from `ADMIN_DISCORD_IDS` and protected by a last-admin rule, a self-demotion rule and a
+permanent-bar allowlist. `event_hosts` is per-event and deliberately **all or nothing** -
+"a host is not a small admin, they are somebody trusted with one evening" - and the co-host
+helpers were deleted on the grounds that "a permission nothing in the site can reach is a
+permission nobody has thought about". `teams.captain_user_id` lets somebody bid. There is
+nothing between "trusted with everything" and "trusted with nothing".
+
+**There is no seam.** Roughly 105 call sites each gate themselves on their first line, across
+fourteen action files and seventeen pages. That is the real cost of this feature and the real
+risk in it: a missed call site is not a visible error, it is a silent hole. The repo's own rule
+is the one to hold on to - **"hiding is not permission"** - so every action enforces its own
+check whatever the screen chooses to show, and a sweep must prove no action was left ungated.
+
+**One correction to the ask, stated rather than quietly worked around.** There is no event delete
+and no user delete anywhere on this site: events are cancelled and kept, "since nothing here is
+destructive". What can actually be deleted is a poll, a template, a profile field and a
+suggestion; what is destructive-but-not-deletion is voiding a lot, clearing a result and
+rebuilding a bracket. The site already names that set - `DESTRUCTIVE` in `src/lib/audit.ts` -
+and uses it only to colour a row in the audit log. Giving that existing classification teeth is a
+better answer than inventing a delete permission per area.
+
+| ID | Requirement | Priority | Note |
+|---|---|---|---|
+| R-261 | As the site admin, I want to give a member named powers without making them an admin, so that somebody can run the thing I trust them with and nothing else. | Must | The powers are a stated vocabulary, not free text. `is_admin` stays a superuser above all of them |
+| R-262 | As the site admin, I want a preset I can apply when granting, so that giving somebody the usual set of powers is one choice rather than twelve. | Should | A preset fills the ticks at the moment it is applied. It is not a live link: editing a preset later does not silently re-grant people |
+| R-263 | As the site admin, I want to adjust any individual power after applying a preset, so that one person who is the exception does not need a preset of their own. | Should | What is stored is one list per person. The preset is a shortcut into it |
+| R-264 | As the site admin, I want granting and revoking to be mine alone, so that nobody can widen their own authority. | Must | Permission-granting is never itself a grantable power, and nothing but the admin flag can confer it |
+| R-265 | As a member with some powers, I want the admin area to show me what I may do and nothing else, so that I am not offered screens that will turn me away. | Should | And the refusal still happens at the action, because hiding is not permission |
+| R-266 | As the site admin, I want every grant and revoke recorded with who did it, so that a change in authority is answerable afterwards. | Must | The audit log already records `user.admin.granted` and `user.admin.revoked`; this joins them |
+| R-267 | As the site admin, I want the dangerous actions to need a power of their own, so that somebody who may run polls cannot delete one by accident of scope. | Should | Over the `DESTRUCTIVE` set the audit log already names, which today only colours a row |
+
 Priority: Must (no launch without it) / Should (launch is worse without it) / Could (nice to have).
 
 ## Constraints
@@ -571,6 +651,18 @@ Priority: Must (no launch without it) / Should (launch is worse without it) / Co
 - Championship: skill ratings or ELO; automatic results from game APIs; prizes, money or entry fees; leaderboards across other communities; more than one championship counting the same event; per-game separate championships running as their own competitions (one season, one table, games are just where the points came from).
 - A private draft that also hides the **result**. R-253 darkens the bidding, not the teams: a night's rosters stay public, because "nobody may see who is on which team" is a different feature nobody asked for and would collide with the championship, the public event page and the player profiles.
 - Uploading a picture to this site, or editing one. R-252 shows what Discord already has; an avatar nobody can change here is a feature, not a gap.
+- Subdividing a host's authority. An event host keeps their evening entire (the owner's decision, 2026-11-13). Site powers are the new idea; a second, per-event one is not.
+- Presets an admin can create and edit on a screen. R-262's presets are named in code, like the default points table, and applying one writes ordinary permissions. A preset editor is a feature nobody has asked for, and a stored preset that silently re-grants people is the thing R-262 deliberately refuses.
+- Permissions on anything a member already does for themselves - their own application, their own availability, their own suggestion. Those are gated by ownership, which is not authority.
+- Taking away the `is_admin` flag, the allowlist, the permanent bar, or `ADMIN_DISCORD_IDS`. They are how the first admin exists and how a compromised one is stopped; permissions sit beside them.
+- An order within a team. `team_members` has no sort column, read order is captain first then
+  acquired time, and no requirement asks for a first-choice-to-last ordering - so a drop decides
+  *which* team, never *where in* it.
+- Dragging a captain, or dragging at all once a draft has opened its first lot. Both are refused
+  by `rosterGuard` today and that does not change: the Captains tab moves a captain, and a
+  started draft is undone by voiding lots.
+- A player's roles or rank being editable from the board. It shows what the member answered; the
+  profile is where an answer is given.
 - A points figure typed straight onto a person. The owner opened this with "let's start with editing the order per person", and R-255 is that start: the order is the recorded fact and the points stay derived from it (R-179). Setting somebody's season total by hand - an adjustment, a penalty, a bonus - is a separate decision, not built here.
 - A per-player place on a night scored in rounds. Its order is its table (R-236, decision 006), and R-255 changes who a *typed* place may belong to, not which nights have one.
 - Hero hands: a hero-centred history ("who has had Hulk?", "is Jeff coming up more often than chance?"). R-244 to R-247 are **player-centred** - one player, every night they drew. Reading the same rows the other way round is a second screen and a separate decision, and no requirement asks for it. Also out: anything that acts on a run of repeats - no reroll, no weighting, no excluding a hero from a player's next draw. The draw happens once and stands (R-212), and a draw that remembered last week would not be random.

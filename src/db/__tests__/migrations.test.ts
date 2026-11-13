@@ -1825,7 +1825,14 @@ describe("the hero catalogue, and no roster in the migration (drizzle/0031)", ()
      * And the seed is what fills it, asked of the real function as the 0028 test
      * asks `createTemplate`: 54 rows on the game that was already there, no
      * second `rivals`, and nothing on `jackbox`.
+     *
+     * The seed is today's code, so it is given today's schema first — which is
+     * the order a deployment meets them in, `db:migrate` and then `db:seed`.
+     * Until drizzle/0034 nothing after 0031 changed what the seed writes, so
+     * the schema as 0031 left it happened to be enough; an insert into
+     * `profile_fields` now names `holds_roles`, a column 0034 adds.
      */
+    await replayUpTo(client, "9999", "0032");
     const db = createPgliteDatabase(client);
     const summary = await seed(db, {});
     expect(summary.heroesInserted).toBe(54);
@@ -2051,5 +2058,306 @@ describe("the round-score table (drizzle/0033)", () => {
     );
     expect(result.rows).toHaveLength(1);
     expect(result.rows[0].indexdef).toContain("(event_id, round_index)");
+  });
+});
+
+describe("a marker for the field that holds a game's preferred roles (drizzle/0034)", () => {
+  /**
+   * R-259 / UC-54: `profile_fields` gains `holds_roles`, and the seeded Rivals
+   * question keyed `roles` — unmarked in every database that exists, there
+   * having been nothing to mark it with — is marked in the same file.
+   *
+   * ## Why this cannot be asked of `ctx`
+   *
+   * A fresh database has no profile fields when the migrations run (the seed
+   * plants them afterwards), so on `ctx` the `UPDATE` matches nothing and
+   * proves only that it parses — the reason 0020, 0025 and 0028 are replayed
+   * against rows too. So: everything up to 0033 first, rows written against
+   * the schema a deployment has today, and then 0034 underneath them.
+   *
+   * ## What "additive only" is held to
+   *
+   * A push to main applies this file while instances of the previous build
+   * are still serving (docs/plan.md's risk register: "Additive-first
+   * migrations; drops in a later commit"). So the claim is not only that the
+   * right row is marked; it is that nothing those instances read has moved.
+   * `shape()` is the whole public schema — columns, their types and defaults,
+   * constraints, indexes, enum values — and `rows()` is every row the file
+   * could reach, both taken before and after.
+   */
+  let client: PGlite;
+  type Snapshot = {
+    shape: Awaited<ReturnType<typeof shape>>;
+    rows: Awaited<ReturnType<typeof rows>>;
+  };
+  /** Either side of the file, both taken in `beforeAll` so no test's own writes are in them. */
+  let before: Snapshot;
+  let after: Snapshot;
+
+  const TAG = "0034_holds_roles";
+
+  /** Everything the public schema declares, as text, in a stable order. */
+  const shape = async () => ({
+    columns: (
+      await client.query<{ at: string }>(
+        `select table_name || '.' || column_name || ' ' || udt_name || ' null=' || is_nullable
+                || ' default=' || coalesce(column_default, '-') as at
+         from information_schema.columns where table_schema = 'public'
+         order by table_name, column_name`
+      )
+    ).rows.map((row) => row.at),
+    constraints: (
+      await client.query<{ at: string }>(
+        `select c.conrelid::regclass::text || ' ' || c.conname || ' ' || pg_get_constraintdef(c.oid) as at
+         from pg_constraint c join pg_namespace n on n.oid = c.connamespace
+         where n.nspname = 'public' order by 1`
+      )
+    ).rows.map((row) => row.at),
+    indexes: (
+      await client.query<{ at: string }>(
+        `select indexdef as at from pg_indexes where schemaname = 'public' order by indexname`
+      )
+    ).rows.map((row) => row.at),
+    enums: (
+      await client.query<{ at: string }>(
+        `select t.typname || '.' || e.enumlabel as at from pg_enum e
+         join pg_type t on t.oid = e.enumtypid order by t.typname, e.enumsortorder`
+      )
+    ).rows.map((row) => row.at),
+  });
+
+  /**
+   * Every row the migration could touch, less the column it adds — so the
+   * same query runs on both sides of it.
+   */
+  const rows = async () => ({
+    fields: (
+      await client.query(
+        `select f.id, g.key as game, f.key, f.label, f.type::text, f.options, f.required, f.sort,
+                f.retired_at, f.created_at
+         from profile_fields f left join games g on g.id = f.game_id
+         order by g.key nulls first, f.sort, f.key`
+      )
+    ).rows,
+    questions: (await client.query(`select * from event_questions order by key`)).rows,
+    templates: (await client.query(`select * from event_templates order by name`)).rows,
+    values: (await client.query(`select * from profile_values order by id`)).rows,
+  });
+
+  /** Which fields are marked, as `game/key`; a field asked of everybody is `-/key`. */
+  const marked = async () =>
+    (
+      await client.query<{ at: string }>(
+        `select coalesce(g.key, '-') || '/' || f.key as at
+         from profile_fields f left join games g on g.id = f.game_id
+         where f.holds_roles order by 1`
+      )
+    ).rows.map((row) => row.at);
+
+  const isMarked = async (game: string | null, key: string) =>
+    (
+      await client.query<{ holds_roles: boolean }>(
+        `select f.holds_roles from profile_fields f left join games g on g.id = f.game_id
+         where f.key = $2 and g.key is not distinct from $1`,
+        [game, key]
+      )
+    ).rows[0].holds_roles;
+
+  const idOf = async (sql: string) => (await client.query<{ id: string }>(sql)).rows[0].id;
+
+  beforeAll(async () => {
+    client = new PGlite();
+    await replayUpTo(client, "0034");
+
+    await client.exec(`insert into games (key, name, sort) values
+      ('rivals',  'Marvel Rivals', 0),
+      ('jackbox', 'Jackbox',       1),
+      ('repo',    'REPO',          2),
+      ('oldgame', 'Old game',      3)`);
+
+    const game = (key: string) => `(select id from games where key = '${key}')`;
+    const HERO_OPTIONS = `'[{"value":"vanguard","label":"Vanguard"},{"value":"duelist","label":"Duelist"},{"value":"strategist","label":"Strategist"}]'::jsonb`;
+
+    /*
+     * The seeded shape, and the rows that look like it and are not it:
+     *  - Rivals' other pick-any, to show the key is what is matched;
+     *  - Jackbox's own pick-any, keyed something else;
+     *  - REPO's `roles`, which is a pick-ONE: its answer is a string, and the
+     *    marker is only ever kept on a pick-any (`canHoldRoles`);
+     *  - a question asked of everybody that happens to be keyed `roles` — it
+     *    belongs to no game, so it is no game's roles.
+     *
+     * And one that is it, retired: Old game's `roles` is marked like any
+     * other. The marker says what the question is, not whether it is being
+     * asked — `rolesFieldFor` skips a retired one, and restoring it should
+     * not need somebody to remember to mark it.
+     */
+    await client.exec(`insert into profile_fields (game_id, key, label, type, options, required, sort, retired_at) values
+      (${game("rivals")},  'ign',    'In-game name',    'text',        '[]'::jsonb, true,  0, null),
+      (${game("rivals")},  'roles',  'Preferred roles', 'multiselect', ${HERO_OPTIONS}, true,  2, null),
+      (${game("rivals")},  'modes',  'Modes you play',  'multiselect', '[{"value":"ranked","label":"Ranked"}]'::jsonb, false, 3, null),
+      (${game("jackbox")}, 'packs',  'Packs you own',   'multiselect', '[{"value":"pack-1","label":"Pack 1"}]'::jsonb, false, 0, null),
+      (${game("repo")},    'roles',  'Your one role',   'select',      '[{"value":"scout","label":"Scout"}]'::jsonb, false, 0, null),
+      (${game("oldgame")}, 'roles',  'Roles',           'multiselect', '[{"value":"scout","label":"Scout"}]'::jsonb, false, 0, '2026-06-01T10:00:00Z'),
+      (null,               'roles',  'Discord roles',   'multiselect', '[{"value":"caller","label":"Caller"}]'::jsonb, false, 0, null)`);
+
+    const field = (gameKey: string, key: string) =>
+      `(select f.id from profile_fields f join games g on g.id = f.game_id where g.key = '${gameKey}' and f.key = '${key}')`;
+
+    await client.exec(`insert into users (name, display_name) values ('vera', 'Vera')`);
+    await client.exec(`insert into profile_values (user_id, field_id, value) values
+      ((select id from users where name = 'vera'), ${field("rivals", "roles")}, '["vanguard","strategist"]'::jsonb)`);
+
+    // An event question that prefills from the field, and a template that
+    // names it by key: the two things a change of type would have broken.
+    await client.exec(`insert into events (slug, title, game_id) values ('cup', 'Rivals cup', ${game("rivals")})`);
+    await client.exec(`insert into event_questions (event_id, key, label, type, options, sort, profile_field_id) values
+      ((select id from events where slug = 'cup'), 'mirrors-roles', 'Preferred roles', 'multiselect', ${HERO_OPTIONS}, 0, ${field("rivals", "roles")})`);
+    await client.exec(`insert into event_templates (name, game_id, questions) values
+      ('Rivals cup', ${game("rivals")}, '[
+        {"key":"roles","label":"Preferred roles","type":"multiselect","required":true,"profileFieldKey":"roles","options":[{"value":"vanguard","label":"Vanguard"}]},
+        {"label":"Anything else","type":"text"}
+      ]'::jsonb)`);
+
+    before = { shape: await shape(), rows: await rows() };
+
+    await runFile(client, TAG);
+
+    after = { shape: await shape(), rows: await rows() };
+  }, PGLITE_BOOT_BUDGET_MS);
+
+  afterAll(async () => {
+    await client.close();
+  });
+
+  it("adds one column, off by default, and nothing else to the schema", async () => {
+    const only = (from: string[], notIn: string[]) => from.filter((entry) => !notIn.includes(entry));
+
+    expect(only(after.shape.columns, before.shape.columns)).toEqual([
+      "profile_fields.holds_roles bool null=NO default=false",
+    ]);
+    expect(only(before.shape.columns, after.shape.columns)).toEqual([]);
+    // The column's own NOT NULL, which this Postgres lists as a constraint
+    // like any other. Nothing else arrives and nothing that was there goes.
+    expect(only(after.shape.constraints, before.shape.constraints)).toEqual([
+      "profile_fields profile_fields_holds_roles_not_null NOT NULL holds_roles",
+    ]);
+    expect(only(before.shape.constraints, after.shape.constraints)).toEqual([]);
+    expect(after.shape.indexes).toEqual(before.shape.indexes);
+    expect(after.shape.enums).toEqual(before.shape.enums);
+  });
+
+  it("changes nothing about any row but the marker", async () => {
+    expect(after.rows).toEqual(before.rows);
+  });
+
+  it("marks the seeded Rivals question, and the retired one that is the same question", async () => {
+    expect(await marked()).toEqual(["oldgame/roles", "rivals/roles"]);
+  });
+
+  it.each([
+    ["another pick-any on the same game", "rivals", "modes"],
+    ["another game's pick-any under another key", "jackbox", "packs"],
+    ["a pick-one keyed `roles`, whose answer is not a list", "repo", "roles"],
+    ["a question asked of everybody keyed `roles`", null, "roles"],
+    ["a free-text question", "rivals", "ign"],
+  ])("leaves %s unmarked", async (_what, game, key) => {
+    expect(await isMarked(game, key)).toBe(false);
+  });
+
+  it("is what the site then reads as the game's roles field", async () => {
+    const { rolesFieldFor } = await import("@/lib/admin-games");
+    const db = createPgliteDatabase(client);
+    const rivals = await idOf(`select id from games where key = 'rivals'`);
+    const oldGame = await idOf(`select id from games where key = 'oldgame'`);
+    const repo = await idOf(`select id from games where key = 'repo'`);
+
+    const found = await rolesFieldFor(rivals, db);
+
+    expect(found?.key).toBe("roles");
+    expect(found?.type).toBe("multiselect");
+    // Marked but retired, and not marked at all: neither is read.
+    expect(await rolesFieldFor(oldGame, db)).toBeNull();
+    expect(await rolesFieldFor(repo, db)).toBeNull();
+  });
+
+  /*
+   * The field keeps its type — the reason this is a marker and not a seventh
+   * entry in `profile_field_type`. Asked of the two real functions that refuse
+   * a link whose types disagree, as the 0025 test asks `canManageEvent`:
+   * reading `type` back would only prove the column still says `multiselect`.
+   */
+  it("leaves an event question that prefills from it saving as before", async () => {
+    const { setEventQuestions } = await import("@/lib/events");
+    const db = createPgliteDatabase(client);
+    const cup = await idOf(`select id from events where slug = 'cup'`);
+    const [question] = (
+      await client.query<{ id: string; profile_field_id: string }>(
+        `select id, profile_field_id from event_questions where key = 'mirrors-roles'`
+      )
+    ).rows;
+
+    const saved = await setEventQuestions(
+      cup,
+      [
+        {
+          id: question.id,
+          key: "mirrors-roles",
+          label: "Preferred roles",
+          type: "multiselect",
+          options: ["Vanguard", "Duelist", "Strategist"],
+          profileFieldId: question.profile_field_id,
+        },
+      ],
+      db
+    );
+
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    expect(saved.data.questions.map((q) => [q.type, q.profileFieldId])).toEqual([
+      ["multiselect", question.profile_field_id],
+    ]);
+  });
+
+  it("leaves a template that names it by key still making an event", async () => {
+    const db = createPgliteDatabase(client);
+    const templateId = await idOf(`select id from event_templates where name = 'Rivals cup'`);
+    const rolesField = await idOf(
+      `select f.id from profile_fields f join games g on g.id = f.game_id
+       where g.key = 'rivals' and f.key = 'roles'`
+    );
+
+    const created = await createEvent({ title: "From the template", templateId }, db);
+
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const copied = (
+      await client.query(
+        `select key, type::text, profile_field_id from event_questions
+         where event_id = '${created.data.id}'::uuid order by sort`
+      )
+    ).rows;
+    expect(copied).toEqual([
+      { key: "roles", type: "multiselect", profile_field_id: rolesField },
+      { key: "anything-else", type: "text", profile_field_id: null },
+    ]);
+  });
+
+  /*
+   * The whole file, both statements, a second time.
+   *
+   * Not true by construction, and each half has its own way to fail: a plain
+   * `ADD COLUMN` stops the second run at "column already exists", and a fix
+   * that derived its value from the row (`SET holds_roles = NOT holds_roles`)
+   * would run and undo itself. The first is why the generated statement was
+   * given `IF NOT EXISTS` by hand.
+   */
+  it("changes nothing when the whole file is run a second time", async () => {
+    const state = async () => ({ shape: await shape(), rows: await rows(), marked: await marked() });
+    const once = await state();
+
+    await runFile(client, TAG);
+
+    expect(await state()).toEqual(once);
   });
 });

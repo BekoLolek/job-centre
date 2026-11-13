@@ -2515,3 +2515,417 @@ other**: both end in `PlacementEditor.tsx`.
   it was ruled Minor rather than fixed here - but the whole set wants one pass with a
   `role="status"` and focus kept on the pressed control. The keyboard path to 3f is the box, and
   the lower zone's placeholder now says so.
+
+## S. Building the teams by moving people (R-257 to R-260 / UC-53, UC-54)
+
+Added 2026-11-13, **Tier 2**, at the owner's request, alongside the permission system in section
+T. Four tasks, **strictly in order** - each is the next one's data.
+
+A standing caution for every task here: `TeamsTab.tsx` is 1460 lines and is pinned by five
+`teams-tab-*.test.ts` files, some of them asserting markup. Read what they assert before moving
+anything.
+
+### Task 118: A profile field marked as holding a game's preferred roles
+
+- **Serves:** R-259 / UC-54
+- **Files:** `src/db/schema.ts`, `drizzle/0034_*.sql` (generated, then checked by hand), `src/lib/admin-games.ts`, the profile-field editor under `src/components/admin/`, `src/db/seed.ts`, and tests
+- **Do:** `profile_fields` gains `holds_roles boolean not null default false`, and the game's roles
+  field is the first non-retired field of that game with the marker set, by the catalogue's own
+  order. **The field keeps its type.** That is the whole reason for this shape rather than a new
+  `roles` entry in `profile_field_type`: a type change cascades into every event question and
+  template question that prefills from the field, because a link whose types disagree is refused
+  - and the migration that carries the cascade cannot be additive-first, which is the repo's
+  stated answer to "a Vercel build runs migrations against production".
+  **Two fields marked resolve by order, as two rank fields already do.** A partial unique index
+  was considered and rejected: enforcing one marker per game needs either a refusal nobody asked
+  for or a "marking B unmarks A" write, and rank lives with the same ambiguity.
+  **The marker needs a way to be set**, which the type approach got free from the type picker: a
+  checkbox on the profile-field editor, offered only for a game's own pick-any field.
+  **Do not run `npm run db:migrate`.** Generate the SQL, check it, leave it.
+  A previous attempt at this task using a new enum value is saved at
+  `C:\Users\L\AppData\Local\Temp\claude\113689d4c2326c79\14fb890b-5418-4ca1-b76e-5c8a0a29b41e\scratchpad\task118-enum-attempt\`
+  - **read its tests before writing yours.** Their intent carries over almost whole, and two of
+  them (a renamed field still found; a pick-any merely keyed `roles` not mistaken for the marked
+  one) are the ones that prove the requirement. Its mechanism does not carry over.
+- **Acceptance criteria:**
+  - [x] The game's roles field is found by its marker and not by its key, proven by renaming the field and still reading it, and by a field keyed `roles` that is **not** marked being ignored
+  - [x] The field keeps its existing type, proven by an event question linked to it still validating and a template still creating an event after the migration
+  - [x] Two marked fields resolve to the first by the catalogue's order, and follow a reorder - **not** "as two rank fields do", which walks every field and falls through per member
+  - [x] A retired marked field stops being read, and the next marked one takes over
+  - [x] A field marked on one game is never read for another, and a field asked of everybody (no game) is never the roles field
+  - [x] The marker can be set and cleared from the profile-field editor, and is not offered where it would mean nothing
+  - [x] The migration is **additive only** - one column added, one update, nothing re-typed and nothing dropped - and running it twice changes nothing the second time
+- **Depends on:** nothing.
+- **Left over:** nothing from the criteria, and six things worth keeping.
+  **This task was built twice, and the first build passed both reviews.** It used a new `roles`
+  value in `profile_field_type`, on the lead's instruction and matching how the `rank` field is
+  found. Quality review then asked the question the lead had not: what does the type *do*?
+  `rank` earns its place - its options come from the game's ladder, it renders its own control,
+  it validates differently. `roles` differed from `multiselect` in exactly one way, that it could
+  be found by a query. **A type that carries no behaviour is not a type**, and this one cost a
+  replacement of the enum, a re-typing of both columns that use it, a cascade into every event
+  question and template question that prefills from the field (a link whose types disagree is
+  refused), and a "Preferred roles" entry in pickers where it means nothing.
+  **The deciding fact was not design taste, it was the deploy.** `vercel.json` sets no build
+  command, so Vercel runs `npm run build`, which is `db:migrate && next build` - **pushing to
+  main applies migrations to production**, which this plan's own risk register answers with
+  "additive-first migrations; drops in a later commit". A type replacement cannot be
+  additive-first: both columns change type in the one deploy old instances are still serving
+  through. Deferring the `DROP TYPE` narrowed that window and could not close it. The owner chose
+  the marker column; the enum attempt is kept at
+  `scratchpad\task118-enum-attempt\` and its tests carried over almost whole.
+  **The lesson is about where the constraint lived.** Neither review caught it, because both were
+  asked about correctness and neither was asked about deployment. The migration was correct. It
+  was also unshippable by this repo's own stated policy, and the policy was written down in the
+  risk register the whole time.
+  **A criterion was made true rather than reworded down to the code.** Idempotency was first
+  proven on the `UPDATE` alone, because a plain `ADD COLUMN` cannot run twice - defensible, since
+  the migrator applies a file once. The criterion said "running it twice changes nothing", so the
+  column became `ADD COLUMN IF NOT EXISTS` and the test runs the whole file again. When the
+  evidence does not match the claim, moving the claim is the cheaper repair and the wrong one.
+  **The Blocking defect was invisible to every tool and would have broken the feature's whole
+  point.** Nothing proved the editor's checkbox reached the server: review deleted the line that
+  puts the marker into the payload and **766 tests passed with a clean typecheck**, because the
+  field is optional so the compiler never looked. And `updateField` reads an absent marker as
+  false, so any edit - *including a rename* - would have silently cleared it. The marker exists
+  precisely so that renaming the field does not break the read (R-259, UC-54), and it would have
+  shipped not surviving a rename. Fixed by extracting the payload as `fieldInputFrom`, the shape
+  this repo already uses for decisions only reachable by a click.
+  **One honest gap, bounded and stated:** the checkbox's `onChange` wiring still has no test. A
+  no-op `onChange`, or a `save` that bypassed `fieldInputFrom`, would pass everything. The
+  payload is proven; the state wiring is not, and nothing without a browser can prove it.
+  **And a false kill found by its own author.** Adding the type filter to the read meant
+  "drops the marker when the question stops being a pick-any" passed under the mutation it
+  claimed to kill, because the lookup now returns null for a text field whatever the marker says.
+  Re-anchored to read the marker off the row, and the mutation watched dying again.
+
+### Task 119: The roles reach the Teams tab
+
+- **Serves:** R-258
+- **Files:** `src/lib/events.ts` (beside `memberRanks` / `gatesFor`), `src/app/admin/events/[id]/page.tsx`, `src/components/admin/events/types.ts`, and tests
+- **Do:** `ApplicantView` carries `rank: string | null`, read by `memberRanks` from the game's
+  rank field. Roles are the same shape of read against the field Task 118 marks, and the pair
+  should be one read rather than two - look at `gatesFor` before deciding where it goes.
+  Nothing renders yet; this task ends with the answers on the screen's props and a test proving
+  it. A game with no roles field gives every player an empty list, which is not the same fact as
+  "this player answered nothing" - the screen needs to tell those apart in Task 120, so carry
+  them apart.
+- **Acceptance criteria:**
+  - [ ] Every accepted applicant's preferred roles reach the Teams tab's props, in the catalogue's own option order rather than the order they were answered
+  - [ ] A game with no roles field and a player who answered nothing are distinguishable at the props, not merged into one empty list
+  - [ ] The read is not a second round trip per player, proven by the query count
+  - [ ] A stored answer naming an option since removed is still returned, as a stale rank already is
+- **Depends on:** Task 118.
+
+### Task 120: The card
+
+- **Serves:** R-258
+- **Files:** a new component beside `src/components/draft/PlayerChip.tsx`, and tests
+- **Do:** `PlayerChip` is a one-line row with a `meta` slot, and there is no card-shaped player
+  component anywhere. This is that component: name, picture (free, R-252), current rank and
+  preferred roles. **It renders and nothing else** - no drag, no actions, no knowledge of teams -
+  so that Task 121 can move it around without the two being one thing.
+  A player with no rank says so in words; the repo already says "no rank recorded" on the
+  Captains tab, so use its words rather than new ones. A player who answered no roles says so
+  too; a game with no roles field shows no roles line at all, which is the distinction Task 119
+  carried.
+- **Acceptance criteria:**
+  - [ ] Name, picture, rank and roles all render, and the initials fallback still appears for a member with no picture
+  - [ ] "No rank recorded" uses the repo's existing wording, asserted against the Captains tab's string rather than a copy
+  - [ ] A player who answered no roles, and a game with no roles field, produce different markup
+  - [ ] The component takes no action and no drag prop - proven by its props, so the next task cannot be tempted to merge them
+  - [ ] It meets the design-token and contrast sweeps, and any control it contains meets the 44px floor
+- **Depends on:** Task 119.
+
+### Task 121: The board
+
+- **Serves:** R-257, R-260 / UC-53
+- **Files:** `src/components/admin/events/TeamsTab.tsx`, a rules module beside it, and tests
+- **Do:** the Rosters panel already places and removes by `<select>`, writing immediately through
+  `placeOnRosterAction` / `removeFromRosterAction`, which return every roster for the tab to
+  adopt. **Keep the selects.** They are the keyboard path and the phone path, exactly as Task
+  117's arrow buttons are, and a drag-only board would be unusable on a touch screen.
+  Add the gesture: a card is dragged onto a team, or back to the unplaced list. Follow Task 117's
+  shape - a handle rather than a draggable row, drop targets as the elements themselves, the
+  rules as pure functions in their own module so they are testable without a DOM. **The move is
+  optimistic** (R-260): the card is on the team the moment it is let go, and a refusal puts it
+  back with the server's own sentence. Today's panel disables every control during a round trip;
+  that is what optimism replaces, and the replacement must still prevent a second move of the
+  same player landing while the first is in flight.
+  The screen does not offer what the server would refuse - `teamsOpenTo` and `rosterFull` already
+  decide that - but the server still refuses, because a board is ten minutes old.
+- **Acceptance criteria:**
+  - [ ] A card dropped on a team places that player, and a card dropped on the unplaced list removes them, both through the actions that already exist rather than a new write path
+  - [ ] The card is on the team before the server answers, and a refusal returns it to exactly where it was, with the server's sentence shown
+  - [ ] A drop where the card started writes nothing at all, asserted as zero calls
+  - [ ] A full team and a captain are both refused, and the refusal is the server's wording, not a second copy
+  - [ ] The "Move to" and "Place on" selects still work and still write, pinned - this is an addition
+  - [ ] A second move of the same player while one is in flight cannot land, and the test says which of the two wins
+  - [ ] No new dependency
+- **Depends on:** Task 120.
+
+### Task 122: A retired rank field is still read
+
+- **Serves:** a defect found while building Task 118. No requirement asks for it; R-259's
+  neighbour exposed it.
+- **Files:** `src/lib/events.ts` (`memberRank`, `memberRanks`), and tests
+- **Do:** every other read of a profile field drops retired ones - `events.ts:1013`,
+  `profile.ts:146` and `:360`, `admin-games.ts:592`, and `rolesFieldFor` as of Task 118. The
+  rank read does not. The consequences are real and all three are invisible: a retired rank field
+  still feeds the entry gates, so a member is admitted or refused on an answer to a question the
+  site has stopped asking; it shadows a newer active rank field through the first-by-sort
+  fall-through; and the member cannot correct the answer, because the form no longer shows the
+  field.
+  **Tier 1.** Start from a failing test that admits somebody on a retired field's answer.
+  Deliberately *not* folded into Task 118: a defect fixed inside a feature is a defect nobody
+  can find afterwards, and this one changes who gets into events.
+- **Acceptance criteria:**
+  - [ ] A retired rank field is not read, proven by a gate decision that changes when the field is retired
+  - [ ] An active rank field sorted after a retired one becomes the one that is read
+  - [ ] A member with an answer only on the retired field reads as having no rank, not as having that answer
+  - [ ] Every existing rank test still passes unchanged - this is a filter, not a rewrite
+- **Depends on:** nothing. Independent of section S's other tasks.
+
+## T. Permissions, so authority is not one switch (R-261 to R-267 / UC-55, UC-56, UC-57)
+
+Added 2026-11-13, **Tier 3**, owner approved the vocabulary at Gate 1 on 2026-11-13. Decision
+record: `docs/decisions/007-permissions.md`.
+
+**The vocabulary, as approved.** Thirteen powers and one modifier:
+
+| Power | What it reaches |
+|---|---|
+| `events.create` | Creating an event |
+| `events.manage` | Every event, as a host has their own one |
+| `announce.post` | Posting an announcement to Discord by hand |
+| `settings.announcements` | Which announcements go out, their wording, their mentions |
+| `settings.integrations` | The webhook URL, the site origin, the guild gate |
+| `games.manage` | Games, rank ladders, profile fields, heroes |
+| `templates.manage` | Event templates |
+| `championships.manage` | Seasons, points tables, opening and closing |
+| `polls.manage` | Creating, closing and deleting polls |
+| `suggestions.moderate` | A suggestion's status; deleting any |
+| `hosts.approve` | Approving and declining applications to host |
+| `members.read` | The member list, availability, and what people have drawn |
+| `audit.read` | The audit log |
+| `destructive` | **Required in addition** to the area's power, over the set `audit.ts` already marks |
+
+**Presets** (named in code, applied not followed): Organiser - `events.create`,
+`events.manage`, `announce.post`, `championships.manage`. Announcer - `announce.post`,
+`settings.announcements`. Moderator - `polls.manage`, `suggestions.moderate`, `members.read`,
+`audit.read`. Curator - `games.manage`, `templates.manage`.
+
+**The order is not negotiable.** The sweep (Task 124) lands before any call site moves, because
+it is what proves none was missed; the guard (Task 125) before the call sites that use it; and
+the screen that grants (Task 131) last, because a grant that reaches nothing is untestable.
+
+**Standing rule for every task in this section:** *hiding is not permission*. A screen that does
+not offer something is never what stops it. Every action checks for itself, and the sweep proves
+every action checks.
+
+### Task 123: The vocabulary, and one row per grant
+
+- **Serves:** R-261 / UC-55
+- **Files:** `src/lib/permissions-policy.ts` (new, pure), `src/lib/permissions.ts` (new, reads), `src/db/schema.ts`, `drizzle/0035_*.sql`, and tests
+- **Do:** the vocabulary above as a frozen list of names in the pure module, with the presets
+  beside it, plus the question "does this holder have this power" as a function over a set - no
+  database, so it is testable and importable by a client component.
+  The stored side is one table, `user_permissions`: the member, the power, who granted it, when.
+  Primary key on (member, power), so a grant is idempotent by construction. Text, not a Postgres
+  enum - the convention `audit_log.action` already follows, and for the reason Task 118 paid for
+  the hard way: growing an enum is a migration with a deploy window, and this vocabulary will
+  grow.
+  **`is_admin` is not stored here and never is.** The admin flag is a superuser above the
+  vocabulary, and the function that answers "may they" takes the flag separately so that nothing
+  can represent an admin as a bundle of powers.
+  **No call site changes in this task.** It ends with a vocabulary, a table, a reader, and tests.
+- **Acceptance criteria:**
+  - [ ] A member with no rows holds nothing, and an admin with no rows holds everything - asserted through the same function
+  - [ ] A power not in the vocabulary cannot be stored or asked about, and the refusal names it
+  - [ ] Applying a preset yields exactly the powers that preset names, asserted name by name rather than by count
+  - [ ] Granting the same power twice leaves one row and does not move `granted_at`
+  - [ ] The migration is additive only, and running it twice changes nothing the second time
+  - [ ] Nothing in the pure module imports a database handle, pinned by the client-boundary sweep
+- **Depends on:** nothing.
+
+### Task 124: The sweep that proves nothing is ungated
+
+- **Serves:** R-261, R-265 (the thing that makes them safe)
+- **Files:** `src/app/__tests__/every-action-is-gated.test.ts` (new), and an allowlist beside it
+- **Do:** about 105 call sites gate themselves, one guard call on the first line, across fourteen
+  action files and seventeen pages. There is no middleware and no shared entry point, so **a
+  missed call site is a silent hole, not an error**. Before anything moves, write the sweep that
+  would catch it: every exported `*Action` in `src/app/**/actions.ts` and every admin page
+  component must name a guard before it does anything else.
+  **This test must pass the moment it is written**, against today's unchanged code - that is what
+  makes it evidence rather than a wish. Anything it cannot see (an action that resolves its gate
+  through a helper, say) goes in an allowlist **with a written reason per entry**, and the
+  allowlist is asserted to be exactly as long as it says it is, so adding to it is deliberate.
+- **Acceptance criteria:**
+  - [ ] It passes against the current tree, unchanged, before any permission work lands
+  - [ ] An action with its guard deleted fails it, and the message names the action and the file
+  - [ ] An action whose guard is called after a database read fails it - the guard is first or it is not a guard
+  - [ ] Every allowlist entry carries a reason, and the count is pinned
+  - [ ] A newly added action with no guard fails it, proven by adding one in a mutation
+- **Depends on:** nothing. **Must land before Tasks 126-129.**
+
+### Task 125: The guard
+
+- **Serves:** R-261, R-264 / UC-56
+- **Files:** `src/lib/session-guards.ts`, `src/lib/permissions.ts`, and tests
+- **Do:** one new guard beside the five that exist, `requirePermission(power)`, built from the
+  same parts as `requireAdmin` and refusing the same way - signed out to `/signin?from=...`,
+  signed in without the power turned away as a non-admin is today, because a member who cannot
+  do a thing should not learn a new vocabulary of refusals.
+  **Admin short-circuits**, exactly as `canManageEvent` already does.
+  **Granting is not a power** (R-264): there is no `permissions.grant` in the vocabulary, so the
+  granting screen keeps `requireAdmin` and no holder can widen their own authority. State that in
+  the guard's docblock, because its absence is the kind of thing a later reader adds "for
+  consistency".
+  Authority is re-read per request, never taken from the session - the reason `is_admin` already
+  behaves that way, and UC-56 3b depends on it.
+- **Acceptance criteria:**
+  - [ ] A holder passes, a non-holder is turned away, and an admin passes without holding anything
+  - [ ] A power revoked mid-session is refused on the next request, asserted against a live session
+  - [ ] The refusal is the same shape a non-admin already gets, pinned against `requireAdmin`'s
+  - [ ] The guard returns the actor, so the audit line names the person and not the power
+  - [ ] There is no power that grants permissions, asserted over the vocabulary itself
+- **Depends on:** Task 123.
+
+### Task 126: Events and announcements move onto powers
+
+- **Serves:** R-261 / UC-56
+- **Files:** `src/app/admin/events/actions.ts`, `src/app/admin/host/actions.ts`, and tests
+- **Do:** `createEventAction` becomes `events.create`. The host-application actions become
+  `hosts.approve`. `postAnnouncementByHandAction` becomes "manages this event, **or** holds
+  `announce.post`" - a power that reaches any event's announcements without reaching the event
+  itself, which is the point of having it separately from `events.manage`.
+  **An event host's authority is untouched** (out of scope, owner's decision): `canManageEvent`
+  keeps its two answers and gains a third only in that an `events.manage` holder now manages
+  every event.
+  Everything else in these files stays `requireEventManager`, and the sweep proves it.
+- **Acceptance criteria:**
+  - [ ] An `events.create` holder creates an event and can do nothing else in the file
+  - [ ] An `events.manage` holder manages an event they do not host, and a host still manages theirs
+  - [ ] An `announce.post` holder posts an announcement by hand on an event they neither host nor manage, and still cannot change what the announcement says
+  - [ ] A `hosts.approve` holder approves and declines, and does not thereby create events
+  - [ ] Every audit line names the holder as actor
+  - [ ] The sweep still passes
+- **Depends on:** Tasks 124, 125.
+
+### Task 127: The catalogue moves onto powers
+
+- **Serves:** R-261
+- **Files:** `src/app/admin/games/actions.ts`, `src/app/admin/templates/actions.ts`, `src/app/admin/championships/actions.ts`, and tests
+- **Do:** `games.manage`, `templates.manage`, `championships.manage`, one per file, replacing
+  `requireAdmin` on each exported action.
+  **The games actions write no audit line today** and that is a gap this task should name rather
+  than silently inherit - a profile-field delete that cascades every answer is recorded nowhere.
+  Record it as its own task; do not widen this one.
+- **Acceptance criteria:**
+  - [ ] Each power reaches exactly its own file's actions and no other, asserted across all three
+  - [ ] An admin still reaches all three without holding anything
+  - [ ] A holder of one is refused the other two, asserted rather than assumed from the code
+  - [ ] The sweep still passes
+- **Depends on:** Tasks 124, 125.
+
+### Task 128: Members, settings, polls, suggestions and the reading screens
+
+- **Serves:** R-261, R-264
+- **Files:** `src/app/polls/actions.ts`, `src/app/suggestions/actions.ts`, `src/app/admin/settings/actions.ts`, `src/app/admin/users/actions.ts`, and tests
+- **Do:** `polls.manage`, `suggestions.moderate`, and the two settings powers - the split matters:
+  `settings.announcements` is wording and mentions, `settings.integrations` is the webhook URL,
+  the site origin and the guild gate. The second is the dangerous one and must not be reachable
+  from the first.
+  **`src/app/admin/users/actions.ts` keeps `requireAdmin` on every grant and revoke** (R-264).
+  `members.read` and `audit.read` reach the reading screens in Task 130 and no action here.
+  **The webhook URL's existing safety rules are untouched**: never sent to the browser in full,
+  never written to the audit log, blank means keep.
+- **Acceptance criteria:**
+  - [ ] A `settings.announcements` holder changes wording and mentions and is refused the webhook URL and the site origin
+  - [ ] No power grants or revokes anything - every action in the members file still needs the admin flag, asserted over the whole file
+  - [ ] A `suggestions.moderate` holder sets any suggestion's status; a member still deletes only their own
+  - [ ] The webhook URL is still masked everywhere it is shown and absent from the audit line, pinned against the existing tests
+  - [ ] The sweep still passes
+- **Depends on:** Tasks 124, 125.
+
+### Task 129: The destructive modifier
+
+- **Serves:** R-267 / UC-57
+- **Files:** `src/lib/audit.ts`, `src/lib/permissions.ts`, the action files Task 126-128 touched, and tests
+- **Do:** `DESTRUCTIVE` in `audit.ts` already names the dangerous actions and today only colours
+  a row in the audit log. Give it teeth: an action in that set needs `destructive` **as well as**
+  the power over its area.
+  **An admin is above it**, and **a host is outside it** - a host's evening is whole (UC-57 3a),
+  so this modifier applies to site-wide holders only. Say so where somebody would otherwise add
+  it to the event guard.
+  The risk here is that the set was built for display and nobody has audited it as an authority
+  list. Read every member of it and say, per entry, whether it belongs - and whether anything
+  destructive is **missing** from it. Report rather than widen.
+- **Acceptance criteria:**
+  - [ ] A holder of an area power without `destructive` does the ordinary things and is refused the destructive one, with a refusal naming what is missing
+  - [ ] The same holder with `destructive` succeeds, and the audit line still records it as destructive
+  - [ ] An admin, and a host on their own event, are both unaffected
+  - [ ] The mapping from action to "is destructive" has exactly one source - the existing set - proven by a mutation to it changing the refusal
+  - [ ] Every entry in the set is accounted for in the report, and anything destructive but missing is named
+- **Depends on:** Tasks 126, 127, 128.
+
+### Task 130: The admin area admits a holder
+
+- **Serves:** R-265 / UC-56
+- **Files:** `src/app/admin/**/page.tsx`, `src/components/admin/AdminNav.tsx`, `src/components/NavMenu.tsx`, `src/app/admin/page.tsx`, and tests
+- **Do:** today `/admin` and every page under it is `requireAdmin`, and the nav shows the Admin
+  link on the flag alone - so a holder has nowhere to land. Each page moves to the power that
+  page is for; `/admin` itself admits anybody holding anything and shows only the cards their
+  powers reach.
+  **This is presentation, and presentation is not protection.** Every action still checks for
+  itself; the sweep still passes; a holder who types a URL their powers do not cover is turned
+  away by the page.
+  `AdminNav`'s docblock promises every entry also lives in the account menu - keep that true, or
+  the whole thing is unreachable on a phone, which is a bug this repo has already shipped once.
+- **Acceptance criteria:**
+  - [ ] A holder of one power sees exactly the cards and nav entries their powers reach, and an admin sees everything
+  - [ ] A member with no powers gets the refusal they get today, unchanged
+  - [ ] A holder reaching a page their powers do not cover is turned away by the page, not merely unlinked
+  - [ ] Every nav entry still appears in the account menu, pinned
+  - [ ] The sweep still passes
+- **Depends on:** Tasks 126, 127, 128.
+
+### Task 131: The screen that grants
+
+- **Serves:** R-262, R-263, R-266 / UC-55
+- **Files:** `src/app/admin/users/actions.ts`, `src/components/admin/UsersManager.tsx`, `src/lib/admin-users.ts`, and tests
+- **Do:** on a member's entry, every power with the ones they hold marked, the presets as buttons
+  that mark what they name, and one save that stores exactly what is marked.
+  **A preset is applied, not followed** (R-262): what is stored is the list, and editing a preset
+  in a later release changes nobody. Say that on the screen in a sentence, not only in a
+  docblock - an admin who believes otherwise will grant the wrong thing.
+  **Admin-only** (R-264), and a member who already holds the admin flag has no power list to
+  edit - they have everything, and the flag is granted and revoked by the controls already there.
+  Every change writes an audit line naming the actor, the member and what changed. The existing
+  `user.admin.granted` / `.revoked` vocabulary is the neighbour to follow.
+- **Acceptance criteria:**
+  - [ ] Saving stores exactly the marked powers - one added and one removed in the same save, asserted as a set rather than a count
+  - [ ] A preset marks exactly its own powers and does not clear a power the member already held outside it, or clears it, whichever the screen says - and the screen says which
+  - [ ] An admin's entry offers no power list, and the reason is on the screen
+  - [ ] Every save writes one audit line naming actor, subject and the change, and a save that changes nothing writes none
+  - [ ] The screen cannot grant the admin flag, and no power appears that is not in the vocabulary
+  - [ ] A holder of every power still cannot reach this screen
+- **Depends on:** Tasks 123, 125. Best built after Task 130, so a grant can be seen to do something.
+
+### Task 132: The games catalogue writes no audit line
+
+- **Serves:** a gap found while planning section T. No requirement asks for it.
+- **Files:** `src/app/admin/games/actions.ts`, `src/lib/audit.ts`, and tests
+- **Do:** every other admin area records what it did. The games actions - including deleting a
+  profile field, which cascades every answer to it - record nothing, so a field that vanishes has
+  no history. Three audit actions are also written but missing from `AUDIT_ACTIONS` and render as
+  raw strings: `event.format`, `team.random`, `draft.bid_cleared`.
+  **Tier 1**, independent of the permission work, and worth doing before Task 129 classifies
+  anything as destructive.
+- **Acceptance criteria:**
+  - [ ] Creating, updating, retiring and deleting a profile field each write an audit line naming the field and the game
+  - [ ] A profile-field delete is recorded as destructive
+  - [ ] The three unnamed actions appear in `AUDIT_ACTIONS` and render as sentences
+  - [ ] No existing audit line changes wording, pinned
+- **Depends on:** nothing.

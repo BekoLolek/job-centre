@@ -77,6 +77,9 @@ describe("seed", () => {
       "Duelist",
       "Strategist",
     ]);
+    // The marker, not the key, is what says "this is the game's
+    // preferred-roles question" (R-259 / UC-54) — and it is on that one only.
+    expect(fields.filter((f) => f.holdsRoles).map((f) => f.key)).toEqual(["roles"]);
     // Only one free-text escape hatch on the whole game.
     expect(fields.filter((f) => f.type === "text")).toHaveLength(1);
   });

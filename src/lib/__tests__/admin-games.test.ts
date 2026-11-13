@@ -16,6 +16,7 @@ import {
   renameGame,
   restoreField,
   retireField,
+  rolesFieldFor,
   setGameActive,
   setRankLadder,
   updateField,
@@ -322,6 +323,201 @@ describe("createField", () => {
     await createField(game.id, { label: "Two", type: "text" }, db);
     const rows = await db.select().from(profileFields).orderBy(asc(profileFields.sort));
     expect(rows.map((row) => row.sort)).toEqual([0, 1]);
+  });
+});
+
+describe("the field that holds a game's preferred roles (R-259 / UC-54)", () => {
+  /**
+   * A pick-any on `gameId`, marked. Labelled by the caller so its key is
+   * whatever that label slugs to — never `roles` unless a test asks for it.
+   */
+  async function markedQuestion(gameId: string, label: string, options: string[] = ["Scout"]) {
+    const field = await createField(
+      gameId,
+      { label, type: "multiselect", options, holdsRoles: true },
+      db
+    );
+    if (!field.ok) throw new Error(field.error);
+    return field.data;
+  }
+
+  async function otherGame() {
+    const other = await createGame({ name: "Other" }, db);
+    if (!other.ok) throw new Error(other.error);
+    return other.data;
+  }
+
+  it("is found by its marker, under a key that is not `roles`, and stays a pick-any", async () => {
+    const game = await addRepo();
+    const field = await markedQuestion(game.id, "Mains", ["Scout", "Medic"]);
+
+    const found = await rolesFieldFor(game.id, db);
+
+    expect(field.key).toBe("mains");
+    expect(found?.id).toBe(field.id);
+    expect(found?.type).toBe("multiselect");
+  });
+
+  it("is still found after the question is renamed", async () => {
+    const game = await addRepo();
+    const field = await markedQuestion(game.id, "Mains", ["Scout", "Medic"]);
+
+    await updateField(
+      field.id,
+      {
+        label: "What do you play?",
+        type: "multiselect",
+        options: ["Scout", "Medic"],
+        holdsRoles: true,
+      },
+      db
+    );
+
+    const found = await rolesFieldFor(game.id, db);
+    expect(found?.id).toBe(field.id);
+    expect(found?.label).toBe("What do you play?");
+  });
+
+  it("is not a pick-any question that merely has the key `roles`", async () => {
+    const game = await addRepo();
+    const lookalike = await createField(
+      game.id,
+      { label: "Roles", type: "multiselect", options: ["Scout", "Medic"] },
+      db
+    );
+    if (!lookalike.ok) throw new Error(lookalike.error);
+
+    expect(lookalike.data.key).toBe("roles");
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+  });
+
+  it("is nothing for a game that marks none, whatever another game marks (UC-54 1a)", async () => {
+    const game = await addRepo();
+    const other = await otherGame();
+    const lanes = await markedQuestion(other.id, "Lanes", ["Top"]);
+
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+    expect((await rolesFieldFor(other.id, db))?.id).toBe(lanes.id);
+  });
+
+  it("is never a question asked of everybody, even one a database holds marked", async () => {
+    const game = await addRepo();
+    // Written past `createField`, which would not keep the marker (below):
+    // the read has to ignore the row on its own account, not rely on the
+    // write never having produced it.
+    await db.insert(profileFields).values({
+      gameId: null,
+      key: "roles",
+      label: "Roles anywhere",
+      type: "multiselect",
+      options: [{ value: "caller", label: "Caller" }],
+      holdsRoles: true,
+    });
+
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+  });
+
+  it("is never a pick-one, even one a database holds marked", async () => {
+    const game = await addRepo();
+    // The same reasoning, for the other half of `canHoldRoles`. A build from
+    // before the column existed retypes a question without touching the
+    // marker, so a marked pick-one is a row a deploy window can really leave
+    // — and its answers are strings where a roles answer is a list.
+    await db.insert(profileFields).values({
+      gameId: game.id,
+      key: "mains",
+      label: "Mains",
+      type: "select",
+      options: [{ value: "scout", label: "Scout" }],
+      holdsRoles: true,
+    });
+
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+  });
+
+  it("is the first of two by the catalogue's order, and follows a reorder (UC-54 1b)", async () => {
+    const game = await addRepo();
+    const first = await markedQuestion(game.id, "Mains");
+    const second = await markedQuestion(game.id, "Off-roles");
+
+    expect((await rolesFieldFor(game.id, db))?.id).toBe(first.id);
+
+    await moveField(second.id, "up", db);
+
+    expect((await rolesFieldFor(game.id, db))?.id).toBe(second.id);
+  });
+
+  it("stops being read once retired, and the next one takes over (UC-54 1c)", async () => {
+    const game = await addRepo();
+    const first = await markedQuestion(game.id, "Mains");
+    const second = await markedQuestion(game.id, "Off-roles");
+
+    await retireField(first.id, db);
+    expect((await rolesFieldFor(game.id, db))?.id).toBe(second.id);
+
+    await retireField(second.id, db);
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+
+    await restoreField(first.id, db);
+    expect((await rolesFieldFor(game.id, db))?.id).toBe(first.id);
+  });
+
+  it("is marked by an edit, and unmarked by the next one", async () => {
+    const game = await addRepo();
+    const plain = await createField(
+      game.id,
+      { label: "Mains", type: "multiselect", options: ["Scout"] },
+      db
+    );
+    if (!plain.ok) throw new Error(plain.error);
+    const edit = { label: "Mains", type: "multiselect", options: ["Scout"] };
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+
+    await updateField(plain.data.id, { ...edit, holdsRoles: true }, db);
+    expect((await rolesFieldFor(game.id, db))?.id).toBe(plain.data.id);
+
+    await updateField(plain.data.id, { ...edit, holdsRoles: false }, db);
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+  });
+
+  it.each([
+    ["a pick-one, whose answer is one role and not a list", "select", ["Scout"]],
+    ["free text", "text", undefined],
+  ])("does not keep the marker on %s", async (_what, type, options) => {
+    const game = await addRepo();
+
+    const made = await createField(game.id, { label: "Mains", type, options, holdsRoles: true }, db);
+
+    expect(made.ok && made.data.holdsRoles).toBe(false);
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
+  });
+
+  it("does not keep the marker on a question asked of everybody", async () => {
+    const made = await createField(
+      null,
+      { label: "Roles anywhere", type: "multiselect", options: ["Caller"], holdsRoles: true },
+      db
+    );
+
+    expect(made.ok && made.data.holdsRoles).toBe(false);
+  });
+
+  it("drops the marker when the question stops being a pick-any, and does not bring it back", async () => {
+    const game = await addRepo();
+    const field = await markedQuestion(game.id, "Mains");
+
+    // Read off the row, not through `rolesFieldFor`: that skips anything
+    // but a pick-any on its own account, so it would say "none" here whether
+    // or not the marker had really gone.
+    const retyped = await updateField(
+      field.id,
+      { label: "Mains", type: "text", holdsRoles: true },
+      db
+    );
+    expect(retyped.ok && retyped.data.field.holdsRoles).toBe(false);
+
+    await updateField(field.id, { label: "Mains", type: "multiselect", options: ["Scout"] }, db);
+    expect(await rolesFieldFor(game.id, db)).toBeNull();
   });
 });
 

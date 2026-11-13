@@ -259,6 +259,25 @@ export function rankUnavailable(game: string | null): string {
 /** How the dialog names a game it is only shown inside (`rankUnavailable`). */
 export const THIS_GAME = "This game";
 
+/**
+ * May this question be marked as holding a game's preferred roles (R-259 /
+ * UC-54)? Only a game's own pick-any.
+ *
+ * A game's, because the roles field is looked up by game and a question asked
+ * of everybody belongs to none. A pick-any, because a member's preferred roles
+ * are a list and that is the one type whose answer is one.
+ *
+ * Here for the reason `rankUnavailable` is: the dialog asks it to decide
+ * whether to offer the box, and `createField` / `updateField` ask it to decide
+ * whether to keep the tick, and two copies of the rule is how the screen ends
+ * up offering something the server throws away.
+ *
+ * @param gameId The game the question belongs to, or `null` for one asked of everybody.
+ */
+export function canHoldRoles(gameId: string | null, type: ProfileFieldType): boolean {
+  return gameId !== null && type === "multiselect";
+}
+
 /* ------------------------------------------------------------------ */
 /* The rank ladder, arranged for two taps                             */
 /* ------------------------------------------------------------------ */

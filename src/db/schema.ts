@@ -537,6 +537,21 @@ export const profileFields = pgTable(
       .notNull()
       .default(sql`'[]'::jsonb`),
     required: boolean("required").notNull().default(false),
+    /**
+     * This is the question a game's preferred roles are read from (R-259 /
+     * UC-54), whatever it is keyed or labelled.
+     *
+     * A marker beside the type rather than a type of its own: the field stays
+     * the `multiselect` it is, so every event question and template question
+     * that prefills from it still matches it. Only a game's own pick-any keeps
+     * the marker (`canHoldRoles` in src/lib/profile-fields.ts), and nothing in
+     * the database holds a game to one — `rolesFieldFor` says which of two
+     * is read.
+     *
+     * False is "not marked", which is what every row was before the column
+     * existed. drizzle/0034 marks the seeded Rivals question.
+     */
+    holdsRoles: boolean("holds_roles").notNull().default(false),
     sort: integer("sort").notNull().default(0),
     /**
      * When an admin retired the question (UC-03 5a, R-09).

@@ -88,6 +88,7 @@ function field(over: Partial<AdminFieldView> = {}): AdminFieldView {
       { value: "healer", label: "Healer" },
     ],
     required: false,
+    holdsRoles: false,
     sort: 0,
     retiredAt: null,
     createdAt: new Date("2026-03-01T18:00:00Z"),

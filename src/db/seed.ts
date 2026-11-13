@@ -226,6 +226,10 @@ const FIELDS_BY_GAME: Record<string, Array<Omit<NewProfileField, "gameId">>> = {
       key: "roles",
       label: "Preferred roles",
       type: "multiselect",
+      // The marker is what says "this is the game's preferred-roles question"
+      // (R-259 / UC-54), not the key. A database seeded before the column
+      // existed holds this row unmarked; drizzle/0034 marks it.
+      holdsRoles: true,
       // The same three roles the hero catalogue uses, from the same source:
       // this question and `heroes.roles` are two views of one fact about the
       // game, and a second hand-written copy of the list is how they drift.

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   Alert,
   Button,
+  Checkbox,
   ChoiceChip,
   ChoiceRow,
   Eyebrow,
@@ -14,11 +15,12 @@ import {
   plural,
 } from "@/components/ui";
 import FieldControl from "@/components/profile/FieldControl";
-import type { ProfileFieldType, ProfileValue } from "@/db/schema";
-import type { AdminFieldView } from "@/lib/admin-games";
+import type { ProfileFieldOption, ProfileFieldType, ProfileValue } from "@/db/schema";
+import type { AdminFieldView, FieldInput } from "@/lib/admin-games";
 import {
   FIELD_TYPES,
   THIS_GAME,
+  canHoldRoles,
   choicesFor,
   fieldTypeInfo,
   normaliseOptions,
@@ -37,6 +39,11 @@ import {
  * and whether it is required. Options are typed one per line, because for the
  * *admin* a textarea is the fast path — plan §2's "clicks, not typing" rule is
  * about the member filling the form in, not the person defining it.
+ *
+ * A game's own pick-any gets a fourth: whether it is the question the game's
+ * preferred roles are read from (R-259 / UC-54). The box is offered only
+ * there — `canHoldRoles`, the same rule `createField` and `updateField` keep
+ * the tick by — so it is never on screen where ticking it would do nothing.
  *
  * The preview underneath is live and is the real control, `FieldControl`, with
  * the draft definition fed into it. It is what makes "add REPO with two
@@ -78,6 +85,37 @@ export function strandedAnswerNotice(count: number): { heading: string; body: st
   };
 }
 
+/**
+ * The words beside the preferred-roles box. Exported so a test can find the
+ * box by them rather than by its position in the dialog.
+ */
+export const ROLES_MARKER_LABEL = "This is the game's preferred-roles question";
+
+/**
+ * What a save sends, for a new question and an edited one alike.
+ *
+ * Exported and pure so a test can read it, because a static render cannot
+ * click Save. The field worth pinning is `holdsRoles`: it is optional on
+ * `FieldInput`, so leaving it out compiles, and `updateField` reads its
+ * absence as "not marked" — an editor that dropped it would clear the marker
+ * on every edit of the marked question, a rename included.
+ */
+export function fieldInputFrom(draft: {
+  label: string;
+  type: ProfileFieldType;
+  options: readonly ProfileFieldOption[];
+  required: boolean;
+  holdsRoles: boolean;
+}): FieldInput {
+  return {
+    label: draft.label,
+    type: draft.type,
+    options: draft.options.map((option) => option.label),
+    required: draft.required,
+    holdsRoles: draft.holdsRoles,
+  };
+}
+
 /*
  * The "why not a rank question here" copy is `rankUnavailable` in
  * `src/lib/profile-fields.ts`, which is also where `createField` reads its
@@ -114,6 +152,7 @@ export default function QuestionDialog({
     (field?.options ?? []).map((option) => option.label).join("\n")
   );
   const [required, setRequired] = useState(field?.required ?? false);
+  const [holdsRoles, setHoldsRoles] = useState(field?.holdsRoles ?? false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,12 +180,7 @@ export default function QuestionDialog({
     [label, type, required, options, rankLadder]
   );
 
-  const input = {
-    label,
-    type,
-    options: options.map((option) => option.label),
-    required,
-  };
+  const input = fieldInputFrom({ label, type, options, required, holdsRoles });
 
   const save = async (force: boolean) => {
     setBusy(true);
@@ -267,6 +301,23 @@ export default function QuestionDialog({
           className="h-32"
           value={optionText}
           onChange={(event) => setOptionText(event.target.value)}
+        />
+      )}
+
+      {canHoldRoles(gameId, type) && (
+        <Checkbox
+          checked={holdsRoles}
+          onChange={setHoldsRoles}
+          label={
+            <span className="block">
+              <span className="block text-14 text-chalk">{ROLES_MARKER_LABEL}</span>
+              <span className="mt-0.5 block text-13 leading-relaxed text-muted">
+                A member&apos;s roles are read from the question with this tick, not from
+                what the question is called — so renaming it is safe. If two are ticked,
+                the first in the list is the one read.
+              </span>
+            </span>
+          }
         />
       )}
 

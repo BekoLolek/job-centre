@@ -49,6 +49,7 @@ import {
 } from "@/db";
 import {
   type FieldShape,
+  canHoldRoles,
   fieldTypeInfo,
   isFieldType,
   normaliseOptions,
@@ -627,6 +628,14 @@ export type FieldInput = {
   /** Labels, one per entry, or `{value,label}` pairs. Ignored by most types. */
   options?: unknown;
   required?: boolean;
+  /**
+   * Mark this as the question the game's preferred roles are read from (R-259).
+   * Kept only on a game's own pick-any (`canHoldRoles`) and dropped anywhere
+   * else, the way `options` are dropped for a type that has none. Left out, it
+   * is false, as `required` is — so an edit that does not ask for the marker
+   * clears it.
+   */
+  holdsRoles?: boolean;
 };
 
 /** The shared checks for creating and editing a field. */
@@ -698,12 +707,78 @@ export async function createField(
   const key = uniqueKey(checked.data.label, siblings.map((field) => field.key), "question");
   const sort = siblings.reduce((highest, field) => Math.max(highest, field.sort + 1), 0);
 
+  const holdsRoles = Boolean(input.holdsRoles) && canHoldRoles(gameId, checked.data.type);
+
   const [created] = await database
     .insert(profileFields)
-    .values({ gameId, key, sort, ...checked.data })
+    .values({ gameId, key, sort, ...checked.data, holdsRoles })
     .returning();
 
   return withData(created);
+}
+
+/**
+ * The question a game's preferred roles are read from, or null when it has
+ * none (R-259 / UC-54).
+ *
+ * Found by the **marker** an admin sets on the question (`holds_roles`), not by
+ * its key or its label: the key is slugged from whatever was first typed and
+ * the label is theirs to change, so neither says what a question *is*. A
+ * question keyed `roles` that is not marked is not it.
+ *
+ * Two marked questions resolve to the first in the catalogue's own order —
+ * `sort`, then age (UC-54 1b) — so reordering them changes which is read. A
+ * retired one is not asked, so it is not read, and the next marked one takes
+ * over (1c). A game that marks none has no roles field, which is an answer and
+ * not a fault (1a).
+ *
+ * Both halves of `canHoldRoles` are asked again here rather than trusted to
+ * the write: a question asked of everybody belongs to no game and is never
+ * returned, and neither is anything but a pick-any, marked or not. The second
+ * is reachable — a build from before the column existed retypes a question
+ * without touching the marker — and a caller is owed a field whose answers
+ * are lists.
+ *
+ * ## Two ways this is NOT the rank lookup — do not copy one onto the other
+ *
+ * The idea is the rank field's — find the question by what it is, not by what
+ * it is called — and nothing else is. `memberRank` / `memberRanks` in
+ * `events.ts` differ twice:
+ *
+ *  1. **One field for the whole game, not the first one each member
+ *     answered.** The rank lookup reads *every* rank field of the game and,
+ *     member by member, falls through to the next when the first is
+ *     unanswered. This is `limit 1`: the first marked field is the game's roles
+ *     field even for a member who answered only the second.
+ *  2. **Retired fields are skipped here and not there.** The rank lookup does
+ *     not filter `retired_at`, so a retired rank field is still read. That is
+ *     a defect in the rank lookup with a task of its own (docs/plan.md, Task
+ *     122), not a behaviour to match.
+ *
+ * ## For Task 119
+ *
+ * Reading the *answers* belongs in `events.ts` beside `memberRanks`, and
+ * nothing there imports this module. Move this function there rather than
+ * writing a second lookup by marker — it has no caller here but its tests.
+ */
+export async function rolesFieldFor(
+  gameId: string,
+  database: Database = defaultDb
+): Promise<ProfileField | null> {
+  const [field] = await database
+    .select()
+    .from(profileFields)
+    .where(
+      and(
+        eq(profileFields.gameId, gameId),
+        eq(profileFields.holdsRoles, true),
+        eq(profileFields.type, "multiselect"),
+        isNull(profileFields.retiredAt)
+      )
+    )
+    .orderBy(asc(profileFields.sort), asc(profileFields.createdAt))
+    .limit(1);
+  return field ?? null;
 }
 
 export type FieldEditImpact = {
@@ -765,8 +840,8 @@ export async function previewFieldEdit(
 }
 
 /**
- * Edit a field's label, type, options or required flag. **No answer is ever
- * deleted by an edit** (UC-03 5a, R-09).
+ * Edit a field's label, type, options, required flag or preferred-roles
+ * marker. **No answer is ever deleted by an edit** (UC-03 5a, R-09).
  *
  * This is the rule the module exists for. An answer is something a member
  * said; an admin's second thoughts about the wording of the question are not a
@@ -814,9 +889,12 @@ export async function updateField(
   // is the number they are told afterwards.
   const stranded = (await previewFieldEdit(fieldId, input, database)).invalidated;
 
+  const holdsRoles =
+    Boolean(input.holdsRoles) && canHoldRoles(existing.gameId, checked.data.type);
+
   const [updated] = await database
     .update(profileFields)
-    .set(checked.data)
+    .set({ ...checked.data, holdsRoles })
     .where(eq(profileFields.id, fieldId))
     .returning();
 

@@ -1647,6 +1647,130 @@ A season of two to four events a month across different games, with one running 
 - **1a.** The night is scored in rounds - refused, as UC-33 is: its order is its table.
 - **1b.** The championship is closed - refused until it is reopened.
 
+## UC-53: Build the teams by moving people
+
+**Actor:** Admin
+**Requirements covered:** R-257, R-258, R-260
+**Trigger:** An event has teams to fill and the admin is filling them by hand.
+
+**Preconditions**
+1. The admin may manage this event, the event has teams, and no lot has been opened.
+
+**Main success path**
+1. Admin opens the event's Teams tab.
+2. System shows every accepted player as a card carrying their name, picture, current rank and preferred roles, either on a team or in the list of people not yet placed.
+3. Admin moves a card onto a team.
+4. System places that player on that team at once, and the card is on the team from the moment it is let go.
+5. Admin moves a card back to the unplaced list.
+6. System takes that player off their team.
+
+**Outcome**
+- The sides are filled, and what is on the screen is what is saved.
+
+**Alternate flows**
+- **2a.** A player with no rank recorded, or no roles - the card says so in words rather than leaving a gap.
+- **2b.** The game has marked no roles field - no card shows roles, and nothing is missing from the screen.
+- **3a.** Admin uses the "Move to" control instead of moving the card - the same write, and the same result. It is the path for a keyboard and for a phone, where there is no dragging.
+- **3b.** The card is let go where it started - nothing is written and nothing is marked as changed.
+- **4a.** The team is full - the move is refused, the card returns to where it was, and the panel says which team and why.
+- **4b.** The player is a captain, or a lot has been opened since the screen was drawn - refused the same way, with the sentence the server gives.
+- **6a.** The player was the last on that team - the team stays, empty.
+
+**Error flows**
+- **3c.** The player is not accepted for this event - refused; a board drawn before somebody withdrew is ten minutes old, and the server decides.
+- **4c.** The server cannot be reached - the card returns to where it was and says nothing was saved.
+
+## UC-54: Say which field holds a game's preferred roles
+
+**Actor:** Admin
+**Requirements covered:** R-259
+
+**Preconditions**
+1. The admin manages the games catalogue, and the game has a profile field holding roles.
+
+**Main success path**
+1. Admin marks that field as the game's preferred-roles field.
+2. System reads it as the answer to "what roles does this player prefer" wherever that is asked.
+
+**Outcome**
+- Renaming the field, or reordering the catalogue, leaves the board reading the right answers.
+
+**Alternate flows**
+- **1a.** The game has no such field - nothing is marked, and screens that would show roles show none.
+- **1b.** Two fields are marked - the first by the catalogue's own order wins. **Not** "as two rank fields do", which is what this flow said when it was written and was wrong in a way worth keeping visible: the rank read walks *every* rank field and falls through per member when the first is unanswered, so two rank fields can each answer for a different person. This takes the first and stops. One field per game is the simpler rule and the one the card needs; the rank read is the odd one out.
+- **1c.** The marked field is retired - it stops being read. **Not** "as a retired field does everywhere", which is what this flow said when it was written and was wrong: a retired *rank* field is still read by `memberRanks`, still feeds the entry gates, and still shadows a newer active one. That is a defect (Task 122), not a behaviour to copy - the roles read filters retired fields because every other profile read does.
+
+## UC-55: Give somebody powers without making them an admin
+
+**Actor:** Site admin
+**Requirements covered:** R-261, R-262, R-263, R-264, R-266
+**Trigger:** The admin wants a member to be able to do a named thing.
+
+**Preconditions**
+1. The actor holds the admin flag. Nothing else reaches this screen, and no power grants it.
+
+**Main success path**
+1. Admin opens the member's entry under Members.
+2. System shows every power in the vocabulary, with the ones this member holds marked.
+3. Admin applies a preset, which marks the powers that preset names.
+4. Admin adjusts individual powers.
+5. Admin saves.
+6. System stores exactly the marked powers for that member, records who changed them, and the member may do those things from their next request.
+
+**Outcome**
+- The member can do what they were given and nothing else, and the change is answerable.
+
+**Alternate flows**
+- **3a.** No preset fits - the admin marks powers directly; a preset is a shortcut, never a requirement.
+- **4a.** The admin unmarks everything - the member keeps no powers, which is the state every member starts in.
+- **6a.** A preset is edited in a later release - nobody's powers change. A preset is applied, not followed.
+- **6b.** The member is signed in while this happens - the next request they make uses the new powers, because authority is read from the row rather than from the session.
+
+**Error flows**
+- **2a.** The member holds the admin flag - their powers are not editable here; an admin already has everything, and the flag is granted and revoked by the controls that already exist.
+- **5a.** The admin tries to grant the power to grant powers - there is no such power to grant (R-264). It is not refused on a screen; it does not exist in the vocabulary.
+
+## UC-56: Do something I have been given the power to do
+
+**Actor:** Member with powers
+**Requirements covered:** R-261, R-265
+
+**Main success path**
+1. Member opens the admin area.
+2. System shows the parts their powers reach, and nothing else.
+3. Member does one of those things.
+4. System allows it, exactly as it would for an admin, and records them as the actor.
+
+**Outcome**
+- The thing is done by the person trusted with it.
+
+**Alternate flows**
+- **2a.** They hold no powers at all - the admin area is not theirs, as today.
+- **3a.** They reach, by a saved link, a screen their powers do not cover - turned away, as a non-admin is today.
+- **4a.** They attempt an action their powers do not cover, by a stale screen or by hand - refused at the action. **Hiding is not permission**: the screen not offering it is never what stops it.
+
+**Error flows**
+- **3b.** Their powers are taken away mid-session - the next request is refused, because every gate re-reads the stored facts rather than trusting the session.
+
+## UC-57: Be stopped from doing the dangerous thing
+
+**Actor:** Member with powers
+**Requirements covered:** R-267
+
+**Main success path**
+1. Member holds the power over an area but not the destructive power.
+2. Member does the ordinary things in that area - creating, editing, closing.
+3. Member attempts one the site classes as destructive.
+4. System refuses, naming what is missing.
+
+**Outcome**
+- The irreversible things need to have been trusted with them specifically.
+
+**Alternate flows**
+- **1a.** They hold the destructive power too - allowed, and recorded as destructive in the audit log as it already is.
+- **2a.** An admin does the same thing - allowed; the flag is above the vocabulary.
+- **3a.** An event host does something destructive on their own event - allowed. A host's evening is whole (out of scope above), and this vocabulary is site-wide.
+
 ## UC-47: See what the room was dealt
 
 **Actor:** Manager (an admin, or this event's host)

@@ -239,6 +239,13 @@
       "when": 1792844073073,
       "tag": "0033_event_round_scores",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794574891152,
+      "tag": "0034_holds_roles",
+      "breakpoints": true
     }
   ]
 }

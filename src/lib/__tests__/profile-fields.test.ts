@@ -4,6 +4,7 @@ import {
   FIELD_TYPES,
   NUMBER_MAX,
   TEXT_MAX_LENGTH,
+  canHoldRoles,
   choicesFor,
   detailAttention,
   fieldTypeInfo,
@@ -119,6 +120,23 @@ describe("field types", () => {
     expect(isFieldType("SELECT")).toBe(false);
     expect(isFieldType("dropdown")).toBe(false);
     expect(isFieldType(undefined)).toBe(false);
+  });
+});
+
+describe("which question may be marked as a game's preferred roles (R-259)", () => {
+  it("is a game's own pick-any", () => {
+    expect(canHoldRoles("game-1", "multiselect")).toBe(true);
+  });
+
+  it.each([
+    ["a pick-any asked of everybody, which belongs to no game", null, "multiselect"],
+    ["a game's pick-one, whose answer is not a list", "game-1", "select"],
+    ["a game's rank", "game-1", "rank"],
+    ["a game's yes / no", "game-1", "bool"],
+    ["a game's number", "game-1", "number"],
+    ["a game's free text", "game-1", "text"],
+  ] as const)("is not %s", (_what, gameId, type) => {
+    expect(canHoldRoles(gameId, type)).toBe(false);
   });
 });
 

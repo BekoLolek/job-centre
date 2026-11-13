@@ -1,0 +1,71 @@
+-- Which profile field holds a game's preferred roles (R-259 / UC-54).
+--
+-- `profile_fields` gains a marker, `holds_roles`, and the site finds a game's
+-- roles question by it rather than by the key `roles` — a key is slugged from
+-- whatever the admin first typed, and a label is theirs to change. The lookup
+-- is `rolesFieldFor`.
+--
+-- ## One column added, one row-fix, and nothing else
+--
+-- The first statement is what `npm run db:generate` wrote, plus `IF NOT
+-- EXISTS` (see "Run twice"). An `ADD COLUMN` with a constant default and NOT
+-- NULL cannot fail on data, and on Postgres 11+ it does not rewrite the table
+-- (drizzle/0023 is the same shape). Nothing is re-typed, renamed, tightened
+-- or dropped: `type` is still
+-- the six-value `profile_field_type` and the marked field is still the
+-- `multiselect` it was, so every event question and template question that
+-- prefills from it still matches it.
+--
+-- That is the reason this is a column and not a seventh field type. A push to
+-- main applies this file while instances of the previous build are still
+-- serving (docs/plan.md's risk register: "Additive-first migrations; drops in
+-- a later commit"). Those instances name their columns in every statement, so
+-- one they have never heard of costs them nothing: their reads do not ask for
+-- it and their inserts leave it to the default.
+--
+-- ## The seeded question is marked here
+--
+-- Every row starts unmarked, which is right for all of them but one: the
+-- preferred-roles question `src/db/seed.ts` has always planted on Rivals,
+-- keyed `roles`. Left alone, R-259 would point at no field on any database
+-- that already exists until somebody ticked the box by hand — and `db:seed`
+-- would not do it for them, because it inserts only where (game, key) is
+-- free. So the row is marked by key, the one thing that identifies it; from
+-- here on the key is never read for this again.
+--
+-- Any game's, not only Rivals' — a game whose pick-any question is keyed
+-- `roles` is asking the same thing. `profile_fields_game_key_uniq` allows one
+-- such row per game, so this marks at most one field on each.
+--
+-- Narrow on purpose:
+--
+--  * only a `multiselect`. A pick-one keyed `roles` holds one string per
+--    member where a roles answer is a list, and the editor only ever keeps
+--    the marker on a pick-any (`canHoldRoles` in src/lib/profile-fields.ts);
+--  * only a game's question. One asked of everybody belongs to no game, and
+--    the field is looked up by game.
+--
+-- A retired question is marked like any other. The marker says what the
+-- question is, not whether it is being asked: `rolesFieldFor` skips a retired
+-- field, and restoring one should not depend on somebody remembering to mark
+-- it afterwards.
+--
+-- No answer is touched, and nothing about the row but the marker changes.
+--
+-- ## Run twice
+--
+-- The whole file can be, and a second run straight after the first changes
+-- nothing. The column is added `IF NOT EXISTS` — written in by hand, as
+-- drizzle/0025's index is — and the `UPDATE` sets a constant on rows chosen
+-- by columns it does not change, so it writes the same value to the same
+-- rows.
+--
+-- It is not guarded against an admin having since unmarked the question: the
+-- migrator applies a file once, so the only second run is one made by hand,
+-- and a hand that re-runs "mark the question keyed `roles`" gets what it says.
+ALTER TABLE "profile_fields" ADD COLUMN IF NOT EXISTS "holds_roles" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+UPDATE "profile_fields"
+SET "holds_roles" = true
+WHERE "key" = 'roles'
+  AND "type" = 'multiselect'
+  AND "game_id" IS NOT NULL;
