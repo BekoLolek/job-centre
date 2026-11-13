@@ -122,6 +122,8 @@ export function applicant(
       discordId: "discord-1",
     },
     rank,
+    // No roles question on this fixture's game, unless a test says otherwise.
+    roles: null,
     eligibility: eligibility(event, { rank }, LADDER, waived),
     waived,
     ...rest,

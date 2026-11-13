@@ -1700,7 +1700,7 @@ A season of two to four events a month across different games, with one running 
 **Alternate flows**
 - **1a.** The game has no such field - nothing is marked, and screens that would show roles show none.
 - **1b.** Two fields are marked - the first by the catalogue's own order wins. **Not** "as two rank fields do", which is what this flow said when it was written and was wrong in a way worth keeping visible: the rank read walks *every* rank field and falls through per member when the first is unanswered, so two rank fields can each answer for a different person. This takes the first and stops. One field per game is the simpler rule and the one the card needs; the rank read is the odd one out.
-- **1c.** The marked field is retired - it stops being read. **Not** "as a retired field does everywhere", which is what this flow said when it was written and was wrong: a retired *rank* field is still read by `memberRanks`, still feeds the entry gates, and still shadows a newer active one. That is a defect (Task 122), not a behaviour to copy - the roles read filters retired fields because every other profile read does.
+- **1c.** The marked field is retired - it stops being read. **Not** "as a retired field does everywhere", which is what this flow said when it was written and was wrong: a retired *rank* field is still read by `memberRanksAndRoles`, still feeds the entry gates, and still shadows a newer active one. That is a defect (Task 122), not a behaviour to copy - the roles read filters retired fields because every other profile read does.
 
 ## UC-55: Give somebody powers without making them an admin
 

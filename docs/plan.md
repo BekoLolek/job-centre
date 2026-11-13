@@ -2611,11 +2611,38 @@ anything.
   "this player answered nothing" - the screen needs to tell those apart in Task 120, so carry
   them apart.
 - **Acceptance criteria:**
-  - [ ] Every accepted applicant's preferred roles reach the Teams tab's props, in the catalogue's own option order rather than the order they were answered
-  - [ ] A game with no roles field and a player who answered nothing are distinguishable at the props, not merged into one empty list
-  - [ ] The read is not a second round trip per player, proven by the query count
-  - [ ] A stored answer naming an option since removed is still returned, as a stale rank already is
+  - [x] Every accepted applicant's preferred roles reach the Teams tab's props, in the catalogue's own option order rather than the order they were answered
+  - [x] A game with no roles field and a player who answered nothing are distinguishable at the props, not merged into one empty list
+  - [x] The read is not a second round trip per player, proven by the query count
+  - [x] A stored answer naming an option since removed is still returned, as a stale rank already is
 - **Depends on:** Task 118.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **A saving that spared the cold callers and charged the hot one.** The build added a `withRoles`
+  flag so callers that never print a role would not pay for the lookup. It did not do that:
+  `getApplicationsForEvent` hard-coded it true, and its other caller is the **public event page**,
+  which uses only names and status and would have paid an extra select on every view. The flag
+  spared the member's form and `setCaptains` and charged the busiest path in the app. Removed -
+  the honest cost is one indexed `limit 1`, in parallel, for two cold callers. A flag parameter
+  standing in for a decision is worth less than the decision.
+  **The representation is mixed, deliberately, and Task 120 was told.** A live option comes back
+  as its catalogue **label** and an option since removed as its raw stored **value** - the `?? raw`
+  shape `profile-fields.ts:574` already uses. So the card will print a dead `flex` as though it
+  were a role name. Accepted, because marking stale roles is a type change in `events.ts` rather
+  than something a component can add, and recorded on Task 120 so nobody meets it by surprise.
+  **The dependency's own docblock told the next reader to do what had been decided against.**
+  Task 118 left a "For Task 119" block in `admin-games.ts` saying to move the resolver into
+  `events.ts`. Importing it was the right call and review agreed, but the file went on
+  instructing otherwise, and named a function the rename had deleted. A hand-off note that
+  outlives its hand-off is a trap with a date on it.
+  **A test was deleted and the deletion was checked.** One of the thirteen killed nothing its
+  neighbours did not. After removing it the owning mutant was re-run and five tests failed,
+  the retitled one among them, and a second mutant confirmed it is still the only test holding
+  the order criterion. Deleting a test is a change like any other and wants the same evidence.
+  **Not proven:** nothing renders roles yet, and the last hop to `TeamsTab` is held by the
+  compiler - `applicants` is a **required** prop - not by a test. That is the opposite of Task
+  118's gap, where the field was optional so the compiler never looked and deleting the line left
+  766 tests passing. Written into the test's docblock, with the condition that would make it a
+  real gap again.
 
 ### Task 120: The card
 
@@ -2629,6 +2656,12 @@ anything.
   Captains tab, so use its words rather than new ones. A player who answered no roles says so
   too; a game with no roles field shows no roles line at all, which is the distinction Task 119
   carried.
+  **One thing the card cannot do, so do not try.** Task 119 returns live options by their
+  catalogue **label** and an option since removed by its raw stored **value** - `?? raw`, the
+  same shape `profile-fields.ts:574` already uses. So the card receives `string[]` with no way to
+  tell `"Vanguard"` from a dead `"flex"`, and will print a stale slug as though it were a role
+  name. That is accepted: marking stale roles would be a type change in `events.ts`, not
+  something this component can add, and no criterion here needs the distinction.
 - **Acceptance criteria:**
   - [ ] Name, picture, rank and roles all render, and the initials fallback still appears for a member with no picture
   - [ ] "No rank recorded" uses the repo's existing wording, asserted against the Captains tab's string rather than a copy
@@ -2668,7 +2701,7 @@ anything.
 
 - **Serves:** a defect found while building Task 118. No requirement asks for it; R-259's
   neighbour exposed it.
-- **Files:** `src/lib/events.ts` (`memberRank`, `memberRanks`), and tests
+- **Files:** `src/lib/events.ts` (`memberRank`, `memberRanksAndRoles` - renamed from `memberRanks` by Task 119), and tests
 - **Do:** every other read of a profile field drops retired ones - `events.ts:1013`,
   `profile.ts:146` and `:360`, `admin-games.ts:592`, and `rolesFieldFor` as of Task 118. The
   rank read does not. The consequences are real and all three are invisible: a retired rank field
@@ -2882,12 +2915,43 @@ every action checks.
   Authority is re-read per request, never taken from the session - the reason `is_admin` already
   behaves that way, and UC-56 3b depends on it.
 - **Acceptance criteria:**
-  - [ ] A holder passes, a non-holder is turned away, and an admin passes without holding anything
-  - [ ] A power revoked mid-session is refused on the next request, asserted against a live session
-  - [ ] The refusal is the same shape a non-admin already gets, pinned against `requireAdmin`'s
-  - [ ] The guard returns the actor, so the audit line names the person and not the power
-  - [ ] There is no power that grants permissions, asserted over the vocabulary itself
+  - [x] A holder passes, a non-holder is turned away, and an admin passes without holding anything
+  - [x] A power revoked mid-session is refused on the next request, asserted against a live session
+  - [x] The refusal is the same shape a non-admin already gets, pinned against `requireAdmin`'s
+  - [x] The guard returns the actor, so the audit line names the person and not the power
+  - [x] There is no power that grants permissions, asserted over the vocabulary itself - held by the **literal** name-by-name pin in `permissions-policy.test.ts`, which fails on any addition, plus a behavioural test that a member holding all fourteen still does not pass `requireAdmin`. A name-shaped regex is not enough: it would admit a granting power called `members.manage`, which `permissions-policy.ts` itself cites as one
 - **Depends on:** Task 123.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **Work was lost to a shared scratchpad, and only asking found it.** Four agents were running in
+  one checkout and two of them wrote a file called `mutants.py`. One re-ran what it thought was
+  its own script and got this task's, which applied 15 mutants to `session-guards.ts` and
+  `permissions.ts` over three minutes. Two edits - the `requireUser()` extraction and a corrected
+  docblock - vanished under a restore of a stale snapshot. The lead's own glance at the file
+  showed the extraction present and would have called it clean; the implementer, asked to confirm
+  rather than assume, found both gone and reapplied them. **Scratchpad names are now prefixed per
+  task.** The lesson is older than the bug: a check that reads "it looks right" is not a check.
+  **The criterion was held by a regex that admitted the very name the code cites.** "No power
+  grants permissions" was asserted by a name-shape rule - `permissions.*`, `*.grant`, `*.revoke`.
+  `permissions-policy.ts:14-15` itself names `members.manage` as a granting-shaped power, and the
+  regex waved it through. Mutant M11b was watched surviving it and dying in Task 123's **literal**
+  name-by-name pin, which fails on any addition at all. The criterion now says where it is held,
+  and the guard's docblock points there instead of at the regex.
+  **The third strike was already extracted.** The signed-out refusal was written out three times
+  across the guards and all three change for the same reason - while `requireEventManager` and
+  `requireManagerOfChild` had opened with `await requireUser()` all along. Taking an extraction
+  that exists costs nothing; writing the fourth copy would have been the decision.
+  **Five tests were deleted and nothing died.** 14 restated Task 123's vocabulary in the wrong
+  file, two were strictly implied by others, one asserted a value only the test itself wrote, and
+  one sweep test ran a path an existing row already covered. Every original mutant was re-run
+  afterwards and all are still killed. Two that looked subsumed were kept because they are not:
+  "somebody else's power" kills the **guard** passing the wrong user id, where the other pin only
+  covers the read, and the unknown-power-for-an-admin test is the only thing stopping
+  `if (user.isAdmin) return user;` being hoisted above `holds`.
+  **What is not proven.** No action calls `requirePermission` yet, so the sweep finds it only in a
+  fixture - the comment in `every-action-is-gated.test.ts` now says so, and Task 126 adds the
+  first real row. And the refusal sends a power-holder to a page that says the account does not
+  have the admin flag, which is false for them; found here, fixed in Task 126 where it becomes
+  visible.
 
 ### Task 126: Events and announcements move onto powers
 
@@ -2909,7 +2973,8 @@ every action checks.
   - [ ] **A `hosts.approve` holder cannot approve their own application**, refused by name - without this the power is an escalation path, because an `event_hosts` row is "within this event the holder can do what an admin can", and `approveInside` has never checked that the decider is not the applicant. Harmless while only admins could approve; a hole the moment it is grantable
   - [ ] An admin approving their own application is unchanged, because an admin already manages every event and the refusal would be theatre
   - [ ] Every audit line names the holder as actor
-  - [ ] The sweep still passes
+  - [ ] **The sign-in page stops telling a power-holder the wrong thing.** `requirePermission` refuses with `error=admin-only`, by design (Task 125), and `src/app/signin/page.tsx` renders that as "your account doesn't have the admin flag" - true today, false the moment a member holds powers and is turned away from one they lack. Found in Task 125's review; it becomes user-visible here, which is why it is fixed here. The copy must be true for a holder and for a plain member alike, without inventing a second vocabulary of refusals
+  - [ ] The sweep still passes, **and gains its first real-tree row for `requirePermission`** - until a call site exists the sixth guard is proven only against a fixture, which `every-action-is-gated.test.ts` says in a comment Task 125 had to amend
 - **Depends on:** Tasks 124, 125.
 
 ### Task 127: The catalogue moves onto powers
@@ -3016,18 +3081,57 @@ every action checks.
 
 - **Serves:** a gap found while planning section T. No requirement asks for it.
 - **Files:** `src/app/admin/games/actions.ts`, `src/lib/audit.ts`, and tests
-- **Do:** every other admin area records what it did. The games actions - including deleting a
-  profile field, which cascades every answer to it - record nothing, so a field that vanishes has
-  no history. Three audit actions are also written but missing from `AUDIT_ACTIONS` and render as
+- **Do:** every other admin area records what it did. The games actions record nothing, so a
+  field that vanishes has no history.
+  **A correction to this entry, made during the build:** it said a profile-field delete "cascades
+  every answer to it". It does not. `deleteField` (`admin-games.ts:979-986`) counts the answers
+  and **refuses** when there are any, pointing the admin at retiring instead - so no delete
+  through this action has ever cascaded. The schema cascade is real
+  (`src/db/schema.ts:590`), but nothing outside tests reaches it. The delete is still recorded as
+  destructive, on the honest ground that the row cannot be brought back rather than the one this
+  entry invented. Three audit actions are also written but missing from `AUDIT_ACTIONS` and render as
   raw strings: `event.format`, `team.random`, `draft.bid_cleared`.
   **Tier 1**, independent of the permission work, and worth doing before Task 129 classifies
   anything as destructive.
 - **Acceptance criteria:**
-  - [ ] Creating, updating, retiring and deleting a profile field each write an audit line naming the field and the game
-  - [ ] A profile-field delete is recorded as destructive
-  - [ ] The three unnamed actions appear in `AUDIT_ACTIONS` and render as sentences
-  - [ ] No existing audit line changes wording, pinned
+  - [x] Creating, updating, retiring and deleting a profile field each write an audit line naming the field and the game, and the update line names what the question was called before, as `hero.renamed` already does
+  - [x] The delete line's sentence about answers is **derived from the count**, not fixed text - a stored summary is never rebuilt, so a sentence that is true only under today's refusal would become a permanent false statement beside a `detail` that contradicts it
+  - [x] A profile-field delete is recorded as destructive
+  - [x] The three unnamed actions appear in `AUDIT_ACTIONS` and render as sentences
+  - [x] No existing audit line changes wording, pinned
+- **Accepted without a test:** three fallbacks that fire only if the field or its game disappears
+  between the catalogue read and the write - `?? "a game"`, `"Deleted a question."`, and the
+  update line's missing previous label. The first two write a line that names neither, which is
+  the right thing to do with a race nobody can open on purpose. The third was found by quality
+  review and was the dangerous one: it stored `detail.previousLabel` **equal to the new label**,
+  a positive claim that nothing was renamed, where the other two claim nothing at all. It now
+  stores `null`. Saying "I do not know" and saying "it did not happen" are different sentences,
+  and an audit log must never confuse them.
 - **Depends on:** nothing.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The entry's premise was false, and it was the lead's sentence.** It said a profile-field
+  delete "cascades every answer to it". `deleteField` counts the answers and **refuses** when
+  there are any. The implementer found it, said so rather than building to the brief, and marked
+  the delete destructive on the honest ground instead - the row cannot be brought back. The entry
+  is corrected above. A plan that is wrong about the code is worse than a plan that is silent,
+  because it gets implemented.
+  **An audit summary is written once and read forever.** The delete line first carried fixed text
+  - "Nobody had answered it, so no answers went with it" - while holding the real count. True
+  today only because of the refusal above; a permanent false statement the day that refusal is
+  relaxed, sitting beside a `detail` that contradicts it. Now derived from the count.
+  **The pin only closed one way.** 72 rows caught a reworded heading and nothing else did. What
+  survived: a later task adds an action and then rewords it, because nothing forced a new action
+  into the table. One key-equality assertion closed it, watched failing on an added key.
+  **"I do not know" and "it did not happen" are different sentences.** Three fallbacks cover the
+  window between the catalogue read and the write. Two write a line naming nothing, which is
+  right. The third stored `detail.previousLabel` **equal to the new label** - a positive claim
+  that no rename happened. It now stores `null`. The real fix is to stop reading before the write
+  at all, which is written into Task 137 with the shape to copy: the hero actions log what the
+  library returned.
+  **One mechanism ratified rather than waved through:** the non-zero delete branch is unreachable
+  through the product, so its test stubs `deleteField`'s return value. Kept - the branch traces to
+  a criterion, costs one ternary, and `vi.mock` being file-scoped is exactly why it lives in its
+  own file rather than voiding the main file's claim to run the unmodified library.
 
 ## U. A stage that was never built (R-268 / UC-18 9b, 9c)
 
@@ -3172,3 +3276,35 @@ somebody made by hand. If it is ever seen, it is a task of its own and the fix i
   - [ ] Watched failing against the current code before the fix
   - [ ] Every other tab with the same shape is either fixed or named with a reason it is safe
 - **Depends on:** nothing.
+
+### Task 137: Three more places the games catalogue says nothing
+
+- **Serves:** the same gap as Task 132, found by its spec review rather than by its plan entry
+- **Files:** `src/app/admin/games/actions.ts`, `src/lib/admin-games.ts`, `src/lib/audit.ts`, tests
+- **Do:** Task 132 recorded four profile-field actions because its criteria named four. Its "Do"
+  text said "the games actions", which is broader, and the rest are still silent:
+  `restoreFieldAction`, `moveFieldAction`, the four game actions, and **`setRankLadderAction`**.
+  The last is the one that matters - it **clears stored answers** and writes no line at all, so a
+  ladder change that wipes everybody's rank leaves no history. Do that one first; the others are
+  bookkeeping beside it.
+  **And take the pre-read out while you are there.** Task 132's four actions each call
+  `loadAdminGames()` - three queries, including a group-by over every `profile_values` row - only
+  to put a game's name in a summary. The hero actions do not: `renameHero` **returns**
+  `previousName`, and the action logs what the library handed back. That is the shape to copy.
+  `updateField` already holds `existing`, and `deleteField` already has a `.returning()` carrying
+  `gameId`. Have them return what the log needs, add a narrow `gameName(id)` for the rest, and
+  the read-before-write gap closes - which deletes `questionIn`, `?? field.label`,
+  `?? "a game"` and `"Deleted a question."` along with it, because all four exist only to cover
+  that gap.
+  Two defects found in the same review, both pre-existing and both in `admin-games.ts`:
+  **the answer count and the delete are separate statements with no transaction**, so an answer
+  saved between them is cascaded while `deletedAnswers` reports 0; and **`resequenceSection` runs
+  after the write** (`:942`, `:995`), so if it throws, the retire or delete is durable, the action
+  throws, and no audit line is written at all.
+- **Acceptance criteria:**
+  - [ ] `setRankLadderAction` writes a line naming the game and how many stored answers it cleared, and is recorded as destructive
+  - [ ] The remaining games actions each write a line, or are named with a reason they do not
+  - [ ] The count and the delete happen under one transaction, proven by a test that writes an answer between them
+  - [ ] A failing `resequenceSection` cannot leave a durable write unlogged, proven by making it throw
+  - [ ] The four profile-field actions log from what the library returned, not from a catalogue read taken before the write, and the three race fallbacks Task 132 accepted are gone because the race is
+- **Depends on:** Task 132.

@@ -76,6 +76,7 @@ import {
   profileValues,
   users,
 } from "@/db";
+import { rolesFieldFor } from "./admin-games";
 import { LOCKED_STATUSES, lockRefusal } from "./archive-policy";
 import {
   type ApplicationsState,
@@ -267,6 +268,25 @@ export type ApplicantView = ApplicationView & {
   };
   /** Their recorded rank for this event's game, if it has one. */
   rank: string | null;
+  /**
+   * Their preferred roles for this event's game (R-258), by the catalogue's
+   * labels and in the catalogue's option order.
+   *
+   * Two different empties, kept apart because a screen says different things
+   * about them:
+   *
+   *  - `null` — **the game has no roles question** (or the event has no game).
+   *    A fact about the event, the same on every row; there is nothing this
+   *    member could have answered.
+   *  - `[]` — **the game asks, and this member has answered nothing.**
+   *
+   * Null rather than a flag beside the list, so that the list cannot be read
+   * without the type making the reader decide what a missing question means.
+   * A role whose option an admin has since removed is still listed, as it was
+   * stored and after the rest, the way `rank` still carries a rank the ladder
+   * has dropped.
+   */
+  roles: string[] | null;
   eligibility: Eligibility;
   /**
    * Which rules a manager has waived for them on this event (R-59).
@@ -587,45 +607,86 @@ async function memberRank(
   return null;
 }
 
-/** Ranks for a whole list of members at once — the admin applicant list. */
-async function memberRanks(
+/**
+ * A member's stored answer to the game's roles question, as the list a screen
+ * prints.
+ *
+ * In the catalogue's own option order and by the catalogue's own labels — the
+ * stored values are slugs, and the order they were stored in is nobody's
+ * decision. An answer naming an option an admin has since removed is kept, as
+ * a rank the ladder no longer has is kept by the rank read below: it has no
+ * label and no place in the order any more, so it follows the rest, as stored.
+ * Anything that is not a list is no answer.
+ */
+function rolesAnswered(field: ProfileField, value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const stored = value.filter((item): item is string => typeof item === "string");
+  const known = field.options.filter((option) => stored.includes(option.value));
+  const removed = stored.filter((item) => !field.options.some((option) => option.value === item));
+  return [...known.map((option) => option.label), ...removed];
+}
+
+/**
+ * Ranks and preferred roles for a whole list of members at once — the admin
+ * applicant list (R-258).
+ *
+ * The two are one read of `profile_values`, not one each: both are "this
+ * member's answer to a question of this game", so the roles question's id
+ * joins the rank questions' in the one statement, and no caller pays a round
+ * trip per member or per kind of answer.
+ *
+ * They are not resolved alike, and the difference is kept. Rank walks *every*
+ * rank question of the game and, member by member, takes the first in
+ * catalogue order that member has answered. Roles are read from exactly one
+ * question — the one `rolesFieldFor` names for the whole game — and a member
+ * who has not answered that one has no roles, whatever else they answered.
+ *
+ * `roles` is null when the game has no roles question or there is no game.
+ * Otherwise it holds an entry for each member who stored an answer; a member
+ * missing from it answered nothing.
+ */
+async function memberRanksAndRoles(
   database: Database,
   gameId: string | null,
   userIds: readonly string[]
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  if (!gameId || userIds.length === 0) return out;
+): Promise<{ ranks: Map<string, string>; roles: Map<string, string[]> | null }> {
+  const ranks = new Map<string, string>();
+  if (!gameId || userIds.length === 0) return { ranks, roles: null };
 
-  const rankFields = await database
-    .select({ id: profileFields.id })
-    .from(profileFields)
-    .where(and(eq(profileFields.gameId, gameId), eq(profileFields.type, "rank")))
-    .orderBy(asc(profileFields.sort), asc(profileFields.createdAt));
-  if (rankFields.length === 0) return out;
+  const [rankFields, rolesField] = await Promise.all([
+    database
+      .select({ id: profileFields.id })
+      .from(profileFields)
+      .where(and(eq(profileFields.gameId, gameId), eq(profileFields.type, "rank")))
+      .orderBy(asc(profileFields.sort), asc(profileFields.createdAt)),
+    rolesFieldFor(gameId, database),
+  ]);
+  const roles = rolesField ? new Map<string, string[]>() : null;
+  const fieldIds = rankFields.map((field) => field.id);
+  if (rolesField) fieldIds.push(rolesField.id);
+  if (fieldIds.length === 0) return { ranks, roles };
 
   const rows = await database
     .select()
     .from(profileValues)
     .where(
-      and(
-        inArray(profileValues.userId, [...userIds]),
-        inArray(
-          profileValues.fieldId,
-          rankFields.map((field) => field.id)
-        )
-      )
+      and(inArray(profileValues.userId, [...userIds]), inArray(profileValues.fieldId, fieldIds))
     );
 
   const order = new Map(rankFields.map((field, index) => [field.id, index]));
   const best = new Map<string, number>();
   for (const row of rows) {
+    if (rolesField && roles && row.fieldId === rolesField.id) {
+      roles.set(row.userId, rolesAnswered(rolesField, row.value));
+      continue;
+    }
     if (typeof row.value !== "string" || row.value.trim() === "") continue;
     const rank = order.get(row.fieldId) ?? Number.MAX_SAFE_INTEGER;
     if ((best.get(row.userId) ?? Number.MAX_SAFE_INTEGER) <= rank) continue;
     best.set(row.userId, rank);
-    out.set(row.userId, row.value);
+    ranks.set(row.userId, row.value);
   }
-  return out;
+  return { ranks, roles };
 }
 
 /* ------------------------------------------------------------------ */
@@ -685,27 +746,46 @@ export async function gatesFor(
   event: { id: string; gameId: string | null } & EventGateView,
   userIds: readonly string[]
 ): Promise<Map<string, MemberGate>> {
-  const out = new Map<string, MemberGate>();
-  const ids = [...new Set(userIds)];
-  if (ids.length === 0) return out;
+  return (await gatesAndRoles(database, event, userIds)).gates;
+}
 
-  const [game, ranks, waivers] = await Promise.all([
+/**
+ * `gatesFor`, with the same members' preferred roles beside it (R-258).
+ *
+ * One assembly rather than a roles read beside it, because the rank this
+ * builds every gate from and the roles are the same read of `profile_values`
+ * (`memberRanksAndRoles`), and a second function would make it twice. Roles
+ * are no part of a gate, so they travel beside the gates and not inside
+ * `MemberGate`, and `gatesFor` hands back the gates alone.
+ *
+ * `roles` is `memberRanksAndRoles`'s: null for a game with no roles question.
+ */
+async function gatesAndRoles(
+  database: Database,
+  event: { id: string; gameId: string | null } & EventGateView,
+  userIds: readonly string[]
+): Promise<{ gates: Map<string, MemberGate>; roles: Map<string, string[]> | null }> {
+  const gates = new Map<string, MemberGate>();
+  const ids = [...new Set(userIds)];
+  if (ids.length === 0) return { gates, roles: null };
+
+  const [game, answers, waivers] = await Promise.all([
     readGame(database, event.gameId),
-    memberRanks(database, event.gameId, ids),
+    memberRanksAndRoles(database, event.gameId, ids),
     readWaivers(database, event.id, ids),
   ]);
   const ladder = game?.rankLadder ?? [];
 
   for (const userId of ids) {
-    const rank = ranks.get(userId) ?? null;
+    const rank = answers.ranks.get(userId) ?? null;
     const waived = waivedRulesFrom(waivers.filter((row) => row.userId === userId));
-    out.set(userId, {
+    gates.set(userId, {
       rank,
       waived,
       eligibility: eligibility(event, { rank }, ladder, waived),
     });
   }
-  return out;
+  return { gates, roles: answers.roles };
 }
 
 /** Availability and confirmation for a set of applications, in two queries. */
@@ -3948,7 +4028,7 @@ export async function getApplicationsForEvent(
   const rows = await readApplications(database, eventId);
   if (rows.length === 0) return [];
 
-  const [views, members, gates] = await Promise.all([
+  const [views, members, { gates, roles }] = await Promise.all([
     decorate(database, rows),
     database
       .select({
@@ -3966,8 +4046,9 @@ export async function getApplicationsForEvent(
       ),
     // One assembly of ladder + ranks + waivers, shared with the apply page and
     // with `setCaptains`, so the verdict this table shows is the verdict the
-    // writes enforce (R-59 / UC-14 3b).
-    gatesFor(
+    // writes enforce (R-59 / UC-14 3b). The roles ride on the same read as the
+    // ranks (R-258), which is why they come from here and not from beside it.
+    gatesAndRoles(
       database,
       event,
       rows.map((row) => row.userId)
@@ -3995,6 +4076,7 @@ export async function getApplicationsForEvent(
           discordId: null,
         },
         rank: gate?.rank ?? null,
+        roles: roles ? (roles.get(view.userId) ?? []) : null,
         eligibility: gate?.eligibility ?? eligibility(event, { rank: null }, []),
         waived: gate?.waived ?? NO_WAIVERS,
       };

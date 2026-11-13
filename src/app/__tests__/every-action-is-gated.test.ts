@@ -70,7 +70,7 @@
  *
  * ## What this does not prove
  *
- * That the guard is the *right* one of the four - `requireUser` on an action
+ * That the guard is the *right* one of the five - `requireUser` on an action
  * that wanted `requireAdmin` passes here. Which guard belongs on which action
  * is what each action's own behaviour tests are for.
  *
@@ -93,11 +93,16 @@ import {
 } from "./gated-allowlist";
 
 /**
- * The guards that turn somebody away. Task 125 adds `requirePermission` to
- * `session-guards.ts`; it is added here in the same change, and a test below
- * fails if a name here is not exported there.
+ * The guards that turn somebody away. A test below fails if a name here is
+ * not exported from `session-guards.ts`.
  */
-const REFUSING_GUARDS = ["requireUser", "requireAdmin", "requireEventManager", "requireManagerOfChild"];
+const REFUSING_GUARDS = [
+  "requireUser",
+  "requireAdmin",
+  "requirePermission",
+  "requireEventManager",
+  "requireManagerOfChild",
+];
 
 /** Identifies and refuses nobody - see the docblock. Recognised so that it can be refused by name. */
 const IDENTIFYING_GUARD = "getCurrentUser";
@@ -610,6 +615,13 @@ describe("reading one file for its gates", () => {
     expect(verdicts(ACTIONS, source)).toEqual([expect.stringMatching(/^saveAction: does not await a guard/)]);
   });
 
+  it("takes requirePermission, with the power it asks about, for a guard that refuses", () => {
+    const source =
+      `"use server";\nimport { requirePermission } from "@/lib/session-guards";\n` +
+      `export async function saveAction() {\n  const actor = await requirePermission("games.manage");\n  return actor.id;\n}`;
+    expect(verdicts(ADMIN_ACTIONS, source)).toEqual(["saveAction: gated by requirePermission"]);
+  });
+
   it("follows a guard imported under another name", () => {
     const source =
       `"use server";\nimport { requireAdmin as gate } from "../../lib/session-guards";\n` +
@@ -851,7 +863,12 @@ describe("every entry point is gated", () => {
     expect(unreadFiles(FILES)).toEqual([]);
   });
 
-  /* And it reads them rightly: known sites of each kind, and each guard at least once. */
+  /*
+   * And it reads them rightly: known sites of each kind, and each guard that
+   * has a call site at least once. `requirePermission` has none in the tree
+   * yet, so there is no row for it: until one exists, the sweep recognising
+   * the sixth guard is proven only against the fixture above.
+   */
   it.each([
     ["src/app/admin/games/actions.ts#createGameAction", "requireAdmin"],
     ["src/app/admin/events/actions.ts#saveBasicsAction", "requireEventManager"],

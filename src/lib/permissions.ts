@@ -10,8 +10,9 @@ import { type Power, assertPower, isPower } from "./permissions-policy";
  * `permissions-policy.ts`, which has no database and can be imported by a
  * client component. This module is the half that talks to Postgres.
  *
- * Nothing calls it yet. No guard reads `powersOf` and no screen calls
- * `grantPower`; until they do, a row here changes what nobody may do.
+ * `powersOf` is read by `requirePermission` in `session-guards.ts` on every
+ * call of the guard for a member who is not an admin, so a row here decides
+ * who that guard lets through. No screen calls `grantPower` yet.
  */
 
 /**

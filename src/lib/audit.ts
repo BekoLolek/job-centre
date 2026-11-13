@@ -172,6 +172,29 @@ export const AUDIT_ACTIONS = {
   "hero.roles": "Hero roles changed",
   "hero.retired": "Hero retired",
   "hero.restored": "Hero brought back",
+  /*
+   * The profile questions on `/admin/games` (Task 132). Every other admin area
+   * recorded what it did and this one recorded nothing, so a question that
+   * vanished from the profile form had no history. `field.deleted` is the one
+   * that has to be here: the row is gone afterwards, and this line is the only
+   * place its label and its game are still written down.
+   */
+  "field.added": "Question added",
+  "field.updated": "Question changed",
+  "field.retired": "Question retired",
+  "field.deleted": "Question deleted",
+  /*
+   * Three actions that were already being written and had no heading, so their
+   * lines were on the page under the raw key. Named here; the code that writes
+   * them is untouched.
+   *
+   * `event.format` is the night's format — 6v6 or 3v3 — and is deliberately
+   * not "Event format changed" (`event.shape`) or "Bracket changed"
+   * (`format.stages`): those are three different rows.
+   */
+  "event.format": "Night format changed",
+  "team.random": "Teams shuffled",
+  "draft.bid_cleared": "Bid cleared",
 } as const;
 
 export type AuditAction = keyof typeof AUDIT_ACTIONS;
@@ -205,6 +228,11 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   // It takes a season's results away with it: the places recorded in that event
   // go by the cascade, and the standings re-score without them.
   "championship.event.removed",
+  // The question goes, and `profile_values.field_id` cascades: whatever was
+  // stored against it goes in the same statement. `deleteField` refuses one
+  // that has answers, so today that is none — but the row itself cannot be
+  // brought back, which is what sets this apart from `field.retired`.
+  "field.deleted",
 ]);
 
 /** The actions that hand something out. Read next to `DESTRUCTIVE` above. */

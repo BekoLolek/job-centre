@@ -742,7 +742,7 @@ export async function createField(
  * ## Two ways this is NOT the rank lookup — do not copy one onto the other
  *
  * The idea is the rank field's — find the question by what it is, not by what
- * it is called — and nothing else is. `memberRank` / `memberRanks` in
+ * it is called — and nothing else is. `memberRank` / `memberRanksAndRoles` in
  * `events.ts` differ twice:
  *
  *  1. **One field for the whole game, not the first one each member
@@ -754,12 +754,6 @@ export async function createField(
  *     not filter `retired_at`, so a retired rank field is still read. That is
  *     a defect in the rank lookup with a task of its own (docs/plan.md, Task
  *     122), not a behaviour to match.
- *
- * ## For Task 119
- *
- * Reading the *answers* belongs in `events.ts` beside `memberRanks`, and
- * nothing there imports this module. Move this function there rather than
- * writing a second lookup by marker — it has no caller here but its tests.
  */
 export async function rolesFieldFor(
   gameId: string,

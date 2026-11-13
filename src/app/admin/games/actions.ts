@@ -15,12 +15,14 @@
  * Both `/admin/games` and `/me/profile` are revalidated after a write, because
  * every one of these edits changes what members are asked.
  *
- * The hero actions at the foot of the file are the one group that does a fourth
- * thing: they write an audit line (UC-40 4 asks for it by name). That belongs
- * here and not in `src/lib/heroes.ts` for the reason `src/lib/audit.ts` states
- * in its own module comment — this is the layer that has run `requireAdmin()`,
- * so it is the only one that knows who is acting. They also revalidate a
- * different pair of pages; see `refreshHeroes`.
+ * Two groups do a fourth thing and write an audit line: the hero actions at
+ * the foot of the file (UC-40 4 asks for it by name), and the four that add,
+ * edit, retire and delete a profile question (Task 132). That belongs here and
+ * not in `src/lib/heroes.ts` or `src/lib/admin-games.ts` for the reason
+ * `src/lib/audit.ts` states in its own module comment — this is the layer that
+ * has run `requireAdmin()`, so it is the only one that knows who is acting.
+ * The hero actions also revalidate a different pair of pages; see
+ * `refreshHeroes`.
  */
 
 import { revalidatePath } from "next/cache";
@@ -34,12 +36,15 @@ import {
 } from "@/lib/heroes";
 import { recordAudit } from "@/lib/audit";
 import {
+  type AdminFieldView,
+  type AdminGamesView,
   type AdminResult,
   type FieldInput,
   type LadderImpact,
   createField,
   createGame,
   deleteField,
+  loadAdminGames,
   moveField,
   moveGame,
   previewFieldEdit,
@@ -133,15 +138,71 @@ export async function setRankLadderAction(
 /* Questions                                                          */
 /* ------------------------------------------------------------------ */
 
+/*
+ * ## Where the audit line sits in each of the four below (Task 132)
+ *
+ * The same three steps in the same order, and the order is the point:
+ *
+ *  1. **Read the catalogue, before the write.** The line has to name the game,
+ *     and for a delete it has to name a question that will not exist a moment
+ *     later. Reading first means a read that fails does so while nothing has
+ *     been changed — the admin gets an error about an action that did not
+ *     happen, which is true.
+ *  2. **Write, and return a refusal untouched.** Nothing is logged about an
+ *     edit the library declined.
+ *  3. **Log.** After the write, never inside it, and with nothing that can
+ *     throw in between: the summary is built from the catalogue already in
+ *     hand and from what the write returned, and `recordAudit` swallows its
+ *     own failures. So a line can go missing, but a saved question can never
+ *     come back to the admin as an error because of its log line.
+ *
+ * Restoring and reordering a question, and everything above this section — the
+ * games themselves and the rank ladders — still write no line. Task 132 asked
+ * for these four.
+ */
+
+/** The two pages a question shows on, and the log that now has a line about it. */
+function refreshQuestions(): void {
+  refresh();
+  revalidatePath("/admin/audit");
+}
+
+/** Where a question is asked, as the log says it: a game by name, or everyone. */
+function sectionSaid(view: AdminGamesView, gameId: string | null): string {
+  if (gameId === null) return "the questions asked of everyone";
+  return view.games.find((game) => game.id === gameId)?.name ?? "a game";
+}
+
+/** One question as the catalogue has it, retired or not. */
+function questionIn(view: AdminGamesView, fieldId: string): AdminFieldView | undefined {
+  return [
+    ...view.globalFields,
+    ...view.globalRetired,
+    ...view.games.flatMap((game) => [...game.fields, ...game.retired]),
+  ].find((field) => field.id === fieldId);
+}
+
 export async function createFieldAction(
   gameId: string | null,
   input: FieldInput
 ): Promise<AdminResult<{ id: string }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const catalogue = await loadAdminGames();
+
   const result = await createField(gameId, input);
   if (!result.ok) return result;
-  refresh();
-  return { ok: true, data: { id: result.data.id } };
+
+  const field = result.data;
+  await recordAudit({
+    action: "field.added",
+    actor: admin,
+    subject: field.id,
+    summary: `Added the question “${field.label}” to ${sectionSaid(catalogue, field.gameId)}.`,
+    detail: { game: field.gameId, label: field.label, type: field.type },
+  });
+
+  refreshQuestions();
+  return { ok: true, data: { id: field.id } };
 }
 
 export async function previewFieldEditAction(
@@ -152,15 +213,56 @@ export async function previewFieldEditAction(
   return previewFieldEdit(fieldId, input);
 }
 
+/**
+ * Edit a question, and record what it was called before.
+ *
+ * The old label leads the sentence and is kept in `detail`, because after the
+ * write the row has no memory of it and the person reading the log is looking
+ * for the name they remember. The stranded count is on the line for the same
+ * reason it is on the confirm dialog: an edit that left answers unreadable is
+ * a different event from one that did not.
+ */
 export async function updateFieldAction(
   fieldId: string,
   input: FieldInput
 ): Promise<AdminResult<{ strandedAnswers: number }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const catalogue = await loadAdminGames();
+
   const result = await updateField(fieldId, input);
   if (!result.ok) return result;
-  refresh();
-  return { ok: true, data: { strandedAnswers: result.data.strandedAnswers } };
+
+  const { field, strandedAnswers } = result.data;
+  /*
+   * Null when the catalogue read before the write had no such row — a window
+   * only a concurrent add can open. `detail` then says the old label is not
+   * known, rather than repeating the new one: `previousLabel` equal to `label`
+   * is a positive statement that nothing was reworded, and that is not
+   * something this action can vouch for without having seen the row.
+   */
+  const previousLabel = questionIn(catalogue, fieldId)?.label ?? null;
+  const called = previousLabel ?? field.label;
+  const reworded = called === field.label ? "" : ` It now reads “${field.label}”.`;
+  const stranded =
+    strandedAnswers === 0
+      ? ""
+      : ` ${strandedAnswers === 1 ? "1 stored answer no longer fits" : `${strandedAnswers} stored answers no longer fit`} it.`;
+  await recordAudit({
+    action: "field.updated",
+    actor: admin,
+    subject: field.id,
+    summary: `Changed the question “${called}” in ${sectionSaid(catalogue, field.gameId)}.${reworded}${stranded}`,
+    detail: {
+      game: field.gameId,
+      label: field.label,
+      previousLabel,
+      type: field.type,
+      strandedAnswers,
+    },
+  });
+
+  refreshQuestions();
+  return { ok: true, data: { strandedAnswers } };
 }
 
 /**
@@ -173,11 +275,29 @@ export async function updateFieldAction(
 export async function retireFieldAction(
   fieldId: string
 ): Promise<AdminResult<{ keptAnswers: number }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const catalogue = await loadAdminGames();
+
   const result = await retireField(fieldId);
   if (!result.ok) return result;
-  refresh();
-  return { ok: true, data: { keptAnswers: result.data.keptAnswers } };
+
+  // The summary says what was kept: "retired" on its own invites the reading
+  // that the answers went with the question, and they did not.
+  const { field, keptAnswers } = result.data;
+  const kept =
+    keptAnswers === 0
+      ? "It is no longer asked; nobody had answered it."
+      : `It is no longer asked, and the ${keptAnswers === 1 ? "1 answer to it is" : `${keptAnswers} answers to it are`} kept.`;
+  await recordAudit({
+    action: "field.retired",
+    actor: admin,
+    subject: field.id,
+    summary: `Retired the question “${field.label}” in ${sectionSaid(catalogue, field.gameId)}. ${kept}`,
+    detail: { game: field.gameId, label: field.label, keptAnswers },
+  });
+
+  refreshQuestions();
+  return { ok: true, data: { keptAnswers } };
 }
 
 /** Ask it again. Every answer kept while it was retired comes back with it. */
@@ -207,13 +327,49 @@ export async function moveFieldAction(
  * One that *has* answers is refused by `deleteField` and pointed at retiring
  * (UC-03 5a) — the count is already on the confirm dialog, so the admin is not
  * discovering the number here.
+ *
+ * The one line here that is the **only** record of its subject. The row is
+ * gone when `deleteField` returns, so the label and the game are taken from
+ * the catalogue read before it; there is nothing to look them up from after.
+ * It says how many answers went with the question because that is the first
+ * thing somebody finding a deletion in the log wants to know, and
+ * `profile_values.field_id` cascading is why they are right to ask.
+ *
+ * That sentence is built from the count `deleteField` reports, the way
+ * `retireFieldAction` builds its own from `keptAnswers`, and not from the rule
+ * that makes the count 0 today. A summary is stored and never rebuilt: one
+ * that asserted "nobody had answered it" unconditionally would become a
+ * permanent false statement the day that rule is relaxed, beside a `detail`
+ * that contradicts it.
  */
 export async function deleteFieldAction(
   fieldId: string
 ): Promise<AdminResult<{ deletedAnswers: number }>> {
-  await requireAdmin();
+  const admin = await requireAdmin();
+  const catalogue = await loadAdminGames();
+  const doomed = questionIn(catalogue, fieldId);
+
   const result = await deleteField(fieldId);
-  if (result.ok) refresh();
+  if (!result.ok) return result;
+
+  const { deletedAnswers } = result.data;
+  const lost =
+    deletedAnswers === 0
+      ? "Nobody had answered it, so no answers went with it."
+      : `The ${deletedAnswers === 1 ? "1 answer" : `${deletedAnswers} answers`} to it went with it.`;
+  await recordAudit({
+    action: "field.deleted",
+    actor: admin,
+    subject: fieldId,
+    summary: `${doomed ? `Deleted the question “${doomed.label}” from ${sectionSaid(catalogue, doomed.gameId)}.` : "Deleted a question."} ${lost}`,
+    detail: {
+      game: doomed?.gameId ?? null,
+      label: doomed?.label ?? null,
+      deletedAnswers,
+    },
+  });
+
+  refreshQuestions();
   return result;
 }
 

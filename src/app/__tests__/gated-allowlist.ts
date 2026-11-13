@@ -3,8 +3,8 @@
  *
  * The sweep's rule is that every server action, every admin page and every API
  * route handler awaits a guard **that refuses** - `requireUser`, `requireAdmin`,
- * `requireEventManager`, `requireManagerOfChild` - before it does anything
- * else. Two lists stand beside that rule, and both are the same kind of thing:
+ * `requirePermission`, `requireEventManager`, `requireManagerOfChild` - before
+ * it does anything else. Two lists stand beside that rule, and both are the same kind of thing:
  * a call site that does not fit, **and a sentence saying why that is right**,
  * not why it is convenient.
  *
@@ -95,7 +95,7 @@ export const GATE_EXCEPTIONS: readonly GateException[] = [
 /**
  * The only sites that may be gated by `getCurrentUser`.
  *
- * `getCurrentUser` is not a guard in the sense the other four are: it answers
+ * `getCurrentUser` is not a guard in the sense the other five are: it answers
  * "who is this" and returns `null` for a stranger, so awaiting it first proves
  * nothing about who gets through. An action that swapped `requireAdmin` for it
  * would be public and would look gated.

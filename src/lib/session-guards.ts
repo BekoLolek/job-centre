@@ -11,11 +11,14 @@
  * // an admin-only page
  * const admin = await requireAdmin();
  *
+ * // a page for whoever holds a power, and for every admin
+ * const actor = await requirePermission("games.manage");
+ *
  * // a page that renders differently when signed out
  * const user = await getCurrentUser();
  * ```
  *
- * All three are server-only: they read the session cookie, so they belong in a
+ * All of them are server-only: they read the session cookie, so they belong in a
  * server component, a server action or a route handler.
  *
  * ## The one other way to get a session
@@ -28,7 +31,7 @@
  *
  * What remains beside Discord is the developer sign-in (R-142 / UC-30) in
  * `src/lib/dev-login.ts`. That is not a parallel identity: it mints a real
- * Auth.js database session, so these three helpers read it exactly as they read
+ * Auth.js database session, so these helpers read it exactly as they read
  * a Discord one. The draft room's `role` is a different thing again — a per-
  * event view computed by `viewerFor` in `src/lib/draft.ts`, which is why a
  * signed-out visitor can still watch a draft (R-70 / UC-16). It is not a login.
@@ -41,6 +44,8 @@ import { type User, db, users } from "@/db";
 import { SIGN_IN_PATH, auth } from "./auth";
 import { SIGN_IN_ERRORS } from "./auth-policy";
 import { canManageEvent } from "./hosting";
+import { powersOf } from "./permissions";
+import { type Power, holds } from "./permissions-policy";
 
 export { SIGN_IN_PATH };
 
@@ -222,6 +227,51 @@ export async function requireAdmin(): Promise<User> {
   // No `from` for this one: signing in again lands them on the same refusal,
   // because it is not authentication they are missing.
   if (!user.isAdmin) redirect(signInHref({ error: SIGN_IN_ERRORS.adminOnly }));
+  return user;
+}
+
+/**
+ * The signed-in member's row, if they hold this power - otherwise the redirect
+ * {@link requireAdmin} gives (R-261 / UC-56).
+ *
+ * An admin passes whatever they hold: the flag answers before the grants are
+ * read, as it does in `canManageEvent`, so an admin never depends on a row in
+ * `user_permissions`. Anybody else passes when the power is on their own list.
+ *
+ * **Refused exactly as a non-admin is.** Signed out goes to sign in and comes
+ * back; signed in without the power goes to `?error=admin-only` with no way
+ * back. A member who cannot do a thing is told the page is not theirs, the
+ * sentence they would have been told before powers existed - not a second
+ * vocabulary of refusals to learn. Like every guard here it refuses by
+ * throwing (`redirect()` throws), never by returning something a caller can
+ * ignore.
+ *
+ * **Read on every request, never from the session.** The row comes from
+ * {@link requireUser} and the grants from `powersOf`, both asked of the database
+ * on this call. Nothing is cached and nothing is carried in the cookie, so a
+ * power revoked a moment ago is refused on the holder's next click without
+ * anybody signing out (UC-56 3b) - the reason `is_admin` is read that way.
+ *
+ * **It returns the actor, not the answer.** The audit line an action writes
+ * names the person who did the thing; which power let them is not who did it.
+ *
+ * ## Granting is not a power, and this guard must never gate it
+ *
+ * There is no `permissions.grant` to pass here, and that is R-264, not a gap.
+ * The screen that gives and takes powers, and the one that gives and takes the
+ * admin flag, keep `requireAdmin`. If either could be reached through a power,
+ * a holder of that power could hand themselves every other one. Do not add
+ * such a power "for consistency" with the screens around it: its absence is
+ * the requirement. `permissions-policy.test.ts` pins the vocabulary name by
+ * name, so any addition fails there; `require-permission.test.ts` shows that
+ * holding all of it still does not pass `requireAdmin`.
+ */
+export async function requirePermission(power: Power): Promise<User> {
+  const user = await requireUser();
+  const powers = user.isAdmin ? new Set<Power>() : await powersOf(user.id);
+  if (!holds({ isAdmin: user.isAdmin, powers }, power)) {
+    redirect(signInHref({ error: SIGN_IN_ERRORS.adminOnly }));
+  }
   return user;
 }
 
