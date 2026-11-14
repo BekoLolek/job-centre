@@ -198,18 +198,18 @@ export type CreateEventFields = {
 export async function createEventAction(
   input: CreateEventFields
 ): Promise<EventResult<{ id: string; slug: string }>> {
-  const admin = await requirePermission("events.create");
+  const actor = await requirePermission("events.create");
 
   const result = await createEvent({
     title: input.title,
     templateId: input.templateId ?? undefined,
-    createdBy: admin.id,
+    createdBy: actor.id,
   });
   if (!result.ok) return result;
 
   await recordAudit({
     action: "event.created",
-    actor: admin,
+    actor,
     eventId: result.data.id,
     summary: `Created "${result.data.title}".`,
     detail: { slug: result.data.slug, template: input.templateId ?? null },
@@ -494,8 +494,13 @@ export async function postAnnouncementByHandAction(
   kind: string,
   options: { confirmed?: boolean } = {}
 ): Promise<PostByHandResult> {
-  const admin = await requireUser();
-  if (!(await canManageEvent(admin, eventId))) await requirePermission("announce.post");
+  /*
+   * Not `admin`: this reaches an `announce.post` holder who manages nothing,
+   * and a local that says admin is how "A manager posted…" got written into a
+   * stored audit summary about somebody who is neither.
+   */
+  const actor = await requireUser();
+  if (!(await canManageEvent(actor, eventId))) await requirePermission("announce.post");
 
   // Arrives from the browser. The other five announcers take an application, a
   // lot or a match id, so a kind that is not one of the five would be a message
@@ -521,13 +526,13 @@ export async function postAnnouncementByHandAction(
    */
   await recordAudit({
     action: "announcement.posted_by_hand",
-    actor: admin,
+    actor,
     eventId,
     subject: kind,
     summary: manualPostSummary(
       kind,
       result.title,
-      admin.displayName ?? admin.name ?? "A manager"
+      actor.displayName ?? actor.name ?? "Somebody"
     ),
     // `claimed` false is the post that went out beside a claim somebody else
     // already held (UC-43 4b) — worth having in the line, because it is the
@@ -879,10 +884,17 @@ export async function saveEventShapeAction(
   const before = await getEventById(eventId);
   if (!before) return fail("That event no longer exists.");
 
+  // The hero answers (R-269, R-270) are not this form's to change yet, and
+  // the save below writes `config.eventShape` whole — so they are carried from
+  // what the event already holds, which for an event with nothing stored is
+  // the resolver's default: drawing, three per role. Never a literal here.
+  const held = eventShapeFrom(before.config);
   const wanted: EventShape = {
     teamEvent: fields.teamEvent,
     draft: fields.draft,
     sizing: { mode: fields.mode, value: fields.value },
+    heroes: held.heroes,
+    heroesPerRole: held.heroesPerRole,
   };
 
   const bounds = shapeProblem(wanted);

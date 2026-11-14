@@ -16,7 +16,7 @@ import AdminNav from "@/components/admin/AdminNav";
 import ChampionshipEditor from "@/components/admin/ChampionshipEditor";
 import { Button, Page, PageHeader } from "@/components/ui";
 import { getChampionship, listCountingEvents } from "@/lib/championships";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +25,7 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
   // and Next puts the title it resolves into the body of the redirect a
   // stranger is answered with - so an unguarded read here names the season,
   // hidden or not, to anybody holding its id.
-  await requireAdmin();
+  await requirePermission("championships.manage");
   const { id } = await params;
   const season = await getChampionship(id);
   return { title: season ? `${season.name} · Admin` : "Championship · Admin" };
@@ -36,7 +36,7 @@ export default async function AdminChampionshipPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireAdmin();
+  await requirePermission("championships.manage");
   const { id } = await params;
 
   const season = await getChampionship(id);

@@ -8,11 +8,20 @@
  * exactly the people it is meant to persuade.
  *
  * Voting still needs an account — see `src/lib/suggestions.ts`.
+ *
+ * The moderating controls - a suggestion's status, removing anybody's - are
+ * offered to whoever `suggestions.moderate` reaches: a holder of it, or an
+ * admin (R-265). That is the question `./actions.ts` asks before it does
+ * either, so the screen offers exactly what the server will accept. The box
+ * still calls the prop `isAdmin`; what it is handed is the answer to that
+ * question, not the flag.
  */
 
 import AppHeader from "@/components/AppHeader";
 import SuggestionBox from "@/components/suggestions/SuggestionBox";
 import { Page, PageHeader, Section } from "@/components/ui";
+import { holderFor } from "@/lib/permissions";
+import { holds } from "@/lib/permissions-policy";
 import { getCurrentUser } from "@/lib/session-guards";
 import { listSuggestions } from "@/lib/suggestions";
 
@@ -25,6 +34,7 @@ export const metadata = {
 export default async function SuggestionsPage() {
   const user = await getCurrentUser();
   const suggestions = await listSuggestions(user?.id ?? null);
+  const mayModerate = user !== null && holds(await holderFor(user), "suggestions.moderate");
 
   const wanted = suggestions.filter((row) => row.status === "open").length;
 
@@ -49,7 +59,7 @@ export default async function SuggestionsPage() {
           <SuggestionBox
             initial={suggestions}
             signedIn={Boolean(user)}
-            isAdmin={Boolean(user?.isAdmin)}
+            isAdmin={mayModerate}
             viewerId={user?.id ?? null}
           />
         </Section>

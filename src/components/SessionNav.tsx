@@ -20,6 +20,7 @@ import Link from "next/link";
 import NavMenu from "./NavMenu";
 import { signOut } from "@/lib/auth";
 import { unreadCount } from "@/lib/notifications";
+import { holderFor } from "@/lib/permissions";
 import { getCurrentUser, returnPathFromRequest } from "@/lib/session-guards";
 
 export default async function SessionNav() {
@@ -67,6 +68,12 @@ export default async function SessionNav() {
    * `force-dynamic` throughout.
    */
   const unread = await unreadCount(user.id);
+  /*
+   * And their powers, for the same reason and on the same request: the menu's
+   * admin entries are the ones these reach (R-265 / UC-56 2), and below `lg`
+   * the menu is the only way into the admin area at all.
+   */
+  const holder = await holderFor(user);
 
   return (
     <NavMenu
@@ -76,7 +83,8 @@ export default async function SessionNav() {
         name: user.name,
         handle: user.handle,
         avatarUrl: user.avatarUrl,
-        isAdmin: user.isAdmin,
+        isAdmin: holder.isAdmin,
+        powers: [...holder.powers],
       }}
       signOut={endSession}
     />

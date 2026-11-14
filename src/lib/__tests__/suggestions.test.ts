@@ -314,7 +314,7 @@ describe("deleting", () => {
     // The author's own like (UC-22 E2) and the voter's.
     expect(await votesOn(id)).toBe(2);
 
-    unwrap(await deleteSuggestion(id, { userId: author, isAdmin: false }, db));
+    unwrap(await deleteSuggestion(id, { userId: author, mayRemoveAny: false }, db));
     expect((await listSuggestions(null, db)).some((s) => s.id === id)).toBe(false);
 
     // And the votes went by cascade. The row vanishing from the list says
@@ -332,18 +332,18 @@ describe("deleting", () => {
     const stranger = await makeUser(db);
     const { id } = unwrap(await addSuggestion(author, proposal({ title: "Not yours" }), db));
 
-    const result = await deleteSuggestion(id, { userId: stranger, isAdmin: false }, db);
+    const result = await deleteSuggestion(id, { userId: stranger, mayRemoveAny: false }, db);
     expect(result.ok).toBe(false);
     expect(why(result)).toMatch(/not yours/i);
     expect((await listSuggestions(null, db)).some((s) => s.id === id)).toBe(true);
   });
 
-  it("lets an admin remove anybody's", async () => {
+  it("removes anybody's for an actor who may remove any, admin or moderator", async () => {
     const author = await makeUser(db);
-    const admin = await makeUser(db);
+    const moderator = await makeUser(db);
     const { id } = unwrap(await addSuggestion(author, proposal({ title: "Off topic" }), db));
 
-    unwrap(await deleteSuggestion(id, { userId: admin, isAdmin: true }, db));
+    unwrap(await deleteSuggestion(id, { userId: moderator, mayRemoveAny: true }, db));
     expect((await listSuggestions(null, db)).some((s) => s.id === id)).toBe(false);
   });
 
@@ -351,7 +351,7 @@ describe("deleting", () => {
     const author = await makeUser(db);
     const result = await deleteSuggestion(
       "00000000-0000-0000-0000-000000000000",
-      { userId: author, isAdmin: false },
+      { userId: author, mayRemoveAny: false },
       db
     );
     expect(result.ok).toBe(false);

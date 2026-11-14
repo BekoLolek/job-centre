@@ -60,10 +60,10 @@ import { planTeams } from "@/lib/random-teams";
  * is here only so the sweep can classify that tab too.
  */
 const WITH_LIST = { game: "Marvel Rivals", heroes: true } as const;
-const TEAMS_WITH_DRAFT: TabVisibility = { teamEvent: true, draft: true, heroList: WITH_LIST };
-const TEAMS_NO_DRAFT: TabVisibility = { teamEvent: true, draft: false, heroList: WITH_LIST };
-const SOLO: TabVisibility = { teamEvent: false, draft: false, heroList: WITH_LIST };
-const NO_LIST: TabVisibility = { teamEvent: true, draft: true, heroList: { game: null } };
+const TEAMS_WITH_DRAFT: TabVisibility = { teamEvent: true, draft: true, heroes: true, heroList: WITH_LIST };
+const TEAMS_NO_DRAFT: TabVisibility = { teamEvent: true, draft: false, heroes: true, heroList: WITH_LIST };
+const SOLO: TabVisibility = { teamEvent: false, draft: false, heroes: true, heroList: WITH_LIST };
+const NO_LIST: TabVisibility = { teamEvent: true, draft: true, heroes: true, heroList: { game: null } };
 
 /**
  * The tabs R-219 keeps whatever kind of event this is, written out **as a
@@ -311,6 +311,8 @@ describe("the stored shape", () => {
       teamEvent: true,
       draft: true,
       sizing: { mode: "perTeam", value: 6 },
+      heroes: true,
+      heroesPerRole: 3,
     });
     expect(eventShapeFrom({})).toEqual(eventShapeFrom(null));
     expect(visibleTabs({ ...eventShapeFrom({}), heroList: WITH_LIST })).toEqual([...TAB_KEYS]);
@@ -332,6 +334,8 @@ describe("the stored shape", () => {
       teamEvent: false,
       draft: false,
       sizing: { mode: "teams", value: 4 },
+      heroes: true,
+      heroesPerRole: 3,
     });
   });
 
@@ -385,11 +389,15 @@ describe("what cannot be saved", () => {
     teamEvent: true,
     draft: true,
     sizing: { mode: "teams" as const, value },
+    heroes: true,
+    heroesPerRole: 3,
   });
   const perTeam = (value: number) => ({
     teamEvent: true,
     draft: true,
     sizing: { mode: "perTeam" as const, value },
+    heroes: true,
+    heroesPerRole: 3,
   });
 
   it("holds a team count to the range an event can have", () => {
@@ -425,6 +433,8 @@ describe("what cannot be saved", () => {
         teamEvent: false,
         draft: false,
         sizing: { mode: "perTeam", value: Number.NaN },
+        heroes: true,
+        heroesPerRole: 3,
       })
     ).toBeNull();
   });

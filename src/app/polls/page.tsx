@@ -5,12 +5,18 @@
  * feature, so hiding them behind a sign-in would leave the page saying nothing
  * to exactly the people a poll is meant to inform.
  *
- * Voting needs an account. Posting needs an admin.
+ * Voting needs an account. Posting, closing and deleting need `polls.manage`
+ * - a holder of it, or an admin (R-265) - which is the question `./actions.ts`
+ * asks before it does any of them, so the screen offers exactly what the
+ * server will accept. The list still calls the prop `isAdmin`; what it is
+ * handed is the answer to that question, not the flag.
  */
 
 import AppHeader from "@/components/AppHeader";
 import PollList from "@/components/polls/PollList";
 import { Page, PageHeader, Section } from "@/components/ui";
+import { holderFor } from "@/lib/permissions";
+import { holds } from "@/lib/permissions-policy";
 import { listPolls } from "@/lib/polls";
 import { getCurrentUser } from "@/lib/session-guards";
 
@@ -23,6 +29,7 @@ export const metadata = {
 export default async function PollsPage() {
   const user = await getCurrentUser();
   const polls = await listPolls(user?.id ?? null);
+  const mayManage = user !== null && holds(await holderFor(user), "polls.manage");
 
   const open = polls.filter((poll) => !poll.closed).length;
 
@@ -54,7 +61,7 @@ export default async function PollsPage() {
           <PollList
             polls={polls}
             signedIn={Boolean(user)}
-            isAdmin={Boolean(user?.isAdmin)}
+            isAdmin={mayManage}
           />
         </Section>
       </Page>

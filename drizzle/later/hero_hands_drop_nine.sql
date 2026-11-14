@@ -1,0 +1,36 @@
+-- NOT A MIGRATION YET. The journal does not list this file and nothing runs it
+-- but `src/db/__tests__/hero-hands-width.test.ts`.
+--
+-- The second half of drizzle/0036: `hero_hands_nine_distinct_per_role` goes,
+-- leaving `hero_hands_per_role_distinct` as the only rule about a hand's shape
+-- (R-270 / UC-58 7). Kept out of 0036 because a push to main applies
+-- migrations while the previous build is still serving (docs/plan.md's risk
+-- register: "Additive-first migrations; drops in a later commit").
+--
+-- It lives in a folder of its own because `schema-drift.test.ts` refuses a
+-- `.sql` in `drizzle/` that the journal does not name, and it is right to.
+--
+-- ## Landing it — a commit of its own, after 0036 is live in production
+--
+--  1. Delete the `check("hero_hands_nine_distinct_per_role", ...)` block from
+--     `src/db/schema.ts`, and the paragraph beneath it saying both are kept.
+--  2. `npm run db:generate -- --name=hero_hands_drop_nine`. It writes one
+--     statement, a `DROP CONSTRAINT` of that name. Replace it with the
+--     statement below — the generated one has no `IF EXISTS` and stops a
+--     second run.
+--  3. Delete this file and this folder; move the "once the nine is dropped"
+--     describe in `hero-hands-width.test.ts` onto the journalled database, and
+--     drop the two tests there that assert the nine is still present.
+--  4. `hero-hands-constraints.test.ts` names the old constraint in its
+--     refusals and reads its `= 9`. Those assertions go with the constraint;
+--     every case in that file has its any-width twin in
+--     `hero-hands-width.test.ts`.
+--  5. Only then may anything that saves a width other than three ship
+--     (Task 143). Before this lands, a hand of any other width is refused.
+--
+-- Never `npm run db:migrate` and never `npm run build` by hand: the push
+-- applies it.
+--
+-- Nothing is rewritten and no row can fail: dropping a CHECK reads no rows.
+-- `IF EXISTS` is what makes a second run change nothing.
+ALTER TABLE "hero_hands" DROP CONSTRAINT IF EXISTS "hero_hands_nine_distinct_per_role";

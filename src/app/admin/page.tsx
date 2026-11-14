@@ -13,11 +13,42 @@
  *
  * **No instant is formatted here.** The event lines go through `EventCard` and
  * `EventDateRange`, both of which re-key on mount in the reader's own zone.
+ *
+ * ## A holder of any area power, shown what their powers reach (R-265 / UC-56 1, 2)
+ *
+ * This is where a holder lands, so it admits an admin and any member with an
+ * area power on their list, and refuses a member with none exactly as it
+ * always did (UC-56 2a). No single power is the page's own, so the guard is
+ * `requireAnyPermission(AREA_POWERS)`. `destructive` is not an area power: it
+ * is required in addition to one, and a member holding it alone is turned
+ * away here as everywhere.
+ *
+ * ## There is no `layout.tsx` beside this page, and one must not be added
+ *
+ * A layout that asked for "any power" looks like the obvious place for the
+ * line above, and it would lock out an event's **host**. A host holds no
+ * power at all - their authority is one row in `event_hosts` - and
+ * `/admin/events/[id]` is under this folder and is theirs to open
+ * (`requireEventManager`). A layout cannot tell that page from the others.
+ * One that only asked for a signed-in member would add nothing, and neither
+ * would re-run on a client-side navigation. So each page refuses for itself,
+ * on its own first line, and the sweep reads every one.
+ *
+ * What is drawn is then cut down to what the reader could act on. A line
+ * appears when they hold the power its screen is on ({@link RESOLVED_BY});
+ * the event cards and the drafts are `events.manage`'s, because every one is a
+ * link into an editor; the tail of the log is `audit.read`'s, and is not read
+ * at all for anybody else. A holder whose powers are for other screens - the
+ * catalogue, the polls - is let in and told nothing is waiting, which is true.
+ *
+ * **None of that is protection.** Every screen a line links to refuses for
+ * itself, and `admin/__tests__/holder-pages.test.ts` asks each of them.
  */
 
 import Link from "next/link";
 import AppHeader from "@/components/AppHeader";
 import AdminNav from "@/components/admin/AdminNav";
+import { AREA_POWERS } from "@/components/admin/sections";
 import { EventCard, EventStatusPill } from "@/components/events";
 import {
   Badge,
@@ -31,9 +62,11 @@ import {
   cx,
   plural,
 } from "@/components/ui";
-import { loadDashboard } from "@/lib/admin-dashboard";
+import { type AttentionKind, loadDashboard } from "@/lib/admin-dashboard";
 import { listAudit } from "@/lib/audit";
-import { requireAdmin } from "@/lib/session-guards";
+import { holderFor } from "@/lib/permissions";
+import { type Power, holds } from "@/lib/permissions-policy";
+import { requireAnyPermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -41,11 +74,40 @@ export const metadata = {
   title: "Admin · Job Centre Events",
 };
 
-export default async function AdminDashboardPage() {
-  const admin = await requireAdmin();
+/**
+ * The power each kind of line is resolved with: the one its screen is on.
+ *
+ * Every kind is named, so a new one does not compile until somebody has said
+ * whose it is. A failed announcement is `audit.read`'s because the line links
+ * to the log, which is where the reason is.
+ */
+const RESOLVED_BY: Record<AttentionKind, Power> = {
+  applications: "events.manage",
+  pending_applications: "events.manage",
+  host_applications: "hosts.approve",
+  publish: "events.manage",
+  captains: "events.manage",
+  lot_open: "events.manage",
+  needs_winner: "events.manage",
+  unscheduled: "events.manage",
+  announcements: "audit.read",
+  championship_result: "events.manage",
+};
 
-  const [view, recent] = await Promise.all([loadDashboard(), listAudit({ limit: 6 })]);
-  const blocked = view.items.filter((item) => item.urgency === "blocked").length;
+export default async function AdminDashboardPage() {
+  const user = await requireAnyPermission(AREA_POWERS);
+  const holder = await holderFor(user);
+
+  const mayManageEvents = holds(holder, "events.manage");
+  const mayCreateEvents = holds(holder, "events.create");
+  const mayReadAudit = holds(holder, "audit.read");
+
+  const [view, recent] = await Promise.all([
+    loadDashboard(),
+    mayReadAudit ? listAudit({ limit: 6 }) : [],
+  ]);
+  const items = view.items.filter((item) => holds(holder, RESOLVED_BY[item.kind]));
+  const blocked = items.filter((item) => item.urgency === "blocked").length;
 
   return (
     <div className="min-h-screen">
@@ -63,20 +125,24 @@ export default async function AdminDashboardPage() {
             <>
               <StatTile
                 label="Needs you"
-                value={view.items.length}
-                valueClassName={view.items.length > 0 ? "text-union" : "text-body"}
+                value={items.length}
+                valueClassName={items.length > 0 ? "text-union" : "text-body"}
               />
               <StatTile
                 label="Blocking"
                 value={blocked}
                 valueClassName={blocked > 0 ? "text-flare" : "text-muted"}
               />
-              <StatTile
-                label="Live"
-                value={view.live.length}
-                valueClassName={view.live.length > 0 ? "text-flare" : "text-muted"}
-              />
-              <StatTile label="Active events" value={view.totals.events} />
+              {mayManageEvents && (
+                <>
+                  <StatTile
+                    label="Live"
+                    value={view.live.length}
+                    valueClassName={view.live.length > 0 ? "text-flare" : "text-muted"}
+                  />
+                  <StatTile label="Active events" value={view.totals.events} />
+                </>
+              )}
             </>
           }
         />
@@ -89,35 +155,45 @@ export default async function AdminDashboardPage() {
             title="Awaiting you"
             description="Every line ends in the screen that resolves it. A finished event never appears — nothing about it can need doing."
           >
-            {view.items.length === 0 ? (
+            {items.length === 0 ? (
               <div className="py-4">
                 <EmptyState>
-                  Nothing is waiting on you. Every applicant has a seat or a place in a
-                  queue, every series has a winner, and every match has a time.
+                  {mayManageEvents
+                    ? "Nothing is waiting on you. Every applicant has a seat or a place in a queue, every series has a winner, and every match has a time."
+                    : "Nothing is waiting on you. What your powers reach is in the menu."}
                 </EmptyState>
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <Button href="/admin/events" size="sm">
-                    All events
-                  </Button>
-                  <Button href="/admin/events" size="sm" variant="union">
-                    Create one
-                  </Button>
+                  {mayManageEvents && (
+                    <Button href="/admin/events" size="sm">
+                      All events
+                    </Button>
+                  )}
+                  {mayCreateEvents && (
+                    <Button href="/admin/events" size="sm" variant="union">
+                      Create one
+                    </Button>
+                  )}
                 </div>
               </div>
             ) : (
               <ul className="divide-y divide-hair/60">
-                {view.items.map((item) => (
+                {items.map((item) => (
                   <li key={item.key} className="flex flex-wrap items-center gap-4 py-5">
                     <div className="min-w-0 flex-1">
                       {/* A failed announcement with no event has no event to name. */}
                       {item.event && (
                         <div className="mb-1 flex flex-wrap items-center gap-2">
-                          <Link
-                            href={`/admin/events/${item.event.id}`}
-                            className="text-12 text-muted hover:text-union"
-                          >
-                            {item.event.title}
-                          </Link>
+                          {/* Named for everybody; a way in only for a reader the editor opens for. */}
+                          {mayManageEvents ? (
+                            <Link
+                              href={`/admin/events/${item.event.id}`}
+                              className="text-12 text-muted hover:text-union"
+                            >
+                              {item.event.title}
+                            </Link>
+                          ) : (
+                            <span className="text-12 text-muted">{item.event.title}</span>
+                          )}
                           <EventStatusPill status={item.event.status} />
                         </div>
                       )}
@@ -146,7 +222,7 @@ export default async function AdminDashboardPage() {
           </Section>
 
           {/* --- Running now, and next ------------------------------- */}
-          {(view.live.length > 0 || view.upcoming.length > 0) && (
+          {mayManageEvents && (view.live.length > 0 || view.upcoming.length > 0) && (
             <Section
               icon="clock"
               title={view.live.length > 0 ? "Running now" : "Coming up"}
@@ -175,7 +251,7 @@ export default async function AdminDashboardPage() {
           )}
 
           {/* --- Drafts nobody can see ------------------------------- */}
-          {view.drafts.length > 0 && (
+          {mayManageEvents && view.drafts.length > 0 && (
             <Section
               icon="calendar"
               title="Drafts"
@@ -196,6 +272,7 @@ export default async function AdminDashboardPage() {
           )}
 
           {/* --- The last few things that happened ------------------- */}
+          {mayReadAudit && (
           <Section
             icon="history"
             title="Last few changes"
@@ -225,10 +302,11 @@ export default async function AdminDashboardPage() {
               </ul>
             )}
           </Section>
+          )}
         </div>
 
         <p className="pb-4 text-center text-12 text-muted">
-          Signed in as {admin.displayName ?? admin.name ?? "an admin"}. A finished event
+          Signed in as {user.displayName ?? user.name ?? "an admin"}. A finished event
           never appears above — it is read-only, so nothing about it can need doing.
         </p>
       </Page>

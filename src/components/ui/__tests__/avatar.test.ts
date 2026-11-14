@@ -238,6 +238,7 @@ describe("the account menu, the one control an avatar could be alone in", () => 
           handle: "faro",
           avatarUrl: null,
           isAdmin: false,
+          powers: [],
         },
         unread,
         signOut: async () => {},

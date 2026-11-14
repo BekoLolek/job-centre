@@ -276,6 +276,8 @@ describe("teamCountFrom", () => {
     teamEvent,
     draft: true,
     sizing,
+    heroes: true,
+    heroesPerRole: 3,
   });
 
   it("is the panel's figure under a count of teams, whoever is accepted", () => {
@@ -317,6 +319,8 @@ describe("rosterSizingFrom", () => {
     teamEvent,
     draft: true,
     sizing,
+    heroes: true,
+    heroesPerRole: 3,
   });
 
   it("is the stated figure, exactly, under players per team — whoever is accepted", () => {

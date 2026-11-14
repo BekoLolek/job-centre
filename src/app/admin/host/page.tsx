@@ -10,7 +10,9 @@ import AdminNav from "@/components/admin/AdminNav";
 import HostQueue from "@/components/admin/HostQueue";
 import { Page, PageHeader, Section } from "@/components/ui";
 import { linkableEvents, listHostApplications } from "@/lib/hosting";
-import { requireAdmin } from "@/lib/session-guards";
+import { holderFor } from "@/lib/permissions";
+import { holds } from "@/lib/permissions-policy";
+import { requirePermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +21,11 @@ export const metadata = {
 };
 
 export default async function AdminHostPage() {
-  await requireAdmin();
+  const decider = await requirePermission("hosts.approve");
+  // Deciding is what let them in. Building the event, opening it and opening
+  // the games catalogue are three more powers, and the queue offers each only
+  // to somebody it would work for.
+  const holder = await holderFor(decider);
   // The events an approval may be linked to (UC-21 3): everything nobody hosts
   // yet, including the one the admin is about to create from an application.
   const [applications, events] = await Promise.all([
@@ -48,7 +54,13 @@ export default async function AdminHostPage() {
           title={waiting > 0 ? `${waiting} waiting` : "Applications"}
           description="What they need from each player is the part to read — it becomes the sign-up questions, and the event is built from it before you hand it over."
         >
-          <HostQueue applications={applications} events={events} />
+          <HostQueue
+            applications={applications}
+            events={events}
+            mayCreateEvent={holds(holder, "events.create")}
+            mayManageEvents={holds(holder, "events.manage")}
+            mayManageGames={holds(holder, "games.manage")}
+          />
         </Section>
       </Page>
     </div>

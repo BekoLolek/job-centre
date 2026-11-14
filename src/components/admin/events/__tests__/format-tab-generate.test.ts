@@ -176,6 +176,8 @@ type Screen = {
   rename: (name: string) => void;
   /** Press Save, as the bar over the page does, and let whatever can settle, settle. */
   save: () => Promise<void>;
+  /** The state the tab hands its save row — `"dirty"` is what holds the unsaved bar up. */
+  saveState: () => unknown;
 };
 
 /**
@@ -234,6 +236,10 @@ function open(
       (row.props.onSave as () => void)();
       await new Promise((done) => setTimeout(done, 0));
     },
+    saveState: () => {
+      html();
+      return seen.find((entry) => entry.kind === "SaveRow")?.props.state;
+    },
   };
 }
 
@@ -244,6 +250,7 @@ const GENERATE = "Generate matches";
 beforeEach(() => {
   hooks.held.clear();
   actions.generateStageAction.mockReset();
+  actions.rebuildStageAction.mockReset();
   actions.saveStagesAction.mockReset();
   router.refresh.mockReset();
 });
@@ -260,13 +267,6 @@ describe("a saved stage with real teams and no stored matches (UC-18 9b)", () =>
     expect(screen.html()).not.toContain("saving builds them");
     expect(screen.button(GENERATE)).not.toBeNull();
     expect(screen.button(GENERATE)?.disabled).toBe(false);
-  });
-
-  it("is a full-height tap target, whatever the compact size beside it does", () => {
-    // `size="sm"` alone is well under the 44px floor; `min-h-11` is 2.75rem.
-    const screen = open(stageView());
-
-    expect(screen.button(GENERATE)?.className).toBe("min-h-11");
   });
 
   it("is still offered after a save that went through — nothing is unsaved any more", async () => {
@@ -337,6 +337,74 @@ describe("an edit typed while a generate is in flight", () => {
     expect(after).toContain(SAVING_BUILDS);
     expect(after).not.toContain("matches generated");
     expect(screen.button(GENERATE)).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The same race on the other busy write — the rebuild (Task 136)     */
+/* ------------------------------------------------------------------ */
+
+describe("an edit typed while a rebuild is in flight", () => {
+  const REBUILD = "Rebuild anyway";
+  // Nothing played, so the dialog's button is the unblocked one.
+  const CONFIRM = "Delete them and continue";
+  const impact = {
+    stageId: "stage-1",
+    name: "Round robin",
+    matches: 6,
+    playedGames: 0,
+    decided: 0,
+    overrides: 0,
+    finished: 0,
+    scheduled: 0,
+    draftedScores: 0,
+    handEdited: false,
+    blocked: false,
+    outOfDateSince: "2026-06-20T18:00:00Z",
+    results: [],
+    confirm: "token-1",
+  };
+  const outOfDate = () => stageView({ outOfDateSince: "2026-06-20T18:00:00Z" });
+
+  it("the control: with nothing typed, a rebuild that lands says what it rebuilt on a clean tab", async () => {
+    actions.previewStagesAction.mockResolvedValueOnce([impact] as never);
+    actions.rebuildStageAction.mockResolvedValue({ ok: true, data: { created: 6 } });
+    const screen = open(outOfDate());
+
+    await screen.press(REBUILD);
+    await screen.press(CONFIRM);
+
+    expect(actions.rebuildStageAction).toHaveBeenCalledWith("stage-1", "token-1");
+    expect(screen.saveState()).toBe("saved");
+    expect(screen.html()).toContain("6 matches rebuilt");
+  });
+
+  it("is still unsaved when the rebuild lands — the save bar is not taken down over it", async () => {
+    let land: (result: unknown) => void = () => {};
+    actions.previewStagesAction.mockResolvedValueOnce([impact] as never);
+    actions.rebuildStageAction.mockReturnValue(
+      new Promise((resolve) => {
+        land = resolve;
+      })
+    );
+    const screen = open(outOfDate());
+
+    await screen.press(REBUILD);
+    await screen.press(CONFIRM);
+    // The buttons are busy, the fields are not.
+    screen.rename("Finals");
+    land({ ok: true, data: { created: 6 } });
+    await new Promise((done) => setTimeout(done, 0));
+
+    const after = screen.html();
+    // The rebuild did land: it was the confirmed write, and the route was refreshed.
+    expect(actions.rebuildStageAction).toHaveBeenCalledWith("stage-1", "token-1");
+    expect(router.refresh).toHaveBeenCalledTimes(1);
+    // Still dirty, with the edit still in its field. The rebuild's own note —
+    // which only a "saved" tab shows — gives way to the edit.
+    expect(screen.saveState()).toBe("dirty");
+    expect(after).toContain('value="Finals"');
+    expect(after).not.toContain("matches rebuilt");
   });
 });
 

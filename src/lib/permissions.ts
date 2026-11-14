@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { type Database, db as defaultDb, userPermissions } from "@/db";
-import { type Power, assertPower, isPower } from "./permissions-policy";
+import { type Holder, type Power, assertPower, isPower } from "./permissions-policy";
 
 /**
  * The stored side of permissions: one row in `user_permissions` per grant
@@ -35,6 +35,29 @@ export async function powersOf(
     .from(userPermissions)
     .where(eq(userPermissions.userId, userId));
   return new Set(rows.map((row) => row.power).filter(isPower));
+}
+
+/**
+ * This member as `holds` wants them: the flag, and beside it their own list
+ * (R-265 / UC-56 2).
+ *
+ * For a screen deciding what to *offer* - which sections, which buttons. It is
+ * the same read `requirePermission` makes and it is made on this request, so a
+ * power taken away a moment ago stops being offered on the next page load. An
+ * admin's list is not read, as the guard does not read it: the flag answers
+ * first, so the rows could change nothing.
+ *
+ * It refuses nobody. What is offered is never what stops an action; the guard
+ * on the action is.
+ */
+export async function holderFor(
+  user: { id: string; isAdmin: boolean },
+  database: Database = defaultDb
+): Promise<Holder> {
+  return {
+    isAdmin: user.isAdmin,
+    powers: user.isAdmin ? new Set<Power>() : await powersOf(user.id, database),
+  };
 }
 
 /**

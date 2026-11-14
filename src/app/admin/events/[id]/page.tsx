@@ -54,6 +54,8 @@ import { handSheet } from "@/lib/hands-sheet";
 import { type StoredHand, handsFor } from "@/lib/hero-hands";
 import { HERO_ROLES, hasHeroList } from "@/lib/heroes";
 import { listRoundScores } from "@/lib/round-scores";
+import { holderFor } from "@/lib/permissions";
+import { holds } from "@/lib/permissions-policy";
 import { requireEventManager } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
@@ -85,6 +87,7 @@ export default async function AdminEventPage({
    * nothing below runs for somebody who should not see it.
    */
   const manager = await requireEventManager(id);
+  const mayManageTemplates = holds(await holderFor(manager), "templates.manage");
   const { tab } = await searchParams;
 
   const event = await getEventById(id);
@@ -341,14 +344,16 @@ export default async function AdminEventPage({
         <EventEditor
           event={event}
           /*
-           * Admin, not manager. `requireEventManager` admits the event's own
-           * host as well, and a host may run this one event without being able
-           * to mint a template for every future one (R-22, UC-08 10a) - so the
-           * editor is told who is reading rather than being left to assume.
-           * `getCurrentUser` is server-only, and a server page handing the flag
-           * down is how `NavMenu`, `PollList` and `SuggestionBox` all do it.
+           * A second question, not the manager's. `requireEventManager` admits
+           * the event's own host as well, and a host may run this one event
+           * without being able to mint a template for every future one (R-22,
+           * UC-08 10a) - so the editor is told whether this reader may, rather
+           * than being left to assume. The answer is `templates.manage` or the
+           * admin flag (R-265), which is what `createTemplateFromEventAction`
+           * asks: a host who holds that power is offered the button, and an
+           * `events.manage` holder who does not is not.
            */
-          isAdmin={manager.isAdmin}
+          mayManageTemplates={mayManageTemplates}
           /*
            * UC-42 5a. `?tab=` is read here, on the server, which is why the
            * decision about where it may land is `tabs.ts`'s and not the

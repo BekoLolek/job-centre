@@ -15,7 +15,7 @@
  * Three readers of hands — {@link handFor}, {@link handsFor},
  * {@link handsOfPlayer} — and one pair of private functions under them:
  * `heroesNamedBy` reads the rows a set of hands name, retired and renamed
- * included, and `unflatten` rebuilds nine slots from those rows. Every reader
+ * included, and `unflatten` rebuilds the hand's slots from those rows. Every reader
  * goes through both, so no two screens can disagree about whether a retired
  * hero is still named or which slot is which role; the tests assert each later
  * reader against {@link handFor} hand for hand, which is what keeps that true.
@@ -93,8 +93,9 @@ import {
   heroes,
   users,
 } from "@/db";
+import { eventShapeFrom } from "@/lib/events-policy";
 import { HERO_ROLES, drawableByRole, listHeroes } from "@/lib/heroes";
-import { HEROES_PER_ROLE, type HeroHand, drawHand } from "@/lib/heroes-policy";
+import { type HeroHand, drawHand } from "@/lib/heroes-policy";
 
 /** What one participant holds for one event, and when they were dealt it. */
 export type StoredHand = {
@@ -128,17 +129,6 @@ export type PlayerWithHands = {
   /** How many hands — one per event, so how many nights they have drawn on. */
   hands: number;
 };
-
-/**
- * How many ids a stored hand holds: three roles at three each.
- *
- * Derived rather than written as 9, because `hero_hands_nine_distinct_per_role`
- * has to say `9` out loud — a CHECK constraint cannot import a constant — and a
- * fourth role would otherwise leave this file and that constraint disagreeing
- * in silence. `hero-hands.test.ts` asserts the two are the same number, which
- * is the only place they can be compared.
- */
-export const HAND_SIZE = HERO_ROLES.length * HEROES_PER_ROLE;
 
 /* --- The refusals, each one distinct ------------------------------ */
 
@@ -178,10 +168,24 @@ function flatten(hand: HeroHand): string[] {
 }
 
 /**
- * The inverse: nine ids and the rows they name, back into three role lists.
+ * The inverse: a hand's ids and the rows they name, back into three role lists.
  *
- * Reads the roles out of `HERO_ROLES` at `HEROES_PER_ROLE` a time rather than
- * slicing at 3, 6 and 9, so the pair of functions stays one fact.
+ * ## The width is read off the hand, not off the event
+ *
+ * `flatten` writes the same number of ids for every role, so the stored array
+ * divides evenly across `HERO_ROLES` and the quotient is the width the hand
+ * was dealt at. That is the only width that can rebuild it: an event's width
+ * can be changed after a hand is dealt, and a hand dealt at another width is
+ * shown as it was dealt (UC-58 7a) — so the event's present number is not
+ * asked, and is not a parameter.
+ *
+ * **Throws on a length the roles do not divide.** Nothing writes one —
+ * `flatten` cannot — and slicing by a fraction would put heroes under the
+ * wrong role and say nothing, which is the same silent wrongness the next
+ * paragraph refuses.
+ *
+ * Exported for `hero-hands.test.ts` alone, which proves it on widths the
+ * database cannot yet store.
  *
  * **Throws on an id with no row.** It cannot happen through the site — nothing
  * deletes a hero, `retireHero` writes `retired_at` and leaves the row where it
@@ -191,7 +195,19 @@ function flatten(hand: HeroHand): string[] {
  * would see a gap and have no way to know it was not what they were dealt, and
  * nothing would be recorded anywhere. So it is loud.
  */
-function unflatten(heroIds: readonly string[], rows: readonly Hero[]): Record<HeroRole, Hero[]> {
+export function unflatten(
+  heroIds: readonly string[],
+  rows: readonly Hero[]
+): Record<HeroRole, Hero[]> {
+  const perRole = heroIds.length / HERO_ROLES.length;
+  if (!Number.isInteger(perRole)) {
+    throw new Error(
+      `A stored hand holds ${heroIds.length} heroes, which does not divide evenly across ` +
+        `${HERO_ROLES.length} roles. A hand is dealt the same number in every role, so ` +
+        `this row was not written by the draw.`
+    );
+  }
+
   const byId = new Map(rows.map((hero) => [hero.id, hero]));
   const out = Object.fromEntries(HERO_ROLES.map((role) => [role, [] as Hero[]])) as Record<
     HeroRole,
@@ -199,8 +215,8 @@ function unflatten(heroIds: readonly string[], rows: readonly Hero[]): Record<He
   >;
 
   HERO_ROLES.forEach((role, roleIndex) => {
-    const from = roleIndex * HEROES_PER_ROLE;
-    for (const id of heroIds.slice(from, from + HEROES_PER_ROLE)) {
+    const from = roleIndex * perRole;
+    for (const id of heroIds.slice(from, from + perRole)) {
       const hero = byId.get(id);
       if (!hero) {
         throw new Error(
@@ -429,7 +445,7 @@ export async function playersWithHands(database: Database = defaultDb): Promise<
  * Deal this participant a hand and store it, or hand back the one they already
  * hold. **Never deals twice** (R-212).
  *
- * `alreadyHeld` tells the two apart: `false` means these nine were dealt by
+ * `alreadyHeld` tells the two apart: `false` means these were dealt by
  * this call and have just been stored, `true` means they were already there and
  * nothing was written. UC-39 3a and 6a are the same answer from this function's
  * point of view and two different screens.
@@ -470,17 +486,23 @@ export async function dealFor(
 
   /* Everything that can refuse, before anything is written (decision 004). */
   const [event] = await database
-    .select({ gameId: events.gameId })
+    .select({ gameId: events.gameId, config: events.config })
     .from(events)
     .where(eq(events.id, eventId))
     .limit(1);
   if (!event) return { ok: false, error: HAND_EVENT_GONE };
   if (!event.gameId) return { ok: false, error: HAND_NO_GAME };
 
-  // Refuses by name when a role holds fewer than three, before any roll
-  // (UC-39 2a). The sentence is Task 74's and is passed through unaltered —
-  // it names every thin role, and restating it here would be a second copy.
-  const drawn = drawHand(drawableByRole(await listHeroes(event.gameId, database)), random);
+  // Refuses by name when a role holds fewer than the event's width, before
+  // any roll (UC-39 2a, UC-58 5a). The sentence is Task 74's and is passed
+  // through unaltered — it names every thin role and the width it needed, and
+  // restating it here would be a second copy. The width is the event's own
+  // (R-270), read off the row this call already holds.
+  const drawn = drawHand(
+    drawableByRole(await listHeroes(event.gameId, database)),
+    random,
+    eventShapeFrom(event.config).heroesPerRole
+  );
   if (!drawn.ok) return { ok: false, error: drawn.error };
 
   /*

@@ -57,7 +57,9 @@ export default function EntryRulesTab({ event }: { event: EventDetail }) {
         setState("error");
         return;
       }
-      setState("saved");
+      // The fields stay live while the save is in flight. An edit made meanwhile
+      // was not sent, so it is still unsaved, and it outranks the note.
+      setState((was) => (was === "dirty" ? was : "saved"));
       router.refresh();
     } catch {
       setError("Could not reach the server. Nothing was saved.");

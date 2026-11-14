@@ -42,7 +42,7 @@ vi.mock("@/db", async (importOriginal) => {
 });
 
 vi.mock("@/lib/session-guards", () => ({
-  requireAdmin: async () => ({ id: state.adminId, displayName: "Beko" }),
+  requirePermission: async () => ({ id: state.adminId, displayName: "Beko" }),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
@@ -53,7 +53,9 @@ vi.mock("@/lib/admin-games", async (importOriginal) => {
     ...actual,
     deleteField: async (fieldId: string) => {
       const result = await actual.deleteField(fieldId);
-      return result.ok ? { ok: true, data: { deletedAnswers: state.reportedAnswers } } : result;
+      return result.ok
+        ? { ok: true, data: { ...result.data, deletedAnswers: state.reportedAnswers } }
+        : result;
     },
   };
 });

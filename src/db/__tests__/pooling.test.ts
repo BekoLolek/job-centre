@@ -138,6 +138,14 @@ describe("the premise behind an unbounded pool", () => {
 
     expect(lockers.map((file) => path.basename(file)).sort()).toEqual([
       "admin-allowlist.ts",
+      // Task 137: `deleteField` takes the question row for update, so the
+      // answer count and the delete cannot be split by a writer landing
+      // between them — an answer saved in that window used to be cascaded
+      // while `deletedAnswers` reported none. The lock is pinned here rather
+      // than proved behaviourally: PGlite is one connection, so a second
+      // writer queues behind any transaction whether or not a row is locked.
+      // On Neon under READ COMMITTED the lock is what closes the window.
+      "admin-games.ts",
       "championship-results.ts",
       "draft.ts",
       "events.ts",

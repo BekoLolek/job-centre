@@ -41,17 +41,20 @@ import {
 const WITH_LIST: TabVisibility = {
   teamEvent: true,
   draft: true,
+  heroes: true,
   heroList: { game: "Marvel Rivals", heroes: true },
 };
 const EMPTY_LIST: TabVisibility = {
   teamEvent: true,
   draft: true,
+  heroes: true,
   heroList: { game: "Marvel Rivals", heroes: false },
 };
-const NO_GAME: TabVisibility = { teamEvent: true, draft: true, heroList: { game: null } };
+const NO_GAME: TabVisibility = { teamEvent: true, draft: true, heroes: true, heroList: { game: null } };
 const SOLO_WITH_LIST: TabVisibility = {
   teamEvent: false,
   draft: false,
+  heroes: true,
   heroList: { game: "Marvel Rivals", heroes: true },
 };
 

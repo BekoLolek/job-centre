@@ -8,7 +8,8 @@
  * and asking two questions about it touches code, which is the whole reason
  * `profile_fields.game_id` points at a table instead of being an enum.
  *
- * Guarded by `requireAdmin()`, which sends a signed-in non-admin to `/signin`
+ * Guarded by `requirePermission("games.manage")` - a holder of that power, or
+ * an admin - which sends anybody else who is signed in to `/signin`
  * with `?error=admin-only` rather than to a 403 — they are not being asked to
  * authenticate again, they are being told the page is not theirs.
  */
@@ -19,7 +20,7 @@ import GamesManager from "@/components/admin/GamesManager";
 import { Page, PageHeader, StatTile } from "@/components/ui";
 import { loadAdminGames } from "@/lib/admin-games";
 import { listHeroesByGame } from "@/lib/heroes";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export const metadata = {
 };
 
 export default async function AdminGamesPage() {
-  await requireAdmin();
+  await requirePermission("games.manage");
   /*
    * Two reads, in parallel. The hero rows are a second table rather than part
    * of `AdminGamesView` because `loadAdminGames` belongs to the questions half

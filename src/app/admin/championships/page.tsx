@@ -5,7 +5,8 @@
  * this is the only read in the codebase that returns them, and an admin has
  * nothing to work on until they can see one.
  *
- * Guarded by `requireAdmin()`, which sends a signed-in non-admin to `/signin`
+ * Guarded by `requirePermission("championships.manage")` - a holder of that
+ * power, or an admin - which sends anybody else who is signed in to `/signin`
  * with `?error=admin-only` rather than to a 403.
  */
 
@@ -23,7 +24,7 @@ import {
 } from "@/components/ui";
 import { seasonMonths } from "@/lib/championship-policy";
 import { listChampionships } from "@/lib/championships";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 import NewChampionship from "./NewChampionship";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ const PILL = {
 } as const;
 
 export default async function AdminChampionshipsPage() {
-  await requireAdmin();
+  await requirePermission("championships.manage");
   const seasons = await listChampionships();
 
   const published = seasons.filter((season) => season.status === "published").length;

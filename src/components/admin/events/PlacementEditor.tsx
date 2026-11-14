@@ -283,7 +283,9 @@ export default function PlacementEditor({
         setState("error");
         return;
       }
-      setState("saved");
+      // The fields stay live while the save is in flight. An edit made meanwhile
+      // was not sent, so it is still unsaved, and it outranks the note.
+      setState((was) => (was === "dirty" ? was : "saved"));
       router.refresh();
     } catch {
       setError("Could not reach the server. Nothing was saved.");
@@ -383,8 +385,10 @@ export default function PlacementEditor({
                 onLand={(event) => land(event, row.id)}
               >
                 <span className="flex shrink-0 items-center gap-1">
+                  {/* Width only: `.btn` floors the height at 44px itself, and
+                      an arrow with its padding is about 37px wide. */}
                   <Button
-                    className="min-h-11 min-w-11"
+                    className="min-w-11"
                     aria-label={`Move ${row.name} up`}
                     disabled={closed || index === 0}
                     onClick={() => change(dropped(order, row.id, ordered[index - 1].id))}
@@ -392,7 +396,7 @@ export default function PlacementEditor({
                     ↑
                   </Button>
                   <Button
-                    className="min-h-11 min-w-11"
+                    className="min-w-11"
                     aria-label={`Move ${row.name} down`}
                     disabled={closed || index === ordered.length - 1}
                     onClick={() =>

@@ -190,16 +190,18 @@ type EventEditorProps = {
   /** `MAX_STAGES`, for the same reason — `src/lib/format.ts` reaches Postgres. */
   maxStages: number;
   /**
-   * Whether the reader is an admin, rather than a host who was given this one
-   * event (R-22 / UC-08 10a).
+   * Whether the reader may manage templates - holds `templates.manage`, or is
+   * an admin - rather than only managing this one event (R-22 / UC-08 10a,
+   * R-265).
    *
    * Only "Save as template" reads it, and only to decide whether to offer
    * itself: the refusal that matters is the server's, in
-   * `createTemplateFromEventAction`. Optional and **false when absent**, so a
-   * caller that has not thought about it hides an admin control rather than
-   * showing one — see {@link showsSaveAsTemplate}.
+   * `createTemplateFromEventAction`, and this is the answer to the question
+   * that action asks. Optional and **false when absent**, so a caller that has
+   * not thought about it hides the control rather than showing one — see
+   * {@link showsSaveAsTemplate}.
    */
-  isAdmin?: boolean;
+  mayManageTemplates?: boolean;
 };
 
 function EditorBody({
@@ -220,7 +222,7 @@ function EditorBody({
   maxDays,
   maxQuestions,
   maxStages,
-  isAdmin,
+  mayManageTemplates,
   resetKey,
 }: EventEditorProps & { resetKey: number }) {
   // Seeded from the URL, then owned here. Deep-linking is what makes an admin
@@ -358,7 +360,11 @@ function EditorBody({
           }
         />
 
-        <SaveAsTemplate eventId={event.id} title={event.title} isAdmin={isAdmin} />
+        <SaveAsTemplate
+          eventId={event.id}
+          title={event.title}
+          mayManageTemplates={mayManageTemplates}
+        />
       </div>
 
       {/* --- The rail ----------------------------------------------- */}
@@ -438,6 +444,11 @@ function EditorBody({
                 accepted={accepted}
                 existingTeams={draft.teams.length}
                 draftStarted={draft.started}
+                teamFormat={draft.teamFormat}
+                rosters={draft.teams.map((team) => ({
+                  name: team.name,
+                  size: team.roster.size,
+                }))}
               />
             )}
             {panel.here === "scoring" && (
@@ -646,37 +657,52 @@ function RailLink({
 /**
  * Whether to offer "Save as template" at all (R-22 / UC-08 10a).
  *
+ * Offered to whoever may manage templates, which the page works out from the
+ * reader's powers and hands down: a holder of `templates.manage`, or an admin.
+ * Not to a host who holds nothing else, and not on the admin flag alone - the
+ * question is the one the action asks (R-265).
+ *
  * `=== true` rather than a truthiness check, so an absent prop — a caller that
- * has not been told who is reading — hides the control instead of offering an
- * admin's button to a host. Exported because which readers are offered an
- * admin-only control is a fact about the product rather than about rendering,
+ * has not been told who is reading — hides the control instead of offering a
+ * template-maker's button to a host. Exported because which readers are
+ * offered the control is a fact about the product rather than about rendering,
  * and it is the half of this that a Node test can hold on to.
  *
  * This is **not** the authorisation. `createTemplateFromEventAction` is, and it
- * is `requireAdmin()`: a host who finds the action some other way is refused by
+ * is `requirePermission("templates.manage")` - a holder of that power, or an
+ * admin: a host who finds the action some other way is refused by
  * the server, which is the only refusal that counts. Hiding the control is so a
  * host is not shown a button that would bounce them to the sign-in page.
  */
-export function showsSaveAsTemplate(isAdmin: boolean | undefined): boolean {
-  return isAdmin === true;
+export function showsSaveAsTemplate(mayManageTemplates: boolean | undefined): boolean {
+  return mayManageTemplates === true;
 }
 
 /**
  * Turn this event's setup into a template, from the editor (UC-08 10a, UC-28 3a).
  *
- * ## Why it is admin-only, and where that is decided
+ * ## Why it is not a host's to make, and where that is decided
  *
  * A host is given one event. Minting a template changes what *every* future
- * event starts from, which is an admin's decision about the site and not a
- * manager's decision about their evening — so R-22 says admin, and UC-08 10a
- * says so again in brackets.
+ * event starts from, which is a decision about the site and not a manager's
+ * decision about their evening — so R-22 says admin, and UC-08 10a says so
+ * again in brackets. Task 127 widened the *answer* to that question from the
+ * admin flag to `templates.manage` **or** the flag; it did not widen who it is
+ * asked of. A host is still refused.
+ *
+ * Task 130 then made the screen ask the same question: `showsSaveAsTemplate`
+ * is told whether the reader may manage templates, not whether they are an
+ * admin, so a `templates.manage` holder who manages this event is shown the
+ * button the server would already have let them press.
  *
  * The server action is where that is enforced, and it is worth saying why it is
  * sound rather than assuming it: the row being written is a new
  * `event_templates` row, which belongs to nobody in particular, so the question
- * is simply "is this reader an admin" and `requireAdmin()` answers it. The
+ * is simply "may this reader manage templates" and
+ * `requirePermission("templates.manage")` answers it, for a holder of that
+ * power and for every admin. The
  * `eventId` travelling alongside is only *read*. If this ever wrote to the
- * event as well, `requireAdmin` would not be enough on its own and the event
+ * event as well, that guard would not be enough on its own and the event
  * would have to be authorised from its own row — `src/lib/event-scope.ts` is
  * the standing note on that, and the rule it states is **authorise on the row
  * you are about to write, never on an id beside it**.
@@ -703,11 +729,11 @@ export function showsSaveAsTemplate(isAdmin: boolean | undefined): boolean {
 export function SaveAsTemplate({
   eventId,
   title,
-  isAdmin,
+  mayManageTemplates,
 }: {
   eventId: string;
   title: string;
-  isAdmin: boolean | undefined;
+  mayManageTemplates: boolean | undefined;
 }) {
   const guard = useNavigationLock();
   const dirty = useIsDirty();
@@ -736,7 +762,7 @@ export function SaveAsTemplate({
 
   // After the hooks, never before them: the same component must run the same
   // hooks on every render of the same mount.
-  if (!showsSaveAsTemplate(isAdmin)) return null;
+  if (!showsSaveAsTemplate(mayManageTemplates)) return null;
 
   return (
     <div className="mt-4 border-t border-hair pt-4">

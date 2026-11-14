@@ -88,7 +88,7 @@ export async function createEventFromApplicationAction(
   // Two powers, because it is two things: acting on a host application, and
   // creating an event. Either alone is refused.
   await requirePermission("hosts.approve");
-  const admin = await requirePermission("events.create");
+  const actor = await requirePermission("events.create");
 
   const application = await getHostApplication(id);
   if (!application) return { ok: false, error: "That application has gone." };
@@ -99,7 +99,7 @@ export async function createEventFromApplicationAction(
   const created = await createEvent({
     title: application.title,
     gameId: application.gameId,
-    createdBy: admin.id,
+    createdBy: actor.id,
   });
   if (!created.ok) return { ok: false, error: created.error };
 
@@ -109,7 +109,7 @@ export async function createEventFromApplicationAction(
 
   await recordAudit({
     action: "event.created",
-    actor: admin,
+    actor,
     eventId: created.data.id,
     subject: id,
     summary: `Created "${created.data.title}" from ${application.by?.name ?? "somebody"}'s host application.`,
@@ -150,7 +150,7 @@ export async function approveHostApplicationAction(
   id: string,
   input: { eventId: string; note?: string }
 ): Promise<HostResult<{ eventId: string }>> {
-  const admin = await requirePermission("hosts.approve");
+  const actor = await requirePermission("hosts.approve");
 
   const application = await getHostApplication(id);
   if (!application) return { ok: false, error: "That application has gone." };
@@ -158,7 +158,7 @@ export async function approveHostApplicationAction(
     return { ok: false, error: "That application has already been decided." };
   }
 
-  const result = await approveHostApplication(id, admin.id, {
+  const result = await approveHostApplication(id, actor.id, {
     note: input.note ?? null,
     eventId: input.eventId,
   });
@@ -166,7 +166,7 @@ export async function approveHostApplicationAction(
 
   await recordAudit({
     action: "host.approved",
-    actor: admin,
+    actor,
     eventId: result.data.eventId,
     subject: id,
     summary: `Approved ${application.by?.name ?? "somebody"} to host "${application.title}".`,
@@ -197,7 +197,7 @@ export async function declineHostApplicationAction(
   id: string,
   note: string
 ): Promise<HostResult<null>> {
-  const admin = await requirePermission("hosts.approve");
+  const actor = await requirePermission("hosts.approve");
 
   const application = await getHostApplication(id);
   if (!application) return { ok: false, error: "That application has gone." };
@@ -205,12 +205,12 @@ export async function declineHostApplicationAction(
     return { ok: false, error: "That application has already been decided." };
   }
 
-  const result = await declineHostApplication(id, admin.id, note);
+  const result = await declineHostApplication(id, actor.id, note);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "host.declined",
-    actor: admin,
+    actor,
     subject: id,
     summary: `Declined a host application for "${application.title}".`,
     detail: { applicationId: id, note: note.trim() },

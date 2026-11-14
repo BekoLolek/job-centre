@@ -75,10 +75,6 @@ function fail(error: string): { ok: false; error: string } {
   return { ok: false, error };
 }
 
-function done(): AdminResult {
-  return { ok: true, data: null };
-}
-
 function withData<T>(data: T): AdminResult<T> {
   return { ok: true, data };
 }
@@ -260,15 +256,26 @@ export async function createGame(
  * it the catalogue can be walked into a state with two "Marvel Rivals" in it,
  * which the create path refuses outright — and a rule that only holds on the
  * way in is not a rule.
+ *
+ * `previousName` comes back with the row because the row has no memory of it
+ * once this returns, and the audit line is where it is kept (`renameHero` does
+ * the same, for the same reason).
  */
 export async function renameGame(
   gameId: string,
   rawName: string,
   database: Database = defaultDb
-): Promise<AdminResult<Game>> {
+): Promise<AdminResult<{ game: Game; previousName: string }>> {
   const name = cleanName(rawName);
   if (!name) return fail("Give the game a name.");
   if (await nameTaken(database, name, gameId)) return fail("That game already exists.");
+
+  const [existing] = await database
+    .select({ name: games.name })
+    .from(games)
+    .where(eq(games.id, gameId))
+    .limit(1);
+  if (!existing) return fail("That game no longer exists.");
 
   const [updated] = await database
     .update(games)
@@ -276,7 +283,9 @@ export async function renameGame(
     .where(eq(games.id, gameId))
     .returning();
 
-  return updated ? withData(updated) : fail("That game no longer exists.");
+  return updated
+    ? withData({ game: updated, previousName: existing.name })
+    : fail("That game no longer exists.");
 }
 
 /**
@@ -300,17 +309,33 @@ export async function setGameActive(
   return updated ? withData(updated) : fail("That game no longer exists.");
 }
 
+/**
+ * Whether a reorder changed the order at all.
+ *
+ * Moving the first row up, or the last down, is answered ok and moves nothing
+ * (`reorder`). The caller is told which it was, so that nothing downstream has
+ * to say "moved" about a press that had nowhere to go.
+ */
+function orderChanged(
+  before: ReadonlyArray<{ id: string }>,
+  after: ReadonlyArray<{ id: string }>
+): boolean {
+  return after.some((row, at) => row.id !== before[at].id);
+}
+
 /** Move a game up or down the list, then rewrite every `sort` as 0…n-1. */
 export async function moveGame(
   gameId: string,
   direction: "up" | "down",
   database: Database = defaultDb
-): Promise<AdminResult> {
+): Promise<AdminResult<{ game: Game; moved: boolean }>> {
   const rows = await database.select().from(games).orderBy(asc(games.sort), asc(games.name));
-  if (!rows.some((row) => row.id === gameId)) return fail("That game no longer exists.");
+  const game = rows.find((row) => row.id === gameId);
+  if (!game) return fail("That game no longer exists.");
 
-  await writeGameSort(database, reorderById(rows, gameId, direction));
-  return done();
+  const reordered = reorderById(rows, gameId, direction);
+  await writeGameSort(database, reordered);
+  return withData({ game, moved: orderChanged(rows, reordered) });
 }
 
 /**
@@ -368,6 +393,32 @@ async function resequenceSection(database: Database, gameId: string | null): Pro
     ...rows.filter((row) => row.retiredAt === null),
     ...rows.filter((row) => row.retiredAt !== null),
   ]);
+}
+
+/**
+ * The name of the game a question is asked under, or null for one asked of
+ * everyone.
+ *
+ * It rides back with a question write so the caller can say where the
+ * question lives without a read of its own. The action layer used to load the
+ * whole catalogue before every write for this one string, and then needed a
+ * fallback sentence for the write having seen a different row than it had.
+ *
+ * Null means "no game" and nothing else. `profile_fields.game_id` is a foreign
+ * key and nothing deletes a game, so an id with no row behind it is a broken
+ * database rather than a case to word around: it throws. Every caller asks
+ * before its first write or inside its transaction, so the throw leaves
+ * nothing behind.
+ */
+async function gameName(database: Database, gameId: string | null): Promise<string | null> {
+  if (gameId === null) return null;
+  const [game] = await database
+    .select({ name: games.name })
+    .from(games)
+    .where(eq(games.id, gameId))
+    .limit(1);
+  if (!game) throw new Error(`A profile question names game ${gameId}, which does not exist.`);
+  return game.name;
 }
 
 /* ------------------------------------------------------------------ */
@@ -541,12 +592,22 @@ export async function previewRankLadder(
  * An empty ladder is valid and meaningful — Jackbox has no ranks — so this
  * never insists on entries. What it will not do is leave a member's profile
  * claiming a rank that no longer exists.
+ *
+ * The ladder and the clear are one transaction. They were two statements on
+ * the bare handle, so a clear that threw left the new ladder stored and the
+ * answers it orphans still on profiles, with the caller holding an exception
+ * and nothing to log. Both refusals are above the transaction and nothing in
+ * it returns one (docs/decisions/004): it either does both writes or throws
+ * and does neither.
+ *
+ * `game` is the row as it was before the write, so the caller can record what
+ * the ladder used to be. After this returns, nothing else remembers.
  */
 export async function setRankLadder(
   gameId: string,
   rawLadder: unknown,
   database: Database = defaultDb
-): Promise<AdminResult<{ ladder: string[]; clearedAnswers: number }>> {
+): Promise<AdminResult<{ game: Game; ladder: string[]; clearedAnswers: number }>> {
   const [game] = await database.select().from(games).where(eq(games.id, gameId)).limit(1);
   if (!game) return fail("That game no longer exists.");
 
@@ -554,12 +615,13 @@ export async function setRankLadder(
   if (ladder.length > 60) return fail("A ladder that long is almost certainly a mistake.");
 
   const impact = await previewRankLadder(gameId, ladder, database);
-  await database.update(games).set({ rankLadder: ladder }).where(eq(games.id, gameId));
 
-  let cleared = 0;
-  if (impact.answers > 0) cleared = await clearInvalidAnswers(gameId, database);
+  const cleared = await database.transaction(async (tx) => {
+    await tx.update(games).set({ rankLadder: ladder }).where(eq(games.id, gameId));
+    return impact.answers > 0 ? clearInvalidAnswers(gameId, tx) : 0;
+  });
 
-  return withData({ ladder, clearedAnswers: cleared });
+  return withData({ game, ladder, clearedAnswers: cleared });
 }
 
 /**
@@ -680,21 +742,27 @@ function validateFieldInput(input: FieldInput): AdminResult<{
  * however hard they try, which is UC-03 3a one level down: no ranks, no rank
  * details. `updateField` has always refused to retype a global question as a
  * rank for exactly this reason; this is the same rule on the way in.
+ *
+ * The row comes back with its game's name beside it (`gameName`, null for a
+ * global question). The game is already in hand here, and it saves the caller
+ * a read to say where the question went.
  */
 export async function createField(
   gameId: string | null,
   input: FieldInput,
   database: Database = defaultDb
-): Promise<AdminResult<ProfileField>> {
+): Promise<AdminResult<ProfileField & { gameName: string | null }>> {
   const checked = validateFieldInput(input);
   if (!checked.ok) return checked;
 
+  let section: string | null = null;
   if (gameId) {
     const [game] = await database.select().from(games).where(eq(games.id, gameId)).limit(1);
     if (!game) return fail("That game no longer exists.");
     if (checked.data.type === "rank" && game.rankLadder.length === 0) {
       return fail(rankUnavailable(game.name));
     }
+    section = game.name;
   } else if (checked.data.type === "rank") {
     return fail(rankUnavailable(null));
   }
@@ -714,7 +782,7 @@ export async function createField(
     .values({ gameId, key, sort, ...checked.data, holdsRoles })
     .returning();
 
-  return withData(created);
+  return withData({ ...created, gameName: section });
 }
 
 /**
@@ -859,7 +927,15 @@ export async function updateField(
   fieldId: string,
   input: FieldInput,
   database: Database = defaultDb
-): Promise<AdminResult<{ field: ProfileField; strandedAnswers: number }>> {
+): Promise<
+  AdminResult<{
+    field: ProfileField;
+    gameName: string | null;
+    /** What the question was called before this edit. The row forgets it. */
+    previousLabel: string;
+    strandedAnswers: number;
+  }>
+> {
   const checked = validateFieldInput(input);
   if (!checked.ok) return checked;
 
@@ -887,6 +963,7 @@ export async function updateField(
 
   const holdsRoles =
     Boolean(input.holdsRoles) && canHoldRoles(existing.gameId, checked.data.type);
+  const section = await gameName(database, existing.gameId);
 
   const [updated] = await database
     .update(profileFields)
@@ -894,7 +971,12 @@ export async function updateField(
     .where(eq(profileFields.id, fieldId))
     .returning();
 
-  return withData({ field: updated, strandedAnswers: stranded });
+  return withData({
+    field: updated,
+    gameName: section,
+    previousLabel: existing.label,
+    strandedAnswers: stranded,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -915,45 +997,72 @@ export async function updateField(
  * Already retired is not an error. A second click on a button that has done
  * its job is a double click, not a fault, and reporting one would be the
  * screen arguing with the admin about something it already agrees with.
+ *
+ * ## One transaction, with the renumbering inside it
+ *
+ * Retiring parks the question behind the live ones, which is a second write.
+ * It used to follow the first on the bare handle, so a renumbering that threw
+ * left the question retired, the caller holding an exception, and no audit
+ * line, because the action never reached the point of writing one.
+ * `restoreField` and `deleteField` had the same shape and have the same fix.
+ * Now a throw rolls the retire back with it, so there is no stored change for
+ * a line to be missing about.
+ *
+ * The one refusal is above the first write (docs/decisions/004).
  */
 export async function retireField(
   fieldId: string,
   database: Database = defaultDb,
   now: Date = new Date()
-): Promise<AdminResult<{ field: ProfileField; keptAnswers: number }>> {
-  const [existing] = await database
-    .select()
-    .from(profileFields)
-    .where(eq(profileFields.id, fieldId))
-    .limit(1);
-  if (!existing) return fail("That question no longer exists.");
+): Promise<AdminResult<{ field: ProfileField; gameName: string | null; keptAnswers: number }>> {
+  return database.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(profileFields)
+      .where(eq(profileFields.id, fieldId))
+      .limit(1);
+    if (!existing) return fail("That question no longer exists.");
 
-  const kept = await fieldAnswerCount(fieldId, database);
-  const [updated] = await database
-    .update(profileFields)
-    .set({ retiredAt: existing.retiredAt ?? now })
-    .where(eq(profileFields.id, fieldId))
-    .returning();
+    const section = await gameName(tx, existing.gameId);
+    const kept = await fieldAnswerCount(fieldId, tx);
+    const [updated] = await tx
+      .update(profileFields)
+      .set({ retiredAt: existing.retiredAt ?? now })
+      .where(eq(profileFields.id, fieldId))
+      .returning();
 
-  await resequenceSection(database, existing.gameId);
-  return withData({ field: updated, keptAnswers: kept });
+    await resequenceSection(tx, existing.gameId);
+    return withData({ field: updated, gameName: section, keptAnswers: kept });
+  });
 }
 
-/** Ask it again. Every answer stored while it was retired comes back with it. */
+/**
+ * Ask it again. Every answer stored while it was retired comes back with it.
+ *
+ * One transaction, for the reason `retireField` gives. The refusal here comes
+ * after the update, and is safe there because it *is* that update's result: it
+ * matched no row, so there is nothing for the commit to keep
+ * (docs/decisions/004, the third safe shape).
+ */
 export async function restoreField(
   fieldId: string,
   database: Database = defaultDb
-): Promise<AdminResult<{ field: ProfileField; restoredAnswers: number }>> {
-  const restored = await fieldAnswerCount(fieldId, database);
-  const [updated] = await database
-    .update(profileFields)
-    .set({ retiredAt: null })
-    .where(eq(profileFields.id, fieldId))
-    .returning();
-  if (!updated) return fail("That question no longer exists.");
+): Promise<
+  AdminResult<{ field: ProfileField; gameName: string | null; restoredAnswers: number }>
+> {
+  return database.transaction(async (tx) => {
+    const restored = await fieldAnswerCount(fieldId, tx);
+    const [updated] = await tx
+      .update(profileFields)
+      .set({ retiredAt: null })
+      .where(eq(profileFields.id, fieldId))
+      .returning();
+    if (!updated) return fail("That question no longer exists.");
 
-  await resequenceSection(database, updated.gameId);
-  return withData({ field: updated, restoredAnswers: restored });
+    const section = await gameName(tx, updated.gameId);
+    await resequenceSection(tx, updated.gameId);
+    return withData({ field: updated, gameName: section, restoredAnswers: restored });
+  });
 }
 
 /**
@@ -967,30 +1076,63 @@ export async function restoreField(
  *
  * A question with no answers is a different thing: a typo, added five minutes
  * ago, that should simply go. That one still deletes.
+ *
+ * ## Lock, count, delete — in one transaction
+ *
+ * The count and the delete were two statements on the bare handle. An answer
+ * saved between them was taken by the cascade while this reported, and the
+ * caller logged, that nobody had answered.
+ *
+ * A transaction on its own does not close that. Under READ COMMITTED a second
+ * session's insert can still commit between the two statements. What closes it
+ * is the `for update` on the question's row: saving an answer has to take a
+ * key-share lock on that row for its foreign key, so it waits for this
+ * transaction to finish, and then finds the question gone and is refused. An
+ * insert already under way holds this lock back instead, and is counted.
+ *
+ * Both refusals are above the delete, so returning them commits nothing
+ * (docs/decisions/004). The renumbering is inside for the reason `retireField`
+ * gives.
+ *
+ * The label and the game come back because the row is gone when this returns
+ * and the caller's audit line is the only place left to write them down.
  */
 export async function deleteField(
   fieldId: string,
   database: Database = defaultDb
-): Promise<AdminResult<{ deletedAnswers: number }>> {
-  const answers = await fieldAnswerCount(fieldId, database);
-  if (answers > 0) {
-    return fail(
-      `${answers === 1 ? "1 member has" : `${answers} members have`} answered this question, ` +
-        "so it cannot be deleted. Retire it instead: it stops being asked and every answer " +
-        "is kept."
-    );
-  }
+): Promise<
+  AdminResult<{
+    label: string;
+    gameId: string | null;
+    gameName: string | null;
+    deletedAnswers: number;
+  }>
+> {
+  return database.transaction(async (tx) => {
+    const [doomed] = await tx
+      .select({ label: profileFields.label, gameId: profileFields.gameId })
+      .from(profileFields)
+      .where(eq(profileFields.id, fieldId))
+      .for("update");
+    if (!doomed) return fail("That question no longer exists.");
 
-  const [deleted] = await database
-    .delete(profileFields)
-    .where(eq(profileFields.id, fieldId))
-    .returning({ id: profileFields.id, gameId: profileFields.gameId, sort: profileFields.sort });
-  if (!deleted) return fail("That question no longer exists.");
+    const answers = await fieldAnswerCount(fieldId, tx);
+    if (answers > 0) {
+      return fail(
+        `${answers === 1 ? "1 member has" : `${answers} members have`} answered this question, ` +
+          "so it cannot be deleted. Retire it instead: it stops being asked and every answer " +
+          "is kept."
+      );
+    }
 
-  // Close the gap the delete left, so `sort` stays dense.
-  await resequenceSection(database, deleted.gameId);
+    const section = await gameName(tx, doomed.gameId);
+    await tx.delete(profileFields).where(eq(profileFields.id, fieldId));
 
-  return withData({ deletedAnswers: answers });
+    // Close the gap the delete left, so `sort` stays dense.
+    await resequenceSection(tx, doomed.gameId);
+
+    return withData({ ...doomed, gameName: section, deletedAnswers: answers });
+  });
 }
 
 /**
@@ -1005,7 +1147,7 @@ export async function moveField(
   fieldId: string,
   direction: "up" | "down",
   database: Database = defaultDb
-): Promise<AdminResult> {
+): Promise<AdminResult<{ field: ProfileField; gameName: string | null; moved: boolean }>> {
   const [field] = await database
     .select()
     .from(profileFields)
@@ -1013,6 +1155,7 @@ export async function moveField(
     .limit(1);
   if (!field) return fail("That question no longer exists.");
 
+  const section = await gameName(database, field.gameId);
   const siblings = await siblingsOf(database, field.gameId);
   const asked = siblings.filter((row) => row.retiredAt === null);
   const retired = siblings.filter((row) => row.retiredAt !== null);
@@ -1024,6 +1167,6 @@ export async function moveField(
     database,
     field.retiredAt === null ? [...reordered, ...staying] : [...staying, ...reordered]
   );
-  return done();
+  return withData({ field, gameName: section, moved: orderChanged(moving, reordered) });
 }
 

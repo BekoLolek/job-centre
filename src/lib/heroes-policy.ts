@@ -1,6 +1,6 @@
 /**
- * The draw itself — nine heroes, three in each role (R-209, R-210 / UC-39 4,
- * 4a, 2a).
+ * The draw itself — as many heroes in each role as the event asks for, three
+ * unless it says otherwise (R-209, R-210, R-270 / UC-39 4, 4a, 2a; UC-58 5a).
  *
  * No database and no React, which is the whole reason this file is not part of
  * the draw page: the only interesting things here are whether the three in a
@@ -49,15 +49,14 @@ import { HERO_ROLES } from "@/lib/heroes";
 import { shuffled } from "@/lib/random-teams";
 
 /**
- * Three in each role, so nine in a hand (R-210).
+ * What a player holds: the same number of heroes under each role.
  *
- * Named rather than written as a literal in four places because the refusal
- * sentence quotes it, and a guard that refuses below three while the deal takes
- * four would be a draw that passes its own check and then throws.
+ * How many is the event's (R-270) and arrives at {@link drawHand} as a
+ * parameter — one `perRole` for the guard, the sentence and the deal, so a
+ * guard that refuses below three while the deal takes four cannot be written.
+ * The default, `HEROES_PER_ROLE`, lives in `events-policy.ts` beside the
+ * resolver that falls back to it, and nothing in this module reads it.
  */
-export const HEROES_PER_ROLE = 3;
-
-/** What a player holds: {@link HEROES_PER_ROLE} heroes under each role. */
 export type HeroHand = Record<HeroRole, Hero[]>;
 
 export type HeroDrawResult =
@@ -70,8 +69,8 @@ export type HeroDrawResult =
  *
  * `drawableByRole` cannot produce a repeat today — `heroes_roles_distinct_
  * nonempty` refuses a row whose `roles` array holds the same role twice — but
- * the three-are-distinct promise is this module's to keep, and a pool of
- * `[A, A, B]` would otherwise clear the "at least three" guard and then deal A
+ * the distinct-within-a-role promise is this module's to keep, and a pool of
+ * `[A, A, B]` would otherwise clear an "at least three" guard and then deal A
  * twice. Counting distinct heroes is what makes the guard and the promise the
  * same question.
  */
@@ -86,12 +85,18 @@ function sentenceList(parts: readonly string[]): string {
 }
 
 /**
- * Deal a hand from these pools, or say which role is too thin to deal from.
+ * Deal a hand of `perRole` heroes in each role from these pools, or say which
+ * role is too thin to deal from.
  *
- * ## The refusal comes before anything is dealt (UC-39 2a)
+ * `perRole` is the event's own width (`eventShapeFrom(config).heroesPerRole`,
+ * R-270) and it is required: a default here would be a second place for three
+ * to be the answer, and a caller that forgot the event's number would deal
+ * the wrong hand with nothing complaining.
  *
- * Every role is counted first, and a role holding fewer than
- * {@link HEROES_PER_ROLE} heroes refuses the whole draw **by name**. A partial
+ * ## The refusal comes before anything is dealt (UC-39 2a, UC-58 5a)
+ *
+ * Every role is counted first, and a role holding fewer than `perRole` heroes
+ * refuses the whole draw **by name**, quoting the width that was asked for. A partial
  * hand is worse than none: a player holding three Vanguards, three Duelists and
  * one Strategist has to find out on the night that the site let them draw, and
  * the thing to fix — a hero list with two Strategists on it — is an admin
@@ -104,12 +109,18 @@ function sentenceList(parts: readonly string[]): string {
  *
  * ## One shuffle per role, taken from the front
  *
- * Each pool is shuffled whole and the first {@link HEROES_PER_ROLE} taken. A
- * partial shuffle — three passes over a 28-hero pool rather than 27 — would
- * deal the same distribution for nine numbers instead of 53, and it is still
- * not worth writing: the saving is 44 floats once per player per night, and the
- * cost is a second shuffle to audit beside the one function in the repo whose
+ * Each pool is shuffled whole and the first `perRole` taken. A partial
+ * shuffle — three passes over a 28-hero pool rather than 27 — would deal the
+ * same distribution for nine numbers instead of 53, and it is still not worth
+ * writing: the saving is 44 floats once per player per night, and the cost is
+ * a second shuffle to audit beside the one function in the repo whose
  * uniformity is proved by enumeration.
+ *
+ * **So the width changes what is kept and never what is burned.** A role
+ * consumes one number fewer than its pool holds whatever `perRole` is, which
+ * is why a hand predicted at three from a known sequence is the hand it was
+ * before the width was a parameter, and why a narrower hand is the front of
+ * the wider one.
  *
  * The roles are walked in {@link HERO_ROLES} order, so the generator is
  * consumed Vanguard, then Duelist, then Strategist. A test predicting an exact
@@ -119,33 +130,29 @@ function sentenceList(parts: readonly string[]): string {
  */
 export function drawHand(
   pools: Record<HeroRole, readonly Hero[]>,
-  random: () => number
+  random: () => number,
+  perRole: number
 ): HeroDrawResult {
   const drawable = Object.fromEntries(
     HERO_ROLES.map((role) => [role, distinctPool(pools[role])])
   ) as Record<HeroRole, Hero[]>;
 
-  const thin = HERO_ROLES.filter((role) => drawable[role].length < HEROES_PER_ROLE).map(
-    (role) => {
-      const held = drawable[role].length;
-      return `${role} has ${held} ${held === 1 ? "hero" : "heroes"}`;
-    }
-  );
+  const thin = HERO_ROLES.filter((role) => drawable[role].length < perRole).map((role) => {
+    const held = drawable[role].length;
+    return `${role} has ${held} ${held === 1 ? "hero" : "heroes"}`;
+  });
 
   if (thin.length > 0) {
     return {
       ok: false,
-      error: `${sentenceList(thin)}. A draw needs ${HEROES_PER_ROLE} in each role, so nothing was dealt. Add more on the game's hero list.`,
+      error: `${sentenceList(thin)}. A draw needs ${perRole} in each role, so nothing was dealt. Add more on the game's hero list.`,
     };
   }
 
   return {
     ok: true,
     hand: Object.fromEntries(
-      HERO_ROLES.map((role) => [
-        role,
-        shuffled(drawable[role], random).slice(0, HEROES_PER_ROLE),
-      ])
+      HERO_ROLES.map((role) => [role, shuffled(drawable[role], random).slice(0, perRole)])
     ) as HeroHand,
   };
 }

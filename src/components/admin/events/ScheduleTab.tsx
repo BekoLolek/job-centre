@@ -302,7 +302,9 @@ export default function ScheduleTab({
         return;
       }
       setNote(`${plural(result.data.scheduled, "match", "matches")} given a start time`);
-      setState("saved");
+      // The button is busy while this runs and the fields are not. An edit
+      // typed meanwhile is still unsaved, and it outranks the note.
+      setState((was) => (was === "dirty" ? was : "saved"));
       router.refresh();
     } catch {
       setError("Could not reach the server. Nothing was saved.");

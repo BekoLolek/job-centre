@@ -2262,11 +2262,24 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Files:** `src/components/admin/events/ShapeTab.tsx`, tests
 - **Do:** where the Teams tab's stated 6v6 or 3v3 disagrees with the sizing, the Format panel says so in a note and **saves anyway**. R-215 is "stated, never enforced" and `MAX_PER_TEAM` is 32 because a 6v6 night fielding eight with substitutes is a real night.
 - **Acceptance criteria:**
-  - [ ] A 3v3 event sized at six a side renders the note and still saves
-  - [ ] An agreeing event renders no note
-  - [ ] No refusal exists on this path, asserted
-  - [ ] **Task 107's refusal is wired to print before the round trip**, which is `ShapeTab`'s own standard for its refusals and which Task 107 could not do: its criterion named the panel while its file list did not include it (the lead's contradiction). `rosterBelowAwardedRefusal` is pure and takes `{ name, size }` per team plus whether a lot is awarded - which the panel is not yet handed, so this is real wiring through the editor rather than one line
+  - [x] A 3v3 event sized at six a side renders the note and still saves
+  - [x] An agreeing event renders no note
+  - [x] No refusal exists on this path, asserted
+  - [x] **Task 107's refusal is wired to print before the round trip**, which is `ShapeTab`'s own standard for its refusals and which Task 107 could not do: its criterion named the panel while its file list did not include it (the lead's contradiction). `rosterBelowAwardedRefusal` is pure and takes `{ name, size }` per team plus whether a lot is awarded - which the panel is not yet handed, so this is real wiring through the editor rather than one line
 - **Depends on:** Task 104.
+- **Left over:** nothing from the criteria, and three things worth keeping.
+  **The file list was wrong and the criterion said so.** Criterion 4 named the panel while the
+  file list omitted what the wiring needs - the lead's contradiction, acknowledged in the criterion
+  itself. `EventEditor.tsx` was authorised and the wiring is real rather than one line.
+  **A note that promised a save something else was blocking.** `formatDisagrees` was gated on
+  `bounds === null` only, so the sentence "so this saves as it is" could print beside a **greyed-out
+  Save and a live refusal** - including the refusal this task itself wired in. It now says "and it
+  is not what is stopping this save", which keeps both truths on screen: the disagreement is real,
+  and it is not the blocker.
+  **A mutant that survived because the fixture could not distinguish the orders.** M9 (the refusal
+  ahead of bounds) passed against a `perTeam 0` fixture, where neither refusal could fire. Replaced
+  with nine teams from 18 accepted - cap 2, out of bounds, rosters of 3 with awards - and it dies.
+  A fixture where both answers are the same answer proves nothing about which rule ran.
 
 ### Task 112: Two loose ends the chain left behind
 
@@ -2274,12 +2287,24 @@ to agree until it is written. Recorded as Task 111, available and not taken.
 - **Files:** `src/components/draft/BidCeiling.tsx`, `src/app/events/[slug]/draft/BidBox.tsx`, and their tests
 - **Do:** two one-line leftovers, each found by the task that could not reach it.
   **`BidCeiling` still prints the word "full" beside a team with no figure at all.** Found by Task 109, outside its file list. `slotsLeft` is 0 for an unsized roster (Task 105's decision: no place is offered when the panel has not sized the teams), so the ceiling block reads "full" for a roster that is not full of anything - the sentence beneath it is correct since Task 109 fixed `ceilingFor`, but the word above it is not.
-  **`BidBox`'s route-around is now redundant.** Task 108 branched on `cap === null` before reaching `ceilingFor` precisely because that function produced "full at null"; Task 109 fixed it at the source, so the guard now protects against a sentence that no longer exists. Dead logic that will read as load-bearing to the next person.
+  **`BidBox`'s route-around is NOT redundant - this entry was wrong.** It said Task 108's `cap === null` branch only dodged "full at null", which Task 109 fixed at the source, leaving dead logic. Task 112's implementer refused to build to that and **proved it false by probe**: deleting the branch fails `bid-box.test.ts:124`, because the branch also keeps the **"You can bid up to" money figure** off an unsized team. Without it a captain reads "You can bid up to 0" for a team nobody has sized - which `BidBox`'s own docblock rules out ("a bid ceiling is a figure derived from the places, and there are none to derive it from"). It also shows the note when `standing` is null, where the fall-through shows nothing. **So the branch stays, and what is actually wrong is the comment above it**, whose stale rationale is the only reason it reads as dead. Correct that instead.
 - **Acceptance criteria:**
-  - [ ] A team with no figure is not described as "full" anywhere in the bid box or the ceiling block
-  - [ ] The redundant `cap === null` branch in `BidBox` is removed, and a test proves the unsized path still says the right thing without it
-  - [ ] State 1 and state 2 wording is untouched, asserted
+  - [x] A team with no figure is not described as "full" anywhere in the bid box or the ceiling block
+  - [x] ~~The redundant `cap === null` branch in `BidBox` is removed~~ **withdrawn, premise false.** Instead: the branch's comment says what it really does - withholds the money figure for an unsized team - and a test pins that a captain whose team is unsized is never shown a bid ceiling
+  - [x] State 1 and state 2 wording is untouched, asserted
 - **Depends on:** Tasks 108, 109.
+- **Left over:** criterion 2 withdrawn (see above), and three things worth keeping.
+  **The implementer refused to build a false premise and proved it false by probe.** The entry
+  called `BidBox`'s `cap === null` branch dead logic. It deleted the branch, watched
+  `bid-box.test.ts` fail with the real string - "You can bid up to **0** The Format panel has not
+  sized the teams yet" - and restored the file byte-identical. Reading the code supported either
+  story; running it settled which. **The branch does a second job nobody had recorded.**
+  **One wrong sentence, copied three times.** The stale "full at null" rationale was in a docblock,
+  then in a test header, then in this plan entry - and the plan entry nearly deleted working code.
+  Correcting two of the three copies would have left the third to re-infect the next reader.
+  **It caught its own false green.** Vitest counted five files for six paths; it chased the
+  discrepancy and found `design-tokens.test.ts` had **never run** - the path was wrong. A sweep
+  that silently does not run is the same failure as a sweep that matches nothing.
 
 ### Task 111: Drop `draft_configs.roster_target` - **available, not taken**
 
@@ -2717,14 +2742,33 @@ anything.
   The screen does not offer what the server would refuse - `teamsOpenTo` and `rosterFull` already
   decide that - but the server still refuses, because a board is ten minutes old.
 - **Acceptance criteria:**
-  - [ ] A card dropped on a team places that player, and a card dropped on the unplaced list removes them, both through the actions that already exist rather than a new write path
-  - [ ] The card is on the team before the server answers, and a refusal returns it to exactly where it was, with the server's sentence shown
-  - [ ] A drop where the card started writes nothing at all, asserted as zero calls
-  - [ ] A full team and a captain are both refused, and the refusal is the server's wording, not a second copy
-  - [ ] The "Move to" and "Place on" selects still work and still write, pinned - this is an addition
-  - [ ] A second move of the same player while one is in flight cannot land, and the test says which of the two wins
-  - [ ] No new dependency
+  - [x] A card dropped on a team places that player, and a card dropped on the unplaced list removes them, both through the actions that already exist rather than a new write path
+  - [x] The card is on the team before the server answers, and a refusal returns it to exactly where it was, with the server's sentence shown
+  - [x] A drop where the card started writes nothing at all, asserted as zero calls
+  - [x] A full team and a captain are both refused, and the refusal is the server's wording, not a second copy
+  - [x] The "Move to" and "Place on" selects still work and still write, pinned - this is an addition
+  - [x] A second move of the same player while one is in flight cannot land, and the test says which of the two wins
+  - [x] No new dependency
 - **Depends on:** Task 120.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **The tests could not see the cards that matter.** `card()` found a card by its **drag handle**,
+  so every captain, every card on a started board and every card in flight was invisible to it -
+  and blanking a captain's card entirely passed all six render tests. The harness now records the
+  props each `PlayerCard` is handed; the same mutation fails two tests by name.
+  **A sweep floor was lowered, and that is worth its own note.** Two `PlayerChip` rows became
+  cards, so the hand-counted chip floor dropped from 7 to 5. This plan has recorded, as a point in
+  a task's favour, that sweeps were satisfied "by changing the new code; none by relaxing a sweep".
+  The relaxation is justified on **two** halves - the card's own `<Avatar>` is still in the sweep's
+  corpus, and `avatarUrl` is a required prop - and it took three drafts to state both, which is
+  itself the lesson: a justification for relaxing a sweep is hard to write because the relaxation
+  is load-bearing. The comment is now a real sweep over `<PlayerCard` call sites instead.
+  **Two lists, not one, against Task 117's lesson** - and the reasoning holds: a card carries no
+  typed state, so the remount destroys nothing, and a card in flight loses its handle anyway
+  because `onLift` is undefined when busy. The consequence was declared: the drop handler ends the
+  drag itself, because the handle unmounts before `dragend` can reach it.
+  **A survivor found mid-build and fixed rather than dropped from the table:** a card whose removal
+  was in flight kept its handle in the unplaced list. A 33-of-35 first run that becomes 35-of-35
+  with a named fix is worth more than a clean 35.
 
 ### Task 122: A retired rank field is still read
 
@@ -2798,9 +2842,9 @@ record: `docs/decisions/007-permissions.md`.
 | `polls.manage` | Creating, closing and deleting polls |
 | `suggestions.moderate` | A suggestion's status; deleting any |
 | `hosts.approve` | Approving and declining applications to host |
-| `members.read` | The member list, availability, and what people have drawn |
+| `members.read` | The member list, availability, and what people have drawn. **The member list half is not delivered yet** - `/admin/users` is the member list *and* the granting screen in one file, and R-264 keeps granting on the admin flag, so Task 130 left the whole page admin-only. Task 131 splits it; until then this power reaches Availability and Hands only. Found by Task 130, which took the safe side of a contradiction this table and Task 131's criteria had between them |
 | `audit.read` | The audit log |
-| `destructive` | **Required in addition** to the area's power, over the set `audit.ts` already marks |
+| `destructive` | **Required in addition** to the area's power, over the set `audit.ts` already marks. **It admits nobody to anything on its own** - Task 130 first read "/admin admits anybody holding anything" literally and gave a `destructive`-only holder an empty screen; a modifier is not an area power, and Task 129 must not read it as one either |
 
 **Presets** (named in code, applied not followed): Organiser - `events.create`,
 `events.manage`, `announce.post`, `championships.manage`. Announcer - `announce.post`,
@@ -3079,11 +3123,28 @@ every action checks.
   than silently inherit - a profile-field delete that cascades every answer is recorded nowhere.
   Record it as its own task; do not widen this one.
 - **Acceptance criteria:**
-  - [ ] Each power reaches exactly its own file's actions and no other, asserted across all three
-  - [ ] An admin still reaches all three without holding anything
-  - [ ] A holder of one is refused the other two, asserted rather than assumed from the code
-  - [ ] The sweep still passes
+  - [x] Each power reaches exactly its own file's actions and no other, asserted across all three
+  - [x] An admin still reaches all three without holding anything
+  - [x] A holder of one is refused the other two, asserted rather than assumed from the code
+  - [x] The sweep still passes
 - **Depends on:** Tasks 124, 125.
+- **Left over:** nothing from the criteria, and three things worth keeping.
+  **It stopped on a blocker instead of working around it.** The sweep pinned one sample row naming
+  `createGameAction` behind `requireAdmin` - the very action this task moves - so criterion 4 could
+  not pass while the task was done as written. The implementer reported it and waited. The lead
+  re-pointed the row at `grantAdminAction`, and **not arbitrarily**: R-264 says granting is never a
+  power, so the members file is the one place guaranteed to stay on the admin flag. The old anchor
+  was an action any later task could move, which is exactly what happened to it. An anchor a task
+  can move is not an anchor.
+  **A write placed before the guard dies on the "wrote nothing" comparison, not on the refusal.**
+  Mutant M7 put a write ahead of the guard; the redirect still threw, and only the six-table
+  snapshot caught it. A guard that refuses after a write is not a guard, and a test that checks
+  only the refusal passes it.
+  **A local called `admin` is how a stored audit line came to say "An admin reopened…" about
+  somebody who is not one.** The literal was the symptom; the variable name was the cause. Both
+  fixed here and in Task 126's two files, which is the fourth and fifth thing today that quietly
+  became false when a guard widened - four comments, one parameter, one set of locals. The code
+  kept working every time; only the words stopped being true.
 
 ### Task 128: Members, settings, polls, suggestions and the reading screens
 
@@ -3098,12 +3159,31 @@ every action checks.
   **The webhook URL's existing safety rules are untouched**: never sent to the browser in full,
   never written to the audit log, blank means keep.
 - **Acceptance criteria:**
-  - [ ] A `settings.announcements` holder changes wording and mentions and is refused the webhook URL and the site origin
-  - [ ] No power grants or revokes anything - every action in the members file still needs the admin flag, asserted over the whole file
-  - [ ] A `suggestions.moderate` holder sets any suggestion's status; a member still deletes only their own
-  - [ ] The webhook URL is still masked everywhere it is shown and absent from the audit line, pinned against the existing tests
-  - [ ] The sweep still passes
+  - [x] A `settings.announcements` holder changes wording and mentions and is refused the webhook URL and the site origin
+  - [x] No power grants or revokes anything - every action in the members file still needs the admin flag, asserted over the whole file
+  - [x] A `suggestions.moderate` holder sets any suggestion's status **and removes any suggestion** - the vocabulary says "a suggestion's status; deleting any", and this criterion was written narrower than the table it serves; a member still deletes only their own
+  - [x] The webhook URL is still masked everywhere it is shown and absent from the audit line, pinned against the existing tests
+  - [x] No parameter lies about who is calling - a moderator reaching a library that asks for `isAdmin` is renamed rather than passed `true`
+  - [x] The sweep still passes
 - **Depends on:** Tasks 124, 125.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **A hand-rolled copy of `holds` hid a hole that 5,800 tests could not see.** `deleteSuggestionAction`
+  wrote `user.isAdmin || (await powersOf(user.id)).has(...)` - and **deleting `user.isAdmin ||`
+  left the whole suite green**, because no test had an admin holding nothing. An admin would have
+  silently lost "remove anybody's", which the file's own docblock promises. `powersOf`'s docblock
+  says to pass its result to `holds`; the rule existed once and was written a second time.
+  **The settings split was verified by reading all four actions, not by trusting a test.** Had any
+  single action written on both sides of the line, the webhook URL would have sat behind
+  `settings.announcements`. None does, and both integrations actions take their guard as the first
+  statement before any read.
+  **The cross-power rows are the whole reason the table exists.** Widening the integrations actions
+  to accept *either* settings power died **only** on the `settings.announcements` rows. Nothing
+  else in the suite would have noticed.
+  **A parameter that lied, and a test title that repeated the lie.** A moderator was passed to the
+  library as `isAdmin: true`; the implementer called the name "slightly off". A parameter called
+  `isAdmin` that is true for a non-admin is how somebody later writes an admin-only rule on the
+  strength of it - and the compiler endorses it. Renamed `mayRemoveAny`, with the docblock saying
+  it is not the flag, and the test whose title said "lets an admin remove anybody's" retitled too.
 
 ### Task 129: The destructive modifier
 
@@ -3124,12 +3204,33 @@ every action checks.
   - [ ] An admin, and a host on their own event, are both unaffected
   - [ ] The mapping from action to "is destructive" has exactly one source - the existing set - proven by a mutation to it changing the refusal
   - [ ] Every entry in the set is accounted for in the report, and anything destructive but missing is named
-- **Depends on:** Tasks 126, 127, 128.
+- **Inherited from Task 139's sweep, which traced every `.delete(` in `src/lib` to its callers.**
+  These deletes **are** reachable from a power and **do** write a line, but under an action that is
+  not in `DESTRUCTIVE` - so the modifier would not cover them. Each is a judgement for this task,
+  not an oversight to fix blindly: `poll.updated` (votes go with removed options), `team.set`,
+  `team.count`, `team.random`, `event.shape` (teams removed), `team.roster`, `team.captains`,
+  `draft.pool`, `draft.bid_cleared`, `waiver.revoked`, `event.days`, `event.questions`,
+  `championship.result`, `event.roundScoring`, `result.round`, `application.availability`,
+  **`settings.guild_gate` and `settings.integrations`** - the last two were missing from the first
+  copy of this list, found by Task 139's own review checking the sweep it was given rather than
+  trusting it. Both write a line; neither is in `DESTRUCTIVE`.
+  **The one that wrote no line at all is now fixed:** `setRankLadderAction` writes `game.ladder`,
+  which Task 137 **marked destructive**, so this task has something to require a power for.
+  **One pair for this task to make consistent:** `game.deactivated` is **not** in `DESTRUCTIVE`
+  while `template.deactivated` **is**. Task 137 left them disagreeing deliberately rather than
+  guessing - nothing is lost either way and both are reversible - so whether they should match is
+  this task's call, and it is one line plus two test rows.
+  **Named as not reachable from a power, with the reason:** `forgetAdmin` and `endSessions` are
+  behind `requireAdmin` only and audited anyway; `voteSuggestion`, `votePoll`,
+  `saveProfileSection`, `setAvailability` and the application-detail writes are a member changing
+  their own data under `requireUser`; `endDevSession` is the dev-login sign-out.
+- **Depends on:** Tasks 126, 127, 128. **The delete half needs Task 139** (done) and the ladder
+  needs Task 137.
 
 ### Task 130: The admin area admits a holder
 
 - **Serves:** R-265 / UC-56
-- **Files:** `src/app/admin/**/page.tsx`, `src/components/admin/AdminNav.tsx`, `src/components/NavMenu.tsx`, `src/app/admin/page.tsx`, and tests
+- **Files:** `src/app/admin/**/page.tsx`, `src/components/admin/AdminNav.tsx`, `src/components/NavMenu.tsx`, `src/app/admin/page.tsx`, **`src/app/suggestions/page.tsx`, `src/app/polls/page.tsx`, `src/components/admin/events/EventEditor.tsx`**, and tests
 - **Do:** today `/admin` and every page under it is `requireAdmin`, and the nav shows the Admin
   link on the flag alone - so a holder has nowhere to land. Each page moves to the power that
   page is for; `/admin` itself admits anybody holding anything and shows only the cards their
@@ -3139,6 +3240,13 @@ every action checks.
   away by the page.
   `AdminNav`'s docblock promises every entry also lives in the account menu - keep that true, or
   the whole thing is unreachable on a phone, which is a bug this repo has already shipped once.
+  **Three screens outside `/admin` gate on the flag, and this task's file list missed them**
+  (found by Task 128's quality review; the omission is the lead's). `suggestions/page.tsx:52`
+  and `polls/page.tsx:57` pass `isAdmin` from the flag alone, so a `suggestions.moderate` or
+  `polls.manage` holder has the server power and no button on the screen. `EventEditor`'s
+  `showsSaveAsTemplate` does the same to a `templates.manage` holder. None is a hole - hiding is
+  not permission, and the actions all refuse correctly - but each is a holder who cannot reach
+  what they hold, which is precisely what R-265 asks this task to end.
   **Two dead ends Task 126 created, which land here.** They follow from "can do nothing else in
   the file" and are not defects in that task, but a holder meets them as a broken screen:
   an `events.create`-only holder is pushed to `/admin/events/[id]` the moment they create an
@@ -3148,13 +3256,39 @@ every action checks.
   them where they cannot go, or the landing says plainly what they may do next - but a holder
   must never be thrown to `/me` by a button the site itself just gave them.
 - **Acceptance criteria:**
-  - [ ] A holder of one power sees exactly the cards and nav entries their powers reach, and an admin sees everything
-  - [ ] A member with no powers gets the refusal they get today, unchanged
-  - [ ] A holder reaching a page their powers do not cover is turned away by the page, not merely unlinked
-  - [ ] **No screen sends a holder somewhere their powers cannot follow.** An `events.create`-only holder creating an event, and a `hosts.approve`-only holder approving one, both end somewhere that makes sense without widening any guard - proven by walking both flows
-  - [ ] Every nav entry still appears in the account menu, pinned
-  - [ ] The sweep still passes
+  - [x] A holder of one power sees exactly the cards and nav entries their powers reach, and an admin sees everything
+  - [x] A member with no powers gets the refusal they get today, unchanged
+  - [x] A holder reaching a page their powers do not cover is turned away by the page, not merely unlinked
+  - [x] **Every screen that offers a thing asks the same question the action asks.** The three flag-only screens above offer their control to a holder, or say why they do not - and the test names the power beside the flag rather than pinning the flag alone
+  - [x] **No screen sends a holder somewhere their powers cannot follow.** An `events.create`-only holder creating an event, and a `hosts.approve`-only holder approving one, both end somewhere that makes sense without widening any guard - proven by walking both flows
+  - [x] Every nav entry still appears in the account menu, pinned
+  - [x] The sweep still passes
 - **Depends on:** Tasks 126, 127, 128.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **It found a bug in its own guard and fixed the guard, not the test.** The first
+  `requireAnyPermission` **redirected an admin** given an empty power list, because `[].some()` is
+  false and the short-circuit never ran. Its own new test caught it. The empty-list test now
+  asserts both halves - an admin passes, a member holding all fourteen is refused.
+  **Three pages hid a gate the sweep could not see.** They opened `requireUser` and refused on a
+  second line, which is the shape one *action* was allowed; three **pages** is the three-strikes
+  trigger, and on a page a forgotten second line admits any signed-in member to an admin screen.
+  The named guard makes all three visible, and the whole-list test now asserts **no admin page
+  reads `requireUser`**, so the shape cannot come back unnoticed.
+  **The plan contradicted itself and the implementer took the safe side.** The vocabulary says
+  `members.read` reaches "the member list"; Task 131's criteria say a holder of every power cannot
+  reach that screen. `/admin/users` is both screens in one file. Left admin-only, and the
+  contradiction is now recorded in the vocabulary table rather than resolved by whoever reads it
+  next.
+  **`destructive` is a modifier, and reading it as an area power gave somebody an empty screen.**
+  Excluded, with a docblock saying so for Task 129's benefit.
+  **The one unpinned line was pinned by rendering, not by a source assertion.** `NavMenu`'s
+  `admin.length > 0 && group(admin)` was covered by nothing - reverting it to the flag passed every
+  test, because the nav test recomputed the menu from props and there is no DOM to open it with.
+  The open panel is now its own component and the revert fails 14 tests. What is still unproven is
+  one line: that pressing the button shows the panel.
+  **And the dead ends were walked, not asserted.** The real action against in-memory Postgres, the
+  screen's own exported decision asked with the props the page really gave, that destination opened
+  as the same holder, then the editor confirmed to still redirect. No guard was widened.
 
 ### Task 131: The screen that grants
 
@@ -3354,11 +3488,30 @@ somebody made by hand. If it is ever seen, it is a task of its own and the fix i
   inside table rows and the `href` form that renders a `next/link`. Any of those that would
   grow a row needs looking at, which is why this is its own task rather than a line in another.
 - **Acceptance criteria:**
-  - [ ] `.btn` and `size="sm"` both render at least 44px tall, proven from the compiled stylesheet rather than from the class names
-  - [ ] A sweep fails on a clickable that renders below the floor, and is watched failing
-  - [ ] No row, header or toolbar in the admin area grows a scrollbar or wraps differently, checked in a browser at phone and desktop widths
-  - [ ] The two call sites that floor themselves by hand lose their now-redundant classes, or keep them with a reason
+  - [x] `.btn` and `size="sm"` both render at least 44px tall, proven from the compiled stylesheet rather than from the class names
+  - [x] A sweep fails on a clickable that **wears `.btn`** and renders below the floor, and is watched failing - narrowed deliberately: the sweep reads `.btn` call sites, and about 17 raw `<button>` elements plus every plain link are outside it. Task 146 carries those
+  - [x] ~~No row, header or toolbar in the admin area grows a scrollbar or wraps differently, checked in a browser at phone and desktop widths~~ **NOT MET, and not reworded to pretend otherwise.** There is no local database, so no admin page can be served. What was measured instead, in a real browser at 375px and 1280px, is a static reproduction of 13 compositions with class lists and ancestor chains copied from real call sites: **no width changed anywhere**, so nothing wrapped differently and nothing gained a horizontal scrollbar. Rows got taller, as they must: a two-row applicants table 88px to 122px, the events tabs at 375px 60px to 90px, the pager 31px to 48px. Real pages with real labels and real fonts are unverified
+  - [x] The two call sites that floor themselves by hand lose their now-redundant classes, or keep them with a reason - and the count was wrong: there are **three** (`PlacementEditor` twice, `FormatTab.tsx:945`), plus `Checkbox`, which keeps its own because it is a `<label>` and never wears `.btn`
+  - [x] The plan's own figure is corrected: **286** `<Button>` call sites and 8 hand-written `.btn` elements, of which 200 can be `sm` - not the "257 `size="sm"` call sites" this entry claimed, which counted other components' `size` props too
 - **Depends on:** nothing.
+- **Left over:** criterion 3 **not met** and criterion 2 narrowed (both recorded above), plus four
+  things worth keeping.
+  **291 of 294 call sites were under the floor.** One `min-height: 44px` on `.btn` fixed all of
+  them; the three that already passed had got there one review at a time. The plan's own figure was
+  wrong too - 286 `<Button>` sites and 8 hand-written `.btn`, of which 200 can be `sm`, not the
+  "257 `size="sm"`" this entry claimed, which had counted other components' `size` props.
+  **The sweep's own parser was never watched failing**, and the mutant proves why that matters:
+  `.slice(0, 1)` in `literalTokens` reads only the first token of each literal, **every floor still
+  holds**, the by-hand equality still holds at 8 = 8 because `btn` happens to be first in all eight
+  lists - and `<Button className="w-full min-h-8">` ships green, with seven real call sites already
+  writing multi-token classNames. The controls now go in as **source snippets through the parser**.
+  **Four hand-counted floors were the wrong instrument.** Being `>=`, every button added to the
+  repo loosened them, while an innocent deletion turned them red. A guard that fires on innocent
+  work and sleeps through the real thing is worse than none. Three were deleted; the fourth went
+  with the parser fix.
+  **It reported one kill as incidental.** Of the four failures under the `.slice` mutant, one fails
+  only because the mutated line puts the word `slice` into the file and trips an unrelated layering
+  test. Counting four would have been easy.
 
 ### Task 136: A write in flight overwrites an edit made while it runs
 
@@ -3373,10 +3526,26 @@ somebody made by hand. If it is ever seen, it is a task of its own and the fix i
   grepping for across the admin tabs: anywhere a tab both tracks its own dirtiness and runs a
   write that does not block typing, this is the same bug with a different noun.
 - **Acceptance criteria:**
-  - [ ] An edit typed while a rebuild is in flight survives it, and the unsaved bar stays up
-  - [ ] Watched failing against the current code before the fix
-  - [ ] Every other tab with the same shape is either fixed or named with a reason it is safe
+  - [x] An edit typed while a rebuild is in flight survives it, and the unsaved bar stays up
+  - [x] Watched failing against the current code before the fix
+  - [x] Every other tab with the same shape is **named**, and each is either fixed here or routed to Task 140 with the reason it cannot be - the sweep found **sixteen** sites and **none** of them is safe, so "named with a reason it is safe" as this criterion was first written could not be satisfied by any honest answer
+  - [x] The four sites where the one-liner is a **complete** fix are fixed here, each with its own watched failure
 - **Depends on:** nothing.
+- **Left over:** criterion 3 reworded (see above), and three things worth keeping.
+  **One bug, sixteen sites.** No tab disables its fields while saving and the unsaved bar does not
+  block typing, so **every** save handler in the admin area had it: type during the round trip, the
+  keystroke sets `dirty`, success sets `saved`, the bar comes down, the edit was never sent.
+  **The implementer refused to apply a half-fix to nine of them**, and its reason is the finding:
+  holding `dirty` keeps the bar up while the adoption still reverts the field, which trades a
+  silent loss for a **visible lie**. And the adoption is not optional - the adopted ids are what
+  stop the next save deleting and re-inserting rows. Task 140 owns those nine and needs a decision,
+  not a patch.
+  **The criterion could not be satisfied by any honest answer.** It said "fixed or named with a
+  reason it is safe", and **none of the sixteen is safe**. That was the lead's wording, not the
+  implementer's failure, and it was reworded rather than fudged.
+  **A side effect found while looking for something else:** once a mid-save keystroke sets `dirty`,
+  the bar's Save button **re-enables while the first save is still in flight**, so a second save can
+  be sent over the first. Reported rather than left.
 
 ### Task 137: Three more places the games catalogue says nothing
 
@@ -3403,12 +3572,31 @@ somebody made by hand. If it is ever seen, it is a task of its own and the fix i
   after the write** (`:942`, `:995`), so if it throws, the retire or delete is durable, the action
   throws, and no audit line is written at all.
 - **Acceptance criteria:**
-  - [ ] `setRankLadderAction` writes a line naming the game and how many stored answers it cleared, and is recorded as destructive
-  - [ ] The remaining games actions each write a line, or are named with a reason they do not
-  - [ ] The count and the delete happen under one transaction, proven by a test that writes an answer between them
-  - [ ] A failing `resequenceSection` cannot leave a durable write unlogged, proven by making it throw
-  - [ ] The four profile-field actions log from what the library returned, not from a catalogue read taken before the write, and the three race fallbacks Task 132 accepted are gone because the race is
+  - [x] `setRankLadderAction` writes a line naming the game and how many stored answers it cleared, and is recorded as destructive
+  - [x] The remaining games actions each write a line, or are named with a reason they do not
+  - [x] The count and the delete happen under one transaction, proven by a test that writes an answer between them
+  - [x] A failing `resequenceSection` cannot leave a durable write unlogged, proven by making it throw
+  - [x] The four profile-field actions log from what the library returned, not from a catalogue read taken before the write, and the three race fallbacks Task 132 accepted are gone because the race is
 - **Depends on:** Task 132.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **A ladder change could wipe everybody's rank with no record.** `setRankLadderAction` clears
+  members' stored answers through `clearInvalidAnswers` and wrote nothing at all. It now writes
+  `game.ladder`, marked destructive, recording the count actually deleted - so Task 129 has
+  something to require a power for. Watched failing three ways, the worst being "the ladder was
+  durable with no line".
+  **Both pre-existing defects are closed with real transactions**, and both failures were watched
+  against a real Postgres trigger rather than a mock: "the question was retired durably" when
+  renumbering threw, and "the answer was accepted and then cascaded" for the count/delete window.
+  **The row lock is pinned, not proved, and the implementer said so.** PGlite is one connection, so
+  a second writer queues behind any transaction whether or not a row is locked - its own mutant D3
+  confirms the window test still passes with `.for("update")` deleted. On Neon under READ COMMITTED
+  the lock is what closes the window. Four mutants separate the transaction from the lock, which is
+  how it knew D3 survived on merit. Reporting "window closed, tested" would have been believed.
+  **And a sweep nobody mentioned caught it.** `pooling.test.ts` pins the complete list of files
+  taking a row lock, because that is what makes lock-ordered writes survive a pooler. This task
+  added the first new lock since Task 88 and the sweep failed on the next full run. The list now
+  carries `admin-games.ts` with its reasoning and its limitation, where the next person will read
+  it.
 
 ### Task 138: The ladder warning counts answers it will not touch
 
@@ -3436,3 +3624,351 @@ somebody made by hand. If it is ever seen, it is a task of its own and the fix i
   - [ ] A ladder edit with no retired fields counts exactly as it does today, pinned
   - [ ] The preview and the clear agree on **which answers they are about**, not only on the retired ones, proven by a fixture holding a stale non-rank answer and an already-off-ladder rank answer
 - **Depends on:** Task 122.
+
+### Task 139: A suggestion can be removed with no record at all
+
+- **Serves:** a gap found by Task 128's build. R-266's neighbour exposed it.
+- **Files:** `src/app/suggestions/actions.ts`, `src/lib/audit.ts`, and tests
+- **Do:** deleting a suggestion writes **no audit line**. That was thin while only an admin could
+  do it; Task 128 made `suggestions.moderate` grantable, so anybody holding it can now remove
+  anybody's suggestion and leave nothing behind. The implementer found it and correctly refused
+  to widen its own task.
+  **This blocks part of Task 129.** That task adds a `destructive` modifier over the set
+  `audit.ts` already names, and an action that writes no line at all cannot be in that set - so
+  the delete must be recorded before it can be classified.
+  While here, check the other deletes reachable from a power for the same hole rather than
+  fixing this one in isolation.
+- **Acceptance criteria:**
+  - [x] Removing a suggestion writes a line naming the actor, the suggestion and whose it was
+  - [x] A member removing their own is recorded too, and reads differently from a moderator removing somebody else's
+  - [x] The line is classified destructive, so Task 129 has something to require a power for - **two keys, not one**: `suggestion.deleted` (somebody else's) is destructive, `suggestion.withdrawn` (their own) is not. This criterion was written in the singular and that was wrong: one destructive key would make Task 129's rule demand a power from a member taking their own suggestion back, which R-163 allows. The implementer saw that before Task 129 did
+  - [x] Every other delete reachable from a power either writes a line or is named here with a reason - **the one hole found is `setRankLadderAction`**, which clears members' stored answers through `clearInvalidAnswers` and writes nothing; it is Task 137's to fix and Task 129's to classify, and it is named here because this criterion says "named here"
+- **Depends on:** Task 128. **Blocks the delete half of Task 129.**
+- **Left over:** criterion 3 corrected (see above), and three things worth keeping.
+  **It saw a consequence in the next task that the next task's own entry had missed.** The lead
+  wrote "the line is classified destructive" in the singular; the implementer split it in two,
+  because one destructive key would make Task 129's rule demand a power from a member taking their
+  **own** suggestion back, which R-163 allows. `suggestion.deleted` is destructive;
+  `suggestion.withdrawn` is not.
+  **Careful, tested code for a state that cannot happen.** Two summary variants, an `own: null`
+  third state and a whole test file covered a read-then-delete race - and ids are server-generated,
+  so a caller can only hold one *after* the insert committed, which is before the read. Worse, in
+  that branch a holder's own row was filed under the **destructive** key, contradicting the rule
+  the task had just settled. The implementer's own note that the race was "unopenable from a test"
+  is what sent review to ask whether it was openable at all.
+  **It applied the deletion test to its own code and reported a surviving mutant.** With the dead
+  branch gone, `!mayRemoveAny ||` could no longer change the answer - proved by watching its mutant
+  **survive**. Three of the four forms that put the power back into `own` die; the fourth cannot be
+  caught by anything honest, and it said so rather than adding a source-text assertion.
+
+### Task 140: Every save in the admin area can swallow an edit typed while it runs
+
+- **Serves:** R-260's promise that the screen never lies about what is saved
+- **Files:** the adopting save handlers listed below, `src/components/admin/events/UnsavedChanges.tsx`, and tests
+- **Do:** Task 136 fixed `FormatTab.rebuild` and the four other sites where one line is a complete
+  fix. Its sweep found the shape in **sixteen** places, and the rest cannot be fixed the same way.
+  **No tab disables its fields while saving**, and the unsaved bar does not block typing, so every
+  save handler has it: a keystroke during the round trip sets `dirty`, success sets `saved`, the
+  bar comes down, and the edit was never sent.
+  **Why the one-liner is not enough here.** These handlers **adopt server data** on landing -
+  `commit` adopts stages, `BasicsTab` the slug, `CaptainsTab` picks, `DaysTab` days,
+  `DraftTab` the config, `QuestionsTab` questions, `RoundScores` reseeds its boxes, `ScoringTab`
+  resets `off` and `confirmed`, `TeamsTab` teams. Holding `dirty` keeps the bar up while the
+  adoption still reverts the field, which trades a silent loss for a visible lie. And the
+  adoption is not optional: the adopted ids are what stop the next save deleting and re-inserting
+  rows.
+  **So this needs a ruling before it needs code:** merge the typed edit over the adopted data,
+  skip adoption when the tab went dirty mid-flight, or block typing while a save is in flight.
+  Pick one, write down why, apply it everywhere.
+  **Sites:** `FormatTab.commit`, `ScheduleTab.save`, `ScoringTab.save`, `BasicsTab.save`,
+  `CaptainsTab.save`, `DaysTab.commit`, `DraftTab.saveConfig`, `QuestionsTab` save,
+  `RoundScores.save`, `ShapeTab.save`, `TeamsTab.commit`/`commitCount`/`commitShuffle`.
+  **Three more that look the same and were not confirmed:** `ChampionshipEditor` (`setSaved`),
+  `events/ApplicantsTab` (`setSavedNote`), `AnnouncementSettings` (the landing does `setBody` and
+  `setMention` over anything typed). Read each before deciding it is or is not the same bug.
+  **And one side effect found with it:** once a mid-save keystroke sets `dirty`, the unsaved
+  bar's Save button **re-enables while the first save is still in flight**, so a second save can
+  be sent over the first.
+- **Acceptance criteria:**
+  - [ ] One rule is chosen for what happens to an edit typed mid-save, written down with its reason, and applied at every site
+  - [ ] An edit typed while each listed save is in flight survives it, each watched failing first
+  - [ ] The unsaved bar cannot send a second save while the first is in flight
+  - [ ] The three unconfirmed sites are each read and either fixed or named as different, with what makes them different
+  - [ ] No adopted id is lost, so the next save still updates rather than deleting and re-inserting
+- **Depends on:** Task 136.
+
+### Task 141: The ceiling block still prints a figure for a team nobody has sized
+
+- **Serves:** R-250's neighbour. Found while building Task 112.
+- **Files:** `src/components/draft/BidCeiling.tsx`, tests
+- **Do:** Task 112 stopped an unsized team reading **"full"**, because that word was false. The
+  same row still prints **"Max bid 0"**, which is the identical mistake in a different noun - a
+  figure derived from places that do not exist. `BidBox` already refuses to do this: its
+  `cap === null` branch withholds "You can bid up to" for exactly this reason, and `BidBox`'s
+  docblock says why ("a bid ceiling is a figure derived from the places, and there are none to
+  derive it from"). The two components disagree about the same team.
+  Task 112 pinned the current wording as-is rather than widening its own scope, which was right;
+  the pin is what this task has to change deliberately.
+  **Decide what the row should say** - the note alone, a dash, or nothing - and make the two
+  components agree.
+- **Acceptance criteria:**
+  - [x] An unsized team's ceiling row prints no figure derived from places it does not have
+  - [x] What it prints instead is the same answer `BidBox` gives for the same team, asserted against both
+  - [x] A sized team's row is unchanged, pinned word for word
+  - [x] Task 112's "Max bid 0" pin is updated deliberately, not deleted
+- **Depends on:** Task 112.
+- **Left over:** nothing from the criteria, and two things worth keeping.
+  **The criterion asked for two components to agree, and the test makes them agree with each
+  other.** One fixture team rendered through both, `expect(row).toBe(box)` - the box side through
+  `BidBox`'s own `cap === null` branch, the row side through `ceilingsFor`. Breaking either fails
+  it. A sized-team control proves the comparison discriminates rather than passing because both
+  sides are empty. Asserting each against a literal would have been the easy version and would
+  have drifted apart silently.
+  **A deliberate pin changed deliberately.** Task 112 pinned `Max bid 0` on purpose rather than
+  widening its own scope; this task changed it with the reason recorded in the test beside it, and
+  tightened it with `not.toContain("Max bid")` and `not.toMatch(/\d/)`.
+
+## V. Whether the night draws heroes, and how many (R-269 to R-271 / UC-58)
+
+Added 2026-11-14 at the owner's request: "make sure there is a toggle for random heroes in setup -
+format, with a number to set how many to draw if enabled". The owner chose **heroes per role**
+over a total (so a hand stays role-shaped and the reveal is unchanged in kind), and chose that
+turning it **off hides both** the Hands tab and the draw page.
+
+**What makes this more than a checkbox.** The nine is not a constant in one place. It is
+`HEROES_PER_ROLE = 3` in `heroes-policy.ts`, `HAND_SIZE = HERO_ROLES.length * HEROES_PER_ROLE` in
+`hero-hands.ts`, the `unflatten` arithmetic that rebuilds roles from a flat array, and a database
+CHECK named `hero_hands_nine_distinct_per_role` that hard-codes `cardinality = 9` and enumerates
+nine index pairs by hand. A CHECK may not contain a subquery, which is why it was written that
+way.
+
+**And the migration deploys on push.** `vercel.json` sets no build command, so Vercel runs
+`npm run build`, which is `db:migrate && next build`. The risk register's answer is additive-first
+migrations with drops in a later commit, so the constraint is replaced in two deploys, never one.
+
+**This section therefore lands in THREE deploys, and the order is not negotiable.** Task 144's
+own build established why: with both CHECKs on the table a hand must satisfy **both**, and the old
+one still says nine - so **the database refuses any width but three until the drop is deployed**,
+not merely until 144 is committed.
+
+| Deploy | What goes | What is true after it |
+|---|---|---|
+| 1 | Task 144: the `IMMUTABLE` function, the new CHECK added `NOT VALID` then validated. The old CHECK stays. | Nothing changes for anybody. Old instances keep writing nine-wide hands, which satisfy both checks. |
+| 2 | `drizzle/later/hero_hands_drop_nine.sql`, moved into `drizzle/` and journalled. | A width other than three can now be **stored**. |
+| 3 | Task 143: the toggle and the number on the panel. | A manager can **save** a width other than three. |
+
+143 before deploy 2 is a production break: a manager saves five, a player presses draw, and
+Postgres refuses the insert with nothing on the panel to explain it. The `drizzle/later/` folder
+exists because `schema-drift.test.ts` refuses an unjournalled `.sql` sitting directly in
+`drizzle/`; the file's own header lists the steps for landing it.
+
+### Task 142: An event says whether it draws heroes, and how wide
+
+- **Serves:** R-269, R-270 / UC-58 1-6
+- **Files:** `src/lib/events-policy.ts`, `src/lib/heroes-policy.ts`, `src/lib/hero-hands.ts`, `src/components/admin/events/tabs.ts`, and tests
+- **Do:** `EventShape` gains the two answers. **No migration**: `events.config` is a
+  `json<EventConfig>` column and `eventShapeFrom` already resolves `teamEvent`, `draft` and
+  `sizing` out of it for exactly this reason - its docblock says so under "No migration, for
+  `teamFormat`'s reason". Follow that, do not add a column.
+  **Defaults are the whole safety argument.** Every event that exists has no such key, so the
+  resolver must read an absent value as **on, three per role**, which is what the site does today.
+  An event that has already dealt hands must never resolve to off.
+  **Then make the count a parameter rather than a constant.** `HEROES_PER_ROLE` is imported by
+  `drawHand`, by `unflatten`, and by `HAND_SIZE`. Thread the event's number through instead, and
+  keep the constant only as the default. `drawHand`'s thin-role refusal already names the count it
+  needed - it must name the event's, not three.
+  **The Hands tab goes when the toggle is off** (R-269 / UC-58 3a): `HERO_LIST_KEYS` currently
+  says hands does not depend on the shape. It does now.
+- **Acceptance criteria:**
+  - [x] An event with nothing stored resolves to drawing heroes, three per role - asserted against a config object with no hero key at all, not one with the key set to the default
+  - [x] An event with hands already dealt and nothing stored still resolves to on, pinned
+  - [x] `drawHand` deals the number it is given in each role, proven at three and at one other width
+  - [x] A thin role's refusal names the width that was asked for, not three
+  - [x] `unflatten` rebuilds a hand of any stored width, proven on a width that is not nine
+  - [x] The Hands tab is hidden when the toggle is off and shown when it is on, and no other tab's visibility changes
+  - [x] Nothing reads `HEROES_PER_ROLE` as the live answer any more, asserted over the source
+- **Depends on:** nothing.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **The default is the whole safety argument, and junk cannot flip it.** Every event in production
+  has no hero key, so absent must read as **on, three per role**. `"false"`, `0`, `null`, `"off"`
+  and `[false]` all read as on; `0`, `-2`, `2.5` and `"4"` all read as three. The criterion was
+  worded to demand a fixture with **no hero key at all**, not one holding the default.
+  **A Format save would have erased the setting.** `updateEvent` merges config one level deep and
+  the action writes `eventShape` whole, so without this task's fix the first save on the Format
+  panel would have dropped a stored `heroes: false` and turned the draw back on. That is a bug that
+  only ever appears weeks later, as "I turned it off and it came back".
+  **The thing that could have broken silently, proved rather than assumed.** `drawHand`'s docblock
+  warns that a test predicting an exact hand is predicting how many random numbers each role burns.
+  One whole shuffle per role is kept, so a role burns pool-size-minus-one at **any** width, every
+  sequence in `heroes-policy.test.ts` is byte-identical, and a partial-shuffle mutant kills nine
+  tests including the exact-predicted-hand one.
+  **A sweep that matches an identifier cannot see an English word.** The draw page said "the draw
+  works the moment there are **three** in each role" as a literal sentence, and sailed through a
+  sweep over `HEROES_PER_ROLE`. Fixed, and the siblings searched for. And review found, in the task
+  *after* this one, that 143 before 144's drop is a production break - reviewing one task and
+  finding the hazard in the next.
+
+### Task 143: The toggle and the number on Setup - Format
+
+- **Serves:** R-269, R-270 / UC-58 2, 4, 6
+- **Files:** `src/components/admin/events/ShapeTab.tsx`, the shape action, and tests
+- **Do:** a `Toggle` and, when it is on, a `Stepper` - both already in `src/components/ui` and
+  both already used on this panel, so no new control. The panel says what the next draw will
+  deal, in the same voice as the sizing consequence beneath it.
+  **The number is bounded and the bound is a typo guard, not a rule about sport**, exactly as
+  `MAX_PER_TEAM = 32` is: one at the bottom, and a top chosen so a slip cannot ask for a hand
+  bigger than any game's hero list. Say why in the constant's docblock.
+  **A save is never refused for a width the game cannot deal** (UC-58 5a). The hero list can be
+  filled in afterwards; the **draw** is what refuses, and it already does.
+- **Acceptance criteria:**
+  - [ ] The toggle saves, and the number is only offered when it is on
+  - [ ] The number saves, and a width outside the bound is refused on the panel before the round trip, as `ShapeTab`'s other refusals are
+  - [ ] Turning the toggle off and saving is never refused, however many hands exist
+  - [ ] The panel says what the next draw will deal, and says it differently when the toggle is off
+  - [ ] Turning the toggle off takes the Hands tab off the event, proven through the editor rather than in the panel alone
+- **Depends on:** Task 142, and **Task 144's drop deployed** - not merely 144 committed. See the three-deploy table at the top of this section; this dependency is not negotiable.
+  Found by Task 142's review: this task is what first lets a width other than three be **saved**,
+  and until 144 has replaced the CHECK, `dealFor` would build a hand of that width and Postgres
+  would **refuse the insert**. A manager would set five, a player would press draw, and the draw
+  would fail for everybody at that event with nothing on the panel to explain it. 143 before 144
+  is a production break, not a rough edge.
+
+### Task 144: The stored hand stops being nine
+
+- **Serves:** R-270, R-271 / UC-58 7, 7a
+- **Files:** `src/db/schema.ts`, `drizzle/00XX_*.sql` (generated, then checked by hand), `src/lib/hero-hands.ts`, and tests
+- **Do:** the CHECK `hero_hands_nine_distinct_per_role` hard-codes `cardinality = 9` and nine
+  index pairs. It must become "a multiple of the role count, no NULLs, and each role's block
+  internally distinct", for any width.
+  **A CHECK may not contain a subquery** - that is why the current one is written out by hand -
+  **but it may call an IMMUTABLE function.** So the shape is: add an `IMMUTABLE` SQL function that
+  takes the array and answers for any width, add the new CHECK as `NOT VALID`, validate it, and
+  **drop the old CHECK in a later commit**. Three statements that are all additive, and a deploy
+  that old instances can still serve through.
+  **Do not drop the old constraint in the same migration as the new one.** `docs/plan.md`'s risk
+  register says additive-first with drops in a later commit, and Task 118 was rebuilt from scratch
+  for breaking exactly that rule.
+  **`drizzle-kit generate` is safe** (it diffs, it touches no database). **Never run
+  `npm run db:migrate`.** Generate, check by hand, leave.
+  **R-271 is the sharp edge:** a hand dealt at three stays a hand of nine for ever. Nothing
+  rewrites, pads or truncates a stored hand when the setting changes, and the reveal reads the
+  width off the row rather than off the event.
+- **Acceptance criteria:**
+  - [x] A hand of any legal width is accepted; a width that is not a multiple of the role count is refused by the database, not only by code
+  - [x] A NULL element is still refused, and a repeat inside one role is still refused, at any width
+  - [x] A repeat **across** roles is still accepted - one hero in two roles is correct and the old constraint was careful about it
+  - [x] Running the migration twice changes nothing the second time
+  - [x] The old constraint is **still present** after this migration, with its drop written as a separate later migration that is not applied in this commit
+  - [x] A hand dealt at one width is read back unchanged after the event's number is changed, proven end to end
+  - [x] **`loadDraw` stops refusing a stored hand on the width it would deal now.** Found by Task 142's review: it checked thinness at the **event's current** width **before** reading a stored hand (the `draw.ts:221-224` this entry first cited is stale now, because the read sits above the check - which is the fix), so a player holding a hand dealt at three cannot see it once the event asks for five and the pools are too thin. That reverses R-271 exactly - the setting rewrites what somebody already drew, by hiding it. Read the stored hand first; the thinness check belongs only on the path that deals a new one
+  - [x] The new CHECK refuses a width of **zero** - an empty array divides evenly by the role count, so a naive "multiple of three" test accepts it
+- **Depends on:** Task 142.
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **It found an off-by-one in the lead's own sequencing.** With both CHECKs on the table a hand
+  must satisfy **both**, and the old one still says nine - so the database refuses any width but
+  three until the **drop is deployed**, not merely until this is committed. Task 143 was written as
+  depending on "Task 144"; it depends on a later deploy. The three-deploy table at the top of this
+  section exists because of this build.
+  **The SQL is careful in three places that each have a reason.** The block index **multiplies
+  before dividing**, because dividing by the width would be a division by zero for two ids across
+  three roles - and the row would then be refused by an error rather than by the constraint's name.
+  `coalesce(..., false)` so the function never answers NULL, which a CHECK counts as satisfied -
+  the same trap the old constraint's `array_position` clause was written for. And the new
+  constraint's name **sorts after** the old one on purpose, so Postgres reports the old name first
+  for a row breaking both, which is why `hero-hands-constraints.test.ts` passes unedited.
+  **"Additive-first" is held by three tests, not by a folder name.** The old constraint is asserted
+  still present and valid after every journalled migration; no top-level `.sql` contains a drop of
+  its name; and the drift test requires every top-level `.sql` to be journalled. Deploy 1 cannot
+  carry the drop.
+  **It went one step past its criterion and said that it had.** A stored hand's `perRole` is now
+  the hand's own width, because `HandReveal` prints `perRole * roles.length` - so a stored nine at
+  an event asking five would have read "**15 were decided**". Review then found the same bug on the
+  path it had not covered: after a click, the heading still printed the prop, above a hand of a
+  different size. Fixed, watched failing with that exact sentence.
+  **Two caveats declared rather than discovered later:** only PGlite was exercised, never Neon, so
+  the function-in-CHECK pattern is assumed to behave the same on real Postgres; and the existing
+  constraint tests depend on **check evaluation order by name**, observed rather than verified as
+  documented.
+
+### Task 145: The draw page closes when the night draws no heroes
+
+- **Serves:** R-269 / UC-58 3a
+- **Files:** `src/app/events/[slug]/draw/draw.ts`, the draw page, and tests
+- **Do:** Task 142 gave the event the toggle and took the Hands tab away when it is off. **It did
+  not close the draw.** `dealFor` and `loadDraw` never consult `heroes`, so a player who has the
+  URL can still be dealt a hand at an event whose manager turned the draw off - and the manager
+  cannot see it, because the Hands tab is the screen that was hidden. That is the worst shape a
+  gap can take: still working, and now invisible.
+  Task 142 reported this itself rather than letting its criterion ("the Hands tab is hidden")
+  stand in for the requirement, which says the toggle takes "the Hands tab and the draw page"
+  (R-269 / UC-58 3a).
+  **Hiding is not permission** applies in its usual form: the page refuses for itself.
+  **A hand already dealt is not withdrawn** (R-271 / R-212). Turning the draw off stops the next
+  deal; it never un-deals one, and it must not make a stored hand unreadable to the player who
+  holds it - decide what they see and say why.
+- **Acceptance criteria:**
+  - [ ] A player at an event with the draw off is refused, by the page, with a sentence that says the night is not drawing heroes rather than that something went wrong
+  - [ ] `dealFor` refuses before it deals, so no row can be written for an event with the draw off - asserted on the stored rows, not only on the answer
+  - [ ] A hand dealt before the draw was turned off is still readable by the player who holds it, or is deliberately not, with the reason written down
+  - [ ] **And `no_game` stops hiding one too.** Found by Task 144's review: `loadDraw` answers `no_game` **before** it reads a stored hand, so a hand whose event later loses its game is invisible to the player who drew it. Task 144 moved the stored-hand read above the *thinness* check and correctly left this one, because the `ready` payload needs a game name - decide what a hand with no game shows, rather than letting the ordering decide it by accident
+  - [ ] Turning the draw back on deals again, and deals at the stored width
+- **Depends on:** Task 142.
+
+### Task 146: The floor is a height, and only for buttons that wear the class
+
+- **Serves:** the same 44px non-negotiable as Task 135, which could not reach these
+- **Files:** `src/components/ui/Button.tsx`, the icon-only call sites, the non-`.btn` clickables, the sweep in `field-ordering.test.ts`
+- **Do:** Task 135 floored `.btn`'s **height** and swept every call site that wears the class. Two
+  kinds of control are still under the floor, and Task 135 named both rather than quietly
+  claiming the floor was met.
+  **Width.** The floor is height only, so an icon-only button is 44px tall and **32px wide**
+  (measured on `DaysTab`'s arrows). There are about **40** `aria-label` buttons across `DaysTab`,
+  `FormatTab`, `QuestionsTab`, `TeamsTab`, `GamesManager`, `LadderEditor`, `QuestionList`,
+  `TemplateQuestionList`, `TemplatesManager`, `HeroEditor`, `ScoringTab`, `PollList` and
+  `AvailabilityPanel`. A floor on every button's width would stretch text buttons, so this wants a
+  rule for the icon-only case rather than one more line in `.btn`.
+  **Clickables that do not wear `.btn`.** About **17** raw `<button>` elements and every plain
+  link: disclosure heads in `ApplicantsTab`, `GamesManager`, `TemplatesManager` and
+  `FormatTab:818`; `ApplyForm`'s two text buttons; `NavMenu`; `StandingsTable`; `PollList`;
+  `SuggestionBox`; `ChoiceChip`; `Disclosure`; `TabNav`; `EventEditor`'s tabs;
+  `AvailabilityGrid`'s cells. Several are visibly short from their classes alone.
+  **And one thing to decide rather than assume:** an `href` button is a 44px `inline-flex` box,
+  which grows a line of prose by 17px. Task 135 did not check whether any of the ~50 `href` call
+  sites sits inside a sentence. Find out before flooring anything else.
+- **Acceptance criteria:**
+  - [ ] An icon-only button meets the floor in **both** dimensions, by a rule that does not stretch a text button
+  - [ ] Every clickable that does not wear `.btn` either meets the floor or is named with a reason it cannot
+  - [ ] The sweep covers them, with its own hand-counted floor so it cannot pass by matching nothing
+  - [ ] A deliberately short control of each new kind is watched failing
+  - [ ] Any `href` button inside prose is named, and what happens to the line is a decision somebody wrote down
+- **Depends on:** Task 135.
+
+### Task 147: Three more half-done writes in the games catalogue
+
+- **Serves:** the same gap as Tasks 132 and 137, found by Task 137's own build
+- **Files:** `src/lib/admin-games.ts`, `src/app/admin/games/actions.ts`, tests
+- **Do:** Task 137 put `setRankLadder`, `deleteField`, `retireField` and `restoreField` each into
+  one transaction and gave every changing action an audit line. Three things it listed rather than
+  widened its own scope to fix.
+  **`moveGame` and `moveField` renumber as several statements with no transaction.** A throw
+  midway leaves a half-renumbered list **and no audit line** - the same family as the
+  `resequenceSection` defect Task 137 did fix, with lower stakes only because a wrong order is
+  visible and recoverable.
+  **`updateField` still reads the row and writes it as two statements.** The action/library gap is
+  closed, so no fallback sentence depends on it, but a relabel landing between those two
+  statements would log the label that was read rather than the one that was written.
+  **Retire and restore log on a repeat press** - "Retired…" for a question already retired -
+  because the library does not report whether anything changed. Task 132 did the same and Task 137
+  mirrored it for consistency rather than fixing one of two.
+  **And one thing that cannot be proved on this harness, recorded so nobody re-derives it:**
+  `deleteField`'s `select … for update` is pinned by statement and position, **not** behaviourally.
+  PGlite is one connection, so a second writer queues behind any transaction whether or not a row
+  is locked - Task 137's mutant D3 confirms the window test still passes with the lock deleted. On
+  Neon under READ COMMITTED the lock is what actually closes the window. Proving it needs two real
+  sessions.
+- **Acceptance criteria:**
+  - [ ] A throw midway through either renumber leaves the list as it was, and nothing is logged for a move that did not happen
+  - [ ] `updateField` reads and writes under one statement or one transaction, proven by a relabel landing in between
+  - [ ] A repeat press of retire or restore writes no line, and the library says whether anything changed rather than the action guessing
+  - [ ] The row lock is either proven against two real sessions, or the pin is left with its limitation written beside it
+- **Depends on:** Task 137.

@@ -10,7 +10,8 @@
  * Running a good Rivals tournament and then saying "do that again next month"
  * is the point of a template; retyping its eleven questions is not.
  *
- * Guarded by `requireAdmin()`, which sends a signed-in non-admin to `/signin`
+ * Guarded by `requirePermission("templates.manage")` - a holder of that power,
+ * or an admin - which sends anybody else who is signed in to `/signin`
  * with `?error=admin-only` rather than to a 403.
  */
 
@@ -19,7 +20,7 @@ import AdminNav from "@/components/admin/AdminNav";
 import TemplatesManager from "@/components/admin/TemplatesManager";
 import { Page, PageHeader, StatTile } from "@/components/ui";
 import { loadAdminTemplates } from "@/lib/admin-templates";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +29,7 @@ export const metadata = {
 };
 
 export default async function AdminTemplatesPage() {
-  await requireAdmin();
+  await requirePermission("templates.manage");
   const view = await loadAdminTemplates();
 
   const active = view.templates.filter((template) => template.isActive).length;

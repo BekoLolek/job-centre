@@ -14,6 +14,9 @@
  * // a page for whoever holds a power, and for every admin
  * const actor = await requirePermission("games.manage");
  *
+ * // a page that is more than one power's
+ * const reader = await requireAnyPermission(["events.create", "events.manage"]);
+ *
  * // a page that renders differently when signed out
  * const user = await getCurrentUser();
  * ```
@@ -45,7 +48,7 @@ import { SIGN_IN_PATH, auth } from "./auth";
 import { SIGN_IN_ERRORS } from "./auth-policy";
 import { canManageEvent } from "./hosting";
 import { powersOf } from "./permissions";
-import { type Power, holds } from "./permissions-policy";
+import { type Power, assertPower, holds } from "./permissions-policy";
 
 export { SIGN_IN_PATH };
 
@@ -270,6 +273,50 @@ export async function requirePermission(power: Power): Promise<User> {
   const user = await requireUser();
   const powers = user.isAdmin ? new Set<Power>() : await powersOf(user.id);
   if (!holds({ isAdmin: user.isAdmin, powers }, power)) {
+    redirect(signInHref({ error: SIGN_IN_ERRORS.adminOnly }));
+  }
+  return user;
+}
+
+/**
+ * As {@link requirePermission}, for a screen that is more than one power's:
+ * the member's row if they hold **any one** of these, otherwise the same
+ * redirect (R-265 / UC-56 1, 3a).
+ *
+ * `/admin/events` is where an event is made and where one is found, which are
+ * two powers; `/admin/settings` is two halves; `/admin` is the front door for
+ * every area. None of them has one power to name, and each used to be written
+ * as `requireUser` with the refusal on the line after it. That shape is a
+ * guard the sweep cannot see: `every-action-is-gated.test.ts` reads the first
+ * line, so a page whose second line was forgotten would admit any signed-in
+ * member to an admin screen and still read as gated. This is that second line
+ * moved into the guard, so the page's whole answer is one expression on its
+ * first line.
+ *
+ * Everything else is `requirePermission`'s, deliberately, and
+ * `require-permission.test.ts` asks the same questions of both:
+ *
+ *  - an admin passes without their grants being read;
+ *  - the row and the grants are read on this call, never from the session;
+ *  - signed out goes to sign in and comes back, signed in without any of
+ *    these goes to `?error=admin-only` with no way back;
+ *  - a name outside the vocabulary throws, for an admin as well.
+ *
+ * **An empty list admits an admin and nobody else.** There is nothing on it
+ * to hold, so it is not "anybody".
+ *
+ * It must never gate the granting of powers or of the admin flag, for the
+ * reason given on {@link requirePermission}: no list of powers reaches those.
+ */
+export async function requireAnyPermission(powers: readonly Power[]): Promise<User> {
+  const user = await requireUser();
+  // Every name, before anybody is answered: `some` below stops at the first
+  // power held, and an admin is never asked about any of them.
+  for (const power of powers) assertPower(power);
+  if (user.isAdmin) return user;
+
+  const holder = { isAdmin: false, powers: await powersOf(user.id) };
+  if (!powers.some((power) => holds(holder, power))) {
     redirect(signInHref({ error: SIGN_IN_ERRORS.adminOnly }));
   }
   return user;

@@ -426,7 +426,7 @@ describe("the rail the page builds", () => {
     const markup = await screen(eventId, host, "hands");
     expect(selected(markup)).toBe("Setup");
     expect(markup).toContain(
-      tabHiddenBecause("hands", { teamEvent: true, draft: true, heroList: { game: null } })
+      tabHiddenBecause("hands", { teamEvent: true, draft: true, heroes: true, heroList: { game: null } })
     );
     expect(markup).not.toContain("Not drawn yet");
   });
@@ -442,6 +442,7 @@ describe("the rail the page builds", () => {
       tabHiddenBecause("hands", {
         teamEvent: true,
         draft: true,
+        heroes: true,
         heroList: { game: game.name, heroes: false },
       })
     );

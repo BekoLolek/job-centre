@@ -26,10 +26,14 @@ import {
  * when the roster is full, and the ceiling sentence under the balance — and
  * both have to say the same thing the team card says, or a captain sees one
  * figure on the rail and another in the box. Under a cap the full line reads
- * "up to"; with no figure at all the box says so in words, because the
- * ceiling sentence for a roster with no cap would otherwise read "full at
- * null", and a captain told their team is full of nothing has been told a
- * lie with a word missing from it.
+ * "the most it may hold"; with no figure at all the box says so in words, in
+ * place of the whole ceiling block. `BidBox` branches on `cap === null` to
+ * do that, and the branch earns its keep twice: it withholds the "You can bid
+ * up to" figure, which would otherwise read "You can bid up to 0" over places
+ * nobody has counted, and it shows the note when `standing` is null, where
+ * the fall-through would show nothing. It is not there to dodge a "full at
+ * null" sentence — `ceilingFor` stopped saying that, and its sentence for
+ * such a roster is now the same note.
  */
 
 /**
@@ -52,12 +56,12 @@ function standingFor(view: DraftRoomView): BidStanding {
   };
 }
 
-function render(view: DraftRoomView): string {
+function render(view: DraftRoomView, standing: BidStanding | null = standingFor(view)): string {
   return textOf(
     renderToStaticMarkup(
       createElement(BidBox, {
         view,
-        standing: standingFor(view),
+        standing,
         spinning: false,
         onBlock: "Rook",
         now: T0,
@@ -78,6 +82,14 @@ describe("a captain whose team has a stated target", () => {
     expect(box).not.toContain(UNSIZED_ROSTER_NOTE);
   });
 
+  it("reads the ceiling under the balance word for word, as before", () => {
+    // Between lots the panel is this and nothing else, so the sentence, the
+    // figure above it and their order are all pinned at once.
+    expect(render(roomView({ under: STATED_SIX }, CAPTAIN_OF_RED))).toBe(
+      "Your bid Balance 400 Bidding opens once the wheel stops on a player. You can bid up to 399 With 2 slots left, the most Rivals Red can bid is 399 — 1 stays back to fill the other 1 slot."
+    );
+  });
+
   it("reads x of y when the roster is full, as before", () => {
     const box = render(roomView({ under: STATED_SIX, redBought: 5, lotOpen: true }, CAPTAIN_OF_RED));
     expect(box).toContain("Your draft is done — 6 of 6 on the roster.");
@@ -89,6 +101,12 @@ describe("a captain whose team has a stated target", () => {
 /* ------------------------------------------------------------------ */
 
 describe("a captain whose team is capped by a count of teams", () => {
+  it("reads the ceiling under the balance word for word, as before", () => {
+    expect(render(roomView({ under: CAP_FIVE }, CAPTAIN_OF_RED))).toBe(
+      "Your bid Balance 400 Bidding opens once the wheel stops on a player. You can bid up to 400 One slot left, so Rivals Red can bid the whole 400 on it."
+    );
+  });
+
   it("reads the full line as a cap, not as x of y", () => {
     const box = render(roomView({ under: CAP_FIVE, redBought: 4, lotOpen: true }, CAPTAIN_OF_RED));
     // Not "5 on the roster, up to 5": full is measured against the cap, so
@@ -115,6 +133,10 @@ describe("a captain whose team the panel has not sized", () => {
     expect(box).not.toContain("null");
     expect(box).not.toContain("You can bid up to");
     expect(box).not.toMatch(/\d+ of \d+|\d+\/\d+|up to 0\b/);
+    // Not full of anything either. Today that holds only because
+    // `canPlaceBid` refuses an unsized roster before it refuses a full one,
+    // which is another module's ordering and not this panel's to lean on.
+    expect(box).not.toMatch(/\bfull\b/);
   });
 
   it("is told so in words between lots too", () => {
@@ -122,5 +144,29 @@ describe("a captain whose team the panel has not sized", () => {
     expect(box).toContain(UNSIZED_ROSTER_NOTE);
     expect(box).not.toContain("null");
     expect(box).not.toContain("You can bid up to");
+  });
+
+  it("is shown the note where the ceiling would stand, and no bid ceiling at all", () => {
+    /*
+     * The positive half of the test above. `ceilingFor`'s sentence for this
+     * roster is the note itself, so the `cap === null` branch in `BidBox`
+     * reads as a guard against a sentence that no longer exists — and deleting
+     * it puts "You can bid up to 0" above the note, a ceiling over places
+     * nobody has counted. The whole panel is pinned so that nothing, figure or
+     * label, can stand between the waiting line and the note.
+     */
+    const box = render(roomView({ under: UNSIZED }, CAPTAIN_OF_RED));
+    expect(box).toBe(
+      `Your bid Balance 400 Bidding opens once the wheel stops on a player. ${UNSIZED_ROSTER_NOTE}`
+    );
+  });
+
+  it("is still told so when the server sent no standing", () => {
+    // The branch's other job: the fall-through draws nothing without a
+    // standing, and a captain of an unsized team would be told nothing.
+    const box = render(roomView({ under: UNSIZED }, CAPTAIN_OF_RED), null);
+    expect(box).toBe(
+      `Your bid Balance 400 Bidding opens once the wheel stops on a player. ${UNSIZED_ROSTER_NOTE}`
+    );
   });
 });

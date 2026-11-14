@@ -44,7 +44,17 @@ function render(
   applications: HostApplication[],
   events: Array<{ id: string; title: string; status: string }> = []
 ): string {
-  return renderToStaticMarkup(createElement(HostQueue, { applications, events }));
+  // As an admin reads it. What a holder of `hosts.approve` alone is offered is
+  // `src/app/admin/__tests__/holder-dead-ends.test.ts`.
+  return renderToStaticMarkup(
+    createElement(HostQueue, {
+      applications,
+      events,
+      mayCreateEvent: true,
+      mayManageEvents: true,
+      mayManageGames: true,
+    })
+  );
 }
 
 describe("the card for an application nobody has decided", () => {

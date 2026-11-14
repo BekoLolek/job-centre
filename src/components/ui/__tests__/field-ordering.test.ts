@@ -1,9 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import postcss from "postcss";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import tailwindcss from "tailwindcss";
 import { beforeAll, describe, expect, it } from "vitest";
 import tailwindConfig from "../../../../tailwind.config";
+import Button, { type ButtonSize, type ButtonVariant } from "../Button";
 
 /**
  * A utility written on a field has to win, and `.field` has to keep supplying
@@ -1439,5 +1442,330 @@ describe("every .num call site has a recorded decision", () => {
       );
       expect(both.map((m) => m[0]), `${file} passes a size prop and a text-* at once`).toEqual([]);
     }
+  });
+});
+
+/* --------------------------------------------------------------------- */
+/* Task 135: the tap-target floor                                        */
+/* --------------------------------------------------------------------- */
+
+/*
+ * Every `.btn` is at least 44px tall, and this is where that is held.
+ *
+ * `.btn` was 13px type on a `line-height` of 1 with `0.5rem` of padding and a
+ * 1px border — 31px — and `size="sm"` (`py-1.5`) was 27px once Task 65 let it
+ * win. The fix is one `min-height` on the class, and what this section proves
+ * is what a `min-height` proves and no more: **a floor**, read from the
+ * compiled stylesheet. A box cannot be shorter than its `min-height` — it
+ * beats `height` and `max-height` both — with two exceptions, which are the
+ * two things refused below: a `min-height` that is smaller, and a `display`
+ * that `min-height` does not apply to.
+ *
+ * Stricter than the cascade on purpose. A class list is refused if *any* token
+ * on it declares a short `min-height` in *any* rule — under a breakpoint, on
+ * hover — rather than only if that declaration wins. `classRules` cannot see
+ * inside `@media`, and "it loses today" is the argument `.btn`'s padding made.
+ *
+ * Two halves, and they are tested differently. What `Button` itself puts on
+ * the element — its size row, its variant — is measured from twelve real
+ * renders. What a *call site* adds is swept: `btn` plus whatever it wrote.
+ *
+ * **Still not a pixel.** This says nothing about width (an icon-only button is
+ * as wide as its glyph and padding), nothing about what a taller button does
+ * to the row it sits in, and nothing about a clickable that does not wear
+ * `.btn`.
+ */
+
+/** The floor, in CSS pixels: WCAG 2.5.5 / the iOS and Android touch guidance. */
+const TOUCH_FLOOR_PX = 44;
+
+/** A rem is the browser's 16px here; `checkbox-hit-area.test.ts` is what holds that. */
+const ROOT_FONT_PX = 16;
+
+/** The two properties that decide whether a floor exists and whether it applies. */
+const FLOOR_TRACKED = ["min-height", "display"] as const;
+
+const BUTTON_FILE = "Button.tsx";
+const SIZES: ButtonSize[] = ["sm", "md"];
+const VARIANTS: ButtonVariant[] = ["default", "union", "flare"];
+
+/** `"2rem"` → `32`, `"44px"` → `44`, `"0"` → `0`; anything else is not a length this can measure. */
+function toPx(value: string): number | null {
+  const length = /^([\d.]+)(rem|px)?$/.exec(value.trim());
+  if (!length) return null;
+  return Number(length[1]) * (length[2] === "rem" ? ROOT_FONT_PX : 1);
+}
+
+/** Why this one declaration lets a box under the floor, or `null` if it does not. */
+function refusal(prop: string, value: string): string | null {
+  if (prop === "display") {
+    // `min-height` does not apply to an inline box, and an `<a>` is one by default.
+    return value === "inline" ? "display: inline ignores min-height" : null;
+  }
+  const px = toPx(value);
+  if (px === null) return `min-height: ${value} is not a length this file can measure`;
+  return px < TOUCH_FLOOR_PX ? `min-height: ${value} is ${px}px` : null;
+}
+
+/**
+ * Every `min-height` and `display` the compiled sheet declares for a class, in
+ * any rule at any depth — `sm:min-h-8` and `hover:inline` included.
+ *
+ * Keyed by the classes in the selector's *last* compound, which is the element
+ * the rule styles: `.group:hover .group-hover\:inline` is a declaration about
+ * the second class, not about `group`.
+ */
+function floorDeclarations(css: string): Map<string, [string, string][]> {
+  const out = new Map<string, [string, string][]>();
+  postcss.parse(css).walkRules((rule) => {
+    const decls: [string, string][] = [];
+    rule.each((child) => {
+      if (child.type === "decl" && FLOOR_TRACKED.some((prop) => prop === child.prop)) {
+        decls.push([child.prop, child.value]);
+      }
+    });
+    if (decls.length === 0) return;
+
+    for (const selector of rule.selector.split(",")) {
+      const subject = selector.trim().split(/\s*[>+~]\s*|\s+/).pop() ?? "";
+      for (const match of subject.matchAll(/\.((?:[-\w]|\\.)+)/g)) {
+        const cls = match[1].replace(/\\(.)/g, "$1");
+        out.set(cls, [...(out.get(cls) ?? []), ...decls]);
+      }
+    }
+  });
+  return out;
+}
+
+/** Filled in `beforeAll` below, from the same compile every other section reads. */
+let FLOOR_DECLARATIONS: Map<string, [string, string][]>;
+
+beforeAll(() => {
+  FLOOR_DECLARATIONS = floorDeclarations(AFTER_CSS);
+});
+
+/** Every reason an element wearing `classes` can render under the floor. Empty is a pass. */
+function shortfalls(classes: string[]): string[] {
+  const resolved = resolve(AFTER, classes, FLOOR_TRACKED);
+  const out: string[] = [];
+
+  // A floor has to exist outside every breakpoint, and so does a `display`
+  // that takes one: an `<a>` with neither is inline and as tall as its text.
+  for (const prop of FLOOR_TRACKED) {
+    if (resolved[prop] === undefined) out.push(`nothing declares a ${prop}`);
+  }
+  for (const token of classes) {
+    for (const [prop, value] of FLOOR_DECLARATIONS.get(token) ?? []) {
+      const why = refusal(prop, value);
+      if (why) out.push(`${token} — ${why}`);
+    }
+  }
+  return out;
+}
+
+/** The class list `Button` really puts on its element, from a real render. */
+function buttonClasses(props: { size: ButtonSize; variant: ButtonVariant; href?: string }): string[] {
+  const html = renderToStaticMarkup(createElement(Button, props));
+  const found = /^<(?:a|button)\b[^>]*\sclass="([^"]*)"/.exec(html);
+  expect(found, `Button rendered no class attribute: ${html}`).not.toBeNull();
+  return found![1].split(/\s+/).filter(Boolean);
+}
+
+/** One attribute's value, from its opening `"` or `{` to the matching close. */
+function attributeValue(source: string, from: number): string | null {
+  if (source[from] === '"') return source.slice(from, source.indexOf('"', from + 1) + 1);
+  if (source[from] !== "{") return null;
+  let depth = 0;
+  let quote = "";
+  for (let i = from; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === quote) quote = "";
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(from, i + 1);
+    }
+  }
+  return null;
+}
+
+/** Every token of every double-quoted literal in an attribute value — both arms of a `cx(…)`. */
+function literalTokens(value: string): string[] {
+  return [...value.matchAll(/"([^"\n]*)"/g)].flatMap((m) => m[1].split(/\s+/).filter(Boolean));
+}
+
+/**
+ * The source with its comments blanked to spaces — block comments, and line
+ * comments that have a line to themselves — keeping every newline, so an index
+ * still points at the same line of the file.
+ *
+ * `attributesAt` counts quotes, and a comment *inside* a tag can hold an
+ * apostrophe: `FormatTab` has "one stage's matches" in the `onClick` of a
+ * `<Button>`, which opens a string that never closes and makes the button read
+ * as a tag with no end. It also means a commented-out button is not counted.
+ */
+function withoutComments(source: string): string {
+  const blank = (comment: string) => comment.replace(/[^\n]/g, " ");
+  return source.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/^[ \t]*\/\/.*$/gm, blank);
+}
+
+/** One element wearing `.btn`, and the classes its call site wrote on it. */
+type TapTarget = { where: string; written: string[] };
+
+/**
+ * **Everything in one file's source that wears `.btn`**, in both the forms it
+ * is written in — the same two-form sweep as `callSites()` above, for the same
+ * reason: a sweep keyed to `<Button>` cannot report the elements that write
+ * `className="btn …"` themselves, and those are the ones with a `py-1` on them.
+ *
+ * Pure, and taking the source rather than a path, so the tests below can hand
+ * it a short control as a snippet and watch the *parser* fail as well as the
+ * measurement behind it.
+ */
+function tapTargetsIn(raw: string, rel: string): TapTarget[] {
+  const out: TapTarget[] = [];
+  const source = withoutComments(raw);
+  const lineAt = (index: number) => source.slice(0, index).split("\n").length;
+
+  for (const match of source.matchAll(/<Button(?=[\s>])/g)) {
+    const where = `${rel}:${lineAt(match.index)}`;
+    const attrs = attributesAt(source, match.index + match[0].length);
+    expect(attrs, `${where} <Button> never closes its tag`).not.toBeNull();
+
+    const cls = /(?:^|[\s{])className=/.exec(attrs!);
+    const value = cls ? attributeValue(attrs!, cls.index + cls[0].length) : '""';
+    expect(
+      value?.startsWith('"'),
+      `${where} hands <Button> a className this sweep cannot read (${value}) — make it a literal`
+    ).toBe(true);
+
+    out.push({ where, written: literalTokens(value!) });
+  }
+
+  for (const match of source.matchAll(/className=/g)) {
+    const value = attributeValue(source, match.index + match[0].length);
+    const written = value ? literalTokens(value) : [];
+    if (!written.includes("btn")) continue;
+    out.push({ where: `${rel}:${lineAt(match.index)}`, written });
+  }
+  return out;
+}
+
+/** Every tap target in `src/**`. `Button.tsx` is the class, not a call site of it. */
+function tapTargets(): TapTarget[] {
+  return sourceFiles()
+    .filter((file) => path.basename(file) !== BUTTON_FILE)
+    .flatMap((file) => tapTargetsIn(fs.readFileSync(file, "utf8"), relative(file)));
+}
+
+/** `where — why` for every target that can render under the floor. */
+function sweep(targets: TapTarget[]): string[] {
+  const out: string[] = [];
+  for (const target of targets) {
+    const why = shortfalls(["btn", ...target.written]);
+    if (why.length > 0) out.push(`${target.where} — ${why.join("; ")}`);
+  }
+  return out;
+}
+
+describe("the tap-target floor", () => {
+  it.each(
+    SIZES.flatMap((size) =>
+      VARIANTS.flatMap((variant) => [
+        { size, variant, as: "button", href: undefined },
+        { size, variant, as: "next/link", href: "/somewhere" },
+      ])
+    )
+  )('floors Button size="$size" variant="$variant" as a $as', ({ size, variant, href }) => {
+    const classes = buttonClasses({ size, variant, href });
+
+    expect(shortfalls(classes)).toEqual([]);
+    // The number, so the pass above is not an empty list agreeing with itself.
+    const resolved = resolve(AFTER, classes, FLOOR_TRACKED);
+    expect(toPx(resolved["min-height"])).toBeGreaterThanOrEqual(TOUCH_FLOOR_PX);
+    // And an `<a>` is a box the floor applies to, which it is not by default.
+    expect(resolved.display).toBe("inline-flex");
+  });
+
+  it('really renders size="sm" with a row of its own, so the six sm cases are not md twice', () => {
+    const sm = buttonClasses({ size: "sm", variant: "default" });
+    const md = buttonClasses({ size: "md", variant: "default" });
+    expect(sm).not.toEqual(md);
+  });
+
+  it("refuses an element that wears the padding and not the class", () => {
+    // The only way to reach this: every swept target has `btn` put on it.
+    expect(shortfalls(["px-3", "py-1.5"])).toEqual([
+      "nothing declares a min-height",
+      "nothing declares a display",
+    ]);
+  });
+
+  it("sees every .btn that is written by hand", () => {
+    // Every literal in `src/**` carrying a `btn` token sits in a `className`
+    // the sweep read. One written into a variable first would be a button the
+    // sweep never measured — and none at all would be a sweep of nothing.
+    const byHand = tapTargets().filter((target) => target.written.includes("btn"));
+    const literals = classLists("btn").filter((site) => !site.where.includes(`/${BUTTON_FILE}:`));
+
+    expect(literals.length).toBeGreaterThan(0);
+    expect(byHand.length, "a .btn class list is written somewhere the sweep cannot see").toBe(
+      literals.length
+    );
+  });
+
+  it("has no clickable wearing .btn that can render under 44px", () => {
+    expect(sweep(tapTargets())).toEqual([]);
+  });
+
+  /*
+   * The sweep, watched failing — parser first, then the measurement. Each row
+   * is source somebody could write, read by the same `tapTargetsIn` the real
+   * files go through, so this fails if the *reading* stops working and not
+   * only if the arithmetic does. In every row the short class is not the first
+   * thing written: a parser that took one token per literal, or one literal
+   * per `cx(…)`, is exactly the parser that would pass the real sweep.
+   *
+   * These snippets are in Tailwind's content glob, so they are also what makes
+   * the compiler emit `min-h-8` and the rest for this file to read back.
+   */
+  it.each([
+    {
+      what: "a short min-height after another class on a <Button>",
+      source: `<Button size="sm" className="w-full min-h-8">Go</Button>`,
+      why: "snippet.tsx:1 — min-h-8 — min-height: 2rem is 32px",
+    },
+    {
+      what: "a short min-height behind a breakpoint, in the second arm of a cx()",
+      source: `<a href="/x" className={cx("btn", on && "sm:min-h-8")}>Go</a>`,
+      why: "snippet.tsx:1 — sm:min-h-8 — min-height: 2rem is 32px",
+    },
+    {
+      what: "an inline display on a <Button> with a comment and an apostrophe in its tag",
+      source: [
+        `<Button`,
+        `  // one stage's matches`,
+        `  onClick={() => { go(); }}`,
+        `  className="ml-auto inline"`,
+        `>`,
+        `  Go`,
+        `</Button>`,
+      ].join("\n"),
+      why: "snippet.tsx:1 — inline — display: inline ignores min-height",
+    },
+  ])("refuses $what", ({ source, why }) => {
+    expect(sweep(tapTargetsIn(source, "snippet.tsx"))).toEqual([why]);
+  });
+
+  it("does not refuse a fixed height, because min-height beats it", () => {
+    const targets = tapTargetsIn(`<Button className="h-8 max-h-8 w-full">Go</Button>`, "snippet.tsx");
+
+    // Read, and then passed — not passed because nothing was read.
+    expect(targets).toEqual([{ where: "snippet.tsx:1", written: ["h-8", "max-h-8", "w-full"] }]);
+    expect(sweep(targets)).toEqual([]);
   });
 });

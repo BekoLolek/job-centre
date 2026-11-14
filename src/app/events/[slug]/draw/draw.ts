@@ -15,7 +15,8 @@
  * `src/lib/hero-hands.ts`, inside a transaction, against a unique index on
  * (event, user) — and only ever by the server action. Nothing in the browser
  * deals, and nothing in the browser is sent a pool it *could* deal from: a
- * `ready` payload carries either the nine that are already stored, or null.
+ * `ready` payload carries either the hand that is already stored — at the
+ * width the row holds, whatever the event asks for now (R-271) — or null.
  * There is no third case, and in particular there is no list of drawable heroes
  * in the payload, because a reveal holding the pool is one refresh away from
  * being a reroll.
@@ -47,9 +48,9 @@ import {
   db as defaultDb,
 } from "@/db";
 import type { EventDetail } from "@/lib/events";
-import { type TeamFormat, teamFormatFrom } from "@/lib/events-policy";
+import { type TeamFormat, eventShapeFrom, teamFormatFrom } from "@/lib/events-policy";
 import { HERO_ROLES, drawableByRole, listHeroes } from "@/lib/heroes";
-import { HEROES_PER_ROLE, drawHand } from "@/lib/heroes-policy";
+import { drawHand } from "@/lib/heroes-policy";
 import type { RevealCard } from "./reveal";
 
 /**
@@ -81,8 +82,12 @@ export type DrawPayload =
   | { kind: "no_seat" }
   /** The event was never given a game, so there is no list to deal from. */
   | { kind: "no_game" }
-  /** UC-39 1b. The game exists and its hero list is empty. Named, not blank. */
-  | { kind: "no_heroes"; game: string }
+  /**
+   * UC-39 1b. The game exists and its hero list is empty. Named, not blank —
+   * and carrying the event's width (R-270), because the sentence on that
+   * screen says how many the draw needs in each role.
+   */
+  | { kind: "no_heroes"; game: string; perRole: number }
   /** UC-39 2a. Refused before any draw, naming every thin role. */
   | { kind: "too_thin"; game: string; refusal: string }
   /** UC-39 2, 6, 6a. The draw may happen, or already has. */
@@ -93,11 +98,15 @@ export type DrawPayload =
       format: TeamFormat;
       /** The roles a hand covers, in deal order, for the copy above the button. */
       roles: readonly HeroRole[];
-      /** How many in each role (R-210). */
+      /**
+       * How many in each role (R-210): the stored hand's own width when there
+       * is one, the event's when there is not (R-271 / UC-58 7a).
+       */
       perRole: number;
       /**
-       * The nine already stored against this player and this event, in deal
-       * order — or null when they have not drawn (UC-39 6a vs 2).
+       * The hand already stored against this player and this event, in deal
+       * order and at the width it was dealt — or null when they have not
+       * drawn (UC-39 6a vs 2).
        */
       hand: RevealCard[] | null;
     };
@@ -125,7 +134,9 @@ export function handCards(heroes: Record<HeroRole, Hero[]>): RevealCard[] {
 class ProbeDealt extends Error {}
 
 /**
- * `drawHand`'s refusal for these pools, or null when it would deal.
+ * `drawHand`'s refusal for these pools at this width, or null when it would
+ * deal. `perRole` is the event's own (`eventShapeFrom`, R-270), so the page
+ * refuses for the width `dealFor` is about to ask for and not for three.
  *
  * UC-39 2a's sentence is `drawHand`'s own (it names **every** thin role, which
  * is Task 74's correction to the use case), and asking the real function for it
@@ -142,11 +153,18 @@ class ProbeDealt extends Error {}
  * than a test trick — the page must never produce a hand, because a hand that
  * was not stored is not a hand (UC-39 5a).
  */
-export function refusalFor(pools: Record<HeroRole, readonly Hero[]>): string | null {
+export function refusalFor(
+  pools: Record<HeroRole, readonly Hero[]>,
+  perRole: number
+): string | null {
   try {
-    const probe = drawHand(pools, () => {
-      throw new ProbeDealt();
-    });
+    const probe = drawHand(
+      pools,
+      () => {
+        throw new ProbeDealt();
+      },
+      perRole
+    );
     return probe.ok ? null : probe.error;
   } catch (cause) {
     if (cause instanceof ProbeDealt) return null;
@@ -192,7 +210,21 @@ async function holdsSeat(
  * (1a), whether there is anything to deal from (1b), whether what there is can
  * make a hand (2a), and only then the draw. Each refusal arrives **before** the
  * work the next question would do — the hero list is not read for somebody with
- * no seat, and no hand is looked up for a game that cannot deal one.
+ * no seat.
+ *
+ * ## A hand already held is answered before the list is asked anything
+ *
+ * "Is there enough to deal from" (1b, 2a) is a question about the **next**
+ * deal, at the width the event asks for **now**. Somebody who holds a hand is
+ * not getting another (R-212), so neither question is theirs — and asking
+ * them first hid a hand dealt at three behind "too thin" the moment the event
+ * asked for five, which is the setting rewriting what somebody drew (R-271 /
+ * UC-58 7a) by another route. So the stored hand is read straight after the
+ * seat and the game, and the hero list is not read for its holder at all.
+ *
+ * Its `perRole` is the hand's own, counted off the stored roles as
+ * `unflatten` rebuilt them, for the same reason: the screen's sentence counts
+ * the cards in front of the player, not the ones the next player will get.
  */
 export async function loadDraw(
   event: EventDetail,
@@ -205,28 +237,33 @@ export async function loadDraw(
   const game = event.game;
   if (!game) return { kind: "no_game" };
 
-  const catalogue = await listHeroes(game.id, database);
-  if (catalogue.length === 0) return { kind: "no_heroes", game: game.name };
-
-  const pools = drawableByRole(catalogue);
-  const refusal = refusalFor(pools);
-  if (refusal !== null) return { kind: "too_thin", game: game.name, refusal };
-
-  const stored = await readHand(event.id, userId, database);
-
-  return {
+  const ready = {
     kind: "ready",
     game: game.name,
     format: teamFormatFrom(event.config),
     roles: HERO_ROLES,
-    perRole: HEROES_PER_ROLE,
-    /*
-     * `dealtAt` is read and deliberately not carried. "You already hold these"
-     * is the fact the screen needs (UC-39 6a) and the hand's presence is what
-     * says it; an instant would also have to be formatted in the player's zone
-     * on the client, which is a hydration problem bought for a line nobody
-     * asked for. It stays on `StoredHand` for whoever does want it.
-     */
-    hand: stored ? handCards(stored.heroes) : null,
-  };
+  } as const;
+
+  /*
+   * `dealtAt` is read and deliberately not carried. "You already hold these"
+   * is the fact the screen needs (UC-39 6a) and the hand's presence is what
+   * says it; an instant would also have to be formatted in the player's zone
+   * on the client, which is a hydration problem bought for a line nobody
+   * asked for. It stays on `StoredHand` for whoever does want it.
+   */
+  const stored = await readHand(event.id, userId, database);
+  if (stored) {
+    return { ...ready, perRole: stored.heroes[HERO_ROLES[0]].length, hand: handCards(stored.heroes) };
+  }
+
+  /* Nothing held, so the questions about the next deal — at the event's width. */
+  const perRole = eventShapeFrom(event.config).heroesPerRole;
+
+  const catalogue = await listHeroes(game.id, database);
+  if (catalogue.length === 0) return { kind: "no_heroes", game: game.name, perRole };
+
+  const refusal = refusalFor(drawableByRole(catalogue), perRole);
+  if (refusal !== null) return { kind: "too_thin", game: game.name, refusal };
+
+  return { ...ready, perRole, hand: null };
 }

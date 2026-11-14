@@ -16,7 +16,7 @@ import AdminNav from "@/components/admin/AdminNav";
 import AvailabilityWeek from "@/components/admin/AvailabilityWeek";
 import { Page, PageHeader, Section } from "@/components/ui";
 import { availabilityWeek } from "@/lib/availability";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 import { formatDate, parseDate, todayIn, weekStart } from "@/lib/zoned-time";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,7 @@ export default async function AdminAvailabilityPage({
 }: {
   searchParams: Promise<{ week?: string | string[] }>;
 }) {
-  await requireAdmin();
+  await requirePermission("members.read");
 
   const raw = await searchParams;
   const asked = Array.isArray(raw.week) ? raw.week[0] : raw.week;

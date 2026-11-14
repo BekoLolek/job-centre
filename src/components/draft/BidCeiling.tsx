@@ -20,6 +20,16 @@ import type { PlayerBook, TeamLike } from "./types";
  * unsaved one — so the numbers move as the minimum bid is dragged around. The
  * places on a team are the Format panel's `sizing` (R-248), not a rule on this
  * screen, so they arrive from the same read that sized the teams' own rosters.
+ *
+ * A row says how many places are left, and what the team may bid, only when
+ * the panel has sized the teams. `rosterState` offers an unsized roster no slot
+ * (`slotsLeft` is 0), which is not the same as being full, and `maxBidFor`
+ * answers a roster with no slot with 0, which is not the same as a ceiling: it
+ * is a sum over places nobody has counted. So with no cap the row is the team's
+ * name and nothing else, and the sentence under the list —
+ * `UNSIZED_ROSTER_NOTE`, from `ceilingFor` — is the block's one word on it
+ * (R-250 / UC-49 1b). That is the captain's bid box's answer for the same team:
+ * the note in place of the whole ceiling, label and figure both.
  */
 
 export type BidCeilingProps = {
@@ -62,20 +72,24 @@ export default function BidCeiling({ teams, config, sizing, bare, className }: B
             >
               <span className="min-w-[8rem] flex-1 truncate text-14">{row.team.name}</span>
 
-              <span className="num text-12 text-muted">
-                {row.roster.slotsLeft > 0
-                  ? `${row.roster.slotsLeft} ${row.roster.slotsLeft === 1 ? "slot" : "slots"} left`
-                  : "full"}
-              </span>
+              {row.roster.cap !== null && (
+                <>
+                  <span className="num text-12 text-muted">
+                    {row.roster.slotsLeft > 0
+                      ? `${row.roster.slotsLeft} ${row.roster.slotsLeft === 1 ? "slot" : "slots"} left`
+                      : "full"}
+                  </span>
 
-              <span className="flex items-baseline gap-1">
-                <Eyebrow as="span">Max bid</Eyebrow>
-                <Money
-                  value={row.max}
-                  tone={row.stuck ? "flare" : row.max === 0 ? "muted" : "union"}
-                  size="lg"
-                />
-              </span>
+                  <span className="flex items-baseline gap-1">
+                    <Eyebrow as="span">Max bid</Eyebrow>
+                    <Money
+                      value={row.max}
+                      tone={row.stuck ? "flare" : row.max === 0 ? "muted" : "union"}
+                      size="lg"
+                    />
+                  </span>
+                </>
+              )}
 
               {row.roster.reserved > 0 && (
                 <span className="flex items-baseline gap-1">

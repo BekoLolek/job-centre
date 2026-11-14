@@ -9,14 +9,15 @@
  * chosen one comes from `?player=`, and what is shown is their hands newest
  * first with how many nights each hero has come up (R-244, R-245).
  *
- * ## Admin, not manager (R-247 / UC-48 1a)
+ * ## Admin or `members.read`, not manager (R-247 / UC-48 1a, R-265)
  *
- * Guarded by `requireAdmin()`, the line `/admin/users` and `/admin/audit`
- * already draw, and deliberately narrower than the per-event sheet, which is
+ * Guarded by `requirePermission("members.read")` - "what people have drawn" is
+ * that power's, with availability - and deliberately narrower than the
+ * per-event sheet, which is
  * `requireEventManager` because it is about the one event that host runs.
  * This page spans events, so it is not one host's: a host who manages Friday
- * must not see what was dealt on every other night. The guard sends a
- * signed-in non-admin to `/signin?error=admin-only` rather than to the `/me`
+ * must not see what was dealt on every other night. The guard sends anybody
+ * else who is signed in to `/signin?error=admin-only` rather than to the `/me`
  * a stranger to an event gets, and `player-hands.test.ts` asserts that
  * destination for a host specifically — a downgrade to `requireEventManager`
  * or `requireUser` would admit them.
@@ -52,7 +53,7 @@ import { Page, PageHeader, StatTile } from "@/components/ui";
 import { heroNights } from "@/lib/hand-history";
 import { type PlayerHand, handsOfPlayer, playersWithHands } from "@/lib/hero-hands";
 import { HERO_ROLES } from "@/lib/heroes";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,7 @@ export default async function AdminHandsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAdmin();
+  await requirePermission("members.read");
 
   const params = await searchParams;
   const raw = Array.isArray(params.player) ? params.player[0] : params.player;

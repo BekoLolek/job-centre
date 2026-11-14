@@ -15,7 +15,7 @@ import {
   HAND_EVENT_GONE,
   HAND_NOT_STORED,
   HAND_NO_GAME,
-  HAND_SIZE,
+  unflatten,
   dealFor,
   handFor,
   handsFor,
@@ -23,7 +23,7 @@ import {
   playersWithHands,
 } from "@/lib/hero-hands";
 import { HERO_ROLES, drawableByRole, hasHeroList, listHeroes } from "@/lib/heroes";
-import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
+import { HEROES_PER_ROLE, eventShapeFrom } from "@/lib/events-policy";
 
 /**
  * Storing a hand: dealt once, and it stands (R-212 / UC-39 3a, 3b, 5a, 6a).
@@ -448,19 +448,6 @@ function countingSelects(): { database: Database; begun: () => number } {
 /* The hand that lands                                                */
 /* ------------------------------------------------------------------ */
 
-describe("HAND_SIZE", () => {
-  /**
-   * The constraint `hero_hands_nine_distinct_per_role` says `9` as a literal,
-   * because a CHECK cannot import a constant.
-   * `hero-hands-constraints.test.ts` reads the live clause and compares it to
-   * this arithmetic; this is the arithmetic.
-   */
-  it("is three roles at three each", () => {
-    expect(HAND_SIZE).toBe(9);
-    expect(HAND_SIZE).toBe(HERO_ROLES.length * HEROES_PER_ROLE);
-  });
-});
-
 describe("the nine that are stored", () => {
   it("are the nine a known sequence deals, grouped by role", async () => {
     const fix = await fixture();
@@ -507,7 +494,7 @@ describe("the nine that are stored", () => {
       ...HAND_A.Duelist.map(idOf),
       ...HAND_A.Strategist.map(idOf),
     ]);
-    expect(row.heroIds).toHaveLength(HAND_SIZE);
+    expect(row.heroIds).toHaveLength(HERO_ROLES.length * HEROES_PER_ROLE);
   });
 
   /**
@@ -619,14 +606,14 @@ describe("the nine that are stored", () => {
     }
 
     const [row] = await rowsFor(fix);
-    expect(row.heroIds).toHaveLength(HAND_SIZE);
+    expect(row.heroIds).toHaveLength(HERO_ROLES.length * HEROES_PER_ROLE);
     expect(new Set(row.heroIds).size).toBe(7);
 
     // And the read rebuilds nine slots from the seven rows it fetched.
     const held = await handFor(fix.eventId, fix.userId, db);
     expect(
       HERO_ROLES.flatMap((role) => (held as NonNullable<typeof held>).heroes[role])
-    ).toHaveLength(HAND_SIZE);
+    ).toHaveLength(HERO_ROLES.length * HEROES_PER_ROLE);
   });
 });
 
@@ -1389,5 +1376,123 @@ describe("hasHeroList", () => {
     expect(await hasHeroList(fix.gameId, counting.database)).toBe(true);
 
     expect(counting.handedBack()).toBe(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* How wide a hand (Task 142 — R-269, R-270 / UC-58)                  */
+/* ------------------------------------------------------------------ */
+
+describe("an event that has already dealt hands, with nothing stored about heroes", () => {
+  /**
+   * Every event on the site today. The resolver is pure over the stored
+   * config, so "already dealt" cannot change its answer — what is pinned here
+   * is that the config such an event really has, read back out of Postgres
+   * after a real deal, resolves to on and to three.
+   */
+  it("still draws heroes, three per role", async () => {
+    const fix = await fixture();
+    await dealFor(fix.eventId, fix.userId, fromList(SEQUENCE_A), db);
+    const [event] = await db
+      .select({ config: eventsTable.config })
+      .from(eventsTable)
+      .where(eq(eventsTable.id, fix.eventId));
+
+    expect(await rowsFor(fix)).toHaveLength(1);
+    expect(JSON.stringify(event.config ?? {})).not.toMatch(/hero/i);
+    expect(eventShapeFrom(event.config).heroes).toBe(true);
+    expect(eventShapeFrom(event.config).heroesPerRole).toBe(3);
+  });
+});
+
+describe("dealFor and the event's width", () => {
+  /**
+   * The refusal is the only place a width other than three can be seen
+   * through `dealFor` today: `hero_hands_nine_distinct_per_role` still
+   * requires nine ids, so a narrower or wider hand cannot be stored. Pools of
+   * four deal happily at three — so a refusal naming five is the event's
+   * number arriving at `drawHand`, and nothing else.
+   */
+  it("asks the draw for the width the event stores, and says so when a role is thin", async () => {
+    const fix = await fixture(4);
+    await db
+      .update(eventsTable)
+      .set({ config: { eventShape: { heroesPerRole: 5 } } })
+      .where(eq(eventsTable.id, fix.eventId));
+
+    const result = await dealFor(fix.eventId, fix.userId, thrower(), db);
+
+    expect(refusal(result)).toBe(
+      "Vanguard has 4 heroes, Duelist has 4 heroes and Strategist has 4 heroes. A draw needs 5 in each role, so nothing was dealt. Add more on the game's hero list."
+    );
+    expect(await rowsFor(fix)).toHaveLength(0);
+  });
+});
+
+describe("unflatten", () => {
+  /** Rows without a database: the function is handed ids and rows and reads nothing. */
+  const row = (name: string): Hero => ({
+    id: `id-${name}`,
+    gameId: "game",
+    name,
+    roles: ["Vanguard"],
+    retiredAt: null,
+    createdAt: new Date("2026-10-23T00:00:00Z"),
+  });
+  const ROWS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].map(row);
+  const ids = (letters: string) => [...letters].map((letter) => `id-${letter}`);
+  const lettersOf = (hand: Record<string, Hero[]>) =>
+    Object.fromEntries(HERO_ROLES.map((role) => [role, hand[role].map((hero) => hero.name).join("")]));
+
+  it("rebuilds nine ids as three to a role", () => {
+    expect(lettersOf(unflatten(ids("ABCDEFGHI"), ROWS))).toEqual({
+      Vanguard: "ABC",
+      Duelist: "DEF",
+      Strategist: "GHI",
+    });
+  });
+
+  it("rebuilds six ids as two to a role", () => {
+    expect(lettersOf(unflatten(ids("ABCDEF"), ROWS))).toEqual({
+      Vanguard: "AB",
+      Duelist: "CD",
+      Strategist: "EF",
+    });
+  });
+
+  it("rebuilds three ids as one to a role", () => {
+    expect(lettersOf(unflatten(ids("ABC"), ROWS))).toEqual({
+      Vanguard: "A",
+      Duelist: "B",
+      Strategist: "C",
+    });
+  });
+
+  it("rebuilds twelve ids as four to a role", () => {
+    expect(lettersOf(unflatten(ids("ABCDEFGHIJKL"), ROWS))).toEqual({
+      Vanguard: "ABCD",
+      Duelist: "EFGH",
+      Strategist: "IJKL",
+    });
+  });
+
+  it("keeps a hero dealt in two roles in both, at a width of two", () => {
+    expect(lettersOf(unflatten(ids("ABACDA"), ROWS))).toEqual({
+      Vanguard: "AB",
+      Duelist: "AC",
+      Strategist: "DA",
+    });
+  });
+
+  it("reads the width off the stored hand, not off the event", () => {
+    // UC-58 7a: a hand dealt at two is shown as two after the event moves to
+    // three. Nothing but the ids is handed in, so nothing else can decide.
+    expect(unflatten(ids("ABCDEF"), ROWS).Strategist).toHaveLength(2);
+  });
+
+  it("refuses ids that do not divide into the roles, rather than guess a width", () => {
+    expect(() => unflatten(ids("ABCDEFG"), ROWS)).toThrow(
+      "A stored hand holds 7 heroes, which does not divide evenly across 3 roles."
+    );
   });
 });

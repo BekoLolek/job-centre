@@ -31,9 +31,9 @@ import {
 // On no game: the Setup panels hang on the shape alone, and an event with no
 // game is the plainer fixture. The hero-list fact is Task 100's and is held in
 // `hands-tabs.test.ts`.
-const TEAMS: TabVisibility = { teamEvent: true, draft: true, heroList: { game: null } };
-const TEAMS_NO_DRAFT: TabVisibility = { teamEvent: true, draft: false, heroList: { game: null } };
-const SOLO: TabVisibility = { teamEvent: false, draft: false, heroList: { game: null } };
+const TEAMS: TabVisibility = { teamEvent: true, draft: true, heroes: true, heroList: { game: null } };
+const TEAMS_NO_DRAFT: TabVisibility = { teamEvent: true, draft: false, heroes: true, heroList: { game: null } };
+const SOLO: TabVisibility = { teamEvent: false, draft: false, heroes: true, heroList: { game: null } };
 
 /**
  * The panels every event has, written out **as a literal on purpose** — the

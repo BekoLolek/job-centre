@@ -492,10 +492,30 @@ h1 {
  *     padding, so the one control that is supposed to look alarming did not.
  *   - `/admin/audit`'s filter chips (`btn border px-2 py-1 text-12`) lost
  *     padding and size; `/events/[slug]`'s tabs (`btn border-0`) kept a border.
+ *
+ * `min-height: 44px` is the touch floor, and it is here rather than at the call
+ * sites because there are 294 of them. Without it the class is 13px type on a
+ * `line-height` of 1, 16px of padding and 2px of border — 31px — and the
+ * layering above is what took `size="sm"` down to 27px by letting its `py-1.5`
+ * win. A floor rather than more padding, so no button gets wider and nothing
+ * beside one reflows sideways; the label stays centred by `align-items`.
+ *
+ *   - Pixels, not `2.75rem`: the floor is a size of finger, not of type.
+ *   - It is a floor on height only. An icon-only button is still as wide as
+ *     its glyph and padding, which is why `PlacementEditor`'s arrows keep
+ *     their `min-w-11`.
+ *   - `display: inline-flex` is part of it. `Button` renders an `<a>` when it
+ *     is given an `href`, an `<a>` is inline by default, and `min-height` does
+ *     not apply to an inline box.
+ *   - Layered like everything else here, so a `min-h-*` written on a button
+ *     beats it. `field-ordering.test.ts` refuses one that is under 44px.
+ *   - `Checkbox` still floors itself with `min-h-11`: it is a `<label>` and
+ *     never wears this class.
  */
 @layer components {
   .btn {
     display: inline-flex;
+    min-height: 44px;
     align-items: center;
     justify-content: center;
     gap: 0.45rem;

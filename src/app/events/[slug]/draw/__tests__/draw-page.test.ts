@@ -4,7 +4,7 @@ import type { EventConfig } from "@/db";
 import { type Database, type Hero, games, heroes as heroesTable } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { HERO_ROLES, drawableByRole, listHeroes } from "@/lib/heroes";
-import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
+import { HEROES_PER_ROLE } from "@/lib/events-policy";
 
 /**
  * `/events/[slug]/draw` — the page, and the payload it hands the browser
@@ -249,7 +249,7 @@ describe("the thin-list refusal (UC-39 2a)", () => {
       { gameId: fix.gameId, name: "Duelist three", roles: ["Duelist"] },
     ]);
 
-    const refusal = refusalFor(drawableByRole(await listHeroes(fix.gameId, harness.db)));
+    const refusal = refusalFor(drawableByRole(await listHeroes(fix.gameId, harness.db)), HEROES_PER_ROLE);
     expect(refusal).toBe(
       "Vanguard has 1 hero and Strategist has 0 heroes. A draw needs 3 in each role, " +
         "so nothing was dealt. Add more on the game's hero list."
@@ -264,7 +264,7 @@ describe("the thin-list refusal (UC-39 2a)", () => {
   it("answers nothing at all for a list that can deal", async () => {
     const fix = await fixture();
     if (!fix.gameId) throw new Error("fixture lost its game");
-    expect(refusalFor(drawableByRole(await listHeroes(fix.gameId, harness.db)))).toBeNull();
+    expect(refusalFor(drawableByRole(await listHeroes(fix.gameId, harness.db)), HEROES_PER_ROLE)).toBeNull();
   });
 });
 
@@ -403,7 +403,16 @@ describe("loadDraw picks the screen", () => {
   it("names the game when its hero list is empty (UC-39 1b)", async () => {
     const fix = await fixture({ perRole: 0 });
     const payload = await loadDraw(await detail(fix.slug), fix.userId, handFor, harness.db);
-    expect(payload).toEqual({ kind: "no_heroes", game: `Draw game ${counter}` });
+    expect(payload).toEqual({ kind: "no_heroes", game: `Draw game ${counter}`, perRole: 3 });
+  });
+
+  it("carries the event's own width with an empty list, for the sentence that quotes it", async () => {
+    const fix = await fixture({ perRole: 0 });
+    await updateEvent(fix.eventId, { config: { eventShape: { heroesPerRole: 5 } } });
+
+    const payload = await loadDraw(await detail(fix.slug), fix.userId, handFor, harness.db);
+
+    expect(payload).toEqual({ kind: "no_heroes", game: `Draw game ${counter}`, perRole: 5 });
   });
 
   it("refuses a thin list with the rule's own sentence (UC-39 2a)", async () => {
@@ -424,6 +433,35 @@ describe("loadDraw picks the screen", () => {
     expect(payload.hand).toBeNull();
     expect(payload.roles).toEqual(HERO_ROLES);
     expect(payload.perRole).toBe(HEROES_PER_ROLE);
+  });
+
+  /*
+   * Task 142 (R-270 / UC-58 5a). The page reads the event's own width — the
+   * number `dealFor` is about to ask `drawHand` for — rather than three. Two
+   * per role is refused at the default width (the test above) and is ready at
+   * a stored two; four per role is ready at the default and thin at five.
+   */
+  it("offers the draw at the width the event stores", async () => {
+    const fix = await fixture({ perRole: 2 });
+    await updateEvent(fix.eventId, { config: { eventShape: { heroesPerRole: 2 } } });
+
+    const payload = await loadDraw(await detail(fix.slug), fix.userId, handFor, harness.db);
+
+    if (payload.kind !== "ready") throw new Error(`got ${payload.kind}`);
+    expect(payload.perRole).toBe(2);
+  });
+
+  it("refuses a list too thin for the event's width, naming that width", async () => {
+    const fix = await fixture();
+    await updateEvent(fix.eventId, { config: { eventShape: { heroesPerRole: 5 } } });
+
+    const payload = await loadDraw(await detail(fix.slug), fix.userId, handFor, harness.db);
+
+    if (payload.kind !== "too_thin") throw new Error(`got ${payload.kind}`);
+    expect(payload.refusal).toBe(
+      "Vanguard has 4 heroes, Duelist has 4 heroes and Strategist has 4 heroes. " +
+        "A draw needs 5 in each role, so nothing was dealt. Add more on the game's hero list."
+    );
   });
 
   it("carries the stored hand once there is one (UC-39 6a)", async () => {
@@ -705,6 +743,22 @@ describe("the page when there is nothing to draw", () => {
     // nothing and leave a player asking which list is missing.
     expect(text).toContain(`Draw game ${counter} has no hero list yet`);
     expect(text).not.toContain("Draw my");
+    expect(text).toContain("the draw works the moment there are 3 in each role.");
+  });
+
+  /*
+   * Task 142 (R-270). The sentence used to say "three" as a word, which no
+   * sweep for the constant could see; it quotes the event's width now.
+   */
+  it("says how many the event's draw needs in each role, not three", async () => {
+    const fix = await fixture({ perRole: 0 });
+    await updateEvent(fix.eventId, { config: { eventShape: { heroesPerRole: 5 } } });
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).toContain("the draw works the moment there are 5 in each role.");
+    expect(text).not.toContain("three in each role");
   });
 
   it("says so when the event has no game at all", async () => {

@@ -12,6 +12,15 @@
  * and a masked copy cross to the client. A webhook URL is a credential: anybody
  * holding it can post into the channel as the site. Reading the environment
  * alone here once told an admin "No webhook" about the one they had just saved.
+ *
+ * ## Two powers, and each holder is shown their own half (R-265 / UC-56 2)
+ *
+ * The announcements are `settings.announcements` and the server's wiring is
+ * `settings.integrations` - the two powers `./actions.ts` asks for. The page
+ * admits a holder of either, or an admin, and renders the half each one's
+ * actions would accept: a form whose save is certain to be refused is a
+ * button that bounces. The guard is `requireAnyPermission`, naming both, on
+ * the first line - as `/admin/events` has it.
  */
 
 import AppHeader from "@/components/AppHeader";
@@ -32,7 +41,9 @@ import {
   getIntegrationConfig,
 } from "@/lib/discord";
 import { getGuildRoles } from "@/lib/discord-roles";
-import { requireAdmin } from "@/lib/session-guards";
+import { holderFor } from "@/lib/permissions";
+import { holds } from "@/lib/permissions-policy";
+import { requireAnyPermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +61,10 @@ export default async function AdminSettingsPage({
    */
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 } = {}) {
-  await requireAdmin();
+  const user = await requireAnyPermission(["settings.announcements", "settings.integrations"]);
+  const holder = await holderFor(user);
+  const mayAnnounce = holds(holder, "settings.announcements");
+  const mayIntegrate = holds(holder, "settings.integrations");
 
   const params = (await searchParams) ?? {};
   const asked = Array.isArray(params.kind) ? params.kind[0] : params.kind;
@@ -124,6 +138,8 @@ export default async function AdminSettingsPage({
         />
 
         <div>
+          {mayAnnounce && (
+          <>
           <AnnouncementSettings
             specs={ANNOUNCEMENTS}
             saved={saved}
@@ -165,7 +181,10 @@ export default async function AdminSettingsPage({
               rather than disappearing.
             </p>
           </Section>
+          </>
+          )}
 
+          {mayIntegrate && (
           <ServerSettings
             gate={{ enabled: gate.enabled, guildId: gate.guildId, source: gate.source.guildId }}
             integrations={{
@@ -187,6 +206,7 @@ export default async function AdminSettingsPage({
               database: Boolean(process.env.DATABASE_URL),
             }}
           />
+          )}
         </div>
 
       </Page>

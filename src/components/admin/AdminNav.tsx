@@ -1,97 +1,38 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { cx } from "@/components/ui";
+import AdminNavLinks from "./AdminNavLinks";
+import { sectionsFor } from "./sections";
+import { holderFor } from "@/lib/permissions";
+import { getCurrentUser } from "@/lib/session-guards";
 
 /**
- * The admin area's own navigation, sat in the top bar next to the session links.
+ * The admin bar, and the one question that decides what is in it (R-265 /
+ * UC-56 2): what do the signed-in member's powers reach?
  *
- * Eleven sections as text links on the ground rather than eleven bordered buttons:
- * side by side, boxes read as one object and the bar stops looking like
- * navigation at all. Only the current section is lit, and it carries a
- * hairline under it.
+ * A server component that asks, around a client one that draws - `SiteNav` and
+ * `SiteNavLinks` over again, and for the reason given there: the rule about
+ * what exists is the server's, the rule about where you are is the browser's.
+ * Asking here rather than in each page keeps the rule in one place instead of
+ * threading it through thirteen `<AdminNav />`s, any one of which could forget.
  *
- * Availability (UC-07 1) and the host queue are here because they were not,
- * and the account menu had them: a page an admin is told to "open" in a use
- * case has to be reachable from the bar that lists the admin area, or the use
- * case starts with a step nobody can take.
+ * The powers are read on this request (`holderFor`), so a section stops being
+ * drawn on the first page load after its power is taken away (UC-56 3b).
+ *
+ * ## It is not what keeps anybody out
+ *
+ * `getCurrentUser` identifies and refuses nobody, which is right for a row of
+ * links and would be wrong for anything else. Every page this bar is drawn on
+ * has already awaited a guard of its own before rendering it, and every page
+ * it links to does the same. A link that is not drawn is a courtesy to a
+ * holder who would only be turned away; the page turning them away is the
+ * protection. See `sections.ts`.
  *
  * Every one of these also lives in the account menu, which is where they are
- * reachable from on a narrow screen — this row hides below `lg` rather than
- * collapsing into a hamburger, per §4.
- *
- * `startsWith` rather than equality, so `/admin/events/[id]` still lights the
- * Events link — except for `/admin` itself, which is a prefix of every other
- * link here and would otherwise light permanently. It gets an exact match.
+ * reachable from on a narrow screen — the row hides below `lg` rather than
+ * collapsing into a hamburger, per §4. `NavMenu` filters its entries through
+ * the same `sectionsFor`, and `__tests__/holder-nav.test.ts` pins the two
+ * lists to each other.
  */
-
-/**
- * Exported so the list itself can be tested: which pages the admin area admits
- * to having is a fact about the product (UC-07 1), and it is the one part of
- * this component that has nothing to do with rendering.
- */
-export const ADMIN_SECTIONS = [
-  { href: "/admin", label: "Tonight", exact: true },
-  { href: "/admin/events", label: "Events" },
-  { href: "/admin/championships", label: "Seasons" },
-  { href: "/admin/availability", label: "Availability" },
-  { href: "/admin/host", label: "Hosts" },
-  { href: "/admin/templates", label: "Templates" },
-  { href: "/admin/games", label: "Games" },
-  { href: "/admin/users", label: "Members" },
-  // R-247 / UC-48 1. Beside Members and Audit because it draws the same line
-  // they do: admin-only, not manager-scoped, since it spans every event.
-  { href: "/admin/hands", label: "Hands" },
-  { href: "/admin/audit", label: "Audit" },
-  { href: "/admin/settings", label: "Settings" },
-] as const;
-
-export default function AdminNav({ className }: { className?: string }) {
-  const pathname = usePathname() ?? "";
-
-  return (
-    <nav
-      /*
-       * `min-w-0` so the header can shrink this instead of widening past the
-       * page shell, and `overflow-x-auto` so what will not fit is still
-       * reachable. `overflow-y-hidden` is explicit: `overflow-x: auto` promotes
-       * the other axis to `auto` too, and a vertical scrollbar inside a 72px
-       * bar is not a thing anybody asked for.
-       */
-      className={cx(
-        // `py-2` is not spacing: the active link's underline hangs 2px below
-        // its box, and `overflow-y-hidden` would otherwise shave it off.
-        "hidden min-w-0 items-center gap-5 overflow-x-auto overflow-y-hidden py-2 lg:flex",
-        className
-      )}
-      aria-label="Admin sections"
-    >
-      {ADMIN_SECTIONS.map((section) => {
-        const active =
-          "exact" in section && section.exact
-            ? pathname === section.href
-            : pathname === section.href || pathname.startsWith(`${section.href}/`);
-        return (
-          <Link
-            key={section.href}
-            href={section.href}
-            aria-current={active ? "page" : undefined}
-            className={cx(
-              "relative py-1 text-14 transition-colors",
-              active ? "text-hot" : "text-muted hover:text-chalk"
-            )}
-          >
-            {section.label}
-            {active && (
-              <span
-                aria-hidden
-                className="absolute -bottom-0.5 left-0 right-0 h-px bg-union"
-              />
-            )}
-          </Link>
-        );
-      })}
-    </nav>
-  );
+export default async function AdminNav({ className }: { className?: string }) {
+  const user = await getCurrentUser();
+  if (!user) return null;
+  return <AdminNavLinks sections={sectionsFor(await holderFor(user))} className={className} />;
 }

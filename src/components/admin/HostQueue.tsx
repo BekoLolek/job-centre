@@ -33,18 +33,56 @@ import {
  * own control, and only a refusal with nowhere to sit becomes a banner. One
  * lump message at the top of a card with three controls makes the admin guess
  * which one it is about.
+ *
+ * ## Three steps, and not all of them are one power (R-265 / UC-56 2)
+ *
+ * Approving and declining are `hosts.approve`, which is what opens this page.
+ * Step 1 is also `events.create` - `createEventFromApplicationAction` asks for
+ * both - and the editor an approval used to land in is the event's own guard,
+ * which a decider who does not manage events does not pass. The catalogue the
+ * card points at is `games.manage`. So the page says which of those the
+ * reader holds, and this screen offers step 1 and links to an event or to
+ * Games only to somebody they would work for. Neither prop refuses
+ * anything: the actions and the editor's guard do.
  */
 
 export type LinkableEvent = { id: string; title: string; status: string };
 
+/**
+ * Where "Approve and hand it over" takes whoever pressed it: the event's
+ * editor, or `null` for nowhere - they stay on the queue, which reloads with
+ * the application under "Already decided".
+ *
+ * Approving hands the event to the *applicant*. The decider gets nothing from
+ * it, and the editor is on `requireEventManager`, which sends anybody else to
+ * `/me` - where a holder of `hosts.approve` alone used to be thrown by this
+ * button. The guard stays as it is; the push was what was wrong.
+ */
+export function editorAfterApproval(mayManageEvents: boolean, eventId: string): string | null {
+  return mayManageEvents ? `/admin/events/${eventId}` : null;
+}
+
+/** What the reader may do beyond deciding, which is what opened the page. */
+type Reach = {
+  /** Holds `events.create`, or is an admin: step 1 is theirs. */
+  mayCreateEvent: boolean;
+  /** Holds `events.manage`, or is an admin: an event's editor opens for them. */
+  mayManageEvents: boolean;
+  /** Holds `games.manage`, or is an admin: the catalogue opens for them. */
+  mayManageGames: boolean;
+};
+
 export default function HostQueue({
   applications,
   events,
+  mayCreateEvent,
+  mayManageEvents,
+  mayManageGames,
 }: {
   applications: HostApplication[];
   /** Events nobody hosts yet — what an approval may be linked to (UC-21 3). */
   events: LinkableEvent[];
-}) {
+} & Reach) {
   const pending = applications.filter((row) => row.status === "pending");
   const decided = applications.filter((row) => row.status !== "pending");
 
@@ -58,7 +96,14 @@ export default function HostQueue({
           </EmptyState>
         ) : (
           pending.map((application) => (
-            <Card key={application.id} application={application} events={events} />
+            <Card
+              key={application.id}
+              application={application}
+              events={events}
+              mayCreateEvent={mayCreateEvent}
+              mayManageEvents={mayManageEvents}
+              mayManageGames={mayManageGames}
+            />
           ))
         )}
       </div>
@@ -79,7 +124,7 @@ export default function HostQueue({
                 <span className="text-13 text-dim">
                   {application.by?.name ?? "somebody"} · {application.gameName}
                 </span>
-                {application.eventId && (
+                {application.eventId && mayManageEvents && (
                   <Link
                     href={`/admin/events/${application.eventId}`}
                     className="text-13 text-union underline underline-offset-4"
@@ -107,10 +152,13 @@ export const NO_REASON_GIVEN =
 function Card({
   application,
   events,
+  mayCreateEvent,
+  mayManageEvents,
+  mayManageGames,
 }: {
   application: HostApplication;
   events: LinkableEvent[];
-}) {
+} & Reach) {
   const router = useRouter();
   const [note, setNote] = useState("");
   const [eventId, setEventId] = useState("");
@@ -166,7 +214,10 @@ function Card({
         refused(result);
         return;
       }
-      router.push(`/admin/events/${result.data.eventId}`);
+      const editor = editorAfterApproval(mayManageEvents, result.data.eventId);
+      if (editor) router.push(editor);
+      // Not theirs to open: the queue reloads with this one decided.
+      else router.refresh();
     } catch {
       setError("Could not reach the server.");
     } finally {
@@ -236,22 +287,29 @@ function Card({
         </p>
         <p className="mt-2 text-13 leading-relaxed text-dim">
           One line of this becomes one sign-up question on the event, ready to edit — and{" "}
-          <Link href="/admin/games" className="text-union underline underline-offset-4">
-            Games
-          </Link>{" "}
+          {/* The catalogue is `games.manage`'s. The word is for everybody; the way in is not. */}
+          {mayManageGames ? (
+            <Link href="/admin/games" className="text-union underline underline-offset-4">
+              Games
+            </Link>
+          ) : (
+            "Games"
+          )}{" "}
           first if the game is not in the catalogue yet.
         </p>
       </div>
 
       {/* --- 1: the event ------------------------------------------- */}
       <div className="mt-4 flex flex-wrap items-end gap-3">
-        <Button
-          variant={eventId ? undefined : "union"}
-          disabled={busy !== null}
-          onClick={() => void create()}
-        >
-          {busy === "create" ? "Creating…" : "Create event from this application"}
-        </Button>
+        {mayCreateEvent && (
+          <Button
+            variant={eventId ? undefined : "union"}
+            disabled={busy !== null}
+            onClick={() => void create()}
+          >
+            {busy === "create" ? "Creating…" : "Create event from this application"}
+          </Button>
+        )}
         <Select
           label="Approve onto"
           value={eventId}
@@ -268,6 +326,12 @@ function Card({
         </Select>
       </div>
       {created && <p className="mt-2 text-13 leading-relaxed text-success">{created}</p>}
+      {!mayCreateEvent && (
+        <p className="mt-2 text-13 leading-relaxed text-dim">
+          Creating an event is a separate power, and not one of yours. Approve onto an event
+          somebody has already built for this, or ask whoever creates events to build it.
+        </p>
+      )}
 
       {/* --- 2 and 3: the decision ---------------------------------- */}
       <div className="mt-4 space-y-3">

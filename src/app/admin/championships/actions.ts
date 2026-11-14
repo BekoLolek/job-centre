@@ -4,13 +4,15 @@
  * The server actions behind `/admin/championships`.
  *
  * Thin on purpose, exactly like `/admin/events`' and `/admin/templates`': prove
- * the caller is an admin, hand the arguments to `src/lib/championships.ts` —
+ * the caller holds `championships.manage` or is an admin, hand the arguments
+ * to `src/lib/championships.ts` —
  * which owns every rule and is tested against real Postgres — and revalidate
  * the pages whose content just changed. There is no business logic here and
  * there must not be: a second copy of "may this season be published" is a
  * second copy that drifts.
  *
- * `requireAdmin()` runs inside every action rather than being trusted from the
+ * `requirePermission("championships.manage")` runs inside every action rather
+ * than being trusted from the
  * page that rendered the button. A server action is a public endpoint; the
  * page's guard proves nothing about who is calling it five minutes later, and
  * the statuses below arrive from the browser and are checked against the enum
@@ -18,7 +20,7 @@
  *
  * ## The log lives here, and only here
  *
- * `recordAudit` needs to know *who* is acting, and `requireAdmin()`'s return
+ * `recordAudit` needs to know *who* is acting, and `requirePermission`'s return
  * value is the only place that is known — `src/lib/championships.ts` takes a
  * `Database` and is called by tests and seeds. The reopen gets its own line
  * naming the person (UC-35 2a), because it is the one move that unlocks a
@@ -36,7 +38,7 @@ import {
   setChampionshipStatus,
   updateChampionship,
 } from "@/lib/championships";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 /** This list, the one season's editor, and the log that just gained a line. */
 function refresh(championshipId?: string): void {
@@ -57,14 +59,14 @@ function refresh(championshipId?: string): void {
 export async function createChampionshipAction(
   input: Pick<ChampionshipFields, "description" | "runsFrom" | "runsTo"> & { name: string }
 ): Promise<ChampionshipResult<{ id: string; slug: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("championships.manage");
 
-  const result = await createChampionship({ ...input, createdBy: admin.id });
+  const result = await createChampionship({ ...input, createdBy: actor.id });
   if (!result.ok) return result;
 
   await recordAudit({
     action: "championship.created",
-    actor: admin,
+    actor,
     subject: result.data.id,
     summary: `Created the championship "${result.data.name}".`,
     detail: { slug: result.data.slug },
@@ -90,14 +92,14 @@ export async function saveChampionshipAction(
   championshipId: string,
   fields: ChampionshipFields
 ): Promise<ChampionshipResult<{ name: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("championships.manage");
 
   const result = await updateChampionship(championshipId, fields);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "championship.updated",
-    actor: admin,
+    actor,
     subject: championshipId,
     summary: `Changed the championship "${result.data.name}".`,
     detail: {
@@ -132,7 +134,7 @@ export async function setChampionshipStatusAction(
   status: ChampionshipStatusValue,
   options: StatusMoveOptions = {}
 ): Promise<ChampionshipResult<{ status: ChampionshipStatusValue }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("championships.manage");
   // Both arrive from the browser; anything that is not a status is refused
   // before it can reach a write or a log line.
   const statuses: readonly string[] = championshipStatus.enumValues;
@@ -150,14 +152,14 @@ export async function setChampionshipStatusAction(
     reopened
       ? {
           action: "championship.reopened",
-          actor: admin,
+          actor,
           subject: championshipId,
-          summary: `${admin.displayName ?? admin.name ?? "An admin"} reopened "${result.data.name}".`,
+          summary: `${actor.displayName ?? actor.name ?? "Somebody"} reopened "${result.data.name}".`,
           detail: { from: "closed", status: "published" },
         }
       : {
           action: "championship.status",
-          actor: admin,
+          actor,
           subject: championshipId,
           summary: `Moved "${result.data.name}" to ${result.data.status}.`,
           detail: { status: result.data.status, confirmed: options.confirm === true },

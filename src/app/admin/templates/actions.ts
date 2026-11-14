@@ -3,7 +3,8 @@
 /**
  * The server actions behind `/admin/templates`.
  *
- * Thin on purpose, exactly like `/admin/games`'s: prove the caller is an admin,
+ * Thin on purpose, exactly like `/admin/games`'s: prove the caller holds
+ * `templates.manage` or is an admin,
  * hand the arguments to `src/lib/admin-templates.ts` — which owns every rule
  * and is tested against real Postgres — and revalidate the pages whose content
  * just changed.
@@ -29,7 +30,7 @@ import {
   updateTemplate,
 } from "@/lib/admin-templates";
 import { recordAudit } from "@/lib/audit";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 /** This page, the create-event picker that reads the same rows, and the log. */
 function refresh(): void {
@@ -41,14 +42,14 @@ function refresh(): void {
 export async function createTemplateAction(
   input: TemplateInput
 ): Promise<TemplateResult<{ id: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("templates.manage");
 
   const result = await createTemplate(input);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "template.created",
-    actor: admin,
+    actor,
     subject: result.data.id,
     summary: `Created the template "${result.data.name}".`,
     detail: { type: result.data.type, questions: result.data.questions.length },
@@ -62,14 +63,14 @@ export async function updateTemplateAction(
   templateId: string,
   patch: TemplatePatch
 ): Promise<TemplateResult<{ id: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("templates.manage");
 
   const result = await updateTemplate(templateId, patch);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "template.updated",
-    actor: admin,
+    actor,
     subject: templateId,
     summary: `Changed the template "${result.data.name}".`,
     detail: { type: result.data.type, questions: result.data.questions.length },
@@ -83,14 +84,14 @@ export async function duplicateTemplateAction(
   templateId: string,
   name?: string
 ): Promise<TemplateResult<{ id: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("templates.manage");
 
   const result = await duplicateTemplate(templateId, name);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "template.duplicated",
-    actor: admin,
+    actor,
     subject: result.data.id,
     summary: `Duplicated a template as "${result.data.name}".`,
     detail: { from: templateId },
@@ -111,14 +112,14 @@ export async function setTemplateActiveAction(
   templateId: string,
   isActive: boolean
 ): Promise<TemplateResult<{ id: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("templates.manage");
 
   const result = await setTemplateActive(templateId, isActive);
   if (!result.ok) return result;
 
   await recordAudit({
     action: isActive ? "template.activated" : "template.deactivated",
-    actor: admin,
+    actor,
     subject: templateId,
     summary: `${isActive ? "Activated" : "Deactivated"} the template "${result.data.name}".`,
   });
@@ -138,14 +139,14 @@ export async function moveTemplateAction(
   templateId: string,
   direction: "up" | "down"
 ): Promise<TemplateResult<null>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("templates.manage");
 
   const result = await moveTemplate(templateId, direction);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "template.moved",
-    actor: admin,
+    actor,
     subject: templateId,
     summary: `Moved a template ${direction} the order.`,
   });
@@ -166,14 +167,14 @@ export async function moveTemplateAction(
 export async function deleteTemplateAction(
   templateId: string
 ): Promise<TemplateResult<{ usedBy: number }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("templates.manage");
 
   const result = await deleteTemplate(templateId);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "template.deleted",
-    actor: admin,
+    actor,
     subject: templateId,
     summary: `Deleted the template "${result.data.name}".`,
     detail: { eventsKept: result.data.usedBy },
@@ -193,14 +194,14 @@ export async function createTemplateFromEventAction(
   eventId: string,
   input: FromEventInput = {}
 ): Promise<TemplateResult<{ id: string; name: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("templates.manage");
 
   const result = await createTemplateFromEvent(eventId, input);
   if (!result.ok) return result;
 
   await recordAudit({
     action: "template.from_event",
-    actor: admin,
+    actor,
     eventId,
     subject: result.data.id,
     summary: `Made the template "${result.data.name}" from an event.`,

@@ -135,16 +135,21 @@ function handsOverAPicture(value: string | null): boolean {
 
 const AVATARS = callSites("Avatar", "src/components/ui/Avatar.tsx");
 const CHIPS = callSites("PlayerChip", "src/components/draft/PlayerChip.tsx");
+const CARDS = callSites("PlayerCard", "src/components/draft/PlayerCard.tsx");
 
 describe("the sweep itself", () => {
   /*
    * The floors. A sweep that matched nothing would pass silently, so the corpus
    * is asserted to be real before anything is concluded from it: eleven
    * avatars and seven chips were counted by hand when this was written.
+   *
+   * Five chips since Task 121: the two on the Teams tab's rosters became
+   * `PlayerCard`s, and cards are swept below, with a floor of their own.
    */
-  it("finds every avatar and every chip on the site", () => {
+  it("finds every avatar, every chip and every card on the site", () => {
     expect(AVATARS.length).toBeGreaterThanOrEqual(11);
-    expect(CHIPS.length).toBeGreaterThanOrEqual(7);
+    expect(CHIPS.length).toBeGreaterThanOrEqual(5);
+    expect(CARDS.length).toBeGreaterThanOrEqual(1);
   });
 
   it("reads a tag whose attributes run over several lines", () => {
@@ -178,6 +183,12 @@ describe("every call site hands over a picture", () => {
   });
 
   it.each(CHIPS)("$where passes <PlayerChip> an avatarUrl", ({ attrs }) => {
+    expect(handsOverAPicture(valueOf(attrs, "avatarUrl"))).toBe(true);
+  });
+
+  // The name of what is handed over, which is all a sweep of the source can
+  // hold. That it is that player's picture is the call site's own test's.
+  it.each(CARDS)("$where passes <PlayerCard> an avatarUrl", ({ attrs }) => {
     expect(handsOverAPicture(valueOf(attrs, "avatarUrl"))).toBe(true);
   });
 });

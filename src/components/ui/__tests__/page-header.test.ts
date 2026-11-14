@@ -3,7 +3,7 @@ import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ADMIN_SECTIONS } from "../../admin/AdminNav";
+import { ADMIN_SECTIONS } from "../../admin/sections";
 import PageHeader, { type PageHeaderProps } from "../PageHeader";
 
 /**

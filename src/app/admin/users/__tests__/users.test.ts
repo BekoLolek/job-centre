@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Database, auditLog, sessions, users } from "@/db";
+import { type Database, adminAllowlist, auditLog, sessions, userNotes, users } from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 
 /*
@@ -42,13 +42,16 @@ vi.mock("@/lib/auth", () => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 
+const actions = await import("../actions");
 const {
   allowAdminAction,
   barAdminAction,
   endSessionsAction,
   grantAdminAction,
   revokeAdminAction,
-} = await import("../actions");
+} = actions;
+const { grantPower } = await import("@/lib/permissions");
+const { POWERS } = await import("@/lib/permissions-policy");
 const { getAllowlistEntries } = await import("@/lib/admin-allowlist");
 const { resolveAdminFlag } = await import("@/lib/auth-policy");
 const { adminCount } = await import("@/lib/admin-users");
@@ -73,7 +76,6 @@ beforeEach(async () => {
   await db.delete(auditLog);
   await db.delete(sessions);
   await db.delete(users);
-  const { adminAllowlist } = await import("@/db");
   await db.delete(adminAllowlist);
 });
 
@@ -118,6 +120,76 @@ describe("the guard", () => {
 
   it("refuses somebody signed in as nobody", async () => {
     await expect(revokeAdminAction("00000000-0000-0000-0000-000000000000")).rejects.toThrow();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* R-264 — no power reaches this file                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Granting is never a power, so the member asking here holds **every** power
+ * there is and is still turned away from every export of the module. One call
+ * per export, each one something that would be written if the guard let them
+ * through: a real member to promote, a second admin to demote, a real id to
+ * allow and to bar.
+ *
+ * Every power rather than a likely one, because the claim is about the whole
+ * vocabulary: an action moved onto any `requirePermission` at all admits this
+ * member, whichever power it names.
+ */
+describe("a member holding every power there is", () => {
+  let target: string;
+  let otherAdmin: string;
+
+  const CALLS: Record<string, () => Promise<unknown>> = {
+    grantAdminAction: () => actions.grantAdminAction(target),
+    revokeAdminAction: () => actions.revokeAdminAction(otherAdmin),
+    endSessionsAction: () => actions.endSessionsAction(target),
+    listUserNotesAction: () => actions.listUserNotesAction(target),
+    addUserNoteAction: () => actions.addUserNoteAction(target, "A note they may not write."),
+    allowAdminAction: () => actions.allowAdminAction({ discordId: TARGET_DISCORD_ID }),
+    barAdminAction: () => actions.barAdminAction({ discordId: TARGET_DISCORD_ID }),
+  };
+
+  beforeEach(async () => {
+    const granter = await makeAdmin("The admin who granted");
+    otherAdmin = await makeAdmin("A second admin");
+    target = await makeUser(db, { displayName: "Target", discordId: TARGET_DISCORD_ID });
+    await db.insert(sessions).values({
+      sessionToken: "an-open-session",
+      userId: target,
+      expires: new Date("2100-01-01T00:00:00Z"),
+    });
+    const holder = await makeUser(db, { displayName: "Holder of everything" });
+    for (const power of POWERS) {
+      await grantPower({ userId: holder, power, grantedByUserId: granter }, db);
+    }
+    signedInAs(holder);
+  });
+
+  /** What the seven actions between them can move. */
+  async function written() {
+    const [lines, flags, allowed, notes, open] = await Promise.all([
+      db.select({ id: auditLog.id }).from(auditLog),
+      db.select({ id: users.id, isAdmin: users.isAdmin }).from(users).orderBy(users.id),
+      db.select().from(adminAllowlist),
+      db.select({ id: userNotes.id }).from(userNotes),
+      db.select({ token: sessions.sessionToken }).from(sessions),
+    ]);
+    return { audit: lines.length, flags, allowed, notes, open };
+  }
+
+  it("has a call here for every action the members file exports", () => {
+    expect(Object.keys(CALLS).sort()).toEqual(Object.keys(actions).sort());
+  });
+
+  it.each(Object.keys(CALLS))("is turned away from %s, and nothing is written", async (action) => {
+    const before = await written();
+
+    await expect(CALLS[action]()).rejects.toThrow(/NEXT_REDIRECT/);
+
+    expect(await written()).toEqual(before);
   });
 });
 

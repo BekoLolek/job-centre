@@ -82,7 +82,10 @@ export type HandRevealProps = {
   format: TeamFormat;
   /** The roles a hand covers, in the order they are dealt. */
   roles: readonly HeroRole[];
-  /** How many in each role (R-210). */
+  /**
+   * How many in each role (R-210) — the event’s, for the copy before the draw.
+   * Once there are cards the count is read off them instead.
+   */
   perRole: number;
   /** The server action. Deals once and returns what is stored. */
   draw: () => Promise<DrawOutcome>;
@@ -152,6 +155,16 @@ export default function HandReveal({
 
   const progress = revealProgress(view);
 
+  /*
+   * Once there are cards, the count above them is theirs (R-271 / UC-58 7a).
+   * `perRole` is the event’s width as it was when this page loaded, and the
+   * hand the click brings back is whatever `dealFor` stored — at the width the
+   * event has by then, or the width of a hand another device already drew. A
+   * hand is the same number in every role, so the cards divide by the roles.
+   */
+  const width = cards === null ? perRole : view.total / roles.length;
+  const handTotal = width * roles.length;
+
   return (
     <div className="space-y-6">
       {/* --- Said before the button, not after it (UC-39 2) ---------- */}
@@ -164,13 +177,13 @@ export default function HandReveal({
         </p>
 
         <h2 className="font-display text-24 leading-tight">
-          {perRole} in each of {roles.length} roles, so {perRole * roles.length} in a hand
+          {width} in each of {roles.length} roles, so {handTotal} in a hand
         </h2>
 
         {cards === null ? (
           <p className="max-w-prose text-14 leading-relaxed text-muted">
             <span className="text-chalk">The draw happens once.</span> Your{" "}
-            {perRole * roles.length} are decided and written down the moment you click,
+            {handTotal} are decided and written down the moment you click,
             before the first card turns — so closing this tab, reloading, or clicking again
             shows you exactly the same hand. There is no reroll, and nobody gets a second
             go.
@@ -178,7 +191,7 @@ export default function HandReveal({
         ) : (
           <p className="max-w-prose text-14 leading-relaxed text-muted">
             <span className="text-chalk">The draw happened once.</span> These{" "}
-            {perRole * roles.length} were decided and written down before the first card
+            {handTotal} were decided and written down before the first card
             turned, and they are what you hold however many times this page is opened.
           </p>
         )}
@@ -190,7 +203,7 @@ export default function HandReveal({
           {error && <Alert>{error}</Alert>}
           <div className="flex flex-wrap items-center gap-4">
             <Button variant="union" onClick={() => void click()} disabled={busy}>
-              {busy ? "Dealing…" : `Draw my ${perRole * roles.length}`}
+              {busy ? "Dealing…" : `Draw my ${handTotal}`}
             </Button>
             <span className="text-12 text-dim">
               {roles.join(" · ")}

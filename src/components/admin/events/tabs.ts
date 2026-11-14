@@ -48,8 +48,8 @@
  * page and by a `"use client"` component, and the only way to be certain it
  * stays safe for both is for it to reach for nothing. {@link TabVisibility} is
  * declared structurally for that reason: `EventShape` from
- * `src/lib/events-policy.ts` supplies two of its three members without this
- * file knowing it exists, and the third ({@link HeroListFact}) is a plain
+ * `src/lib/events-policy.ts` supplies three of its four members without this
+ * file knowing it exists, and the fourth ({@link HeroListFact}) is a plain
  * object the server page builds.
  */
 
@@ -226,16 +226,18 @@ export type HeroListFact =
   | { game: string; heroes: boolean };
 
 /**
- * The three facts that decide what is drawn.
+ * The four facts that decide what is drawn.
  *
- * `teamEvent` and `draft` are answers off the Format panel, declared
+ * `teamEvent`, `draft` and `heroes` are answers off the Format panel, declared
  * structurally rather than imported so that `EventShape` from
  * `src/lib/events-policy.ts` supplies them without this module importing
- * anything (see the file's docblock). `heroList` is a fact about **another
- * table** — the game's hero list — so no stored config can supply it: the
- * server page reads it (`hasHeroList`) and passes it in.
+ * anything (see the file's docblock). `heroes` is whether the night draws
+ * random heroes at all (R-269) — required, for the reason `heroList` is,
+ * below. `heroList` is a fact about **another table** — the game's hero list —
+ * so no stored config can supply it: the server page reads it (`hasHeroList`)
+ * and passes it in.
  *
- * ## Why the third member is required
+ * ## Why the `heroList` member is required
  *
  * Two alternatives were weighed and rejected.
  *
@@ -256,6 +258,7 @@ export type HeroListFact =
 export type TabVisibility = {
   teamEvent: boolean;
   draft: boolean;
+  heroes: boolean;
   heroList: HeroListFact;
 };
 
@@ -271,18 +274,23 @@ export type TabVisibility = {
 export const TEAM_ONLY_KEYS: readonly TabKey[] = ["draft", "teams", "captains", "format"];
 
 /**
- * The one tab that needs a hero list (R-239 / UC-47 preconditions).
+ * The one tab that needs a hero list (R-239 / UC-47 preconditions) — and an
+ * event that draws heroes at all (R-269 / UC-58 3a).
  *
  * A list of its own rather than a fifth entry in {@link TEAM_ONLY_KEYS},
  * because the two hang on different facts and come back from different
- * screens: a team tab comes back from Setup → Format, Hands from Setup →
- * Basics (where a game is chosen) or from the game's own hero list. The sweep
- * in `shape-tabs.test.ts` classifies every key into exactly one of the three
- * lists, so a tab in none of them fails there.
+ * screens: a team tab comes back when the event has sides; Hands comes back
+ * from the hero toggle on Setup → Format, from Setup → Basics (where a game is
+ * chosen), or from the game's own hero list. The sweep in `shape-tabs.test.ts`
+ * classifies every key into exactly one of the three lists, so a tab in none
+ * of them fails there.
  *
- * Hands does **not** depend on the shape: a solo night deals hands as readily
- * as a team night, and the draw page never asks. Nor on the event's status —
- * the sheet is as true after the night as before it.
+ * Hands **does** depend on the shape, in one answer of it: `heroes`, the
+ * Format panel's toggle. An event that says it draws no heroes has no hands
+ * sheet to open, whatever its game's list holds. It does not depend on the
+ * shape's *other* answers — a solo night deals hands as readily as a team
+ * night — nor on the event's status: the sheet is as true after the night as
+ * before it.
  */
 export const HERO_LIST_KEYS: readonly TabKey[] = ["hands"];
 
@@ -296,10 +304,17 @@ export const HERO_LIST_KEYS: readonly TabKey[] = ["hands"];
  * answers both questions, so the rail cannot hide a tab the explanation does
  * not cover.
  *
- * ## Hands has two sentences, not one
+ * ## Hands has three sentences, not one
  *
- * An event with no game and an event whose game has an empty hero list are
- * both without a Hands tab, and are fixed on different screens: the first on
+ * An event that does not draw heroes has no Hands tab, and that is asked
+ * **first**: the toggle is the manager's own decision about this event, and
+ * while it is off neither choosing a game nor filling a hero list brings the
+ * tab back, so either of the other two sentences would send the reader to a
+ * screen that cannot fix it (R-269 / UC-58 3a).
+ *
+ * With the toggle on, an event with no game and an event whose game has an
+ * empty hero list are both without a Hands tab, and are fixed on different
+ * screens: the first on
  * Setup → Basics, where a game is chosen; the second on that game's hero list
  * under Admin → Games, which the sentence names by the game's name so the
  * manager knows which list to fill rather than which event to blame (UC-47
@@ -319,6 +334,9 @@ export const HERO_LIST_KEYS: readonly TabKey[] = ["hands"];
  */
 export function tabHiddenBecause(tab: TabKey, shape: TabVisibility): string | null {
   if (HERO_LIST_KEYS.includes(tab)) {
+    if (!shape.heroes) {
+      return `${TAB_LABELS[tab]} is only for an event that draws heroes, and this one does not. Setup → Format is where that is decided.`;
+    }
     const list = shape.heroList;
     if (list.game === null) {
       return `${TAB_LABELS[tab]} is only for an event with a game, and this one has none. Setup → Basics is where a game is chosen.`;
@@ -412,11 +430,13 @@ export type TabLanding = {
  * event — lands the same way, on the Format panel with
  * {@link setupHiddenBecause}'s sentence (UC-44 6b).
  *
- * A link to **Hands** on an event that has none lands on Setup → Basics
- * instead (UC-47 1a, 1b) — see {@link panelThatDecides}. The sentence it
- * carries says which of the two reasons applies, and for an empty hero list it
- * names the game, because the screen that fixes *that* is not in the editor
- * at all.
+ * A link to **Hands** on an event that draws heroes and has no hero list
+ * lands on Setup → Basics instead (UC-47 1a, 1b) — see
+ * {@link panelThatDecides}. The sentence it carries says which of the two
+ * reasons applies, and for an empty hero list it names the game, because the
+ * screen that fixes *that* is not in the editor at all. On an event that does
+ * not draw heroes it lands on Format like every other hidden tab, because
+ * that is where the toggle is (UC-58 3a).
  */
 export function landOn(
   raw: string | string[] | undefined,
@@ -424,7 +444,9 @@ export function landOn(
 ): TabLanding {
   const tab = tabFrom(raw);
   const why = tabHiddenBecause(tab, shape);
-  if (why !== null) return { tab: "setup", setup: panelThatDecides(tab), asked: tab, why };
+  if (why !== null) {
+    return { tab: "setup", setup: panelThatDecides(tab, shape), asked: tab, why };
+  }
 
   const setup = setupFrom(raw);
   const panelWhy = setupHiddenBecause(setup, shape);
@@ -437,14 +459,16 @@ export function landOn(
  * The Setup panel a hidden tab comes back from — where a link to it lands.
  *
  * Format for the team-only tabs, because that is where sides and the draft
- * are decided (UC-42 5a). Basics for Hands, because that is where a game is
- * chosen (UC-47 1a); an empty hero list is fixed outside the editor entirely,
- * and Basics is still the panel that shows which game the event is on, so it
- * is the nearest screen that can say so. Nothing else is hidden, so nothing
- * else lands anywhere.
+ * are decided (UC-42 5a) — and for Hands on an event that does not draw
+ * heroes, because the toggle is on that panel too (UC-58 3a). Basics for
+ * Hands otherwise, because that is where a game is chosen (UC-47 1a); an
+ * empty hero list is fixed outside the editor entirely, and Basics is still
+ * the panel that shows which game the event is on, so it is the nearest
+ * screen that can say so. Nothing else is hidden, so nothing else lands
+ * anywhere.
  */
-function panelThatDecides(tab: TabKey): SetupKey {
-  return HERO_LIST_KEYS.includes(tab) ? "basics" : "shape";
+function panelThatDecides(tab: TabKey, shape: TabVisibility): SetupKey {
+  return HERO_LIST_KEYS.includes(tab) && shape.heroes ? "basics" : "shape";
 }
 
 /**

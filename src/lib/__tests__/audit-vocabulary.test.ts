@@ -106,6 +106,31 @@ const QUESTIONS: Array<[action: string, heading: string]> = [
   ["field.deleted", "Question deleted"],
 ];
 
+/**
+ * Removing a suggestion, which wrote no line at all before Task 139. Two
+ * actions for one button: whose the suggestion was decides which.
+ */
+const SUGGESTION_REMOVALS: Array<[action: string, heading: string]> = [
+  ["suggestion.deleted", "Suggestion removed"],
+  ["suggestion.withdrawn", "Own suggestion removed"],
+];
+
+/**
+ * The rest of `/admin/games`, which wrote no line at all before Task 137: the
+ * games themselves, a game's rank ladder, and bringing a question back or
+ * moving it.
+ */
+const CATALOGUE: Array<[action: string, heading: string]> = [
+  ["game.added", "Game added"],
+  ["game.renamed", "Game renamed"],
+  ["game.activated", "Game activated"],
+  ["game.deactivated", "Game deactivated"],
+  ["game.moved", "Games reordered"],
+  ["game.ladder", "Rank ladder changed"],
+  ["field.restored", "Question brought back"],
+  ["field.moved", "Questions reordered"],
+];
+
 describe("the headings the log already had", () => {
   it.each(PINNED)("%s still reads “%s”", (action, heading) => {
     expect(actionLabel(action)).toBe(heading);
@@ -122,7 +147,13 @@ describe("the pin covers the whole vocabulary", () => {
      * two-file change — the heading goes in a table here in the same diff, and
      * from then on it is pinned like the rest.
      */
-    const pinned = [...PINNED, ...NEWLY_NAMED, ...QUESTIONS].map(([action]) => action);
+    const pinned = [
+      ...PINNED,
+      ...NEWLY_NAMED,
+      ...QUESTIONS,
+      ...SUGGESTION_REMOVALS,
+      ...CATALOGUE,
+    ].map(([action]) => action);
 
     expect(Object.keys(AUDIT_ACTIONS).sort()).toEqual(pinned.sort());
   });
@@ -164,4 +195,48 @@ describe("the profile questions in the log's vocabulary", () => {
       expect(actionTone(action)).toBe("muted");
     }
   );
+});
+
+describe("removing a suggestion in the log's vocabulary", () => {
+  it.each(SUGGESTION_REMOVALS)("%s reads “%s”", (action, heading) => {
+    expect(AUDIT_ACTIONS).toHaveProperty([action]);
+    expect(actionLabel(action)).toBe(heading);
+  });
+
+  it("marks somebody else's suggestion being removed as something taken away", () => {
+    // The row goes and every like on it goes with it, by cascade — and it is
+    // the one of the two that a power, not authorship, allowed.
+    expect(actionTone("suggestion.deleted")).toBe("flare");
+  });
+
+  it("does not mark a member taking their own back that way", () => {
+    // No power is involved in it (R-163), so there is nothing here for the
+    // `destructive` modifier to be required on top of.
+    expect(actionTone("suggestion.withdrawn")).toBe("muted");
+  });
+});
+
+describe("the games catalogue in the log's vocabulary", () => {
+  it.each(CATALOGUE)("%s reads “%s”", (action, heading) => {
+    expect(AUDIT_ACTIONS).toHaveProperty([action]);
+    expect(actionLabel(action)).toBe(heading);
+  });
+
+  it("marks a ladder change as something taken away", () => {
+    // It is the one action on the page that deletes what members stored: an
+    // answer the new ladder does not recognise is cleared.
+    expect(actionTone("game.ladder")).toBe("flare");
+  });
+
+  it.each([
+    "game.added",
+    "game.renamed",
+    "game.activated",
+    "game.deactivated",
+    "game.moved",
+    "field.restored",
+    "field.moved",
+  ])("does not mark %s that way, because nothing is lost by it", (action) => {
+    expect(actionTone(action)).toBe("muted");
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ADMIN_SECTIONS } from "../AdminNav";
+import { ADMIN_SECTIONS } from "../sections";
 
 /**
  * What the admin bar admits the admin area contains.
@@ -31,8 +31,10 @@ describe("the admin bar's sections", () => {
   it("links the player hand history, beside Members and Audit (UC-48 1)", () => {
     // UC-48 1 is "Admin opens Hands from the admin nav" — the same first step
     // the two entries above were missing. Beside the other two admin-only
-    // pages, because that is the line R-247 draws: `/admin/users`,
-    // `/admin/hands` and `/admin/audit` are the three `requireAdmin` guards.
+    // pages, because that is the line R-247 drew: `/admin/users`,
+    // `/admin/hands` and `/admin/audit` were the three `requireAdmin` guards.
+    // Task 130 put the second and third on `members.read` and `audit.read`;
+    // the order in the bar is unchanged.
     expect(hrefs).toContain("/admin/hands");
     expect(hrefs.indexOf("/admin/hands")).toBe(hrefs.indexOf("/admin/users") + 1);
     expect(hrefs.indexOf("/admin/audit")).toBe(hrefs.indexOf("/admin/hands") + 1);
@@ -60,10 +62,8 @@ describe("the admin bar's sections", () => {
      * on every admin page, and an always-lit link tells the reader nothing.
      */
     const home = ADMIN_SECTIONS.find((section) => section.href === "/admin");
-    expect(home && "exact" in home && home.exact).toBe(true);
-    expect(
-      ADMIN_SECTIONS.filter((section) => "exact" in section && section.exact)
-    ).toHaveLength(1);
+    expect(home?.exact).toBe(true);
+    expect(ADMIN_SECTIONS.filter((section) => section.exact)).toHaveLength(1);
   });
 
   it("names each section once", () => {

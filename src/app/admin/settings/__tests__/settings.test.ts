@@ -36,6 +36,14 @@ vi.mock("@/db", async (importOriginal) => {
 vi.mock("@/lib/session-guards", () => ({
   // A real row, so the audit line the action writes can name its actor.
   requireAdmin: async () => ({ id: state.adminId, displayName: "Admin" }),
+  // The actions ask for a power (Task 128), and since Task 130 so does the
+  // page: either of the two, by `requireAnyPermission`. Who gets through either
+  // is the business of `src/app/__tests__/polls-suggestions-settings-powers.test.ts`
+  // and `src/app/admin/__tests__/holder-pages.test.ts`; here all of them let
+  // the admin in, because this file is about what happens after. The flag is
+  // on the row because the page reads it to decide which half to draw.
+  requirePermission: async () => ({ id: state.adminId, displayName: "Admin", isAdmin: true }),
+  requireAnyPermission: async () => ({ id: state.adminId, displayName: "Admin", isAdmin: true }),
 }));
 
 vi.mock("@/lib/auth", () => ({
@@ -61,6 +69,7 @@ const {
 
 /** The switches a kind has until somebody touches them. */
 const defaults = defaultAnnouncementSettings();
+const { maskWebhook } = await import("@/lib/announce");
 const { loadDashboard } = await import("@/lib/admin-dashboard");
 const { recordAudit } = await import("@/lib/audit");
 
@@ -116,7 +125,28 @@ describe("the webhook status", () => {
 
     expect(findElement(page, AnnouncementSettings)?.props.configured).toBe(false);
   });
+
+  it("puts the webhook's token nowhere in what the page renders", async () => {
+    await setIntegrationSetting(SETTING_KEYS.webhookUrl, WEBHOOK);
+
+    const page = await AdminSettingsPage();
+
+    // Every prop of every element, not the one prop that is meant to carry it:
+    // a second component handed the raw URL would be a second place it is shown.
+    expect(everyProp(page)).toContain(maskWebhook(WEBHOOK));
+    expect(everyProp(page)).not.toContain(TOKEN);
+  });
 });
+
+/** A webhook whose token is long enough that the mask has something to hide. */
+const TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+const WEBHOOK = `https://discord.test/api/webhooks/1399/${TOKEN}`;
+
+/** Every prop of every element in a rendered tree, as one string to search. */
+function everyProp(node: ReactNode): string {
+  // React's own bookkeeping (`_owner`, `_store`) is not a prop and loops.
+  return JSON.stringify(node, (key, value) => (key.startsWith("_") ? undefined : value));
+}
 
 describe("saving the integrations", () => {
   it("saves nothing when the webhook is valid but the address is not", async () => {
@@ -127,6 +157,38 @@ describe("saving the integrations", () => {
 
     expect(result.ok).toBe(false);
     expect((await getIntegrationConfig()).webhook).toBeNull();
+  });
+
+  it("hands the saved webhook back masked", async () => {
+    const result = await saveIntegrationsAction({ webhookUrl: WEBHOOK });
+
+    expect(result).toEqual({ ok: true, data: { webhook: maskWebhook(WEBHOOK), origin: null } });
+    expect(JSON.stringify(result)).not.toContain(TOKEN);
+  });
+
+  it("writes an audit line that says the webhook was set and does not carry it", async () => {
+    await handle.db.delete(auditLog);
+
+    await saveIntegrationsAction({ webhookUrl: WEBHOOK });
+
+    const lines = await handle.db
+      .select({ summary: auditLog.summary, detail: auditLog.detail })
+      .from(auditLog)
+      .where(eq(auditLog.action, "settings.integrations"));
+    expect(lines.map((line) => line.summary)).toEqual(["Integrations changed — webhook set."]);
+    expect(JSON.stringify(lines)).not.toContain(TOKEN);
+    expect(JSON.stringify(lines)).not.toContain("webhooks/1399");
+  });
+
+  it("keeps the webhook when its field is left blank beside a new address", async () => {
+    await setIntegrationSetting(SETTING_KEYS.webhookUrl, WEBHOOK);
+
+    await saveIntegrationsAction({ webhookUrl: "", siteOrigin: "https://jobcentre.example.test" });
+
+    expect(await getIntegrationConfig()).toMatchObject({
+      webhook: WEBHOOK,
+      origin: "https://jobcentre.example.test",
+    });
   });
 
   it("clears the site address back to the deployment's", async () => {

@@ -6,9 +6,22 @@
  * that returns them, because members must never see one and an admin has
  * nothing to work on until they can.
  *
- * Guarded by `requireAdmin()`, which sends a signed-in non-admin to `/signin`
- * with `?error=admin-only` rather than to a 403 — they are not being asked to
+ * ## Two powers open it, and each is shown its own half (R-265 / UC-56 2)
+ *
+ * The page is `list + create`, and those are two powers: `events.manage` finds
+ * an event and `events.create` makes one. So it admits a holder of either, or
+ * an admin, and sends anybody else who is signed in to `/signin` with
+ * `?error=admin-only` rather than to a 403 — they are not being asked to
  * authenticate again, they are being told the page is not theirs.
+ *
+ * The guard is `requireAnyPermission`, naming both, on the first line - where
+ * the sweep can read it. `admin/__tests__/holder-pages.test.ts` holds it to
+ * exactly those two.
+ *
+ * `EventsManager` is then told which half the reader holds. That is what it
+ * offers, never what stops anything: `createEventAction` asks for
+ * `events.create` itself, and the editor each row links to is on the event's
+ * own guard.
  */
 
 import AppHeader from "@/components/AppHeader";
@@ -21,7 +34,9 @@ import {
   listEventTemplates,
   listEvents,
 } from "@/lib/events";
-import { requireAdmin } from "@/lib/session-guards";
+import { holderFor } from "@/lib/permissions";
+import { holds } from "@/lib/permissions-policy";
+import { requireAnyPermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +45,9 @@ export const metadata = {
 };
 
 export default async function AdminEventsPage() {
-  await requireAdmin();
+  const user = await requireAnyPermission(["events.create", "events.manage"]);
+  const holder = await holderFor(user);
+  const mayManage = holds(holder, "events.manage");
 
   const [summaries, templates] = await Promise.all([listEvents(), listEventTemplates()]);
   const totals = await countApplicationsByStatus(summaries.map((event) => event.id));
@@ -88,7 +105,14 @@ export default async function AdminEventsPage() {
         />
 
         <EventsManager
-          rows={rows}
+          mayCreate={holds(holder, "events.create")}
+          mayManage={mayManage}
+          /*
+           * A row is a link to that event's editor and a status control, and
+           * neither works for a reader who manages no event - so they are
+           * handed none, rather than a list of drafts they can only look at.
+           */
+          rows={mayManage ? rows : []}
           templates={templates.map((template) => ({
             id: template.id,
             name: template.name,

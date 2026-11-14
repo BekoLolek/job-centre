@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { sectionsFor } from "@/components/admin/sections";
 import { Avatar, Eyebrow, cx } from "@/components/ui";
+import type { Holder, Power } from "@/lib/permissions-policy";
 
 /**
  * The account menu: an avatar and a name that open a panel of links.
@@ -24,6 +26,11 @@ export type NavMenuUser = {
   handle: string | null;
   avatarUrl: string | null;
   isAdmin: boolean;
+  /**
+   * The powers stored for them, read by `SessionNav` on this request. An
+   * array, not a `Set`, because it crosses from a server component.
+   */
+  powers: readonly Power[];
 };
 
 type Item = { href: string; label: string; hint?: string };
@@ -36,7 +43,13 @@ const MEMBER: Item[] = [
   { href: "/host", label: "Host an event", hint: "Propose one, or open yours" },
 ];
 
-const ADMIN: Item[] = [
+/**
+ * The admin area, as the menu words it. Exported with {@link adminMenuFor} so
+ * `__tests__/holder-nav.test.ts` can pin it to the bar's own list: below `lg`
+ * the bar is hidden, and an entry missing here is a page nobody on a phone can
+ * reach.
+ */
+export const ADMIN_MENU: Item[] = [
   { href: "/admin", label: "Tonight", hint: "What needs attention" },
   { href: "/admin/events", label: "Events" },
   { href: "/admin/championships", label: "Seasons", hint: "Championships and their scoring" },
@@ -52,6 +65,107 @@ const ADMIN: Item[] = [
   { href: "/admin/audit", label: "Audit log" },
   { href: "/admin/settings", label: "Settings" },
 ];
+
+/**
+ * The admin entries this member is shown: the ones whose section their powers
+ * reach, which is every one for an admin and none for a member who holds
+ * nothing (R-265 / UC-56 2, 2a).
+ *
+ * Asked of `sectionsFor`, the same function the bar is drawn from, so the menu
+ * cannot offer a page the bar would not. What it offers is a courtesy - each
+ * page behind these links refuses for itself.
+ */
+export function adminMenuFor(holder: Holder): Item[] {
+  const reached = new Set(sectionsFor(holder).map((section) => section.href));
+  return ADMIN_MENU.filter((item) => reached.has(item.href));
+}
+
+/**
+ * The panel the account button opens: who you are, the member links, the admin
+ * links your powers reach, and sign out.
+ *
+ * A component of its own, and exported, so it can be rendered without pressing
+ * the button - which a Node test cannot do. What matters here is the Admin
+ * group: it is drawn from {@link adminMenuFor} and **not from the admin flag**,
+ * because below `lg` the admin bar is hidden and this group is a holder's only
+ * way into the admin area (R-265 / UC-56 2). `__tests__/holder-nav.test.ts`
+ * renders this for a holder of each power and reads the links off it.
+ */
+export function AccountMenuPanel({
+  user,
+  name,
+  pathname,
+  signOut,
+}: {
+  user: NavMenuUser;
+  name: string;
+  /** Where the reader is, to mark the current entry. */
+  pathname: string;
+  signOut: () => Promise<void>;
+}) {
+  const admin = adminMenuFor({ isAdmin: user.isAdmin, powers: new Set(user.powers) });
+
+  const group = (items: Item[]) =>
+    items.map((item) => {
+      const current =
+        item.href === "/me" || item.href === "/admin"
+          ? pathname === item.href
+          : pathname === item.href || pathname.startsWith(`${item.href}/`);
+      return (
+        <Link
+          key={item.href}
+          href={item.href}
+          aria-current={current ? "page" : undefined}
+          className={cx(
+            "block px-4 py-2.5 transition-colors",
+            current ? "bg-union/10 text-hot" : "text-chalk/85 hover:bg-overlay-1 hover:text-hot"
+          )}
+        >
+          <span className="block text-14 leading-tight">{item.label}</span>
+          {item.hint && (
+            <span className="mt-0.5 block text-11 leading-tight text-muted">{item.hint}</span>
+          )}
+        </Link>
+      );
+    });
+
+  return (
+    <div
+      role="menu"
+      className="absolute right-0 z-50 mt-2 w-64 rounded-lg border border-hair bg-panel py-1.5 shadow-lift"
+    >
+      <div className="border-b border-hair px-4 pb-3 pt-2">
+        <p className="text-14 leading-tight text-chalk">{name}</p>
+        {user.handle && (
+          <Link
+            href={`/players/${user.handle}`}
+            className="num text-11 text-muted transition-colors hover:text-union"
+          >
+            /players/{user.handle}
+          </Link>
+        )}
+      </div>
+
+      <div className="py-1">{group(MEMBER)}</div>
+
+      {admin.length > 0 && (
+        <>
+          <Eyebrow as="p" className="border-t border-hair px-4 pb-1.5 pt-3 text-inherit">Admin</Eyebrow>
+          <div className="pb-1">{group(admin)}</div>
+        </>
+      )}
+
+      <form action={signOut} className="border-t border-hair pt-1">
+        <button
+          type="submit"
+          className="block w-full px-4 py-2.5 text-left text-14 text-muted transition-colors hover:bg-overlay-1 hover:text-flare"
+        >
+          Sign out
+        </button>
+      </form>
+    </div>
+  );
+}
 
 export default function NavMenu({
   user,
@@ -86,30 +200,6 @@ export default function NavMenu({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-
-  const group = (items: Item[]) =>
-    items.map((item) => {
-      const current =
-        item.href === "/me" || item.href === "/admin"
-          ? pathname === item.href
-          : pathname === item.href || pathname.startsWith(`${item.href}/`);
-      return (
-        <Link
-          key={item.href}
-          href={item.href}
-          aria-current={current ? "page" : undefined}
-          className={cx(
-            "block px-4 py-2.5 transition-colors",
-            current ? "bg-union/10 text-hot" : "text-chalk/85 hover:bg-overlay-1 hover:text-hot"
-          )}
-        >
-          <span className="block text-14 leading-tight">{item.label}</span>
-          {item.hint && (
-            <span className="mt-0.5 block text-11 leading-tight text-muted">{item.hint}</span>
-          )}
-        </Link>
-      );
-    });
 
   return (
     <div ref={root} className="relative">
@@ -166,40 +256,7 @@ export default function NavMenu({
       </button>
 
       {open && (
-        <div
-          role="menu"
-          className="absolute right-0 z-50 mt-2 w-64 rounded-lg border border-hair bg-panel py-1.5 shadow-lift"
-        >
-          <div className="border-b border-hair px-4 pb-3 pt-2">
-            <p className="text-14 leading-tight text-chalk">{name}</p>
-            {user.handle && (
-              <Link
-                href={`/players/${user.handle}`}
-                className="num text-11 text-muted transition-colors hover:text-union"
-              >
-                /players/{user.handle}
-              </Link>
-            )}
-          </div>
-
-          <div className="py-1">{group(MEMBER)}</div>
-
-          {user.isAdmin && (
-            <>
-              <Eyebrow as="p" className="border-t border-hair px-4 pb-1.5 pt-3 text-inherit">Admin</Eyebrow>
-              <div className="pb-1">{group(ADMIN)}</div>
-            </>
-          )}
-
-          <form action={signOut} className="border-t border-hair pt-1">
-            <button
-              type="submit"
-              className="block w-full px-4 py-2.5 text-left text-14 text-muted transition-colors hover:bg-overlay-1 hover:text-flare"
-            >
-              Sign out
-            </button>
-          </form>
-        </div>
+        <AccountMenuPanel user={user} name={name} pathname={pathname} signOut={signOut} />
       )}
     </div>
   );

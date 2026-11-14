@@ -31,25 +31,31 @@ const { SaveAsTemplate, showsSaveAsTemplate } = await import("../EventEditor");
  * A template changes what every future event starts from, which is not a
  * host's decision to make.
  *
- * `createTemplateFromEventAction` is the refusal that counts (`requireAdmin()`,
+ * `createTemplateFromEventAction` is the refusal that counts
+ * (`requirePermission("templates.manage")` - a holder of that power, or an admin -
  * and the row it writes is a new template, so there is no event row to
  * authorise against — see the component's docblock). This file covers the
  * other half: that a host is never shown the button in the first place.
+ *
+ * What the control is told is whether the reader may manage templates - the
+ * power or the flag, worked out by the page (Task 130). Which readers that is
+ * true for is `src/app/__tests__/holder-screens.test.ts`, which opens the page
+ * as each of them; here `true` is such a reader and `false` is a host.
  */
 
 /** The control as the editor renders it, markup and all. */
-function render(isAdmin: boolean | undefined): string {
+function render(mayManageTemplates: boolean | undefined): string {
   return renderToStaticMarkup(
     createElement(SaveAsTemplate, {
       eventId: "11111111-1111-1111-1111-111111111111",
       title: "Rivals Winter Cup",
-      isAdmin,
+      mayManageTemplates,
     })
   );
 }
 
 describe("who is offered Save as template (UC-08 10a)", () => {
-  it("offers it to an admin", () => {
+  it("offers it to a reader who may manage templates - an admin, or a holder of the power", () => {
     expect(showsSaveAsTemplate(true)).toBe(true);
   });
 
@@ -65,7 +71,7 @@ describe("who is offered Save as template (UC-08 10a)", () => {
 });
 
 describe("what the editor actually renders (UC-08 10a)", () => {
-  it("renders the control for an admin", () => {
+  it("renders the control for a reader who may manage templates", () => {
     expect(render(true)).toContain("Save as template");
   });
 

@@ -5,7 +5,8 @@
  *
  * `recordAudit` is called from the action files under `src/app` and from
  * nowhere else, and that is a rule rather than an accident. They are the trust
- * boundary: they are the only layer that has run `requireAdmin()` and therefore
+ * boundary: they are the only layer that has run the guard - `requireAdmin()`,
+ * `requirePermission()` or the event's own - and therefore
  * the only layer that knows *who is acting*. The rules modules underneath —
  * `events.ts`, `draft.ts`, `format.ts` — take a `Database` and are called by
  * tests, by seeds, by preview helpers and by each other, so an insert scattered
@@ -121,6 +122,21 @@ export const AUDIT_ACTIONS = {
   "settings.announcements": "Announcements changed",
   "settings.guild_gate": "Sign-in gate changed",
   "suggestion.status": "Suggestion updated",
+  /*
+   * A suggestion taken off the list (Task 139). One button, two actions, and
+   * whose the suggestion was decides which: `suggestion.deleted` is somebody
+   * removing another member's, which only an admin or a holder of
+   * `suggestions.moderate` can do; `suggestion.withdrawn` is anybody taking
+   * their own back, which needs no power at all (R-163).
+   *
+   * Two actions rather than an `own` flag in the detail, for the reason
+   * `announcement.posted_by_hand` is one: "who removed somebody else's idea"
+   * is found by scanning headings. It is also what lets the first be in
+   * `DESTRUCTIVE` below without the second: a rule that asks for a power
+   * before a destructive action must not catch a member removing their own.
+   */
+  "suggestion.deleted": "Suggestion removed",
+  "suggestion.withdrawn": "Own suggestion removed",
   "poll.created": "Poll posted",
   "poll.updated": "Poll changed",
   "poll.closed": "Poll closed",
@@ -184,6 +200,24 @@ export const AUDIT_ACTIONS = {
   "field.retired": "Question retired",
   "field.deleted": "Question deleted",
   /*
+   * The rest of `/admin/games` (Task 137): the games themselves, a game's rank
+   * ladder, and bringing a question back or moving it. `game.ladder` is the
+   * one that has to be here. Saving a ladder clears every stored answer the
+   * new one no longer recognises, and this line is the only record of how many
+   * went and of what the ladder was before.
+   *
+   * `game.activated` and `game.deactivated` are two actions for one switch, as
+   * the template pair is, so "who hid this game" is found by its heading.
+   */
+  "game.added": "Game added",
+  "game.renamed": "Game renamed",
+  "game.activated": "Game activated",
+  "game.deactivated": "Game deactivated",
+  "game.moved": "Games reordered",
+  "game.ladder": "Rank ladder changed",
+  "field.restored": "Question brought back",
+  "field.moved": "Questions reordered",
+  /*
    * Three actions that were already being written and had no heading, so their
    * lines were on the page under the raw key. Named here; the code that writes
    * them is untouched.
@@ -233,6 +267,15 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   // that has answers, so today that is none — but the row itself cannot be
   // brought back, which is what sets this apart from `field.retired`.
   "field.deleted",
+  // The one write on `/admin/games` that deletes what members stored: every
+  // answer the new ladder does not recognise is cleared, and putting the
+  // ladder back does not bring them back. One action whether or not any went
+  // this time, because whoever may do it is decided before the count is known.
+  "game.ladder",
+  // Somebody else's suggestion goes, and every like on it goes with it by
+  // cascade. `suggestion.withdrawn` is deliberately not here: the author
+  // taking their own back loses the same rows, but no power allowed it.
+  "suggestion.deleted",
 ]);
 
 /** The actions that hand something out. Read next to `DESTRUCTIVE` above. */

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, type DragEvent, type ReactNode } from "react";
 import {
   Alert,
   Badge,
@@ -15,10 +15,12 @@ import {
   Panel,
   Select,
   Stepper,
+  cx,
   plural,
 } from "@/components/ui";
 import {
   Money,
+  PlayerCard,
   PlayerChip,
   UNSIZED_ROSTER_NOTE,
   playerAvatar,
@@ -59,6 +61,7 @@ import {
   saveTeamsAction,
   setTeamCountAction,
 } from "@/app/admin/events/draft-actions";
+import { type BoardMove, boardOf, moveFor } from "./roster-board";
 import SaveRow, { type SaveState } from "./SaveRow";
 import type { DraftTabData } from "./types";
 
@@ -103,6 +106,53 @@ import type { DraftTabData } from "./types";
  * placed: a waitlisted member on a roster is a seat given away by the back
  * door. The server holds that rule — it is re-read inside the write — and this
  * screen does not offer what the server would refuse.
+ *
+ * ## The rosters are a board, and a move is on it before it is saved (UC-53)
+ *
+ * Every player is a `PlayerCard` — on a team, or in the list of people not
+ * yet placed — and a card is moved by dragging it onto a team or back to that
+ * list (R-257). **The selects stay**, and stay the real path: "Move to", "Place
+ * on" and Off are how it is done from a keyboard and on a phone, where there
+ * is no drag. A drop asks `roster-board.ts`'s `moveFor` the same question
+ * they do and goes out through the same `send`, so the gesture is a second
+ * hand on the two actions that were already here and not a second write path.
+ *
+ * The handle is what is draggable, not the card, as in `PlacementEditor`: a
+ * draggable ancestor takes the mouse away from the select inside it. It is
+ * `aria-hidden` because it is the mouse's way only. The drop targets are the
+ * elements themselves — a team's panel, and the unplaced list's block — and a
+ * target says yes (`preventDefault` on `dragover`) only where `moveFor` would
+ * write: not where the card started, and not on a team `teamsOpenTo` leaves
+ * out. A captain's card has no handle. The server still refuses each of those
+ * in its own words, because a board is ten minutes old, and its sentence is
+ * what is shown — there is no copy of it here.
+ *
+ * **The move is optimistic** (R-260). `rosters` is written only from a server
+ * answer; `pending` is the moves asked for and not yet answered; the board
+ * drawn is `boardOf` the two. So a card is on its team the moment it is let
+ * go, and a refusal — or no answer at all — drops the move and the card is
+ * back exactly where it was, because the row it came from was never changed.
+ *
+ * What that replaced is a panel that disabled every control for the length of
+ * a round trip. Now only the card in flight is held: it is dimmed, it has no
+ * handle, its controls are disabled, and `moveFor` returns nothing for it
+ * whatever asks — **the first move wins** and a second is not queued behind
+ * it. Everybody else can be moved meanwhile. Next sends server actions one at
+ * a time, so answers arrive in the order the moves were made, and each is
+ * laid under the moves still out.
+ *
+ * **Each team is its own `<ul>`, and so is the unplaced list** — the opposite
+ * of `PlacementEditor`'s one list, on purpose. React carries a key within a
+ * parent and not across two, so a card that changes list is unmounted and
+ * made again. There that destroyed a box mid-keystroke. Here a card holds
+ * nothing typed: its select is controlled to the placeholder and its state is
+ * all in this component. One list would cost the two-column grid of team
+ * panels, to save nothing. Two things do follow from the remount, and both
+ * are handled or said: the handle a drag started on is gone by the time the
+ * drag ends, so **the drop ends the drag** rather than waiting for a `dragend`
+ * that may never arrive; and a select that moves its own card takes the
+ * keyboard focus with it when it goes — as it did before, when the select was
+ * disabled under the focus for the round trip and then moved.
  *
  * ## Balances follow the mode, and the mode lives on the Draft tab
  *
@@ -452,7 +502,10 @@ export default function TeamsTab({
   const [rosters, setRosters] = useState<RosterMove[]>(() =>
     data.teams.flatMap((team) => team.members.map((member) => ({ ...member })))
   );
-  const [moving, setMoving] = useState<string | null>(null);
+  /** The moves asked for and not yet answered. `rosters` is written only from a server answer. */
+  const [pending, setPending] = useState<BoardMove[]>([]);
+  /** The player whose card is on the move, while a drag is in flight. */
+  const [dragging, setDragging] = useState<string | null>(null);
   const [rosterError, setRosterError] = useState<string | null>(null);
 
   const touch = () => {
@@ -670,11 +723,33 @@ export default function TeamsTab({
 
   /* --- Writing a roster ------------------------------------------ */
 
-  const place = async (userId: string, teamId: string) => {
-    setMoving(userId);
+  /** What the screen draws: the saved rosters with every move still in flight made. */
+  const board = boardOf(rosters, pending);
+  const inFlight = (userId: string) => pending.some((move) => move.userId === userId);
+
+  /** The write that putting this player on `to` asks for — a team, or null for no team. */
+  const moveOf = (userId: string, to: string | null) =>
+    moveFor(
+      { rosters, pending },
+      userId,
+      to,
+      teamsOpenTo(sized, board, data.sizing.cap, userId).map((team) => team.id)
+    );
+
+  /**
+   * One move, from a select, the Off button or a drop. On the board at once;
+   * adopted from the server's answer, or dropped again with its sentence.
+   */
+  const send = async (userId: string, to: string | null) => {
+    const move = moveOf(userId, to);
+    if (move === null) return;
+    setPending((current) => [...current, move]);
     setRosterError(null);
     try {
-      const result = await placeOnRosterAction(teamId, userId);
+      const result =
+        move.kind === "place"
+          ? await placeOnRosterAction(move.teamId, userId)
+          : await removeFromRosterAction(move.teamId, userId);
       if (!result.ok) {
         setRosterError(result.error);
         return;
@@ -684,30 +759,32 @@ export default function TeamsTab({
     } catch {
       setRosterError("Could not reach the server. Nothing was saved.");
     } finally {
-      setMoving(null);
+      setPending((current) => current.filter((other) => other !== move));
     }
   };
 
-  const unplace = async (userId: string, teamId: string) => {
-    setMoving(userId);
-    setRosterError(null);
-    try {
-      const result = await removeFromRosterAction(teamId, userId);
-      if (!result.ok) {
-        setRosterError(result.error);
-        return;
-      }
-      setRosters(result.data.rosters);
-      router.refresh();
-    } catch {
-      setRosterError("Could not reach the server. Nothing was saved.");
-    } finally {
-      setMoving(null);
-    }
+  const lift = (event: DragEvent, userId: string) => {
+    // Firefox starts no drag without data; the id itself travels in state.
+    event.dataTransfer.setData("text/plain", userId);
+    event.dataTransfer.effectAllowed = "move";
+    setDragging(userId);
+  };
+  /** Whether the card on the move could be let go here — a team, or null for the unplaced list. */
+  const takes = (to: string | null) => dragging !== null && moveOf(dragging, to) !== null;
+  /** Say yes to a drop only where it would write. */
+  const allow = (event: DragEvent, to: string | null) => {
+    if (takes(to)) event.preventDefault();
+  };
+  /** Let go on a team, or on the unplaced list. Ends the drag itself — see the docblock. */
+  const land = (event: DragEvent, to: string | null) => {
+    if (dragging === null) return;
+    event.preventDefault();
+    setDragging(null);
+    void send(dragging, to);
   };
 
   const named = teams.filter((team) => team.name.trim().length > 0).length;
-  const placeable = unplacedAccepted(applicants, rosters);
+  const placeable = unplacedAccepted(applicants, board);
 
   /*
    * UC-41 4 and UC-42 6, worked out with the same functions the writes use.
@@ -739,6 +816,14 @@ export default function TeamsTab({
   const sized = teams.filter((team): team is DraftTeam & { id: string } =>
     team.id !== undefined
   );
+  const applicantOf = new Map(applicants.map((row) => [row.member.id, row]));
+  /** What a card says about somebody. No application on this page: no rank known, no roles line. */
+  const cardFor = (userId: string) => ({
+    name: playerName(players, userId),
+    avatarUrl: playerAvatar(players, userId),
+    rank: applicantOf.get(userId)?.rank ?? null,
+    roles: applicantOf.get(userId)?.roles ?? null,
+  });
 
   return (
     <div className="space-y-6">
@@ -1144,16 +1229,32 @@ export default function TeamsTab({
           </Alert>
         )}
 
+        {!data.started && sized.length > 0 && (
+          <p className="max-w-prose text-12 text-muted">
+            Drag a card by its handle onto a team, or back to the list underneath. The menus
+            on each card do the same from a keyboard or a phone. A move is saved as it is
+            made.
+          </p>
+        )}
+
         {sized.length === 0 ? (
           <EmptyState>Set the team count above and the rosters appear here.</EmptyState>
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2">
             {sized.map((team) => {
-              const on = rosters.filter((row) => row.teamId === team.id);
+              const on = board.filter((row) => row.teamId === team.id);
               const full = rosterFull(on.length, data.sizing.cap);
 
               return (
-                <li key={team.id} className="rounded-lg border border-hair p-3">
+                <li
+                  key={team.id}
+                  className={cx(
+                    "rounded-lg border p-3",
+                    takes(team.id) ? "border-union" : "border-hair"
+                  )}
+                  onDragOver={(event) => allow(event, team.id)}
+                  onDrop={(event) => land(event, team.id)}
+                >
                   <div className="mb-2 flex flex-wrap items-baseline gap-2">
                     <span className="font-display text-16">{team.name}</span>
                     <Badge tone={full ? "union" : "default"}>
@@ -1168,63 +1269,64 @@ export default function TeamsTab({
                   {on.length === 0 ? (
                     <EmptyState size="sm">Nobody on this roster yet.</EmptyState>
                   ) : (
-                    <ul>
+                    <ul className="space-y-2">
                       {[...on]
                         .sort((a, b) => Number(b.isCaptain) - Number(a.isCaptain))
-                        .map((member) => (
-                          <li key={member.userId}>
-                            <PlayerChip
-                              name={playerName(players, member.userId)}
-                              avatarUrl={playerAvatar(players, member.userId)}
-                              trailing={
-                                member.isCaptain ? (
+                        .map((member) => {
+                          const busy = inFlight(member.userId);
+
+                          return (
+                            <BoardCard
+                              key={member.userId}
+                              card={cardFor(member.userId)}
+                              dimmed={busy || dragging === member.userId}
+                              onLift={
+                                member.isCaptain || busy || data.started
+                                  ? undefined
+                                  : (event) => lift(event, member.userId)
+                              }
+                              onDragEnd={() => setDragging(null)}
+                            >
+                              {member.isCaptain ? (
+                                <>
                                   <Badge tone="union">Captain</Badge>
-                                ) : member.price > 0 ? (
-                                  <Money value={member.price} size="sm" />
-                                ) : null
-                              }
-                              dimmed={moving === member.userId}
-                              actions={
-                                member.isCaptain ? (
                                   <span className="text-11 text-dim">Captains tab</span>
-                                ) : (
-                                  <span className="flex items-center gap-1">
-                                    <Select
-                                      aria-label={`Move ${playerName(players, member.userId)} to another team`}
-                                      value=""
-                                      disabled={moving !== null || data.started}
-                                      className="text-12"
-                                      onChange={(input) => {
-                                        const to = input.target.value;
-                                        if (to) void place(member.userId, to);
-                                      }}
-                                    >
-                                      <option value="">Move to…</option>
-                                      {teamsOpenTo(
-                                        sized,
-                                        rosters,
-                                        data.sizing.cap,
-                                        member.userId
-                                      ).map((other) => (
-                                        <option key={other.id} value={other.id}>
-                                          {other.name}
-                                        </option>
-                                      ))}
-                                    </Select>
-                                    <Button
-                                      size="sm"
-                                      variant="flare"
-                                      disabled={moving !== null || data.started}
-                                      onClick={() => void unplace(member.userId, team.id)}
-                                    >
-                                      Off
-                                    </Button>
-                                  </span>
-                                )
-                              }
-                            />
-                          </li>
-                        ))}
+                                </>
+                              ) : (
+                                <>
+                                  {member.price > 0 && <Money value={member.price} size="sm" />}
+                                  <Select
+                                    aria-label={`Move ${playerName(players, member.userId)} to another team`}
+                                    value=""
+                                    disabled={busy || data.started}
+                                    className="text-12"
+                                    onChange={(input) => void send(member.userId, input.target.value)}
+                                  >
+                                    <option value="">Move to…</option>
+                                    {teamsOpenTo(
+                                      sized,
+                                      board,
+                                      data.sizing.cap,
+                                      member.userId
+                                    ).map((other) => (
+                                      <option key={other.id} value={other.id}>
+                                        {other.name}
+                                      </option>
+                                    ))}
+                                  </Select>
+                                  <Button
+                                    size="sm"
+                                    variant="flare"
+                                    disabled={busy || data.started}
+                                    onClick={() => void send(member.userId, null)}
+                                  >
+                                    Off
+                                  </Button>
+                                </>
+                              )}
+                            </BoardCard>
+                          );
+                        })}
                     </ul>
                   )}
                 </li>
@@ -1233,45 +1335,56 @@ export default function TeamsTab({
           </ul>
         )}
 
-        <div className="space-y-2">
+        <div
+          className="space-y-2"
+          onDragOver={(event) => allow(event, null)}
+          onDrop={(event) => land(event, null)}
+        >
           <Eyebrow>Accepted and not on a team</Eyebrow>
+          {takes(null) && (
+            <p className="border-y border-dashed border-union py-3 text-13 text-muted">
+              Let go here to take them off their team.
+            </p>
+          )}
           {placeable.length === 0 ? (
             <EmptyState size="sm">
               Everybody accepted has a team. Accept more on the Applicants tab to place
               them here.
             </EmptyState>
           ) : (
-            <ul>
-              {placeable.map((userId) => (
-                <li key={userId}>
-                  <PlayerChip
-                    name={playerName(players, userId)}
-                    avatarUrl={playerAvatar(players, userId)}
-                    dimmed={moving === userId}
-                    actions={
-                      <Select
-                        aria-label={`Place ${playerName(players, userId)} on a team`}
-                        value=""
-                        disabled={moving !== null || data.started || sized.length === 0}
-                        className="text-12"
-                        onChange={(input) => {
-                          const to = input.target.value;
-                          if (to) void place(userId, to);
-                        }}
-                      >
-                        <option value="">Place on…</option>
-                        {teamsOpenTo(sized, rosters, data.sizing.cap, userId).map(
-                          (team) => (
-                            <option key={team.id} value={team.id}>
-                              {team.name}
-                            </option>
-                          )
-                        )}
-                      </Select>
+            <ul className="space-y-2">
+              {placeable.map((userId) => {
+                const busy = inFlight(userId);
+
+                return (
+                  <BoardCard
+                    key={userId}
+                    card={cardFor(userId)}
+                    dimmed={busy || dragging === userId}
+                    onLift={
+                      busy || data.started || sized.length === 0
+                        ? undefined
+                        : (event) => lift(event, userId)
                     }
-                  />
-                </li>
-              ))}
+                    onDragEnd={() => setDragging(null)}
+                  >
+                    <Select
+                      aria-label={`Place ${playerName(players, userId)} on a team`}
+                      value=""
+                      disabled={busy || data.started || sized.length === 0}
+                      className="text-12"
+                      onChange={(input) => void send(userId, input.target.value)}
+                    >
+                      <option value="">Place on…</option>
+                      {teamsOpenTo(sized, board, data.sizing.cap, userId).map((team) => (
+                        <option key={team.id} value={team.id}>
+                          {team.name}
+                        </option>
+                      ))}
+                    </Select>
+                  </BoardCard>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -1456,5 +1569,54 @@ export default function TeamsTab({
         )}
       </Modal>
     </div>
+  );
+}
+
+/**
+ * One card on the board: its handle when it may be dragged, the player, and
+ * whatever the list it is in adds after — a badge, a price, the selects.
+ * `PlayerCard` draws the player and knows nothing of this; the handle is
+ * `aria-hidden` because it is the mouse's way only, and so is its tooltip.
+ */
+function BoardCard({
+  card,
+  dimmed,
+  onLift,
+  onDragEnd,
+  children,
+}: {
+  card: { name: string; avatarUrl: string | null; rank: string | null; roles: string[] | null };
+  /** In flight to the server, or being dragged right now. */
+  dimmed: boolean;
+  /** Drag started on the handle. Absent for a card that may not move. */
+  onLift?: (event: DragEvent) => void;
+  /** The drag ended without a drop that took it. */
+  onDragEnd: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <li className={cx("flex flex-wrap items-center gap-2", dimmed && "opacity-55")}>
+      {onLift && (
+        <span
+          aria-hidden
+          draggable
+          title={`Drag ${card.name}`}
+          onDragStart={onLift}
+          onDragEnd={onDragEnd}
+          className="flex h-11 w-11 shrink-0 cursor-grab select-none items-center justify-center text-16 text-dim"
+        >
+          ≡
+        </span>
+      )}
+      <div className="min-w-[10rem] flex-1">
+        <PlayerCard
+          name={card.name}
+          avatarUrl={card.avatarUrl}
+          rank={card.rank}
+          roles={card.roles}
+        />
+      </div>
+      <span className="flex shrink-0 items-center gap-1.5">{children}</span>
+    </li>
   );
 }

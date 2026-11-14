@@ -625,6 +625,36 @@ path of each use case is its acceptance test; every alternate and error flow get
 
 ---
 
+## UC-58: Decide whether the night draws heroes, and how wide a hand
+
+**Actor:** Manager
+**Requirements covered:** R-269, R-270, R-271
+**Trigger:** Manager sets up an event and decides whether it is a hero night.
+
+**Preconditions**
+1. Actor manages an event.
+
+**Main success path**
+1. Manager opens Setup - Format.
+2. System shows a toggle for drawing random heroes, on by default for an event that already has hands.
+3. Manager turns it on.
+4. System shows a number for how many heroes each player draws in each role, starting at three.
+5. Manager sets the number and saves.
+6. System stores both on the event and says what the next draw will deal.
+7. A player opens the draw page and is dealt that many in each role.
+
+**Outcome**
+- The event says whether it draws heroes and how wide a hand, and the next draw obeys it.
+
+**Alternate flows**
+- **3a.** Manager turns it off - System hides the Hands tab and closes the draw page for that event (R-269).
+- **5a.** The game has fewer heroes in a role than the number asks for - System refuses the **draw**, naming every thin role and the count it needed, exactly as it does today for three. Saving the setting is never refused: a game's hero list can be filled in afterwards.
+
+**Error flows**
+- **7a.** A player already holds a hand dealt at a different width - System shows the hand as it was dealt and does not redeal (R-271 / R-212).
+
+---
+
 ## UC-19: Record results
 
 **Actor:** Manager

@@ -15,6 +15,11 @@
  * matters more here than anywhere else on the site, because the thing being
  * edited *is* who counts as an admin.
  *
+ * **It stays `requireAdmin` now that powers exist, on every action (R-264).**
+ * Granting is never a power: nothing in `permissions-policy.ts` reaches this
+ * file, and no action here may move to `requirePermission`. `users.test.ts`
+ * asks every export as a member holding the whole vocabulary.
+ *
  * ## Why the actor is passed down rather than read down there
  *
  * `revokeAdmin` needs to know who is clicking, to refuse a self-demotion.

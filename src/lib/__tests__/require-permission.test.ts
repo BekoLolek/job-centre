@@ -65,7 +65,9 @@ vi.mock("@/lib/auth", () => ({
   },
 }));
 
-const { requireAdmin, requirePermission } = await import("@/lib/session-guards");
+const { requireAdmin, requireAnyPermission, requirePermission } = await import(
+  "@/lib/session-guards"
+);
 const { grantPower } = await import("@/lib/permissions");
 
 let handle: TestDatabase;
@@ -282,6 +284,98 @@ describe("the refusal is the one a non-admin already gets", () => {
 
     expect(asPermission).toBe(asAdminOnly);
     expect(asPermission).toBe("/signin?error=admin-only");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Any one of several (Task 130)                                      */
+/* ------------------------------------------------------------------ */
+
+/*
+ * `requireAnyPermission`, for a page that is more than one power's: the
+ * events list, the settings screen, the admin area's front door. The same
+ * guard asked about a set - so everything above is asked of it again, on the
+ * same database-backed session.
+ */
+describe("requireAnyPermission", () => {
+  const EITHER = ["events.create", "events.manage"] as const;
+
+  it.each(EITHER)("lets a member through who holds %s, one of the powers named", async (power) => {
+    const member = await makeUser(db);
+    await give(member, power);
+    await signIn(member);
+
+    const user = await requireAnyPermission(EITHER);
+
+    expect(user.id).toBe(member);
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("turns away a member who holds every power but the ones named", async () => {
+    const member = await makeUser(db);
+    await give(member, ...POWERS.filter((power) => !(EITHER as readonly Power[]).includes(power)));
+    await signIn(member);
+
+    const to = await refusalOf(() => requireAnyPermission(EITHER));
+
+    expect(to).toBe("/signin?error=admin-only");
+  });
+
+  it("turns away a member who holds nothing", async () => {
+    await signIn(await makeUser(db));
+
+    expect(await refusalOf(() => requireAnyPermission(EITHER))).toBe("/signin?error=admin-only");
+  });
+
+  it("lets an admin holding nothing through", async () => {
+    const admin = await makeAdmin();
+    await signIn(admin);
+
+    expect((await requireAnyPermission(EITHER)).id).toBe(admin);
+  });
+
+  it("asked about no power at all, lets an admin through and nobody else", async () => {
+    // An empty list is not "anybody": there is nothing on it to hold.
+    const member = await makeUser(db);
+    await give(member, ...POWERS);
+    await signIn(member);
+    const to = await refusalOf(() => requireAnyPermission([]));
+    await signIn(await makeAdmin());
+
+    await expect(requireAnyPermission([])).resolves.toBeDefined();
+    expect(to).toBe("/signin?error=admin-only");
+  });
+
+  it("refuses a question that names a power that does not exist, for an admin as well", async () => {
+    await signIn(await makeAdmin());
+
+    await expect(
+      requireAnyPermission(["events.create", "permissions.grant" as Power])
+    ).rejects.toThrow(/"permissions.grant" is not a power/);
+  });
+
+  it("refuses a power revoked mid-session on the next request, and leaves the session alone", async () => {
+    const member = await makeUser(db);
+    await give(member, "events.manage");
+    const sessionToken = await signIn(member);
+    const before = await requireAnyPermission(EITHER);
+
+    await revoke(member);
+    const to = await refusalOf(() => requireAnyPermission(EITHER));
+
+    expect(before.id).toBe(member);
+    expect(to).toBe("/signin?error=admin-only");
+    expect(await sessionRows(sessionToken)).toHaveLength(1);
+  });
+
+  it("sends a signed-out visitor to sign in, remembering the page, as requirePermission does", async () => {
+    state.headers = { "next-url": "/admin/events" };
+
+    const one = await refusalOf(() => requirePermission("events.create"));
+    const any = await refusalOf(() => requireAnyPermission(EITHER));
+
+    expect(any).toBe(one);
+    expect(any).toBe("/signin?from=%2Fadmin%2Fevents");
   });
 });
 

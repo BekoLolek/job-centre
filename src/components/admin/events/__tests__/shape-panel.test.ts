@@ -70,7 +70,7 @@ const { default: ShapeTab } = await import("../ShapeTab");
 const { default: EventEditor } = await import("../EventEditor");
 const { default: AdminEventPage } = await import("@/app/admin/events/[id]/page");
 const { applyToEvent, createEvent, publishEvent, updateEvent } = await import("@/lib/events");
-const { eventShapeFrom } = await import("@/lib/events-policy");
+const { eventShapeFrom, teamFormatFrom } = await import("@/lib/events-policy");
 const { setTeamCount } = await import("@/lib/draft");
 
 let handle: TestDatabase;
@@ -137,6 +137,10 @@ function panel(
       accepted: 18,
       existingTeams: 0,
       draftStarted: false,
+      // Task 110's two, as an event with no teams yet has them. What they are
+      // for is held in `shape-panel-stated-format.test.ts`.
+      teamFormat: teamFormatFrom(config ?? {}),
+      rosters: [],
       ...rest,
     })
   );

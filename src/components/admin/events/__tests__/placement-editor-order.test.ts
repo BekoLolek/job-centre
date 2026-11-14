@@ -242,12 +242,14 @@ describe("moving without a mouse", () => {
   });
 
   it.each(["Move Ana up", "Move Ana down", "Move Ben up", "Move Ben down"])(
-    "sizes %s at the 44px floor",
+    "keeps %s 44px wide",
     (label) => {
       const markup = editor(SOLO, PLACED);
 
       const classes = /class="([^"]*)"/.exec(control(markup, label)!)![1].split(/\s+/);
-      expect(classes).toContain("min-h-11");
+      // Height is `.btn`’s own `min-height` now, proven from the compiled
+      // stylesheet in `field-ordering.test.ts`. Width is still this call site’s:
+      // nothing floors how wide an arrow and its padding are.
       expect(classes).toContain("min-w-11");
     }
   );

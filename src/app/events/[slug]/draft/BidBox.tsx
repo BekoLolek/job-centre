@@ -32,11 +32,23 @@
  * never reads one figure on the rail and another in the box. A stated target
  * reads "6 of 6"; a cap reads "5 on the roster, the most it may hold"; and a
  * roster the panel has not sized gets `UNSIZED_ROSTER_NOTE` **in place of**
- * the ceiling, because `ceilingFor`'s sentence for a roster with no cap would
- * read "full at null" — a bid ceiling is a figure derived from the places, and
- * there are none to derive it from. Between lots that note is the panel's
- * only word on it; with a lot open, `canPlaceBid`'s `roster_unsized` refusal
- * is already the alert, and the note is left off rather than said twice.
+ * the whole ceiling block, not only its sentence.
+ *
+ * That branch on `cap === null` is load-bearing, and not for the reason it
+ * was first written. `ceilingFor` once read "full at null" for such a roster
+ * and no longer does — its sentence is now this same note — so the branch
+ * looks like a guard against a sentence that has gone. What it still does:
+ *
+ *  - it withholds the "You can bid up to" figure. Falling through to
+ *    `Ceiling` would print "You can bid up to 0" above the note, and a bid
+ *    ceiling is a figure derived from the places on a team; with none to
+ *    derive it from, a 0 is a sum over nothing dressed as a limit;
+ *  - it shows the note when `standing` is null, where the fall-through
+ *    shows nothing at all.
+ *
+ * Between lots that note is the panel's only word on it; with a lot open,
+ * `canPlaceBid`'s `roster_unsized` refusal is already the alert, and the
+ * note is left off rather than said twice.
  */
 
 import { useEffect, useState } from "react";

@@ -17,7 +17,11 @@ import {
   DRAFT_AWARDED_REFUSAL,
   type EventShape,
   MAX_PER_TEAM,
+  type RosterHolding,
   type SizingMode,
+  type TeamFormat,
+  rosterBelowAwardedRefusal,
+  rosterSizingFrom,
   shapeProblem,
   sizingConsequence,
   teamsInTheWayRefusal,
@@ -58,9 +62,19 @@ import {
  * attempted, from the same pure functions the action uses — the bounds
  * (`shapeProblem`), the accepted count being too small to make two sides
  * (`planTeams`, through `sizingConsequence`), the teams already in the way
- * (UC-42 2a) and the awarded lots that settle it (UC-42 3a). The server refuses
- * again anyway. That is not belt-and-braces, it is UC-42 5b: a panel is a
- * screen and a screen is not a guard.
+ * (UC-42 2a), the awarded lots that settle it (UC-42 3a) and a figure below a
+ * roster those awards filled (UC-49 1c). The server refuses again anyway. That
+ * is not belt-and-braces, it is UC-42 5b: a panel is a screen and a screen is
+ * not a guard.
+ *
+ * ## And the one thing it says without refusing
+ *
+ * The Teams tab's stated 6v6 or 3v3 can disagree with the places the sizing
+ * allows, and the panel says so in a note that blocks nothing (R-251 / UC-49
+ * 1d). R-215 is "stated, never enforced": a 6v6 night fielding eight with
+ * substitutes is a real night, which is why `MAX_PER_TEAM` is 32. The note is
+ * deliberately not part of `refusal` below, and
+ * `shape-panel-stated-format.test.ts` holds the save row open beside it.
  *
  * ## And what it tells the admin they are about to lose
  *
@@ -76,6 +90,8 @@ export default function ShapeTab({
   accepted,
   existingTeams,
   draftStarted,
+  teamFormat,
+  rosters,
 }: {
   eventId: string;
   /** As stored — `eventShapeFrom(event.config)`, read on the server. */
@@ -92,8 +108,12 @@ export default function ShapeTab({
   accepted: number;
   /** How many teams the event already has, for UC-42 2a. */
   existingTeams: number;
-  /** True once a lot has been awarded — UC-42 3a. */
+  /** True once a lot has been awarded — UC-42 3a, UC-49 1c. */
   draftStarted: boolean;
+  /** The night as the Teams tab states it (R-215), for the note — UC-49 1d. */
+  teamFormat: TeamFormat;
+  /** Each team and what it holds, for UC-49 1c to name the ones in the way. */
+  rosters: readonly RosterHolding[];
 }) {
   const router = useRouter();
   const [state, setState] = useState<SaveState>("idle");
@@ -113,15 +133,25 @@ export default function ShapeTab({
     // instead of reading it as a number — `ChampionshipTab`'s `numberFrom` has
     // the argument.
     sizing: { mode, value: Number.isFinite(typed) ? typed : Number.NaN },
+    // Not this panel's to edit yet (R-269, R-270): the event's own answers,
+    // as `eventShapeFrom` resolved them, carried through unchanged.
+    heroes: shape.heroes,
+    heroesPerRole: shape.heroesPerRole,
   };
 
   const bounds = shapeProblem(edited);
   const consequence = sizingConsequence(edited.sizing, accepted);
+  // The places the edit would leave on a team — the figure the action measures
+  // the rosters against, and the one the stated format is read beside.
+  const cap = rosterSizingFrom(edited, accepted).cap;
 
   /*
-   * UC-42 2a and 3a, asked here in the same words the action answers in. The
-   * draft refusal covers going solo as well as switching the draft off: a solo
-   * event has no Draft tab at all, so it is the same loss by another route.
+   * UC-42 2a and 3a and UC-49 1c, asked here in the same words the action
+   * answers in. The draft refusal covers going solo as well as switching the
+   * draft off: a solo event has no Draft tab at all, so it is the same loss by
+   * another route. The roster refusal sits behind the bounds because the
+   * action checks those first, and it cannot meet the two above it: a solo
+   * edit has no places to be below.
    */
   const losingDraft = draftStarted && (!teamEvent || !draft);
   const losingTeams = !teamEvent && existingTeams > 0;
@@ -129,7 +159,14 @@ export default function ShapeTab({
     ? DRAFT_AWARDED_REFUSAL
     : losingTeams && !discard
       ? teamsInTheWayRefusal(existingTeams)
-      : (bounds ?? (teamEvent ? consequence.problem : null));
+      : (bounds ??
+        rosterBelowAwardedRefusal(rosters, cap, draftStarted) ??
+        (teamEvent ? consequence.problem : null));
+
+  // UC-49 1d. Never folded into `refusal`: a note, and the save goes through —
+  // unless something else refuses it, and then the note stays and says only
+  // that it is not the reason.
+  const formatDisagrees = cap !== null && bounds === null && cap !== teamFormat.teamSize;
 
   const dropping = TEAM_ONLY_KEYS.filter(
     (tab) => !visibleTabs({ ...edited, heroList }).includes(tab)
@@ -313,6 +350,16 @@ export default function ShapeTab({
                 {plural(consequence.short.length, "team")} short of the biggest —{" "}
                 {consequence.short.join(", ")}. The remainder is spread one per team rather
                 than left on one short side, and this is before anything is saved.
+              </p>
+            )}
+            {formatDisagrees && (
+              <p className="text-12 leading-relaxed text-muted">
+                The Teams tab states a {teamFormat.format} night — {teamFormat.teamSize} a
+                side — and the sizing here allows {cap}. That is a note, not a refusal: the
+                format is stated, never enforced,{" "}
+                {refusal === null
+                  ? "so this saves as it is."
+                  : "and it is not what is stopping this save."}
               </p>
             )}
           </div>

@@ -70,7 +70,7 @@
  *
  * ## What this does not prove
  *
- * That the guard is the *right* one of the five - `requireUser` on an action
+ * That the guard is the *right* one of the six - `requireUser` on an action
  * that wanted `requireAdmin` passes here. Which guard belongs on which action
  * is what each action's own behaviour tests are for. The one exception is
  * `src/app/admin/events/actions.ts` and `src/app/admin/host/actions.ts`, whose
@@ -102,6 +102,7 @@ const REFUSING_GUARDS = [
   "requireUser",
   "requireAdmin",
   "requirePermission",
+  "requireAnyPermission",
   "requireEventManager",
   "requireManagerOfChild",
 ];
@@ -624,6 +625,16 @@ describe("reading one file for its gates", () => {
     expect(verdicts(ADMIN_ACTIONS, source)).toEqual(["saveAction: gated by requirePermission"]);
   });
 
+  it("takes requireAnyPermission, with the powers it asks about, for a guard that refuses", () => {
+    const source =
+      `import { requireAnyPermission } from "@/lib/session-guards";\n` +
+      `export default async function AdminThingsPage() {\n` +
+      `  const actor = await requireAnyPermission(["events.create", "events.manage"]);\n  return actor.id;\n}`;
+    expect(verdicts("src/app/admin/things/page.tsx", source)).toEqual([
+      "AdminThingsPage: gated by requireAnyPermission",
+    ]);
+  });
+
   it("follows a guard imported under another name", () => {
     const source =
       `"use server";\nimport { requireAdmin as gate } from "../../lib/session-guards";\n` +
@@ -870,15 +881,32 @@ describe("every entry point is gated", () => {
    * least once. `requirePermission` had no call site until Task 126 gave
    * `createEventAction` one, so its row is the first to show the sweep
    * recognising the sixth guard in the tree and not only in the fixture above.
+   *
+   * The `requireAdmin` row used to name `createGameAction`, which Task 127
+   * moved onto `games.manage`. It now names a grant, and that is not an
+   * arbitrary replacement: **R-264 says granting is never a power**, so every
+   * action in `admin/users/actions.ts` is guaranteed to stay on the admin flag
+   * for as long as that requirement stands. An anchor that a later task can
+   * move is not an anchor.
+   *
+   * The admin-page row for `requireAdmin` used to name `AdminDashboardPage`,
+   * which Task 130 moved: `/admin` admits a holder of any area power, so it is
+   * behind `requireAnyPermission` - the seventh name this sweep knows, and the
+   * row that shows it recognised in the tree. The `requireAdmin` anchor is now
+   * `AdminUsersPage`, for the reason above - it is the screen that gives and
+   * takes the admin flag, so R-264 keeps it on the flag. Every admin page is
+   * listed whole in the test after next.
    */
   it.each([
-    ["src/app/admin/games/actions.ts#createGameAction", "requireAdmin"],
+    ["src/app/admin/users/actions.ts#grantAdminAction", "requireAdmin"],
     ["src/app/admin/events/actions.ts#createEventAction", "requirePermission"],
     ["src/app/admin/events/actions.ts#saveBasicsAction", "requireEventManager"],
     ["src/app/admin/events/format-actions.ts#recordGamesAction", "requireManagerOfChild"],
     ["src/app/me/profile/actions.ts#saveProfileSectionAction", "requireUser"],
     ["src/app/events/[slug]/draft/actions.ts#loadRoomAction", "getCurrentUser"],
-    ["src/app/admin/page.tsx#AdminDashboardPage", "requireAdmin"],
+    ["src/app/admin/users/page.tsx#AdminUsersPage", "requireAdmin"],
+    ["src/app/admin/page.tsx#AdminDashboardPage", "requireAnyPermission"],
+    ["src/app/admin/games/page.tsx#AdminGamesPage", "requirePermission"],
     ["src/app/admin/events/[id]/page.tsx#AdminEventPage", "requireEventManager"],
     ["src/app/admin/events/[id]/page.tsx#generateMetadata", "requireEventManager"],
   ])("finds %s behind %s, with nothing ahead of it", (site, guard) => {
@@ -926,6 +954,50 @@ describe("every entry point is gated", () => {
       "host/actions.ts#approveHostApplicationAction: requirePermission",
       "host/actions.ts#declineHostApplicationAction: requirePermission",
     ]);
+  });
+
+  /*
+   * Task 130 moved the admin pages off the admin flag, each onto the power it
+   * is for. Listed whole, for the reason the list above is: a page that drifts
+   * to another guard, or a new one that arrives, changes this list in the same
+   * diff.
+   *
+   * **Three are more than one power's**, and read `requireAnyPermission`:
+   * `/admin` admits a holder of any area power, `/admin/events` a holder of
+   * either of two and `/admin/settings` likewise. They were first written as
+   * `requireUser` with the refusal on the line after, which this sweep cannot
+   * see - a page whose second line was forgotten would have admitted any
+   * signed-in member and read as gated. One guard on the first line is what
+   * makes all three visible here, and **no admin page reads `requireUser`**:
+   * the last assertion says so, so the shape cannot come back unnoticed.
+   *
+   * Which powers each one names is still not this sweep's to know.
+   * `admin/__tests__/holder-pages.test.ts` holds that: every page here, opened
+   * by a holder of each power in turn, by an admin, by a member holding
+   * nothing and by a visitor.
+   */
+  it("finds every admin page behind the guard Task 130 left it", () => {
+    const guards = SITES.filter((found) => found.kind === "admin page")
+      .map((found) => `${found.site.slice("src/app/admin/".length)}: ${found.guard}`)
+      .sort();
+    expect(guards).toEqual([
+      "audit/page.tsx#AdminAuditPage: requirePermission",
+      "availability/page.tsx#AdminAvailabilityPage: requirePermission",
+      "championships/[id]/page.tsx#AdminChampionshipPage: requirePermission",
+      "championships/[id]/page.tsx#generateMetadata: requirePermission",
+      "championships/page.tsx#AdminChampionshipsPage: requirePermission",
+      "events/[id]/page.tsx#AdminEventPage: requireEventManager",
+      "events/[id]/page.tsx#generateMetadata: requireEventManager",
+      "events/page.tsx#AdminEventsPage: requireAnyPermission",
+      "games/page.tsx#AdminGamesPage: requirePermission",
+      "hands/page.tsx#AdminHandsPage: requirePermission",
+      "host/page.tsx#AdminHostPage: requirePermission",
+      "page.tsx#AdminDashboardPage: requireAnyPermission",
+      "settings/page.tsx#AdminSettingsPage: requireAnyPermission",
+      "templates/page.tsx#AdminTemplatesPage: requirePermission",
+      "users/page.tsx#AdminUsersPage: requireAdmin",
+    ]);
+    expect(guards.filter((entry) => entry.endsWith(": requireUser"))).toEqual([]);
   });
 
   it("recognises only guards that session-guards really exports", () => {

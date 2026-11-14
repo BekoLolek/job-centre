@@ -5,9 +5,23 @@
  *
  * As thin as every other action file here: the shape of the setting and its
  * defaults are `src/lib/announce.ts`'s, the write is `setAnnouncementSettings`'s,
- * and nothing below re-decides either. `requireAdmin()` runs inside the action
- * rather than being trusted from the page that rendered the switch, because a
- * server action is a public endpoint.
+ * and nothing below re-decides either. The guard runs inside the action rather
+ * than being trusted from the page that rendered the switch, because a server
+ * action is a public endpoint.
+ *
+ * ## Two powers, and the line between them (R-261 / UC-56)
+ *
+ * `settings.announcements` reaches what is *said*: which announcements go out,
+ * their wording, their mentions - the first two actions below.
+ * `settings.integrations` reaches where the site is *pointed*: the webhook URL,
+ * the site address and the sign-in gate - the last two. The second is the
+ * dangerous one. Its holder can aim every announcement at another channel, or
+ * open sign-in to any Discord account, so it must never be reachable from the
+ * first: no action here accepts either power, and none writes on both sides of
+ * the line. Keep it that way - a field added to the wrong action crosses it
+ * without any guard changing.
+ * `src/app/__tests__/polls-suggestions-settings-powers.test.ts` asks every
+ * action here as the holder of the other power.
  *
  * The change is audited. Which announcements fire is a decision about what the
  * whole server sees, so "who turned the result announcements off, and when" is
@@ -33,12 +47,12 @@ import {
   setAnnouncementTemplate,
 } from "@/lib/discord";
 import type { EventResult } from "@/lib/events";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 export async function saveAnnouncementSettingsAction(
   patch: Record<string, boolean>
 ): Promise<EventResult<{ settings: AnnouncementSettings }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("settings.announcements");
 
   // Normalised rather than trusted: a payload from a stale tab may name a kind
   // that no longer exists, and one from anywhere else may not be booleans at
@@ -55,7 +69,7 @@ export async function saveAnnouncementSettingsAction(
   if (changed.length > 0) {
     await recordAudit({
       action: "settings.announcements",
-      actor: admin,
+      actor,
       summary: `Discord announcements: ${changed
         .map((kind) => `${kind} ${stored[kind] ? "on" : "off"}`)
         .join(", ")}.`,
@@ -73,7 +87,7 @@ export async function saveAnnouncementSettingsAction(
  * Thin, like every other action here: the refusals, the version check, the
  * conflict's `current` row and both audit lines are `setAnnouncementTemplate`'s,
  * and nothing below re-decides any of them. What this adds is the two things an
- * action owes: `requireAdmin()`, because a server action is a public endpoint
+ * action owes: its guard, because a server action is a public endpoint
  * whatever rendered the form, and a sceptical read of the payload.
  *
  * ## What is checked here, and what is deliberately not
@@ -100,7 +114,7 @@ export async function saveAnnouncementTemplateAction(input: {
   /** The version the editor was opened at. `0` is a kind with no row. */
   expectedVersion: number;
 }): Promise<TemplateSaveResult> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("settings.announcements");
 
   const kind = ANNOUNCEMENTS.find((spec) => spec.kind === input.kind)?.kind;
   if (!kind) {
@@ -119,7 +133,7 @@ export async function saveAnnouncementTemplateAction(input: {
   const result = await setAnnouncementTemplate(
     kind satisfies AnnouncementKind,
     { body, mention: { everyone: input.everyone === true, roleIds } },
-    { expectedVersion, actor: admin }
+    { expectedVersion, actor }
   );
 
   // Only on a save that happened. A refusal and a lost race both leave the row
@@ -149,14 +163,15 @@ export type ConfigResult<T> = { ok: true; data: T } | { ok: false; error: string
  *    on and no id, `configured` is false and every sign-in fails closed.
  *
  * What is deliberately *not* refused is turning the gate off. That opens the
- * site to any Discord account in the world, which is a real decision an admin
- * is allowed to make; the screen says so in as many words first.
+ * site to any Discord account in the world, which is a real decision whoever
+ * holds `settings.integrations` is allowed to make; the screen says so in as
+ * many words first.
  */
 export async function saveGuildGateAction(input: {
   enabled: boolean;
   guildId: string;
 }): Promise<ConfigResult<{ enabled: boolean; guildId: string; source: string }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("settings.integrations");
 
   const guildId = input.guildId.trim();
   if (guildId && !/^\d{17,20}$/.test(guildId)) {
@@ -180,7 +195,7 @@ export async function saveGuildGateAction(input: {
 
   await recordAudit({
     action: "settings.guild_gate",
-    actor: admin,
+    actor,
     summary: after.enabled
       ? `Sign-in gated on server ${after.guildId || "(none)"}.`
       : "Sign-in opened to any Discord account.",
@@ -222,7 +237,7 @@ export async function saveIntegrationsAction(input: {
   siteOrigin?: string;
   clearSiteOrigin?: boolean;
 }): Promise<ConfigResult<{ webhook: string | null; origin: string | null }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("settings.integrations");
   const changed: string[] = [];
 
   const webhook = input.clearWebhook ? "" : (input.webhookUrl ?? "").trim();
@@ -259,7 +274,7 @@ export async function saveIntegrationsAction(input: {
   if (changed.length > 0) {
     await recordAudit({
       action: "settings.integrations",
-      actor: admin,
+      actor,
       summary: `Integrations changed — ${changed.join(", ")}.`,
       // The webhook is never written to the audit log in full: the log is a
       // screen an admin can read, and this is a credential.

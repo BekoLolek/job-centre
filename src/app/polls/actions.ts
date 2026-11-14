@@ -3,8 +3,9 @@
 /**
  * Poll writes.
  *
- * Posting, editing and closing are admin-only; voting needs any account.
- * Reading is public and has no action at all — see the page.
+ * Posting, editing, closing and deleting need `polls.manage` (R-261 / UC-56),
+ * which an admin has without holding it; voting needs any account. Reading is
+ * public and has no action at all — see the page.
  *
  * Every closed-poll check is repeated here even though the library makes it
  * too. That is not belt and braces for its own sake: the library refusal is
@@ -25,7 +26,7 @@ import {
   updatePoll,
   votePoll,
 } from "@/lib/polls";
-import { requireAdmin, requireUser } from "@/lib/session-guards";
+import { requirePermission, requireUser } from "@/lib/session-guards";
 
 export type PollActionResult<T = undefined> =
   | { ok: true; data: T }
@@ -64,18 +65,18 @@ function refresh(): void {
 export async function createPollAction(
   draft: PollDraft
 ): Promise<PollActionResult<{ id: string }>> {
-  const admin = await requireAdmin();
-  const result = await createPoll(admin.id, toInput(draft));
+  const actor = await requirePermission("polls.manage");
+  const result = await createPoll(actor.id, toInput(draft));
   if (!result.ok) return result;
 
   await recordAudit({
     action: "poll.created",
-    actor: admin,
+    actor,
     summary: `Posted a poll: "${draft.question.trim()}".`,
     detail: { pollId: result.data.id, options: draft.options.length, multiple: draft.multiple },
   });
 
-  notifyPollPosted(result.data.id, draft.question.trim(), admin.id);
+  notifyPollPosted(result.data.id, draft.question.trim(), actor.id);
 
   refresh();
   return { ok: true, data: result.data };
@@ -84,14 +85,14 @@ export async function createPollAction(
 /**
  * What this edit would cost. Read-only, and asked before the confirm.
  *
- * Admin-gated despite reading nothing secret: it names the options about to be
- * dropped, and there is no reason for that to be a public endpoint.
+ * Behind `polls.manage` despite reading nothing secret: it names the options
+ * about to be dropped, and there is no reason for that to be a public endpoint.
  */
 export async function previewPollEditAction(
   pollId: string,
   draft: PollDraft
 ): Promise<PollActionResult<PollEditPreview>> {
-  await requireAdmin();
+  await requirePermission("polls.manage");
   const preview = await previewPollEdit(pollId, toInput(draft));
   return { ok: true, data: preview };
 }
@@ -100,13 +101,13 @@ export async function updatePollAction(
   pollId: string,
   draft: PollDraft
 ): Promise<PollActionResult<{ lostVotes: number }>> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("polls.manage");
   const result = await updatePoll(pollId, toInput(draft));
   if (!result.ok) return result;
 
   await recordAudit({
     action: "poll.updated",
-    actor: admin,
+    actor,
     summary:
       result.data.lostVotes > 0
         ? `Changed a poll, discarding ${result.data.lostVotes} votes.`
@@ -119,7 +120,7 @@ export async function updatePollAction(
 }
 
 export async function closePollAction(pollId: string): Promise<PollActionResult> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("polls.manage");
   const result = await closePoll(pollId);
   // Nothing to log when nothing moved: a "Closed a poll" line against a poll
   // that had already been deleted is a line that makes the log say something
@@ -128,7 +129,7 @@ export async function closePollAction(pollId: string): Promise<PollActionResult>
 
   await recordAudit({
     action: "poll.closed",
-    actor: admin,
+    actor,
     summary: "Closed a poll.",
     detail: { pollId },
   });
@@ -146,15 +147,15 @@ export async function closePollAction(pollId: string): Promise<PollActionResult>
  * `PollList` — but the log is what is left once the screen is gone.
  */
 export async function deletePollAction(pollId: string): Promise<PollActionResult> {
-  const admin = await requireAdmin();
+  const actor = await requirePermission("polls.manage");
   const result = await deletePoll(pollId);
-  // Same again: two admins on the same poll, or one on a stale page, must not
+  // Same again: two people on the same poll, or one on a stale page, must not
   // both have "Deleted a poll, and the votes on it" written against their name.
   if (!result.ok) return result;
 
   await recordAudit({
     action: "poll.deleted",
-    actor: admin,
+    actor,
     summary: "Deleted a poll, and the votes on it.",
     detail: { pollId },
   });

@@ -307,7 +307,8 @@ export async function voteSuggestion(
 }
 
 /**
- * An admin marking where a suggestion got to (R-90 / UC-22 5, 6).
+ * Marking where a suggestion got to (R-90 / UC-22 5, 6). Who may - an admin,
+ * or a holder of `suggestions.moderate` - is the action's to decide.
  *
  * Refuses rather than saying nothing when the row has gone. The screen moves
  * the dropdown optimistically — it has to, or the control fights the cursor —
@@ -340,13 +341,18 @@ export async function setSuggestionStatus(
  * Nothing deleted means the row was not theirs, or was not there — one sentence
  * answers both and is true either way. The votes go with it by cascade, which
  * is right: they were votes for this, not for the idea in general.
+ *
+ * `mayRemoveAny` is the caller's answer to "anybody's, or only their own" - an
+ * admin, or a holder of `suggestions.moderate` (R-261). It is **not** the admin
+ * flag and must not be read as one: it is true for a member who is no admin.
+ * Who that is gets decided where the session is, in the action.
  */
 export async function deleteSuggestion(
   suggestionId: string,
-  actor: { userId: string; isAdmin: boolean },
+  actor: { userId: string; mayRemoveAny: boolean },
   database: Database = defaultDb
 ): Promise<SuggestionResult<undefined>> {
-  const mine = actor.isAdmin
+  const mine = actor.mayRemoveAny
     ? eq(eventSuggestions.id, suggestionId)
     : and(
         eq(eventSuggestions.id, suggestionId),

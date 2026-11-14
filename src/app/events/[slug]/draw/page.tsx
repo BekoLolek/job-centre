@@ -119,7 +119,11 @@ export default async function DrawPage({ params }: { params: Promise<{ slug: str
                   : HEADINGS[payload.kind].title}
             </h2>
             <p className="mt-3 max-w-xl text-14 leading-relaxed text-muted">
-              {payload.kind === "too_thin" ? payload.refusal : HEADINGS[payload.kind].body}
+              {payload.kind === "too_thin"
+                ? payload.refusal
+                : payload.kind === "no_heroes"
+                  ? noHeroesBody(payload.perRole)
+                  : HEADINGS[payload.kind].body}
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
               <Button href={`/events/${event.slug}`} variant="union">
@@ -167,12 +171,10 @@ const HEADINGS = {
   },
   no_heroes: {
     eyebrow: "Nothing to draw from",
-    // Overridden above, because this one names the game.
+    // Both overridden above: the title names the game, and the body is
+    // `noHeroesBody`, which quotes the event's own width.
     title: "This game has no hero list yet",
-    body:
-      "A hand is dealt from this game's heroes and the list is empty, so there is " +
-      "nothing here to turn over. An admin can add them on the game's screen, and the " +
-      "draw works the moment there are three in each role.",
+    body: "",
   },
   too_thin: {
     eyebrow: "Nothing to draw yet",
@@ -182,3 +184,16 @@ const HEADINGS = {
     body: "",
   },
 } as const;
+
+/**
+ * The empty-list sentence, quoting how many this event's draw needs in each
+ * role (R-270) — a digit, as `drawHand`'s refusal writes it, and never the
+ * word "three", which is right only for an event that has not said otherwise.
+ */
+function noHeroesBody(perRole: number): string {
+  return (
+    "A hand is dealt from this game's heroes and the list is empty, so there is " +
+    "nothing here to turn over. An admin can add them on the game's screen, and the " +
+    `draw works the moment there are ${perRole} in each role.`
+  );
+}

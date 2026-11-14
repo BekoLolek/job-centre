@@ -67,7 +67,7 @@ const { default: RoundTable, nightTable } = await import("../RoundTable");
 // the whole fact, so it carries all three members — a solo event on no game,
 // which puts Hands among the tabs the sweep looks for. `TEAM` is only ever the
 // Results tab's `shape`, which reads `teamEvent` alone.
-const SOLO: TabVisibility = { teamEvent: false, draft: false, heroList: { game: null } };
+const SOLO: TabVisibility = { teamEvent: false, draft: false, heroes: true, heroList: { game: null } };
 const TEAM = { teamEvent: true };
 
 const SIX: RoundScoring = {

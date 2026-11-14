@@ -11,7 +11,7 @@ import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpe
  * the one thing `src/lib/__tests__/heroes-editing.test.ts` structurally cannot
  * check, because `src/lib/audit.ts` is explicit that `recordAudit` is called
  * from the action layer and nowhere else: this is the only layer that has run
- * `requireAdmin()` and therefore the only one that knows who is acting.
+ * `requirePermission()` and therefore the only one that knows who is acting.
  *
  * Only what cannot run outside a Next request is replaced, the way
  * `settings.test.ts` does it: who is signed in, and the page cache.
@@ -32,7 +32,7 @@ vi.mock("@/db", async (importOriginal) => {
 
 vi.mock("@/lib/session-guards", () => ({
   // A real row, so the line the action writes can name its actor.
-  requireAdmin: async () => ({ id: state.adminId, displayName: "Beko" }),
+  requirePermission: async () => ({ id: state.adminId, displayName: "Beko" }),
 }));
 
 const revalidated: string[] = [];

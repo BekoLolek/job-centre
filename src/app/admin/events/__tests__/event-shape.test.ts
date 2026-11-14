@@ -157,8 +157,44 @@ describe("storing the shape", () => {
       teamEvent: true,
       draft: false,
       sizing: { mode: "teams", value: 3 },
+      // Not this form's to set: an event with nothing stored draws heroes,
+      // three per role, before the save and after it (R-269, R-270).
+      heroes: true,
+      heroesPerRole: 3,
     });
     expect(eventShapeFrom(await storedConfig(fixture.eventId))).toEqual(saved.shape);
+  });
+
+  /*
+   * Task 142. The save writes `config.eventShape` whole, so the two hero
+   * answers have to be carried through it or the first Format save after
+   * somebody turned the draw off would quietly turn it back on.
+   */
+  it("carries the event's hero answers through a save that does not set them", async () => {
+    const fixture = await hostedEvent(4);
+    await db
+      .update(events)
+      .set({ config: { eventShape: { heroes: false, heroesPerRole: 2 } } })
+      .where(eq(events.id, fixture.eventId));
+
+    const saved = unwrap(await saveEventShapeAction(fixture.eventId, TEAMS));
+
+    expect(saved.shape.heroes).toBe(false);
+    expect(saved.shape.heroesPerRole).toBe(2);
+    const stored = eventShapeFrom(await storedConfig(fixture.eventId));
+    expect(stored.heroes).toBe(false);
+    expect(stored.heroesPerRole).toBe(2);
+  });
+
+  it("leaves an event with no hero answer drawing heroes, three per role, after a save", async () => {
+    const fixture = await hostedEvent(4);
+    expect(JSON.stringify(await storedConfig(fixture.eventId))).not.toMatch(/hero/i);
+
+    unwrap(await saveEventShapeAction(fixture.eventId, { ...TEAMS, teamEvent: false, draft: false }));
+
+    const stored = eventShapeFrom(await storedConfig(fixture.eventId));
+    expect(stored.heroes).toBe(true);
+    expect(stored.heroesPerRole).toBe(3);
   });
 
   it("writes one top-level key on events.config and no column", async () => {
@@ -176,7 +212,15 @@ describe("storing the shape", () => {
     unwrap(await saveEventShapeAction(fixture.eventId, TEAMS));
 
     const stored = (await storedConfig(fixture.eventId)).eventShape as Record<string, unknown>;
-    expect(Object.keys(stored).sort()).toEqual(["draft", "sizing", "teamEvent"]);
+    // Five decisions and nothing derived: the two hero answers are stored
+    // choices like the other three (R-269, R-270), not consequences.
+    expect(Object.keys(stored).sort()).toEqual([
+      "draft",
+      "heroes",
+      "heroesPerRole",
+      "sizing",
+      "teamEvent",
+    ]);
     expect(Object.keys(stored.sizing as Record<string, unknown>).sort()).toEqual([
       "mode",
       "value",

@@ -8,7 +8,16 @@ import { cx } from "./cx";
 
 /** `union` is the primary/commit action, `flare` the destructive one. */
 export type ButtonVariant = "default" | "union" | "flare";
-/** `md` keeps the padding baked into `.btn`; `sm` is the compact header/inline size. */
+/**
+ * `md` keeps the padding baked into `.btn`; `sm` is the compact header/inline size.
+ *
+ * Compact means narrower, not shorter: 1.6px a side, `px-3` (12px) against
+ * `.btn`'s `0.85rem` (13.6px). Both sizes stand on `.btn`'s 44px
+ * `min-height`, which `sm` writes nothing against — so its `py-1.5` only shows
+ * on a button whose content is taller than the floor. Do not add a `min-h-*`
+ * to `sm` to get the height back: 27px is what it was before the floor, and
+ * `field-ordering.test.ts` refuses it.
+ */
 export type ButtonSize = "sm" | "md";
 
 const VARIANT: Record<ButtonVariant, string> = {

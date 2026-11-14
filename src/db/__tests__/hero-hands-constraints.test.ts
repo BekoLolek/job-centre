@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { events, games, heroHands, heroes, users } from "@/db";
 import { HERO_ROLES } from "@/lib/heroes";
-import { HEROES_PER_ROLE } from "@/lib/heroes-policy";
+import { HEROES_PER_ROLE } from "@/lib/events-policy";
 import { type TestDatabase, expectRejection, freshDatabase } from "./helpers";
 
 /**

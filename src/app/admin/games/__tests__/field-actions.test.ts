@@ -11,7 +11,7 @@ import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpe
  * question that vanished from the profile form had no history at all. The line
  * is written by the action and not by `src/lib/admin-games.ts`, for the reason
  * `src/lib/audit.ts` gives: this is the only layer that has run
- * `requireAdmin()` and so the only one that knows who is acting.
+ * `requirePermission()` and so the only one that knows who is acting.
  *
  * Two games are seeded, and the questions under test go on the **second**, so a
  * line that named whichever game came first would not pass by luck.
@@ -35,7 +35,7 @@ vi.mock("@/db", async (importOriginal) => {
 
 vi.mock("@/lib/session-guards", () => ({
   // A real row, so the line the action writes can name its actor.
-  requireAdmin: async () => ({ id: state.adminId, displayName: "Beko" }),
+  requirePermission: async () => ({ id: state.adminId, displayName: "Beko" }),
 }));
 
 const revalidated: string[] = [];

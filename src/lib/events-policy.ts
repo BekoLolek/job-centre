@@ -627,12 +627,34 @@ export type TeamSizing = {
  * `tabHiddenBecause`'s rule, one place — and keeping the admin's answer means
  * turning teams back on restores the event they were describing instead of
  * silently clearing the draft they had already asked for.
+ *
+ * `heroes` and `heroesPerRole` are R-269 and R-270: whether the night draws
+ * random heroes at all, and how many each player draws **in each role** — per
+ * role and not a total, because the stored hand is role-shaped and the reveal
+ * reads it that way. The width is kept while `heroes` is false for `draft`'s
+ * reason: turning the draw back on restores the night that was described.
  */
 export type EventShape = {
   teamEvent: boolean;
   draft: boolean;
   sizing: TeamSizing;
+  heroes: boolean;
+  heroesPerRole: number;
 };
+
+/**
+ * Three in each role — **the default, and only the default** (R-270).
+ *
+ * What an event with no stored width draws, which is every event from before
+ * the width could be set. It is not the live answer for any event: that is
+ * `eventShapeFrom(config).heroesPerRole`, and `hero-width.test.ts` sweeps the
+ * source to hold that this is read nowhere but the resolver's fallback.
+ *
+ * Declared here rather than in `heroes-policy.ts`, where it used to live,
+ * because the import can only run this way: this module is read by client
+ * components and `heroes-policy.ts` reaches the hero catalogue.
+ */
+export const HEROES_PER_ROLE = 3;
 
 /**
  * The largest side this will store, and it is a typo guard rather than a rule
@@ -686,6 +708,20 @@ function record(value: SettingValue | undefined): Record<string, SettingValue> {
  * The sizing default is the night's own format — 6v6 means six to a side, 3v3
  * three — rather than a number invented here, so the panel opens agreeing with
  * what Task 78 already stored instead of contradicting it.
+ *
+ * ## The hero answers default to what the site does today
+ *
+ * `heroes` reads anything but a stored `false` as **on**, and `heroesPerRole`
+ * reads anything but a whole number of at least one as {@link HEROES_PER_ROLE}
+ * (R-269, R-270). Every event stored before these existed has neither key and
+ * drew three per role, so that is what nothing-stored has to mean — a default
+ * of off would take the Hands tab from every event that has already dealt
+ * hands, and those hands with it as far as any manager could see.
+ *
+ * They are inside `config.eventShape` rather than siblings of it, unlike
+ * `privateDraft` below, because the Format panel is where they are decided:
+ * its save writes this object whole, so the panel that writes the shape is
+ * the one writer of these too and there is nothing for another save to erase.
  */
 export function eventShapeFrom(config: EventConfig | null | undefined): EventShape {
   const shape = record(config?.eventShape);
@@ -700,10 +736,18 @@ export function eventShapeFrom(config: EventConfig | null | undefined): EventSha
         ? MIN_TEAMS
         : teamFormatFrom(config).teamSize;
 
+  const width = shape.heroesPerRole;
+  const heroesPerRole =
+    typeof width === "number" && Number.isInteger(width) && width > 0
+      ? width
+      : HEROES_PER_ROLE;
+
   return {
     teamEvent: shape.teamEvent !== false,
     draft: shape.draft !== false,
     sizing: { mode, value },
+    heroes: shape.heroes !== false,
+    heroesPerRole,
   };
 }
 

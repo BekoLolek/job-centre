@@ -7,6 +7,7 @@ import {
   auditLog,
   eventHosts,
   events,
+  users,
 } from "@/db";
 import { type TestDatabase, freshDatabase, makeHost, makeUser } from "@/db/__tests__/helpers";
 import type { AnnouncementSettings } from "@/lib/announce";
@@ -375,6 +376,24 @@ describe("announce.post", () => {
         holder,
         `Holder of announce.post posted the “New event” announcement for “${event.title}” by hand.`,
       ],
+    ]);
+  });
+
+  it("says somebody posted, not a manager, when the holder has no name on file", async () => {
+    const nameless = await makeUser(db);
+    await db.update(users).set({ displayName: null, name: null }).where(eq(users.id, nameless));
+    await grantPower(
+      { userId: nameless, power: "announce.post", grantedByUserId: ids["events.manage"] },
+      db
+    );
+    state.userId = nameless;
+    const event = await anEvent();
+
+    await actions.postAnnouncementByHandAction(event.id, "event_published");
+
+    const lines = await linesFor(event.id, "announcement.posted_by_hand");
+    expect(lines.map((line) => line.summary)).toEqual([
+      `Somebody posted the “New event” announcement for “${event.title}” by hand.`,
     ]);
   });
 

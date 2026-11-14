@@ -34,7 +34,7 @@ import {
 } from "@/components/ui";
 import { type AuditView, listAudit, resolveAuditFilter } from "@/lib/audit";
 import { listEventOptions } from "@/lib/events";
-import { requireAdmin } from "@/lib/session-guards";
+import { requirePermission } from "@/lib/session-guards";
 
 export const dynamic = "force-dynamic";
 
@@ -50,7 +50,7 @@ export default async function AdminAuditPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAdmin();
+  await requirePermission("audit.read");
 
   const params = await searchParams;
   const raw = Array.isArray(params.event) ? params.event[0] : params.event;

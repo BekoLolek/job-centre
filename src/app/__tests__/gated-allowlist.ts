@@ -3,7 +3,8 @@
  *
  * The sweep's rule is that every server action, every admin page and every API
  * route handler awaits a guard **that refuses** - `requireUser`, `requireAdmin`,
- * `requirePermission`, `requireEventManager`, `requireManagerOfChild` - before
+ * `requirePermission`, `requireAnyPermission`, `requireEventManager`,
+ * `requireManagerOfChild` - before
  * it does anything else. Two lists stand beside that rule, and both are the same kind of thing:
  * a call site that does not fit, **and a sentence saying why that is right**,
  * not why it is convenient.

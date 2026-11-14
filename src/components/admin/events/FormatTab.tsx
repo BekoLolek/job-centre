@@ -420,7 +420,10 @@ export default function FormatTab({
       }
       setPending(null);
       setNote(`${plural(result.data.created, "match", "matches")} rebuilt`);
-      setState("saved");
+      // As in `generate` below: the buttons are busy while this runs and the
+      // fields are not. An edit typed meanwhile is still unsaved, and it
+      // outranks the note.
+      setState((was) => (was === "dirty" ? was : "saved"));
       router.refresh();
     } catch {
       setError("Could not reach the server. Nothing was rebuilt.");
@@ -939,7 +942,6 @@ function StagePanel({
           <Button
             size="sm"
             variant="union"
-            className="min-h-11"
             disabled={busy}
             onClick={onGenerate}
           >

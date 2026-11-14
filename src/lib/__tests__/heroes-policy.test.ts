@@ -1,7 +1,18 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Hero, HeroRole } from "@/db";
 import { HERO_ROLES } from "@/lib/heroes";
-import { HEROES_PER_ROLE, drawHand } from "@/lib/heroes-policy";
+import { HEROES_PER_ROLE } from "@/lib/events-policy";
+import { drawHand as drawHandAt } from "@/lib/heroes-policy";
+
+/**
+ * Every draw in this file is at the default width. The width became a
+ * parameter in Task 142 and is proved in `hero-width.test.ts`; binding it here,
+ * once, is what leaves every sequence and every expected hand below exactly as
+ * it was — which is the evidence that three per role consumes the generator
+ * as it always did.
+ */
+const drawHand = (pools: Record<HeroRole, readonly Hero[]>, random: () => number) =>
+  drawHandAt(pools, random, HEROES_PER_ROLE);
 
 /**
  * The draw, as arithmetic (R-209, R-210 / UC-39 4, 4a, 2a).

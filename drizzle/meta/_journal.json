@@ -253,6 +253,13 @@
       "when": 1794579646132,
       "tag": "0035_user_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1794682518880,
+      "tag": "0036_hero_hands_any_width",
+      "breakpoints": true
     }
   ]
 }

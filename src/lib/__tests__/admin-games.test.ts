@@ -148,8 +148,8 @@ describe("renameGame and setGameActive", () => {
     const result = await renameGame(game.id, "R.E.P.O.", db);
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data.name).toBe("R.E.P.O.");
-      expect(result.data.key).toBe("repo");
+      expect(result.data.game.name).toBe("R.E.P.O.");
+      expect(result.data.game.key).toBe("repo");
     }
   });
 

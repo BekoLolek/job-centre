@@ -490,6 +490,29 @@ export const heroHands = pgTable(
         and ${table.heroIds}[7] <> ${table.heroIds}[9]
         and ${table.heroIds}[8] <> ${table.heroIds}[9]`
     ),
+    /*
+     * The same three rules for a hand of **any** width (R-270 / UC-58 7): the
+     * same number of ids in every role and at least one, no NULL among them,
+     * and each role's block distinct inside itself — and only inside itself,
+     * for Deadpool's reason above.
+     *
+     * A CHECK may not contain a subquery but may call an IMMUTABLE function,
+     * so the rule lives in `hero_hand_is_well_formed`, which drizzle/0036
+     * creates by hand: drizzle-kit does not model functions, so it is not in
+     * this file and `db:generate` will never write or drop it. The `3` is
+     * `HERO_ROLES.length`, a literal for the reason the `9` above is one;
+     * `hero-hands-width.test.ts` reads it off the live constraint and compares.
+     *
+     * **Both checks are here on purpose, and the one above is not dead code.**
+     * A push to main applies migrations while the previous build is still
+     * serving, so the nine is replaced in two deploys: 0036 adds this beside
+     * it, and `drizzle/later/hero_hands_drop_nine.sql` says how the nine goes
+     * afterwards. Until it has, a hand must satisfy both, which means nine.
+     */
+    check(
+      "hero_hands_per_role_distinct",
+      sql`hero_hand_is_well_formed(${table.heroIds}, 3)`
+    ),
     // The draw page's read is "my hand for this event", which the unique
     // constraint above already indexes. This one is the admin-shaped read —
     // every hand dealt at one event — and UC-39 7 is players comparing hands.
