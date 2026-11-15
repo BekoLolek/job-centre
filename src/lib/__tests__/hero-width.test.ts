@@ -22,9 +22,10 @@ import { drawHand } from "@/lib/heroes-policy";
  *  - **Nothing reads `HEROES_PER_ROLE` as the live answer**, swept over the
  *    source: the constant is the resolver's fallback and nothing else.
  *
- * A width other than three cannot be *stored* yet —
- * `hero_hands_nine_distinct_per_role` still requires nine ids — so every
- * other-width assertion here is over the pure function, never a round trip.
+ * Every other-width assertion here is over the pure function, never a round
+ * trip. This file was written while the CHECK that said nine was still on the
+ * table; drizzle/0037 dropped it, and the round trips at other widths are in
+ * `hero-stored-width.test.ts` and `src/db/__tests__/hero-hands-width.test.ts`.
  */
 
 /* ------------------------------------------------------------------ */

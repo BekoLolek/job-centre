@@ -1,0 +1,16 @@
+-- The nine goes (R-270 / UC-58 7): the second half of drizzle/0036.
+--
+-- 0036 added `hero_hands_per_role_distinct` beside
+-- `hero_hands_nine_distinct_per_role` and removed nothing, because a push to
+-- main applies migrations while the previous build is still serving
+-- (docs/plan.md's risk register: "Additive-first migrations; drops in a later
+-- commit"). This is the later commit. When it has run, the new CHECK is the
+-- only rule about a hand's shape, and a hand of a width other than three can
+-- be stored.
+--
+-- Nothing is rewritten and no row can fail: dropping a CHECK reads no rows.
+--
+-- What `npm run db:generate` wrote was this statement without `IF EXISTS`,
+-- which stops a second run at "does not exist". The migrator applies a file
+-- once; `IF EXISTS` is what makes a second run change nothing anyway.
+ALTER TABLE "hero_hands" DROP CONSTRAINT IF EXISTS "hero_hands_nine_distinct_per_role";

@@ -2017,8 +2017,8 @@ describe("the round-score table (drizzle/0033)", () => {
    * The bound is the literal 32 because a CHECK cannot import a constant.
    * `MAX_ROUNDS` in src/lib/round-scoring.ts is the same number, and *its* test
    * reads this clause out of `information_schema` and compares — the shape
-   * `hero_hands_nine_distinct_per_role` already uses against `HERO_ROLES.length
-   * * HEROES_PER_ROLE`. This side asserts only what the migration wrote, so
+   * `hero_hands_per_role_distinct`'s role count already uses against
+   * `HERO_ROLES.length`. This side asserts only what the migration wrote, so
    * `src/db/schema.ts` goes on importing nothing from src/lib.
    */
   it("bounds the round with a CHECK that says 32", async () => {

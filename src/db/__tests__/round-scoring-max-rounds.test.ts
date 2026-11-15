@@ -11,8 +11,8 @@ import { type TestDatabase, freshDatabase } from "./helpers";
  * is the number every screen and policy function uses. If the two drift the
  * failure is silent and one-sided — a panel allowing 40 rounds would have the
  * 33rd save refused with a constraint name, and nothing else in the suite would
- * say why. `hero_hands_nine_distinct_per_role` has the same test for the same
- * reason (`hero-hands-constraints.test.ts`).
+ * say why. `hero_hands_per_role_distinct`'s role count has the same test for
+ * the same reason (`hero-hands-width.test.ts`).
  *
  * Read out of `information_schema` rather than asserted as arithmetic: the
  * point is the number the live constraint is enforcing, not the number this

@@ -1,11 +1,8 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { handCards, loadDraw } from "@/app/events/[slug]/draw/draw";
 import { type Database, games, heroHands, heroes } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
-import { MIGRATIONS_FOLDER } from "@/db/migrate";
 import {
   applyToEvent,
   createEvent,
@@ -21,30 +18,23 @@ import { HERO_ROLES } from "@/lib/heroes";
  * Task 144 — a hand dealt at one width stays exactly as dealt (R-271 / UC-58
  * 7, 7a), through the real writes and the real reads.
  *
- * Two databases, for the reason `src/db/__tests__/hero-hands-width.test.ts`
- * gives: `shipped` is every journalled migration, where the nine is still on
- * the table and three is the only width that can be stored; `later` has the
- * drop in `drizzle/later` applied, and is the only place a hand of six can be
- * dealt at all.
+ * One database, every journalled migration. Until drizzle/0037 dropped the
+ * CHECK that said nine there were two — a hand of six could only be dealt
+ * where the drop had been applied by hand.
  *
  * It lives here rather than beside `draw-page.test.ts` because that folder is
  * another task's while this one is in flight; `loadDraw` needs no session and
  * no render, so nothing is lost by asking it from outside.
  */
 
-let shipped: TestDatabase;
-let later: TestDatabase;
+let ctx: TestDatabase;
 
 beforeAll(async () => {
-  shipped = await freshDatabase();
-  later = await freshDatabase();
-  const drop = readFileSync(path.join(MIGRATIONS_FOLDER, "later", "hero_hands_drop_nine.sql"), "utf8");
-  await later.client.exec(drop);
+  ctx = await freshDatabase();
 });
 
 afterAll(async () => {
-  await shipped.close();
-  await later.close();
+  await ctx.close();
 });
 
 let counter = 0;
@@ -125,33 +115,33 @@ async function payloadFor(db: Database, fix: Fixture) {
 
 describe("a hand dealt at one width, after the event's number changes (R-271)", () => {
   it.each([[1], [5]])("is the same nine when three becomes %i", async (width) => {
-    const fix = await fixture(shipped.db, 3, 6);
-    const dealt = await deal(shipped.db, fix);
-    const ids = await storedIds(shipped.db, fix.eventId);
+    const fix = await fixture(ctx.db, 3, 6);
+    const dealt = await deal(ctx.db, fix);
+    const ids = await storedIds(ctx.db, fix.eventId);
 
-    await setWidth(shipped.db, fix.eventId, width);
+    await setWidth(ctx.db, fix.eventId, width);
 
     expect(ids).toHaveLength(9);
-    expect(await storedIds(shipped.db, fix.eventId)).toEqual(ids);
-    expect(await handFor(fix.eventId, fix.userId, shipped.db)).toEqual(dealt);
-    expect(await dealFor(fix.eventId, fix.userId, thrower, shipped.db)).toEqual({
+    expect(await storedIds(ctx.db, fix.eventId)).toEqual(ids);
+    expect(await handFor(fix.eventId, fix.userId, ctx.db)).toEqual(dealt);
+    expect(await dealFor(fix.eventId, fix.userId, thrower, ctx.db)).toEqual({
       ok: true,
       hand: dealt,
       alreadyHeld: true,
     });
   });
 
-  it("is the same six when two becomes three, once a six can be stored", async () => {
-    const fix = await fixture(later.db, 2, 6);
-    const dealt = await deal(later.db, fix);
-    const ids = await storedIds(later.db, fix.eventId);
+  it("is the same six when two becomes three", async () => {
+    const fix = await fixture(ctx.db, 2, 6);
+    const dealt = await deal(ctx.db, fix);
+    const ids = await storedIds(ctx.db, fix.eventId);
 
-    await setWidth(later.db, fix.eventId, 3);
+    await setWidth(ctx.db, fix.eventId, 3);
 
     expect(ids).toHaveLength(6);
-    expect(await storedIds(later.db, fix.eventId)).toEqual(ids);
-    expect(await handFor(fix.eventId, fix.userId, later.db)).toEqual(dealt);
-    expect(await dealFor(fix.eventId, fix.userId, thrower, later.db)).toEqual({
+    expect(await storedIds(ctx.db, fix.eventId)).toEqual(ids);
+    expect(await handFor(fix.eventId, fix.userId, ctx.db)).toEqual(dealt);
+    expect(await dealFor(fix.eventId, fix.userId, thrower, ctx.db)).toEqual({
       ok: true,
       hand: dealt,
       alreadyHeld: true,
@@ -167,11 +157,11 @@ describe("the draw page, for somebody who already holds a hand", () => {
    * is not getting one — so it must not stand between them and their nine.
    */
   it("shows the nine they hold when the event now asks for more than the list can deal", async () => {
-    const fix = await fixture(shipped.db, 3, 4);
-    const dealt = await deal(shipped.db, fix);
+    const fix = await fixture(ctx.db, 3, 4);
+    const dealt = await deal(ctx.db, fix);
 
-    await setWidth(shipped.db, fix.eventId, 5);
-    const payload = await payloadFor(shipped.db, fix);
+    await setWidth(ctx.db, fix.eventId, 5);
+    const payload = await payloadFor(ctx.db, fix);
 
     expect(payload).toMatchObject({ kind: "ready", hand: handCards(dealt.heroes) });
   });
@@ -183,22 +173,22 @@ describe("the draw page, for somebody who already holds a hand", () => {
   it.each([[1], [5]])(
     "says three in each role beside a stored nine, though the event now says %i",
     async (width) => {
-      const fix = await fixture(shipped.db, 3, 6);
-      await deal(shipped.db, fix);
+      const fix = await fixture(ctx.db, 3, 6);
+      await deal(ctx.db, fix);
 
-      await setWidth(shipped.db, fix.eventId, width);
-      const payload = await payloadFor(shipped.db, fix);
+      await setWidth(ctx.db, fix.eventId, width);
+      const payload = await payloadFor(ctx.db, fix);
 
       expect(payload).toMatchObject({ kind: "ready", perRole: 3 });
     }
   );
 
   it("shows a stored six as six, two in each role, though the event now says three", async () => {
-    const fix = await fixture(later.db, 2, 6);
-    const dealt = await deal(later.db, fix);
+    const fix = await fixture(ctx.db, 2, 6);
+    const dealt = await deal(ctx.db, fix);
 
-    await setWidth(later.db, fix.eventId, 3);
-    const payload = await payloadFor(later.db, fix);
+    await setWidth(ctx.db, fix.eventId, 3);
+    const payload = await payloadFor(ctx.db, fix);
 
     expect(payload).toMatchObject({ kind: "ready", perRole: 2, hand: handCards(dealt.heroes) });
     expect(handCards(dealt.heroes)).toHaveLength(6);
@@ -209,11 +199,11 @@ describe("the draw page, for somebody who already holds a hand", () => {
    * asked, at the event's width, and nothing is dealt to find out.
    */
   it("still refuses a thin list to somebody who holds nothing", async () => {
-    const fix = await fixture(shipped.db, 5, 4);
+    const fix = await fixture(ctx.db, 5, 4);
 
-    const payload = await payloadFor(shipped.db, fix);
+    const payload = await payloadFor(ctx.db, fix);
 
     expect(payload.kind).toBe("too_thin");
-    expect(await handFor(fix.eventId, fix.userId, shipped.db)).toBeNull();
+    expect(await handFor(fix.eventId, fix.userId, ctx.db)).toBeNull();
   });
 });

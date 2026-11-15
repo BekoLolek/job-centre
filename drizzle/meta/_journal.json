@@ -260,6 +260,13 @@
       "when": 1794682518880,
       "tag": "0036_hero_hands_any_width",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1794703683510,
+      "tag": "0037_hero_hands_drop_nine",
+      "breakpoints": true
     }
   ]
 }

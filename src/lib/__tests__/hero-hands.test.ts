@@ -1407,11 +1407,11 @@ describe("an event that has already dealt hands, with nothing stored about heroe
 
 describe("dealFor and the event's width", () => {
   /**
-   * The refusal is the only place a width other than three can be seen
-   * through `dealFor` today: `hero_hands_nine_distinct_per_role` still
-   * requires nine ids, so a narrower or wider hand cannot be stored. Pools of
-   * four deal happily at three — so a refusal naming five is the event's
-   * number arriving at `drawHand`, and nothing else.
+   * Asked through the refusal, which needs nothing stored. (A hand of another
+   * width *can* be stored since drizzle/0037 dropped the CHECK that said
+   * nine; `hero-stored-width.test.ts` deals one.) Pools of four deal happily
+   * at three — so a refusal naming five is the event's number arriving at
+   * `drawHand`, and nothing else.
    */
   it("asks the draw for the width the event stores, and says so when a role is thin", async () => {
     const fix = await fixture(4);

@@ -1,7 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { events, games, heroHands, heroes, users } from "@/db";
-import { HERO_ROLES } from "@/lib/heroes";
 import { HEROES_PER_ROLE } from "@/lib/events-policy";
 import { type TestDatabase, expectRejection, freshDatabase } from "./helpers";
 
@@ -17,10 +16,11 @@ import { type TestDatabase, expectRejection, freshDatabase } from "./helpers";
  * test in `hero-hands.test.ts` about two clicks is testing code that this
  * constraint is holding up.
  *
- * The cases that insert through raw SQL do so where the point is a value
- * TypeScript would not let a caller write — a NULL element, eight ids, a
- * repeat inside one role. A guard only the type system holds is not a guard on
- * the database, and `dealFor` is not the only thing that could ever write here.
+ * The **shape of the array** — its width, a NULL element, a repeat inside one
+ * role — is `hero_hands_per_role_distinct`, and its refusals are in
+ * `hero-hands-width.test.ts`, at three in each role and at other widths. The
+ * cases left here are the ones that say nothing about which CHECK is on the
+ * table: what is accepted, and what the column itself refuses.
  */
 
 let ctx: TestDatabase;
@@ -165,43 +165,6 @@ describe("the nine ids", () => {
     expect(row.dealtAt).toBeInstanceOf(Date);
   });
 
-  it("refuses eight, and refuses ten", async () => {
-    const short = await fixture();
-    await expectRejection(
-      () => insertRaw(short, literal(short.heroIds.slice(0, 8))),
-      /hero_hands_nine_distinct_per_role/
-    );
-
-    const long = await fixture();
-    await expectRejection(
-      () => insertRaw(long, literal([...long.heroIds, long.heroIds[0]])),
-      /hero_hands_nine_distinct_per_role/
-    );
-  });
-
-  it("refuses an empty array", async () => {
-    const fix = await fixture();
-    await expectRejection(() => insertRaw(fix, `'{}'`), /hero_hands_nine_distinct_per_role/);
-  });
-
-  /**
-   * The separate half of the check, and not decoration.
-   *
-   * `null <> null` is NULL rather than false, and a CHECK counts NULL as
-   * satisfied — so a NULL element would pass every inequality in the
-   * constraint. `array_position(..., null) is null` is what refuses it, and
-   * this is the case that tells the two halves apart: nine elements, all the
-   * inequalities true of the ones that are real.
-   */
-  it("refuses a NULL element even though there are nine of them", async () => {
-    const fix = await fixture();
-    const withNull = [...fix.heroIds.slice(0, 8), "null"];
-    await expectRejection(
-      () => insertRaw(fix, `'{${withNull.join(",")}}'`),
-      /hero_hands_nine_distinct_per_role/
-    );
-  });
-
   it("refuses a NULL array", async () => {
     const fix = await fixture();
     await expectRejection(() => insertRaw(fix, "null"), /null value in column "hero_ids"|not-null/);
@@ -209,27 +172,6 @@ describe("the nine ids", () => {
 });
 
 describe("distinct within a role, repeating across them", () => {
-  /**
-   * UC-39 4a's first half, in the database: a player's three in a role are
-   * distinct from each other, because dealing somebody the same hero twice is a
-   * wasted roll.
-   *
-   * Each role's triple is tested in its own right. A constraint that only
-   * checked the first three would pass a test that only looked at the first
-   * three, and the three triples are nine separate inequalities that could each
-   * be mistyped.
-   */
-  it.each([
-    ["Vanguard", 0],
-    ["Duelist", HEROES_PER_ROLE],
-    ["Strategist", HEROES_PER_ROLE * 2],
-  ])("refuses the same hero twice inside %s", async (_role, offset) => {
-    const fix = await fixture();
-    const ids = [...fix.heroIds];
-    ids[offset + 1] = ids[offset];
-    await expectRejection(() => insertRaw(fix, literal(ids)), /hero_hands_nine_distinct_per_role/);
-  });
-
   /**
    * UC-39 4a's other half and UC-40 3c's consequence: **Deadpool**.
    *
@@ -308,28 +250,6 @@ describe("a hand's row", () => {
           [fix.eventId]
         ),
       /hero_hands_user_id_users_id_fk|foreign key/
-    );
-  });
-
-  /**
-   * The check says `9` as a literal because a CHECK constraint cannot import a
-   * constant. This is the one place the literal and the code's `HERO_ROLES
-   * .length * HEROES_PER_ROLE` can be compared, so a fourth role cannot leave
-   * the two disagreeing in silence — the constraint would start refusing every
-   * hand the draw deals, and nothing else in the suite would say why.
-   *
-   * Read out of `information_schema` rather than asserted as arithmetic: the
-   * point is the number the live constraint is enforcing, not the number this
-   * file believes it wrote.
-   */
-  it("checks the hand size the code deals", async () => {
-    const result = await ctx.client.query<{ check_clause: string }>(
-      `select check_clause from information_schema.check_constraints
-         where constraint_name = 'hero_hands_nine_distinct_per_role'`
-    );
-    expect(result.rows).toHaveLength(1);
-    expect(result.rows[0].check_clause).toContain(
-      `= ${HERO_ROLES.length * HEROES_PER_ROLE}`
     );
   });
 
