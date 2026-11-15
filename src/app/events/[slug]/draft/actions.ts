@@ -23,6 +23,15 @@
  * it, so a write from an `/api/*` route is invisible to the pages that render
  * next. Anything here that writes has to be an action.
  *
+ * ## Three commands need `destructive` as well (R-267 / UC-57)
+ *
+ * Discarding a lot, cancelling the open one and undoing a settled one write
+ * `draft.discarded` and `draft.voided`, which `audit.ts` marks destructive. Each
+ * asks `destructiveRefusal` with that key and this event's id before it reads
+ * or writes anything more. That is asked of a holder of `events.manage` and
+ * never of the event's host, whose evening is whole (UC-57 3a) - which is why
+ * it is on the command and not in `requireEventManager`.
+ *
  * ## Nothing revalidates
  *
  * The room polls once a second (§3.4) and every action hands back a freshly
@@ -47,6 +56,7 @@ import {
   voidLot,
 } from "@/lib/draft";
 import { recordAudit } from "@/lib/audit";
+import { destructiveRefusal } from "@/lib/permissions";
 import { announceLotSold } from "@/lib/discord";
 import type { BidRefusalReason } from "@/lib/draft-policy";
 import {
@@ -230,6 +240,8 @@ export async function runDraftAction(
     }
 
     case "discard": {
+      const refusal = await destructiveRefusal(admin, "draft.discarded", eventId);
+      if (refusal) return done(false, refusal);
       if (!lotId) return done(false, "Nobody is on the block right now.");
       const discarded = await describeLot(lotId);
       const result = await discardLot(lotId, { closedBy: admin.id });
@@ -317,6 +329,8 @@ export async function runDraftAction(
     }
 
     case "cancel": {
+      const refusal = await destructiveRefusal(admin, "draft.voided", eventId);
+      if (refusal) return done(false, refusal);
       if (!lotId) return done(false, "Nobody is on the block right now.");
       const cancelling = await describeLot(lotId);
       const result = await voidLot(lotId, { voidedBy: admin.id });
@@ -334,6 +348,8 @@ export async function runDraftAction(
     }
 
     case "undo": {
+      const refusal = await destructiveRefusal(admin, "draft.voided", eventId);
+      if (refusal) return done(false, refusal);
       const result = await voidLastLot(eventId, { voidedBy: admin.id });
       if (!result.ok) return done(false, result.error);
 

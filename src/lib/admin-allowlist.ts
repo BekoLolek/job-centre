@@ -2,6 +2,8 @@ import { type SQL, and, eq, inArray } from "drizzle-orm";
 import { type Database, adminAllowlist, db as defaultDb, users } from "@/db";
 import { revokeRefusal } from "./admin-users-policy";
 import { normaliseDiscordId } from "./auth-policy";
+import { clearPowers } from "./permissions";
+import type { Power } from "./permissions-policy";
 
 /**
  * The admin allowlist: Discord ids that become admins on sign-in, and ids that
@@ -124,12 +126,28 @@ export async function getAllowlistEntries(
  * If they already have an account the flag is set now rather than waiting for
  * their next sign-in — an admin who adds somebody and then watches nothing
  * happen for a week reasonably concludes the feature is broken.
+ *
+ * That is a promotion, so it does what `grantAdmin` does to the account's list
+ * of powers (Task 151, R-266): the flag replaces it. The list is deleted in
+ * this transaction, on a locked row, and handed back as `clearedPowers` with
+ * the `account` it belonged to, so the action can write the line. Cleared
+ * afterwards instead, the member would for a moment be an admin with a live
+ * list, and a demotion landing in that moment would wake it.
  */
 export async function allowAdmin(
   discordId: string,
   input: { note?: string | null; addedByUserId?: string | null } = {},
   database: Database = defaultDb
-): Promise<AllowlistResult<{ discordId: string; promotedNow: boolean }>> {
+): Promise<
+  AllowlistResult<{
+    discordId: string;
+    promotedNow: boolean;
+    /** The account with this id, when there is one yet. */
+    account: { id: string; displayName: string | null; name: string | null } | null;
+    /** What the flag replaced on that account: often nothing. */
+    clearedPowers: Power[];
+  }>
+> {
   const id = normaliseDiscordId(discordId);
   if (!id) {
     return {
@@ -166,15 +184,32 @@ export async function allowAdmin(
       });
 
     const [existing] = await tx
-      .select({ id: users.id, isAdmin: users.isAdmin })
+      .select({
+        id: users.id,
+        isAdmin: users.isAdmin,
+        displayName: users.displayName,
+        name: users.name,
+      })
       .from(users)
-      .where(eq(users.discordId, id));
+      .where(eq(users.discordId, id))
+      .for("update");
 
     if (existing && !existing.isAdmin) {
       await tx.update(users).set({ isAdmin: true }).where(eq(users.id, existing.id));
     }
+    const clearedPowers = existing ? await clearPowers(existing.id, tx) : [];
 
-    return { ok: true as const, data: { discordId: id, promotedNow: Boolean(existing) } };
+    return {
+      ok: true as const,
+      data: {
+        discordId: id,
+        promotedNow: Boolean(existing),
+        account: existing
+          ? { id: existing.id, displayName: existing.displayName, name: existing.name }
+          : null,
+        clearedPowers,
+      },
+    };
   });
 }
 

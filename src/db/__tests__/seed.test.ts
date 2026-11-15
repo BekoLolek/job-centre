@@ -1,6 +1,15 @@
 import { eq, isNull } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SETTING_KEYS, games, heroes, profileFields, settings, users } from "@/db";
+import {
+  SETTING_KEYS,
+  auditLog,
+  games,
+  heroes,
+  profileFields,
+  settings,
+  userPermissions,
+  users,
+} from "@/db";
 import { RIVALS_RANK_LADDER, parseAdminDiscordIds, seed } from "@/db/seed";
 import { drawableByRole } from "@/lib/heroes";
 import { type TestDatabase, freshDatabase, makeUser } from "./helpers";
@@ -241,6 +250,43 @@ describe("seed", () => {
     expect(promoted.isAdmin).toBe(true);
     const [untouched] = await ctx.db.select().from(users).where(eq(users.discordId, "999"));
     expect(untouched.isAdmin).toBe(false);
+  });
+
+  it("deletes the list of powers of a member it marks admin, and says so in the log", async () => {
+    // Task 151. A re-run with an id newly in ADMIN_DISCORD_IDS is a promotion
+    // nobody clicked. Left in the table, the list would come back into force
+    // the day the flag was revoked.
+    const member = await makeUser(ctx.db, { discordId: "111", displayName: "Ada" });
+    const bystander = await makeUser(ctx.db, { discordId: "999" });
+    await ctx.db.insert(userPermissions).values([
+      { userId: member, power: "polls.manage" },
+      { userId: bystander, power: "audit.read" },
+    ]);
+
+    await seed(ctx.db, { ADMIN_DISCORD_IDS: "111" });
+
+    const left = await ctx.db
+      .select({ userId: userPermissions.userId, power: userPermissions.power })
+      .from(userPermissions);
+    expect(left).toEqual([{ userId: bystander, power: "audit.read" }]);
+    expect(await ctx.db.select().from(auditLog)).toEqual([
+      expect.objectContaining({
+        action: "user.powers.changed",
+        actorUserId: null,
+        subject: member,
+        summary:
+          "Removed Ada's powers: polls.manage. The seed made them an admin from ADMIN_DISCORD_IDS, and the flag replaces the list.",
+        detail: { added: [], removed: ["polls.manage"], replacedByAdminFlag: true, by: "seed" },
+      }),
+    ]);
+  });
+
+  it("writes nothing to the log for a member it marks admin who held no powers", async () => {
+    await makeUser(ctx.db, { discordId: "111" });
+
+    await seed(ctx.db, { ADMIN_DISCORD_IDS: "111" });
+
+    expect(await ctx.db.select().from(auditLog)).toEqual([]);
   });
 
   it("does not invent rows for allowlisted ids that have never signed in", async () => {

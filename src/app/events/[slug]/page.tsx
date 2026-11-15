@@ -134,16 +134,22 @@ export default async function EventPage({
    * than by a second opinion here (Task 84 / UC-39 1).
    *
    * The link has to admit exactly who the page admits, and the only way for two
-   * screens to agree about that is for them to ask one function: a seat read, a
-   * game, a hero list that is not empty and not too thin to deal from are four
-   * conditions and `loadDraw` already owns all four, in that order, refusing
-   * each before it does the next question's work. Re-deriving them here would be
-   * a copy that drifts, and the direction it drifts is a link that offers a
-   * route answering `no_seat` — the dead end UC-39 1a exists to stop.
+   * screens to agree about that is for them to ask one function. `loadDraw`
+   * asks, in this order: a seat; a hand already stored, which is `ready`
+   * whatever the event says now; then, for somebody holding nothing, a draw
+   * that is switched on, a game, and a hero list that is not empty and not too
+   * thin to deal from. It owns every one of those, refusing each before it
+   * does the next question's work. Re-deriving them here would be a copy that
+   * drifts, and the direction it drifts is a link that offers a route
+   * answering `no_seat` — the dead end UC-39 1a exists to stop.
    *
-   * So the link appears on `ready` and on nothing else. An event whose game has
-   * no hero list does not advertise a draw, and neither does one whose list is
-   * too thin, because in both cases the page behind the link refuses.
+   * So the link appears on `ready`, and on `former_seat` — a hand whose holder
+   * has since lost their seat, which the page behind the link still shows them
+   * (Task 149) — and on nothing else. A night that draws no
+   * heroes does not advertise a draw, nor does an event whose game has no hero
+   * list or one too thin, because in each case the page behind the link
+   * refuses — and a hand dealt before any of that changed keeps its link,
+   * because the page behind it still shows the hand.
    *
    * Signed out there is nothing to ask: a hand belongs to one person, so there
    * is no seat to hold and `requireUser` on the draw page would bounce them.
@@ -297,7 +303,7 @@ export default async function EventPage({
                 wording carries the distinction on its own, so nothing here is
                 said in colour alone.
               */}
-              {draw?.kind === "ready" && (
+              {(draw?.kind === "ready" || draw?.kind === "former_seat") && (
                 <div>
                   <Eyebrow className="mb-2">Your draw</Eyebrow>
                   <Button

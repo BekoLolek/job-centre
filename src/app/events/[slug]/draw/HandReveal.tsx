@@ -78,6 +78,15 @@ export type HandRevealProps = {
    * list is {@link HandRevealProps.draw}.
    */
   initialHand: RevealCard[] | null;
+  /**
+   * Whether this player holds a seat now. False only for a hand whose holder
+   * has since lost theirs (`former_seat` in `draw.ts`), and it drops the two
+   * sentences that speak to somebody on a team: "who plays what is yours to
+   * settle" under the comp, and the closing line that sends a holder to
+   * compare with their team. Somebody without a seat has no team here. Every
+   * other sentence is about the hand or the night and is said to both.
+   */
+  seated: boolean;
   /** The comp the admin chose, printed and nothing more (UC-39 7a). */
   format: TeamFormat;
   /** The roles a hand covers, in the order they are dealt. */
@@ -93,6 +102,7 @@ export type HandRevealProps = {
 
 export default function HandReveal({
   initialHand,
+  seated,
   format,
   roles,
   perRole,
@@ -172,8 +182,8 @@ export default function HandReveal({
         <Eyebrow>The night&rsquo;s format</Eyebrow>
 
         <p className="max-w-prose text-14 leading-relaxed text-muted">
-          {format.format} states a {format.comp} comp. Who plays what is yours to settle
-          once you can all see what you hold.
+          {format.format} states a {format.comp} comp.
+          {seated && " Who plays what is yours to settle once you can all see what you hold."}
         </p>
 
         <h2 className="font-display text-24 leading-tight">
@@ -233,9 +243,15 @@ export default function HandReveal({
 
           {view.complete && (
             <p className="max-w-prose text-14 leading-relaxed text-muted">
-              That is the hand, and it stands. Compare it with your team&rsquo;s before you
-              settle who plays what — knowing what everybody holds is the point of drawing
-              all {roles.length} roles rather than one.
+              That is the hand, and it stands.
+              {seated && (
+                <>
+                  {" "}
+                  Compare it with your team&rsquo;s before you settle who plays what —
+                  knowing what everybody holds is the point of drawing all {roles.length}{" "}
+                  roles rather than one.
+                </>
+              )}
             </p>
           )}
         </Panel>

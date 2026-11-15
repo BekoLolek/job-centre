@@ -42,7 +42,8 @@ vi.mock("@/db", async (importOriginal) => {
 });
 
 vi.mock("@/lib/session-guards", () => ({
-  requirePermission: async () => ({ id: state.adminId, displayName: "Beko" }),
+  // An admin, as the name says: the `destructive` modifier (Task 129) reads the flag from here.
+  requirePermission: async () => ({ id: state.adminId, displayName: "Beko", isAdmin: true }),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));

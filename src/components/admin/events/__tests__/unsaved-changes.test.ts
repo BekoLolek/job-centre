@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   type Here,
   type LinkAttempt,
@@ -8,6 +8,7 @@ import {
   holdingWork,
   isLockEntry,
   navigationDecision,
+  saveGate,
   unsavedHistoryLock,
 } from "../UnsavedChanges";
 
@@ -366,6 +367,110 @@ describe("the history lock (UC-08 9a)", () => {
     expect(lock.listening).toBe(0);
     lock.pressBack();
     expect(lock.held).toBe(0);
+  });
+});
+
+/*
+ * The bar's Save button, pressed twice (R-260, Task 140).
+ *
+ * The button was disabled off the tab's own `saving`, which is one render
+ * behind the press and was knocked back to `dirty` by anything that touched
+ * the tab mid-flight — so a second save could be sent over the first. The gate
+ * holds on the save's own promise instead, which no state in a tab can talk it
+ * out of.
+ */
+describe("the bar's save gate — one save at a time", () => {
+  /** A save that stays in flight until the test lands or fails it. */
+  function heldSave() {
+    let land: () => void = () => {};
+    let fail: () => void = () => {};
+    const save = vi.fn(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          land = resolve;
+          fail = () => reject(new Error("offline"));
+        })
+    );
+    /** A turn of the task queue, so the gate has heard the promise settle. */
+    const settle = () => new Promise((done) => setTimeout(done, 0));
+    return {
+      save,
+      land: async () => {
+        land();
+        await settle();
+      },
+      fail: async () => {
+        fail();
+        await settle();
+      },
+    };
+  }
+
+  it("sends the first press", () => {
+    const { save } = heldSave();
+    const send = saveGate(() => {});
+
+    send(save);
+
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not send a second press while the first is in flight", () => {
+    const { save } = heldSave();
+    const send = saveGate(() => {});
+
+    send(save);
+    send(save);
+
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a save is in flight, so the button can be disabled on it", () => {
+    const { save } = heldSave();
+    const said: boolean[] = [];
+    const send = saveGate((inFlight) => said.push(inFlight));
+
+    send(save);
+
+    expect(said).toEqual([true]);
+  });
+
+  it("says so no longer once the save has landed, and sends the next press", async () => {
+    const { save, land } = heldSave();
+    const said: boolean[] = [];
+    const send = saveGate((inFlight) => said.push(inFlight));
+
+    send(save);
+    await land();
+    send(save);
+
+    expect(said).toEqual([true, false, true]);
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("lets go when the save fails, rather than holding the button for good", async () => {
+    const { save, fail } = heldSave();
+    const said: boolean[] = [];
+    const send = saveGate((inFlight) => said.push(inFlight));
+
+    send(save);
+    await fail();
+    send(save);
+
+    expect(said).toEqual([true, false, true]);
+    expect(save).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds nothing for a save that only opened a confirm and sent nothing", () => {
+    const opensDialog = vi.fn(() => undefined);
+    const said: boolean[] = [];
+    const send = saveGate((inFlight) => said.push(inFlight));
+
+    send(opensDialog);
+    send(opensDialog);
+
+    expect(said).toEqual([]);
+    expect(opensDialog).toHaveBeenCalledTimes(2);
   });
 });
 

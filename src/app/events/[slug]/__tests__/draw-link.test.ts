@@ -20,14 +20,16 @@ import { HERO_ROLES } from "@/lib/heroes";
  *
  * ## The link and the page have to admit the same people
  *
- * A link is a promise about what is behind it. `loadDraw` answers one of five
- * payloads — `no_seat`, `no_game`, `no_heroes`, `too_thin`, `ready` — and four
- * of them are refusals. A link that offered the route to somebody `loadDraw`
+ * A link is a promise about what is behind it. `loadDraw` answers one of seven
+ * payloads — `no_seat`, `draw_off`, `no_game`, `no_heroes`, `too_thin`,
+ * `ready`, `former_seat` — and five of them are refusals. (`former_seat` is
+ * not one: it is a hand whose holder lost their seat, the page still shows it,
+ * and so the link stays — Task 149.) A link that offered the route to somebody `loadDraw`
  * would answer `no_seat` is the dead end UC-39 1a was written to stop ("they are
  * told so rather than shown an empty draw"), only now the site walked them into
- * it. So the page asks `loadDraw` itself and shows the link on `ready` alone,
+ * it. So the page asks `loadDraw` itself and shows the link on those two and no refusal,
  * and the tests below are aimed at the refusals rather than at the happy path:
- * each of the four is arranged for real and the link must be absent.
+ * each of the five is arranged for real and the link must be absent.
  *
  * ## Why the page is rendered rather than the condition tested
  *
@@ -78,9 +80,14 @@ vi.mock("next/navigation", async (importOriginal) => {
 
 const { default: EventPage } = await import("../page");
 const { dealFor, handFor } = await import("@/lib/hero-hands");
-const { applyToEvent, createEvent, publishEvent, setApplicationStatus } = await import(
-  "@/lib/events"
-);
+const {
+  applyToEvent,
+  createEvent,
+  publishEvent,
+  setApplicationStatus,
+  updateEvent,
+  withdrawApplication,
+} = await import("@/lib/events");
 
 let harness: TestDatabase;
 
@@ -169,6 +176,12 @@ async function fixture(
   return { eventId: created.data.id, slug: created.data.slug, title, userId, gameId };
 }
 
+/** What the Format panel's save does when the manager switches the draw off. */
+async function turnDrawOff(eventId: string): Promise<void> {
+  const saved = await updateEvent(eventId, { config: { eventShape: { heroes: false } } }, harness.db);
+  if (!saved.ok) throw new Error(saved.error);
+}
+
 /** The route's own markup, as the server sends it. */
 async function render(slug: string): Promise<string> {
   const page = await EventPage({
@@ -239,7 +252,7 @@ describe("UC-39 1: a participant can open the draw", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* The four refusals the link must not offer                          */
+/* The five refusals the link must not offer                          */
 /* ------------------------------------------------------------------ */
 
 describe("the link admits exactly who the page admits", () => {
@@ -316,7 +329,10 @@ describe("the link admits exactly who the page admits", () => {
 
   it("does not offer it while a role is too thin to deal from (too_thin)", async () => {
     /*
-     * The fifth payload, and the one an acceptance criterion does not mention.
+     * One of the refusals, and the one an acceptance criterion does not mention.
+     * Deliberately not numbered: Task 145 added `draw_off` and every count in
+     * this file went stale at once, which is the argument against counting
+     * things in prose that the code can grow more of.
      * It is held to the same rule for the same reason: the page behind the link
      * refuses, naming every short role (UC-39 2a), so offering the route would
      * be the site walking somebody into a refusal it could already see coming.
@@ -328,6 +344,62 @@ describe("the link admits exactly who the page admits", () => {
       { gameId: fix.gameId, name: `Thin Duelist ${counter}`, roles: ["Duelist"] },
       { gameId: fix.gameId, name: `Thin Strategist ${counter}`, roles: ["Strategist"] },
     ]);
+    state.userId = fix.userId;
+
+    const markup = await render(fix.slug);
+    expect(words(markup)).toContain(fix.title);
+    expect(linksToDraw(markup, fix.slug)).toBe(false);
+  });
+
+  /*
+   * Task 145 (R-269 / UC-58 3a). The link needed no change to get this right —
+   * it shows on `ready` alone, and a closed draw is `draw_off` — so these two
+   * are here to say so, rather than leave it to be re-derived.
+   */
+  it("does not offer it at a night that draws no heroes (draw_off)", async () => {
+    const fix = await fixture();
+    await turnDrawOff(fix.eventId);
+    state.userId = fix.userId;
+
+    const markup = await render(fix.slug);
+    expect(words(markup)).toContain(fix.title);
+    expect(linksToDraw(markup, fix.slug)).toBe(false);
+  });
+
+  it("still points a holder at their hand after the draw is turned off", async () => {
+    // The page behind the link shows a hand dealt before the switch (R-271),
+    // so the link to it stays — and says "see", not "draw".
+    const fix = await fixture();
+    const dealt = await dealFor(fix.eventId, fix.userId, () => 0, harness.db);
+    if (!dealt.ok) throw new Error(dealt.error);
+    await turnDrawOff(fix.eventId);
+    state.userId = fix.userId;
+
+    const markup = await render(fix.slug);
+    expect(linksToDraw(markup, fix.slug)).toBe(true);
+    expect(words(markup)).toContain("See your hand");
+  });
+
+  it("still points a holder at their hand after they lose their seat (former_seat)", async () => {
+    // Task 149: the page behind the link shows a former seat the hand they
+    // drew, so the link to it stays — the one kind besides `ready` that has
+    // something of the reader's behind it.
+    const fix = await fixture();
+    const dealt = await dealFor(fix.eventId, fix.userId, () => 0, harness.db);
+    if (!dealt.ok) throw new Error(dealt.error);
+    const gone = await withdrawApplication(fix.eventId, fix.userId, harness.db);
+    if (!gone.ok) throw new Error(gone.error);
+    state.userId = fix.userId;
+
+    const markup = await render(fix.slug);
+    expect(linksToDraw(markup, fix.slug)).toBe(true);
+    expect(words(markup)).toContain("See your hand");
+  });
+
+  it("does not offer it to somebody who gave their seat up before drawing (no_seat)", async () => {
+    const fix = await fixture();
+    const gone = await withdrawApplication(fix.eventId, fix.userId, harness.db);
+    if (!gone.ok) throw new Error(gone.error);
     state.userId = fix.userId;
 
     const markup = await render(fix.slug);

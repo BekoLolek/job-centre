@@ -9,6 +9,7 @@ import {
   Avatar,
   Badge,
   Button,
+  Checkbox,
   ChoiceChip,
   ChoiceRow,
   EmptyState,
@@ -24,12 +25,14 @@ import type { AdminUserView, AdminUsersView } from "@/lib/admin-users";
 // The pure half, deliberately: `@/lib/admin-users` builds every Drizzle table
 // at import time and a client bundle has no use for any of it.
 import { NOTE_MAX, revokeRefusal } from "@/lib/admin-users-policy";
+import { POWERS, PRESETS, type Power } from "@/lib/permissions-policy";
 import {
   addUserNoteAction,
   endSessionsAction,
   grantAdminAction,
   listUserNotesAction,
   revokeAdminAction,
+  saveMemberPowersAction,
 } from "@/app/admin/users/actions";
 
 /**
@@ -52,10 +55,103 @@ import {
  * component's admin count is as old as the last page load, and two admins
  * demoting each other at the same instant is exactly the case a client-side
  * count would get wrong.
+ *
+ * ## Powers
+ *
+ * A member who is not an admin has a list of powers, edited in a dialog and
+ * stored by one save as exactly what is ticked (R-262 / UC-55). An admin has
+ * no list to edit and the row says why. Nothing in the dialog touches the
+ * admin flag: that stays with the two buttons on the row (R-264).
  */
 
 /** UC-02 E1's facet, both ways round. Mirrors `UserFilter` in the rules module. */
 type Filter = "all" | "admins" | "members";
+
+/* ------------------------------------------------------------------ */
+/* Powers: the words on the screen                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * What each power reaches, in the words `permissions-policy.ts` documents it
+ * with. Keyed by `Power`, so a power added to the vocabulary without a line
+ * here does not compile.
+ */
+const POWER_REACHES: Record<Power, string> = {
+  "events.create": "Create an event.",
+  "events.manage": "Manage every event, as a host manages their own.",
+  "announce.post": "Post an announcement to Discord by hand.",
+  "settings.announcements": "Choose which announcements go out, their wording and their mentions.",
+  "settings.integrations": "Change the webhook URL, the site origin and the guild gate.",
+  "games.manage": "Edit games, rank ladders, profile fields and heroes.",
+  "templates.manage": "Edit event templates.",
+  "championships.manage": "Run championships: seasons, points tables, opening and closing.",
+  "polls.manage": "Create, close and delete polls.",
+  "suggestions.moderate": "Set the status of a suggestion and delete any.",
+  "hosts.approve": "Approve and decline host applications.",
+  "members.read": "Read member availability and what people have drawn.",
+  "audit.read": "Read the audit log.",
+  destructive:
+    "The modifier for destructive actions. It reaches nothing without the power for the area beside it.",
+};
+
+/**
+ * R-262, on the screen and not only in a docblock: an admin who thinks a
+ * preset is a role that members stay attached to will grant the wrong thing.
+ */
+export const PRESET_IS_NOT_FOLLOWED =
+  "A preset is a shortcut, not a role. What is saved is this list of powers, with no record of which preset it came from, so editing a preset in a later release changes nobody who already holds anything.";
+
+/**
+ * Which way a preset goes, said where it is pressed. It adds; see
+ * {@link withPreset} for why.
+ */
+export const PRESET_CLEARS_NOTHING =
+  "A preset ticks its own powers and clears nothing. Whatever was ticked before stays ticked, so untick by hand anything this member should not keep.";
+
+/** Why an admin's row has no powers button. */
+export const ADMIN_HAS_NO_LIST =
+  "An admin can do everything, so there is no list of powers to edit. The admin flag is given and taken with the button on this row.";
+
+/**
+ * What an admin's row says when rows are still stored for them (Task 151).
+ *
+ * Everything that makes somebody an admin deletes their list, so this is only
+ * ever seen for rows stored before that was so, or written by hand. It names
+ * the powers, because "some rows" is not something anybody can decide about.
+ */
+export function storedOnAnAdmin(powers: readonly Power[]): string {
+  return `Still stored from before they were an admin: ${powers.join(", ")}. An admin can do everything, so these change nothing today, but they come back into force if the admin flag is taken away. Clear them unless that is what you intend.`;
+}
+
+/** The button beside {@link storedOnAnAdmin}. It saves the empty list. */
+export const CLEAR_STORED_POWERS = "Clear stored powers";
+
+/**
+ * What the row of a member who holds powers says under its "Make admin"
+ * button, before it is pressed: the flag replaces the list. Text on the row
+ * and not the button's `title`, which a phone never shows.
+ */
+export function flagReplacesList(powers: readonly Power[]): string {
+  return `Making them an admin removes the ${plural(powers.length, "power")} on their list (${powers.join(", ")}). The flag replaces the list, so taking it away later leaves them with none until somebody grants them again.`;
+}
+
+/**
+ * The ticks after a preset is pressed: everything that was ticked, and the
+ * preset's own powers.
+ *
+ * It adds and never clears. The other reading, where a preset replaces the
+ * list, lets one press drop a power the admin was not looking at, and makes
+ * Organiser followed by Announcer leave only Announcer. Taking a power away
+ * is always somebody unticking that power.
+ */
+export function withPreset(
+  marked: ReadonlySet<Power>,
+  preset: keyof typeof PRESETS
+): Set<Power> {
+  return new Set<Power>([...marked, ...PRESETS[preset]]);
+}
+
+const PRESET_NAMES = Object.keys(PRESETS) as Array<keyof typeof PRESETS>;
 
 export default function UsersManager({
   view,
@@ -71,6 +167,7 @@ export default function UsersManager({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [notesFor, setNotesFor] = useState<AdminUserView | null>(null);
+  const [powersFor, setPowersFor] = useState<AdminUserView | null>(null);
 
   const shown = useMemo(() => {
     const wanted = search.trim().toLowerCase();
@@ -215,11 +312,36 @@ export default function UsersManager({
                   )
                 }
                 onNotes={() => setNotesFor(row)}
+                onPowers={() => {
+                  setError(null);
+                  setNote(null);
+                  setPowersFor(row);
+                }}
+                onClearPowers={() =>
+                  run(
+                    () => saveMemberPowersAction(row.id, []),
+                    `Cleared the powers stored for ${row.displayName}.`
+                  )
+                }
               />
             ))
           )}
         </div>
       </Section>
+
+      {/* Mounted per member, so the ticks start from that member's own list. */}
+      {powersFor && (
+        <PowersDialog
+          key={powersFor.id}
+          member={powersFor}
+          onClose={() => setPowersFor(null)}
+          onSaved={(said) => {
+            setPowersFor(null);
+            setNote(said);
+            router.refresh();
+          }}
+        />
+      )}
 
       <NotesDialog
         member={notesFor}
@@ -245,6 +367,8 @@ function MemberRow({
   onRevoke,
   onEndSessions,
   onNotes,
+  onPowers,
+  onClearPowers,
 }: {
   member: AdminUserView;
   isSelf: boolean;
@@ -255,6 +379,8 @@ function MemberRow({
   onRevoke: () => void;
   onEndSessions: () => void;
   onNotes: () => void;
+  onPowers: () => void;
+  onClearPowers: () => void;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-3 py-5">
@@ -311,6 +437,11 @@ function MemberRow({
         <Button size="sm" disabled={busy} onClick={onNotes}>
           Notes{member.notes > 0 ? ` (${member.notes})` : ""}
         </Button>
+        {!member.isAdmin && (
+          <Button size="sm" disabled={busy} onClick={onPowers}>
+            Powers{member.powers.length > 0 ? ` (${member.powers.length})` : ""}
+          </Button>
+        )}
         {/*
           UC-02 4a. Offered for everyone, including yourself: the reason to
           reach for it is a machine you no longer trust, and that machine is
@@ -356,7 +487,140 @@ function MemberRow({
           signing in will not give it back.
         </p>
       )}
+      {!member.isAdmin && member.powers.length > 0 && (
+        <p className="w-full text-12 leading-relaxed text-muted">
+          {flagReplacesList(member.powers)}
+        </p>
+      )}
+      {member.isAdmin && member.powers.length === 0 && (
+        <p className="w-full text-12 leading-relaxed text-muted">{ADMIN_HAS_NO_LIST}</p>
+      )}
+      {member.isAdmin && member.powers.length > 0 && (
+        <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-2">
+          <p className="min-w-0 flex-1 text-12 leading-relaxed text-flare">
+            {storedOnAnAdmin(member.powers)}
+          </p>
+          <Button size="sm" disabled={busy} onClick={onClearPowers}>
+            {CLEAR_STORED_POWERS}
+          </Button>
+        </div>
+      )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Powers                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * One member's powers: every power there is, the ones they hold ticked, the
+ * presets as buttons, and one save.
+ *
+ * Nothing is stored until Save, and Save sends the whole list of ticks. The
+ * server stores exactly that list and decides what counts as a change; this
+ * component does not diff. The ticks start from the member's stored list
+ * because the parent mounts a fresh dialog per member.
+ */
+export function PowersDialog({
+  member,
+  onClose,
+  onSaved,
+}: {
+  member: AdminUserView;
+  onClose: () => void;
+  /** Called with the sentence to show once the list is stored. */
+  onSaved: (said: string) => void;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [marked, setMarked] = useState<ReadonlySet<Power>>(() => new Set(member.powers));
+  const [error, setError] = useState<string | null>(null);
+
+  const mark = (power: Power, on: boolean) => {
+    const next = new Set(marked);
+    if (on) next.add(power);
+    else next.delete(power);
+    setMarked(next);
+  };
+
+  const save = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await saveMemberPowersAction(member.id, [...marked]);
+      if (!result.ok) return setError(result.error);
+      const changed = result.data.added.length + result.data.removed.length > 0;
+      onSaved(
+        changed
+          ? `Saved the powers for ${member.displayName}.`
+          : `Nothing changed for ${member.displayName}. Their powers are as they were.`
+      );
+    });
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={`Powers for ${member.displayName}`}
+      eyebrow="Admin only. Every change is written to the audit log"
+      footer={
+        <>
+          <Button disabled={pending} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="union" disabled={pending} onClick={save}>
+            Save powers
+          </Button>
+        </>
+      }
+    >
+      <p className="text-14 leading-relaxed text-muted">
+        Tick what {member.displayName} may do. Nothing changes until you save, and saving
+        stores exactly what is ticked.
+      </p>
+
+      <div className="space-y-3 border-t border-hair pt-4">
+        <Eyebrow>Presets</Eyebrow>
+        <div className="flex flex-wrap gap-2">
+          {PRESET_NAMES.map((name) => (
+            <Button
+              key={name}
+              size="sm"
+              disabled={pending}
+              onClick={() => setMarked(withPreset(marked, name))}
+            >
+              {name}
+            </Button>
+          ))}
+        </div>
+        <p className="text-12 leading-relaxed text-muted">{PRESET_CLEARS_NOTHING}</p>
+        <p className="text-12 leading-relaxed text-muted">{PRESET_IS_NOT_FOLLOWED}</p>
+      </div>
+
+      <div className="border-t border-hair pt-4">
+        <Eyebrow>Powers</Eyebrow>
+        <div className="mt-2 divide-y divide-hair/60">
+          {POWERS.map((power) => (
+            <div key={power} className="py-2">
+              <Checkbox
+                value={power}
+                checked={marked.has(power)}
+                disabled={pending}
+                onChange={(on) => mark(power, on)}
+                label={
+                  <>
+                    <span className="block font-mono text-chalk">{power}</span>
+                    <span className="block text-muted">{POWER_REACHES[power]}</span>
+                  </>
+                }
+              />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {error && <Alert>{error}</Alert>}
+    </Modal>
   );
 }
 

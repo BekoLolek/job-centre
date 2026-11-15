@@ -1,6 +1,14 @@
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Database, adminAllowlist, auditLog, sessions, userNotes, users } from "@/db";
+import {
+  type Database,
+  adminAllowlist,
+  auditLog,
+  sessions,
+  userNotes,
+  userPermissions,
+  users,
+} from "@/db";
 import { type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 
 /*
@@ -49,8 +57,9 @@ const {
   endSessionsAction,
   grantAdminAction,
   revokeAdminAction,
+  saveMemberPowersAction,
 } = actions;
-const { grantPower } = await import("@/lib/permissions");
+const { grantPower, powersOf } = await import("@/lib/permissions");
 const { POWERS } = await import("@/lib/permissions-policy");
 const { getAllowlistEntries } = await import("@/lib/admin-allowlist");
 const { resolveAdminFlag } = await import("@/lib/auth-policy");
@@ -150,6 +159,9 @@ describe("a member holding every power there is", () => {
     addUserNoteAction: () => actions.addUserNoteAction(target, "A note they may not write."),
     allowAdminAction: () => actions.allowAdminAction({ discordId: TARGET_DISCORD_ID }),
     barAdminAction: () => actions.barAdminAction({ discordId: TARGET_DISCORD_ID }),
+    // The one that hands powers out: to the target, and - the escalation the
+    // requirement is about - a holder saving a list for somebody else.
+    saveMemberPowersAction: () => actions.saveMemberPowersAction(target, ["audit.read"]),
   };
 
   beforeEach(async () => {
@@ -168,16 +180,20 @@ describe("a member holding every power there is", () => {
     signedInAs(holder);
   });
 
-  /** What the seven actions between them can move. */
+  /** What the eight actions between them can move. */
   async function written() {
-    const [lines, flags, allowed, notes, open] = await Promise.all([
+    const [lines, flags, allowed, notes, open, powers] = await Promise.all([
       db.select({ id: auditLog.id }).from(auditLog),
       db.select({ id: users.id, isAdmin: users.isAdmin }).from(users).orderBy(users.id),
       db.select().from(adminAllowlist),
       db.select({ id: userNotes.id }).from(userNotes),
       db.select({ token: sessions.sessionToken }).from(sessions),
+      db
+        .select({ userId: userPermissions.userId, power: userPermissions.power })
+        .from(userPermissions)
+        .orderBy(userPermissions.userId, userPermissions.power),
     ]);
-    return { audit: lines.length, flags, allowed, notes, open };
+    return { audit: lines.length, flags, allowed, notes, open, powers };
   }
 
   it("has a call here for every action the members file exports", () => {
@@ -398,5 +414,241 @@ describe("ending sessions", () => {
 
     expect(result.ok === false && result.error).toMatch(/no longer exists/i);
     expect(await auditActions()).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Task 131, R-262, R-266 / UC-55 — saving a member's powers          */
+/* ------------------------------------------------------------------ */
+
+describe("saving a member's powers", () => {
+  let actor: string;
+  let member: string;
+
+  /** Signed in as an admin, with a member who holds two powers already. */
+  beforeEach(async () => {
+    actor = await makeAdmin("Actor");
+    member = await makeUser(db, { displayName: "Ada" });
+    await grantPower({ userId: member, power: "polls.manage", grantedByUserId: actor }, db);
+    await grantPower({ userId: member, power: "audit.read", grantedByUserId: actor }, db);
+    signedInAs(actor);
+  });
+
+  const stored = async (userId: string) => new Set(await powersOf(userId, db));
+
+  it("stores exactly what was marked: one added and one removed in the same save", async () => {
+    // Two before, two after. The set is compared, because the count cannot
+    // tell this save from one that did nothing.
+    await saveMemberPowersAction(member, ["audit.read", "games.manage"]);
+
+    expect(await stored(member)).toEqual(new Set(["audit.read", "games.manage"]));
+  });
+
+  it("records the admin who saved as the one who granted the power it added", async () => {
+    // The row and the audit line are two records of one event, and the row is
+    // the one `powersOf` reads. The member is a valid granter as far as the
+    // foreign key goes, so only this says it was not them.
+    await saveMemberPowersAction(member, ["polls.manage", "audit.read", "games.manage"]);
+
+    const [added] = await db
+      .select({ grantedByUserId: userPermissions.grantedByUserId })
+      .from(userPermissions)
+      .where(eq(userPermissions.power, "games.manage"));
+    expect(added.grantedByUserId).toBe(actor);
+  });
+
+  it("writes one line, naming who saved, whose list it was and what changed", async () => {
+    await saveMemberPowersAction(member, ["audit.read", "games.manage"]);
+
+    const lines = await db.select().from(auditLog);
+    expect(lines).toEqual([
+      expect.objectContaining({
+        action: "user.powers.changed",
+        actorUserId: actor,
+        actorName: "Actor",
+        subject: member,
+        summary: "Changed Ada's powers: added games.manage; removed polls.manage.",
+        detail: { added: ["games.manage"], removed: ["polls.manage"] },
+      }),
+    ]);
+  });
+
+  it("writes no line for a save that changes nothing", async () => {
+    const result = await saveMemberPowersAction(member, ["polls.manage", "audit.read"]);
+
+    expect(result).toEqual({ ok: true, data: { added: [], removed: [] } });
+    expect(await auditActions()).toEqual([]);
+  });
+
+  it("says only what was added when nothing was removed", async () => {
+    await saveMemberPowersAction(member, ["polls.manage", "audit.read", "games.manage"]);
+
+    const [line] = await db.select().from(auditLog);
+    expect(line.summary).toBe("Changed Ada's powers: added games.manage.");
+  });
+
+  it("refuses a list for a member who is an admin, and writes nothing", async () => {
+    const admin = await makeAdmin("Grace");
+
+    const result = await saveMemberPowersAction(admin, ["audit.read"]);
+
+    expect(result.ok === false && result.error).toMatch(/Grace is an admin/);
+    expect(await stored(admin)).toEqual(new Set());
+    expect(await auditActions()).toEqual([]);
+  });
+
+  // The admin flag is not a power, under any of the names somebody might try.
+  it.each(["admin", "isAdmin", "is_admin", "user.admin.granted", "permissions.grant"])(
+    "cannot be made to grant the admin flag by naming it %s",
+    async (name) => {
+      const result = await saveMemberPowersAction(member, ["audit.read", name]);
+
+      expect(result.ok).toBe(false);
+      expect(await isAdmin(member)).toBe(false);
+      expect(await stored(member)).toEqual(new Set(["polls.manage", "audit.read"]));
+      expect(await auditActions()).toEqual([]);
+    }
+  );
+
+  it("leaves the admin flag off after a save that works", async () => {
+    await saveMemberPowersAction(member, [...POWERS]);
+
+    expect(await isAdmin(member)).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Task 151, R-264, R-266 — a demoted admin holds what somebody chose  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The flag replaces the list. A list stored before a promotion used to stay in
+ * the table and come back into force on demotion, with no line in the log for
+ * its return; promoting now deletes it and says so.
+ *
+ * Through the real actions throughout, and the table is read as well as
+ * `powersOf` - `powersOf` is what the guard asks, the table is where a row
+ * that would wake later is hiding.
+ */
+describe("promoting a member who holds powers", () => {
+  let granter: string;
+  let promoter: string;
+  let member: string;
+
+  const rowsOf = async (userId: string) =>
+    (
+      await db
+        .select({ power: userPermissions.power })
+        .from(userPermissions)
+        .where(eq(userPermissions.userId, userId))
+    ).map((row) => row.power);
+
+  /** The log, in the order `recordAudit` wrote it. */
+  const lines = async () =>
+    (await db.select().from(auditLog)).sort(
+      (a, b) => a.at.getTime() - b.at.getTime() || a.action.localeCompare(b.action)
+    );
+
+  /** Ada holds two powers, saved by one admin; a second admin is about to act. */
+  beforeEach(async () => {
+    granter = await makeAdmin("Granter");
+    promoter = await makeAdmin("Promoter");
+    member = await makeUser(db, { displayName: "Ada", discordId: TARGET_DISCORD_ID });
+    signedInAs(granter);
+    await saveMemberPowersAction(member, ["polls.manage", "audit.read"]);
+    await db.delete(auditLog);
+    signedInAs(promoter);
+  });
+
+  it("leaves them holding nothing once promoted and then demoted", async () => {
+    // Criterion 1, end to end: grant, promote, demote, then ask what the
+    // guard would be told.
+    await grantAdminAction(member);
+    signedInAs(granter);
+    const demoted = await revokeAdminAction(member);
+
+    expect(demoted.ok).toBe(true);
+    expect(await isAdmin(member)).toBe(false);
+    expect(await powersOf(member, db)).toEqual(new Set());
+    expect(await rowsOf(member)).toEqual([]);
+  });
+
+  it("has no stored row for them while they are an admin", async () => {
+    await grantAdminAction(member);
+
+    expect(await rowsOf(member)).toEqual([]);
+  });
+
+  it("writes a line for the list it removed, naming the admin who promoted", async () => {
+    await grantAdminAction(member);
+
+    expect(await lines()).toEqual([
+      expect.objectContaining({ action: "user.admin.granted", actorUserId: promoter }),
+      expect.objectContaining({
+        action: "user.powers.changed",
+        actorUserId: promoter,
+        actorName: "Promoter",
+        subject: member,
+        summary:
+          "Removed Ada's powers on making them an admin: polls.manage, audit.read. The flag replaces the list.",
+        detail: { added: [], removed: ["polls.manage", "audit.read"], replacedByAdminFlag: true },
+      }),
+    ]);
+  });
+
+  it("writes no powers line when the member promoted held nothing", async () => {
+    const plain = await makeUser(db, { displayName: "Plain" });
+
+    await grantAdminAction(plain);
+
+    expect(await auditActions()).toEqual(["user.admin.granted"]);
+  });
+
+  it("removes the list when the promotion is made from the allowlist panel", async () => {
+    // The other button that sets the flag on an account that already exists.
+    const allowed = await allowAdminAction({ discordId: TARGET_DISCORD_ID });
+
+    expect(allowed.ok).toBe(true);
+    expect(await isAdmin(member)).toBe(true);
+    expect(await rowsOf(member)).toEqual([]);
+    expect(await lines()).toEqual([
+      expect.objectContaining({ action: "user.admin.granted", actorUserId: promoter }),
+      expect.objectContaining({
+        action: "user.powers.changed",
+        actorUserId: promoter,
+        subject: member,
+        detail: { added: [], removed: ["polls.manage", "audit.read"], replacedByAdminFlag: true },
+      }),
+    ]);
+  });
+
+  it("leaves them holding nothing once allowed from the panel and then barred", async () => {
+    await allowAdminAction({ discordId: TARGET_DISCORD_ID });
+    await barAdminAction({ discordId: TARGET_DISCORD_ID });
+
+    expect(await isAdmin(member)).toBe(false);
+    expect(await powersOf(member, db)).toEqual(new Set());
+  });
+
+  it("clears rows an admin still has when the empty list is saved for them, with a line", async () => {
+    // Rows on an admin that no promotion on this screen made: a sign-in sets
+    // the flag without anybody clicking. The screen offers this save.
+    await db.update(users).set({ isAdmin: true }).where(eq(users.id, member));
+
+    const result = await saveMemberPowersAction(member, []);
+
+    expect(result).toEqual({
+      ok: true,
+      data: { added: [], removed: ["polls.manage", "audit.read"] },
+    });
+    expect(await rowsOf(member)).toEqual([]);
+    expect(await lines()).toEqual([
+      expect.objectContaining({
+        action: "user.powers.changed",
+        actorUserId: promoter,
+        subject: member,
+        summary: "Changed Ada's powers: removed polls.manage, audit.read.",
+      }),
+    ]);
   });
 });

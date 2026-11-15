@@ -34,7 +34,7 @@
  *    answers is refused and pointed at retirement.
  */
 
-import { and, asc, count, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
   type Database,
   type Game,
@@ -323,19 +323,29 @@ function orderChanged(
   return after.some((row, at) => row.id !== before[at].id);
 }
 
-/** Move a game up or down the list, then rewrite every `sort` as 0…n-1. */
+/**
+ * Move a game up or down the list, then rewrite every `sort` as 0…n-1.
+ *
+ * One transaction. The renumbering is a statement per row, and on the bare
+ * handle a throw after the first left two games sharing a `sort` and the
+ * caller holding an exception, with no line written about a list that had
+ * nonetheless changed. Now a throw leaves the list as it was. The one refusal
+ * is above the first write (docs/decisions/004).
+ */
 export async function moveGame(
   gameId: string,
   direction: "up" | "down",
   database: Database = defaultDb
 ): Promise<AdminResult<{ game: Game; moved: boolean }>> {
-  const rows = await database.select().from(games).orderBy(asc(games.sort), asc(games.name));
-  const game = rows.find((row) => row.id === gameId);
-  if (!game) return fail("That game no longer exists.");
+  return database.transaction(async (tx) => {
+    const rows = await tx.select().from(games).orderBy(asc(games.sort), asc(games.name));
+    const game = rows.find((row) => row.id === gameId);
+    if (!game) return fail("That game no longer exists.");
 
-  const reordered = reorderById(rows, gameId, direction);
-  await writeGameSort(database, reordered);
-  return withData({ game, moved: orderChanged(rows, reordered) });
+    const reordered = reorderById(rows, gameId, direction);
+    await writeGameSort(tx, reordered);
+    return withData({ game, moved: orderChanged(rows, reordered) });
+  });
 }
 
 /**
@@ -540,6 +550,69 @@ async function ladderAffectedEvents(
   return out.sort((a, b) => a.title.localeCompare(b.title));
 }
 
+/** The entries of `before` that `after` no longer has, in ladder order. */
+function removedEntries(before: readonly string[], after: readonly string[]): string[] {
+  const keeping = new Set(after);
+  return before.filter((name) => !keeping.has(name));
+}
+
+/**
+ * The stored answers a ladder edit orphans, by id.
+ *
+ * An answer is orphaned by the edit when it is given to a rank question the
+ * game **still asks** and names an entry the edit **removes**. That is the
+ * whole definition, and this function is the only place it is written:
+ * `previewRankLadder` counts what it returns and `setRankLadder` deletes what
+ * it returns, so the number the admin agrees to and the rows that go are the
+ * same answers by construction rather than by two queries kept in step.
+ *
+ * Three things are deliberately outside it.
+ *
+ *  - **A retired question's answers.** They are the archive that retiring
+ *    exists to protect (UC-03 5a), and nothing is asking them to still parse.
+ *    The warning used to count them and the clear used to skip them, so the
+ *    admin agreed to a bigger loss than happened.
+ *  - **Answers that were already unreadable.** A pick-one whose option was
+ *    edited away, or a rank that left the ladder while its question was
+ *    retired, was stranded by some earlier edit and *kept* (R-09 —
+ *    `updateField`). The clear used to sweep the game for anything that no
+ *    longer parsed and delete those too, unannounced, the next time a rank
+ *    happened to be removed. A ladder edit is not a reason to forget them.
+ *  - **Anything that is not a rank answer**, whatever it spells. "Bronze" in a
+ *    free-text box is not a rank.
+ *
+ * The retired filter is in the `where`, as it is for the other reads that
+ * narrow by kind (`rolesFieldFor`).
+ */
+async function orphanedRankAnswers(
+  gameId: string,
+  removed: readonly string[],
+  database: Database
+): Promise<string[]> {
+  if (removed.length === 0) return [];
+
+  const rankFields = await database
+    .select({ id: profileFields.id })
+    .from(profileFields)
+    .where(
+      and(
+        eq(profileFields.gameId, gameId),
+        eq(profileFields.type, "rank"),
+        isNull(profileFields.retiredAt)
+      )
+    );
+  if (rankFields.length === 0) return [];
+
+  const rows = await database
+    .select({ id: profileValues.id, value: profileValues.value })
+    .from(profileValues)
+    .where(inArray(profileValues.fieldId, rankFields.map((field) => field.id)));
+
+  return rows
+    .filter((row) => typeof row.value === "string" && removed.includes(row.value))
+    .map((row) => row.id);
+}
+
 /**
  * What replacing this game's ladder would cost.
  *
@@ -547,9 +620,10 @@ async function ladderAffectedEvents(
  *
  *  1. **Answers.** A `rank` answer stores the ladder entry's *name*, so
  *     removing an entry orphans every answer holding it. `setRankLadder`
- *     clears exactly those rows afterwards — the alternative is a profile
- *     displaying a rank the game no longer has. A pure *reorder* removes
- *     nothing and so costs no answers at all.
+ *     clears exactly those rows afterwards (`orphanedRankAnswers` is what
+ *     "those" means, for both) — the alternative is a profile displaying a
+ *     rank the game no longer has. A pure *reorder* removes nothing and so
+ *     costs no answers at all.
  *  2. **Events (UC-03 3b).** A reorder costs no answers but silently re-aims
  *     every entry rule written against this game, which is the change nobody
  *     sees coming. Those events are named before the save, not after.
@@ -563,26 +637,10 @@ export async function previewRankLadder(
   if (!game) return { removed: [], answers: 0, events: [] };
 
   const next = normaliseRankLadder([...nextLadder]);
-  const keeping = new Set(next);
-  const removed = game.rankLadder.filter((name) => !keeping.has(name));
+  const removed = removedEntries(game.rankLadder, next);
   const affected = await ladderAffectedEvents(gameId, game.rankLadder, next, database);
+  const orphaned = await orphanedRankAnswers(gameId, removed, database);
 
-  if (removed.length === 0) return { removed: [], answers: 0, events: affected };
-
-  const rankFields = await database
-    .select({ id: profileFields.id })
-    .from(profileFields)
-    .where(and(eq(profileFields.gameId, gameId), eq(profileFields.type, "rank")));
-  if (rankFields.length === 0) return { removed, answers: 0, events: affected };
-
-  const rows = await database
-    .select({ fieldId: profileValues.fieldId, value: profileValues.value })
-    .from(profileValues)
-    .where(inArray(profileValues.fieldId, rankFields.map((field) => field.id)));
-
-  const orphaned = rows.filter(
-    (row) => typeof row.value === "string" && removed.includes(row.value)
-  );
   return { removed, answers: orphaned.length, events: affected };
 }
 
@@ -592,6 +650,15 @@ export async function previewRankLadder(
  * An empty ladder is valid and meaningful — Jackbox has no ranks — so this
  * never insists on entries. What it will not do is leave a member's profile
  * claiming a rank that no longer exists.
+ *
+ * What it clears is what `previewRankLadder` counted and nothing else: both
+ * ask `orphanedRankAnswers`. `clearedAnswers` is the number of rows deleted.
+ *
+ * The delete checks the value again instead of trusting the ids it was handed.
+ * A member who re-answers with a rank the ladder keeps, between the read and
+ * the delete, has an answer that is no longer orphaned; deleting by id alone
+ * took it anyway. So the count is what the delete returns, not what the read
+ * found.
  *
  * The ladder and the clear are one transaction. They were two statements on
  * the bare handle, so a clear that threw left the new ladder stored and the
@@ -614,70 +681,20 @@ export async function setRankLadder(
   const ladder = normaliseRankLadder(rawLadder);
   if (ladder.length > 60) return fail("A ladder that long is almost certainly a mistake.");
 
-  const impact = await previewRankLadder(gameId, ladder, database);
+  const removed = removedEntries(game.rankLadder, ladder);
 
   const cleared = await database.transaction(async (tx) => {
     await tx.update(games).set({ rankLadder: ladder }).where(eq(games.id, gameId));
-    return impact.answers > 0 ? clearInvalidAnswers(gameId, tx) : 0;
+    const orphaned = await orphanedRankAnswers(gameId, removed, tx);
+    if (orphaned.length === 0) return 0;
+    const deleted = await tx
+      .delete(profileValues)
+      .where(and(inArray(profileValues.id, orphaned), inArray(profileValues.value, removed)))
+      .returning({ id: profileValues.id });
+    return deleted.length;
   });
 
   return withData({ game, ladder, clearedAnswers: cleared });
-}
-
-/**
- * Delete stored answers that no longer parse against their field.
- *
- * The one remaining caller is `setRankLadder`, and only when the admin has
- * confirmed a ladder entry's *removal*: an answer naming a rank the game no
- * longer has would render as a rank nobody can be. Editing a question does
- * **not** call this any more — see `updateField`.
- *
- * Retired questions are skipped. Their answers are the archive that retiring
- * exists to protect (UC-03 5a), and nothing is asking them to still parse.
- *
- * Reads the values rather than trying to express "still valid" in SQL, because
- * the rules live in `profile-fields` and having them in two places is how the
- * two versions drift apart.
- */
-async function clearInvalidAnswers(
-  gameId: string | null,
-  database: Database = defaultDb
-): Promise<number> {
-  const [game] = gameId
-    ? await database.select().from(games).where(eq(games.id, gameId)).limit(1)
-    : [null];
-
-  const fields = (
-    await database
-      .select()
-      .from(profileFields)
-      .where(gameId ? eq(profileFields.gameId, gameId) : isNull(profileFields.gameId))
-  ).filter((field) => field.retiredAt === null);
-  if (fields.length === 0) return 0;
-
-  const rows = await database
-    .select()
-    .from(profileValues)
-    .where(inArray(profileValues.fieldId, fields.map((field) => field.id)));
-
-  const shapeFor = (field: ProfileField): FieldShape => ({
-    type: field.type,
-    label: field.label,
-    options: field.options,
-    rankLadder: game?.rankLadder ?? [],
-  });
-  const fieldById = new Map(fields.map((field) => [field.id, field]));
-
-  const doomed = rows.filter((row) => {
-    const field = fieldById.get(row.fieldId);
-    return field ? !valueStillValid(shapeFor(field), row.value) : false;
-  });
-
-  if (doomed.length === 0) return 0;
-  await database
-    .delete(profileValues)
-    .where(inArray(profileValues.id, doomed.map((row) => row.id)));
-  return doomed.length;
 }
 
 /* ------------------------------------------------------------------ */
@@ -922,6 +939,19 @@ export async function previewFieldEdit(
  * The key is left alone on a relabel. It is an internal identifier; changing it
  * would break nothing today but would break a saved application answer in
  * Phase 2, and there is no reason to spend that.
+ *
+ * ## Lock, read, write — in one transaction
+ *
+ * `previousLabel` is the label this edit replaced, and it is only that if
+ * nothing can reword the question between the read and the write. They were
+ * two statements on the bare handle, so a relabel landing between them was
+ * overwritten while the caller logged the label that had been read. The read
+ * now takes the row with `for update` and the write follows in the same
+ * transaction, so a second edit waits for this one and then replaces what
+ * this one wrote. Every refusal is above the write (docs/decisions/004).
+ *
+ * As with `deleteField`, the lock is what closes the window on Neon and it is
+ * pinned by statement, not seen working: see the note on that function.
  */
 export async function updateField(
   fieldId: string,
@@ -939,43 +969,47 @@ export async function updateField(
   const checked = validateFieldInput(input);
   if (!checked.ok) return checked;
 
-  const [existing] = await database
-    .select()
-    .from(profileFields)
-    .where(eq(profileFields.id, fieldId))
-    .limit(1);
-  if (!existing) return fail("That question no longer exists.");
+  return database.transaction(async (tx) => {
+    const [existing] = await tx
+      .select()
+      .from(profileFields)
+      .where(eq(profileFields.id, fieldId))
+      .for("update");
+    if (!existing) return fail("That question no longer exists.");
 
-  if (checked.data.type === "rank") {
-    const [game] = existing.gameId
-      ? await database.select().from(games).where(eq(games.id, existing.gameId)).limit(1)
-      : [null];
-    if (!game) return fail("A rank question has to belong to a game with a rank ladder.");
-    if (game.rankLadder.length === 0) {
-      return fail(`${game.name} has no rank ladder yet, so a rank question has nothing to offer.`);
+    if (checked.data.type === "rank") {
+      const [game] = existing.gameId
+        ? await tx.select().from(games).where(eq(games.id, existing.gameId)).limit(1)
+        : [null];
+      if (!game) return fail("A rank question has to belong to a game with a rank ladder.");
+      if (game.rankLadder.length === 0) {
+        return fail(
+          `${game.name} has no rank ladder yet, so a rank question has nothing to offer.`
+        );
+      }
     }
-  }
 
-  // Counted against the *incoming* definition before the write, which is the
-  // same arithmetic `previewFieldEdit` did — so the number the admin confirmed
-  // is the number they are told afterwards.
-  const stranded = (await previewFieldEdit(fieldId, input, database)).invalidated;
+    // Counted against the *incoming* definition before the write, which is the
+    // same arithmetic `previewFieldEdit` did — so the number the admin confirmed
+    // is the number they are told afterwards.
+    const stranded = (await previewFieldEdit(fieldId, input, tx)).invalidated;
 
-  const holdsRoles =
-    Boolean(input.holdsRoles) && canHoldRoles(existing.gameId, checked.data.type);
-  const section = await gameName(database, existing.gameId);
+    const holdsRoles =
+      Boolean(input.holdsRoles) && canHoldRoles(existing.gameId, checked.data.type);
+    const section = await gameName(tx, existing.gameId);
 
-  const [updated] = await database
-    .update(profileFields)
-    .set({ ...checked.data, holdsRoles })
-    .where(eq(profileFields.id, fieldId))
-    .returning();
+    const [updated] = await tx
+      .update(profileFields)
+      .set({ ...checked.data, holdsRoles })
+      .where(eq(profileFields.id, fieldId))
+      .returning();
 
-  return withData({
-    field: updated,
-    gameName: section,
-    previousLabel: existing.label,
-    strandedAnswers: stranded,
+    return withData({
+      field: updated,
+      gameName: section,
+      previousLabel: existing.label,
+      strandedAnswers: stranded,
+    });
   });
 }
 
@@ -998,6 +1032,13 @@ export async function updateField(
  * its job is a double click, not a fault, and reporting one would be the
  * screen arguing with the admin about something it already agrees with.
  *
+ * It is not a retirement either, and `changed` says which this was. It is the
+ * update's own answer: the write is aimed at the question *while it is still
+ * asked*, so it matches a row exactly when there was something to retire. Two
+ * presses arriving together cannot both be told they did it, and a press that
+ * retired nothing has written nothing — not the date, not a renumbering — so
+ * the caller has nothing to log.
+ *
  * ## One transaction, with the renumbering inside it
  *
  * Retiring parks the question behind the live ones, which is a second write.
@@ -1008,60 +1049,93 @@ export async function updateField(
  * Now a throw rolls the retire back with it, so there is no stored change for
  * a line to be missing about.
  *
- * The one refusal is above the first write (docs/decisions/004).
+ * The one refusal follows an update that matched no row, so there is nothing
+ * for the commit to keep (docs/decisions/004, the third safe shape).
  */
 export async function retireField(
   fieldId: string,
   database: Database = defaultDb,
   now: Date = new Date()
-): Promise<AdminResult<{ field: ProfileField; gameName: string | null; keptAnswers: number }>> {
+): Promise<
+  AdminResult<{
+    field: ProfileField;
+    gameName: string | null;
+    keptAnswers: number;
+    /** False when the question was already retired and nothing was written. */
+    changed: boolean;
+  }>
+> {
   return database.transaction(async (tx) => {
-    const [existing] = await tx
-      .select()
-      .from(profileFields)
-      .where(eq(profileFields.id, fieldId))
-      .limit(1);
-    if (!existing) return fail("That question no longer exists.");
-
-    const section = await gameName(tx, existing.gameId);
-    const kept = await fieldAnswerCount(fieldId, tx);
-    const [updated] = await tx
+    const [retired] = await tx
       .update(profileFields)
-      .set({ retiredAt: existing.retiredAt ?? now })
-      .where(eq(profileFields.id, fieldId))
+      .set({ retiredAt: now })
+      .where(and(eq(profileFields.id, fieldId), isNull(profileFields.retiredAt)))
       .returning();
+    const field = retired ?? (await fieldById(tx, fieldId));
+    if (!field) return fail("That question no longer exists.");
 
-    await resequenceSection(tx, existing.gameId);
-    return withData({ field: updated, gameName: section, keptAnswers: kept });
+    const section = await gameName(tx, field.gameId);
+    const kept = await fieldAnswerCount(fieldId, tx);
+    if (retired) await resequenceSection(tx, field.gameId);
+    return withData({
+      field,
+      gameName: section,
+      keptAnswers: kept,
+      changed: retired !== undefined,
+    });
   });
+}
+
+/** One question by id, whatever its standing. Undefined when there is none. */
+async function fieldById(database: Database, fieldId: string): Promise<ProfileField | undefined> {
+  const [field] = await database
+    .select()
+    .from(profileFields)
+    .where(eq(profileFields.id, fieldId))
+    .limit(1);
+  return field;
 }
 
 /**
  * Ask it again. Every answer stored while it was retired comes back with it.
  *
- * One transaction, for the reason `retireField` gives. The refusal here comes
- * after the update, and is safe there because it *is* that update's result: it
- * matched no row, so there is nothing for the commit to keep
- * (docs/decisions/004, the third safe shape).
+ * One transaction, for the reason `retireField` gives, and `changed` on the
+ * same terms: the update is aimed at the question *while it is retired*, so a
+ * press on one already being asked matches nothing, writes nothing and says
+ * so. The refusal comes after that update, and is safe there because it *is*
+ * that update's result: it matched no row, so there is nothing for the commit
+ * to keep (docs/decisions/004, the third safe shape).
  */
 export async function restoreField(
   fieldId: string,
   database: Database = defaultDb
 ): Promise<
-  AdminResult<{ field: ProfileField; gameName: string | null; restoredAnswers: number }>
+  AdminResult<{
+    field: ProfileField;
+    gameName: string | null;
+    restoredAnswers: number;
+    /** False when the question was already being asked and nothing was written. */
+    changed: boolean;
+  }>
 > {
   return database.transaction(async (tx) => {
-    const restored = await fieldAnswerCount(fieldId, tx);
-    const [updated] = await tx
+    const answers = await fieldAnswerCount(fieldId, tx);
+    const [restored] = await tx
       .update(profileFields)
       .set({ retiredAt: null })
-      .where(eq(profileFields.id, fieldId))
+      .where(and(eq(profileFields.id, fieldId), isNotNull(profileFields.retiredAt)))
       .returning();
-    if (!updated) return fail("That question no longer exists.");
+    const field = restored ?? (await fieldById(tx, fieldId));
+    if (!field) return fail("That question no longer exists.");
 
-    const section = await gameName(tx, updated.gameId);
-    await resequenceSection(tx, updated.gameId);
-    return withData({ field: updated, gameName: section, restoredAnswers: restored });
+    const section = await gameName(tx, field.gameId);
+    if (restored) await resequenceSection(tx, field.gameId);
+    return withData({
+      field,
+      gameName: section,
+      restoredAnswers: answers,
+      changed: restored !== undefined,
+    });
   });
 }
 
@@ -1089,6 +1163,17 @@ export async function restoreField(
  * key-share lock on that row for its foreign key, so it waits for this
  * transaction to finish, and then finds the question gone and is refused. An
  * insert already under way holds this lock back instead, and is counted.
+ *
+ * **The lock is pinned, not proven.** `field-atomicity.test.ts` checks that
+ * the `for update` is asked for, and asked for before the count. No test
+ * shows a second session waiting on it, and none can on this harness: PGlite
+ * is one connection, so a second writer queues behind any open transaction
+ * whether or not a row is locked, and the behavioural test there still passes
+ * with the lock deleted (Task 137's mutant D3, and Task 147 looked again).
+ * Proving it takes two real sessions against Postgres proper. Until somebody
+ * has those, do not read the passing window test as evidence for the lock,
+ * and do not remove the lock because nothing fails without it. The same goes
+ * for the one in `updateField`.
  *
  * Both refusals are above the delete, so returning them commits nothing
  * (docs/decisions/004). The renumbering is inside for the reason `retireField`
@@ -1142,31 +1227,32 @@ export async function deleteField(
  * swaps with the live question next to it, never with a retired one it cannot
  * see. Retired questions are then written back behind the live ones, so the
  * section stays dense either way.
+ *
+ * One transaction, for the reason `moveGame` gives. The one refusal is above
+ * the first write (docs/decisions/004).
  */
 export async function moveField(
   fieldId: string,
   direction: "up" | "down",
   database: Database = defaultDb
 ): Promise<AdminResult<{ field: ProfileField; gameName: string | null; moved: boolean }>> {
-  const [field] = await database
-    .select()
-    .from(profileFields)
-    .where(eq(profileFields.id, fieldId))
-    .limit(1);
-  if (!field) return fail("That question no longer exists.");
+  return database.transaction(async (tx) => {
+    const field = await fieldById(tx, fieldId);
+    if (!field) return fail("That question no longer exists.");
 
-  const section = await gameName(database, field.gameId);
-  const siblings = await siblingsOf(database, field.gameId);
-  const asked = siblings.filter((row) => row.retiredAt === null);
-  const retired = siblings.filter((row) => row.retiredAt !== null);
-  const moving = field.retiredAt === null ? asked : retired;
-  const staying = field.retiredAt === null ? retired : asked;
+    const section = await gameName(tx, field.gameId);
+    const siblings = await siblingsOf(tx, field.gameId);
+    const asked = siblings.filter((row) => row.retiredAt === null);
+    const retired = siblings.filter((row) => row.retiredAt !== null);
+    const moving = field.retiredAt === null ? asked : retired;
+    const staying = field.retiredAt === null ? retired : asked;
 
-  const reordered = reorderById(moving, fieldId, direction);
-  await writeFieldSort(
-    database,
-    field.retiredAt === null ? [...reordered, ...staying] : [...staying, ...reordered]
-  );
-  return withData({ field, gameName: section, moved: orderChanged(moving, reordered) });
+    const reordered = reorderById(moving, fieldId, direction);
+    await writeFieldSort(
+      tx,
+      field.retiredAt === null ? [...reordered, ...staying] : [...staying, ...reordered]
+    );
+    return withData({ field, gameName: section, moved: orderChanged(moving, reordered) });
+  });
 }
 

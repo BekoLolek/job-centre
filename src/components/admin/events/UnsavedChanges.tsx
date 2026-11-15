@@ -49,6 +49,50 @@ import { cx } from "@/components/ui";
  * remembered to list. Anything less general would rot the first time somebody
  * adds a field.
  *
+ * ## An edit made while a save is in flight: there is not one (Task 140)
+ *
+ * No tab used to disable its fields while it saved, so a keystroke during the
+ * round trip marked the tab dirty, the landing marked it saved, the bar came
+ * down and the edit had never been sent. Three answers were on the table, and
+ * **the ruling is the third: nothing on a tab can be touched while its own
+ * write is in flight.** Every surface that saves puts `inert` on itself for
+ * exactly as long as its request is out — `inert={state === "saving"}`, or the
+ * busy flag where a write has one of its own — and that is the whole rule, the
+ * same at every site.
+ *
+ *  - **Merging the typed edit over what the server sent back** is the answer
+ *    that sounds best and is a different function at every site. Days,
+ *    questions, teams and stages adopt *rows*, and matching a row typed
+ *    mid-flight to a row the server just numbered means a key-to-id map per
+ *    list; the draft config, the schedule and the slug adopt *normalised
+ *    values*, where "merge" has to decide whether a clamp or the keystroke
+ *    wins; round scores adopt the baseline the next save is compared against.
+ *    Sixteen sites, sixteen merges, each one a place to lose a row.
+ *  - **Skipping the adoption when the tab went dirty mid-flight** loses the
+ *    ids. A day added, saved, and relabelled before the save lands would stay
+ *    id-less on the screen, so the next save would insert it a second time and
+ *    delete the first — with every availability answer given to it. That is
+ *    worse than the bug it fixes, and the adoption comments in `DaysTab`,
+ *    `QuestionsTab`, `TeamsTab` and `FormatTab` each say so.
+ *  - **Blocking** costs a manager the length of one server action, during
+ *    which the bar already says "Saving…" and already refuses Cancel and every
+ *    way out of the editor. Nothing typed is lost because nothing can be
+ *    typed, the adoption lands on exactly what was sent, and there is no
+ *    per-site judgement to get wrong. It is also what this codebase was
+ *    already doing by halves — `busy` disables every button, the announcement
+ *    switches and the mention picker are `disabled={pending}` — with the text
+ *    boxes left out.
+ *
+ * `inert` rather than `disabled` on each control, for the reason Discard is a
+ * remount rather than an undo: it covers the fields nobody remembered to list,
+ * and the cards that are dragged rather than typed into.
+ *
+ * The handlers Task 136 fixed (`rebuild`, `generate`, `fill`, the entry rules,
+ * the championship weight, the placements) keep their own answer — they adopt
+ * nothing, so holding `dirty` when they land is complete for them — and
+ * {@link saveGate} is the other half: whatever a tab says about itself, the
+ * bar does not send a second save while the first is out.
+ *
  * ## Why the rules are pure functions with their inputs handed in
  *
  * {@link navigationDecision} and {@link unsavedHistoryLock} take the browser
@@ -295,6 +339,44 @@ export function unsavedHistoryLock(options: HistoryLockOptions): () => void {
 }
 
 /* ------------------------------------------------------------------ */
+/* One save at a time                                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The bar's Save button, held to one save at a time (R-260, Task 140).
+ *
+ * The button used to be disabled off the tab's own `saving` and nothing else.
+ * That is one render behind the press — two clicks in the same frame both got
+ * through — and a tab could be knocked from `saving` back to `dirty` while its
+ * request was still out, which lit the button again over a save in flight.
+ *
+ * So the gate holds on the one thing a tab cannot talk it out of: the promise
+ * the save itself returned. `onChange` is told when one goes out and when it
+ * settles — landed or failed, the button comes back either way.
+ *
+ * A save that returns nothing sent nothing: it opened a confirm ("this clears
+ * four answers") and the write, if there is one, goes out from that dialog's
+ * own button. There is nothing to hold for, so nothing is held.
+ */
+export function saveGate(
+  onChange: (inFlight: boolean) => void
+): (save: () => unknown) => void {
+  let inFlight = false;
+  return (save) => {
+    if (inFlight) return;
+    const sent = save();
+    if (!(sent instanceof Promise)) return;
+    inFlight = true;
+    onChange(true);
+    const settled = () => {
+      inFlight = false;
+      onChange(false);
+    };
+    sent.then(settled, settled);
+  };
+}
+
+/* ------------------------------------------------------------------ */
 /* The context                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -305,7 +387,8 @@ type Registration = WorkState & {
   label?: string;
   /** Why saving is blocked, if it is. */
   reason?: ReactNode;
-  save: () => void;
+  /** Returns the write's promise when it sends one — {@link saveGate} holds on it. */
+  save: () => unknown;
 };
 
 type Ctx = {
@@ -377,6 +460,9 @@ export default function UnsavedChangesProvider({
 }) {
   const [entries, setEntries] = useState<ReadonlyMap<string, Registration>>(new Map());
   const [nudge, setNudge] = useState(0);
+  // Held here rather than in the bar, which is rebuilt on every refusal.
+  const [sending, setSending] = useState(false);
+  const send = useMemo(() => saveGate(setSending), []);
 
   const register = useCallback((id: string, value: Registration | null) => {
     setEntries((was) => {
@@ -488,7 +574,8 @@ export default function UnsavedChangesProvider({
       {active && (
         <UnsavedBar
           key={nudge}
-          entry={active}
+          entry={{ ...active, saving: active.saving || sending }}
+          onSave={() => send(active.save)}
           onDiscard={() => {
             onDiscard();
             // The remount clears the registration; drop it now so the bar goes
@@ -501,7 +588,15 @@ export default function UnsavedChangesProvider({
   );
 }
 
-function UnsavedBar({ entry, onDiscard }: { entry: Registration; onDiscard: () => void }) {
+function UnsavedBar({
+  entry,
+  onSave,
+  onDiscard,
+}: {
+  entry: Registration;
+  onSave: () => void;
+  onDiscard: () => void;
+}) {
   return (
     <div
       role="region"
@@ -545,7 +640,7 @@ function UnsavedBar({ entry, onDiscard }: { entry: Registration; onDiscard: () =
           <button
             type="button"
             className="btn btn-union"
-            onClick={entry.save}
+            onClick={onSave}
             disabled={entry.saving || entry.blocked}
           >
             {entry.saving ? "Saving…" : (entry.label ?? "Save changes")}

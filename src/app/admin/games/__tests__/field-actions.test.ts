@@ -35,7 +35,8 @@ vi.mock("@/db", async (importOriginal) => {
 
 vi.mock("@/lib/session-guards", () => ({
   // A real row, so the line the action writes can name its actor.
-  requirePermission: async () => ({ id: state.adminId, displayName: "Beko" }),
+  // An admin, as the name says: the `destructive` modifier (Task 129) reads the flag from here.
+  requirePermission: async () => ({ id: state.adminId, displayName: "Beko", isAdmin: true }),
 }));
 
 const revalidated: string[] = [];
@@ -302,6 +303,19 @@ describe("retireFieldAction", () => {
 
     expect(result.ok).toBe(false);
     expect(await lines()).toHaveLength(0);
+  });
+
+  it("writes no second line for a second press, and still answers it", async () => {
+    // "Retired…" about a question that was already retired is a line about
+    // something that did not happen (Task 147).
+    const id = await addMainRole();
+    await answer(id, "tank");
+    unwrap(await retireFieldAction(id));
+
+    const again = unwrap(await retireFieldAction(id));
+
+    expect(again).toEqual({ keptAnswers: 1 });
+    expect(await lines()).toHaveLength(1);
   });
 
   it("refreshes the log", async () => {

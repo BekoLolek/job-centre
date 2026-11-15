@@ -9,6 +9,10 @@
  * and is tested against real Postgres — and revalidate the pages whose content
  * just changed.
  *
+ * Deleting one needs `destructive` as well (R-267 / UC-57): `template.deleted`
+ * is in `audit.ts`'s destructive set. Deactivating is not - it switches back
+ * on with nothing lost, and it is the path the screen recommends instead.
+ *
  * `/admin/events` is revalidated as well as this page, because its create box
  * reads `listEventTemplates()`: a template made or deactivated here changes
  * what that picker offers, and a picker showing yesterday's list is the sort of
@@ -30,6 +34,7 @@ import {
   updateTemplate,
 } from "@/lib/admin-templates";
 import { recordAudit } from "@/lib/audit";
+import { destructiveRefusal } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session-guards";
 
 /** This page, the create-event picker that reads the same rows, and the log. */
@@ -168,6 +173,8 @@ export async function deleteTemplateAction(
   templateId: string
 ): Promise<TemplateResult<{ usedBy: number }>> {
   const actor = await requirePermission("templates.manage");
+  const refusal = await destructiveRefusal(actor, "template.deleted");
+  if (refusal) return { ok: false, error: refusal };
 
   const result = await deleteTemplate(templateId);
   if (!result.ok) return result;

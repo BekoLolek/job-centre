@@ -7,6 +7,10 @@
  * which an admin has without holding it; voting needs any account. Reading is
  * public and has no action at all — see the page.
  *
+ * Deleting needs `destructive` as well (R-267 / UC-57): `poll.deleted` is in
+ * `audit.ts`'s destructive set, and `destructiveRefusal` is asked with that
+ * key after the guard and before the write.
+ *
  * Every closed-poll check is repeated here even though the library makes it
  * too. That is not belt and braces for its own sake: the library refusal is
  * what actually protects the data, and these exist so the screen gets a
@@ -16,6 +20,7 @@
 import { revalidatePath } from "next/cache";
 import { recordAudit } from "@/lib/audit";
 import { notifyPollPosted } from "@/lib/notify-events";
+import { destructiveRefusal } from "@/lib/permissions";
 import {
   type PollEditPreview,
   type PollInput,
@@ -148,6 +153,9 @@ export async function closePollAction(pollId: string): Promise<PollActionResult>
  */
 export async function deletePollAction(pollId: string): Promise<PollActionResult> {
   const actor = await requirePermission("polls.manage");
+  const refusal = await destructiveRefusal(actor, "poll.deleted");
+  if (refusal) return { ok: false, error: refusal };
+
   const result = await deletePoll(pollId);
   // Same again: two people on the same poll, or one on a stale page, must not
   // both have "Deleted a poll, and the votes on it" written against their name.

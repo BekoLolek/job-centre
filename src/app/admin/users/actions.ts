@@ -29,6 +29,7 @@
  */
 
 import { revalidatePath } from "next/cache";
+import type { User } from "@/db";
 import {
   type AddNoteInput,
   type AdminUserResult,
@@ -37,10 +38,12 @@ import {
   grantAdmin,
   listUserNotes,
   revokeAdmin,
+  saveMemberPowers,
 } from "@/lib/admin-users";
 import { allowAdmin, barAdmin, forgetAdmin } from "@/lib/admin-allowlist";
 import { normaliseDiscordId } from "@/lib/auth-policy";
 import { recordAudit } from "@/lib/audit";
+import type { Power } from "@/lib/permissions-policy";
 import { requireAdmin } from "@/lib/session-guards";
 
 /** The members list, and the audit log that just grew a line. */
@@ -49,10 +52,41 @@ function refresh(): void {
   revalidatePath("/admin/audit");
 }
 
+/**
+ * The line for a list of powers the admin flag replaced (Task 151, R-266).
+ *
+ * Promoting a member deletes whatever list they held, so that a later
+ * demotion leaves them with nothing rather than with powers no admin granted
+ * at that moment. This is the record of it: who promoted, whose list it was,
+ * and what was on it. Under `user.powers.changed`, beside the line for the
+ * grant that put them there, so the history of one member's powers is read
+ * under one action. Nothing deleted, no line.
+ */
+async function recordPowersReplaced(
+  admin: User,
+  member: { id: string; displayName: string | null; name: string | null },
+  cleared: Power[]
+): Promise<void> {
+  if (cleared.length === 0) return;
+  await recordAudit({
+    action: "user.powers.changed",
+    actor: admin,
+    subject: member.id,
+    summary: `Removed ${member.displayName ?? member.name ?? "a member"}'s powers on making them an admin: ${cleared.join(", ")}. The flag replaces the list.`,
+    detail: { added: [], removed: cleared, replacedByAdminFlag: true },
+  });
+}
+
 /* ------------------------------------------------------------------ */
 /* The admin flag                                                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Make a member an admin.
+ *
+ * Their list of powers goes in the same transaction, and gets a line of its
+ * own after the grant's: see {@link recordPowersReplaced}.
+ */
 export async function grantAdminAction(
   userId: string
 ): Promise<AdminUserResult<{ admins: number }>> {
@@ -68,6 +102,7 @@ export async function grantAdminAction(
     summary: `Made ${result.data.user.displayName ?? result.data.user.name ?? "a member"} an admin.`,
     detail: { admins: result.data.admins },
   });
+  await recordPowersReplaced(admin, result.data.user, result.data.clearedPowers);
 
   refresh();
   return { ok: true, data: { admins: result.data.admins } };
@@ -103,6 +138,57 @@ export async function revokeAdminAction(
 
   refresh();
   return { ok: true, data: { admins: result.data.admins } };
+}
+
+/* ------------------------------------------------------------------ */
+/* Powers                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Store a member's list of powers as exactly what was marked (R-262 / UC-55).
+ *
+ * `requireAdmin`, like everything else here, and it is the action R-264 is
+ * about: this is the one that hands powers out, so it is the one that must
+ * never be reachable by holding a power.
+ *
+ * One line per save that changed something, naming who saved, whose list it
+ * was, and what went on and came off it (R-266). A save that changed nothing
+ * writes none: `saveMemberPowers` reports what Postgres actually inserted and
+ * deleted, so the same list sent twice is one line, not two.
+ *
+ * `user.powers.changed` sits beside `user.admin.granted` and
+ * `user.admin.revoked`. One action rather than a granted/revoked pair,
+ * because one save can do both and is one decision.
+ */
+export async function saveMemberPowersAction(
+  userId: string,
+  powers: string[]
+): Promise<AdminUserResult<{ added: Power[]; removed: Power[] }>> {
+  const admin = await requireAdmin();
+
+  const result = await saveMemberPowers(userId, powers, admin.id);
+  if (!result.ok) return result;
+
+  const { user, added, removed } = result.data;
+  if (added.length === 0 && removed.length === 0) {
+    return { ok: true, data: { added, removed } };
+  }
+
+  const who = user.displayName ?? user.name ?? "a member";
+  const changes = [
+    added.length > 0 ? `added ${added.join(", ")}` : null,
+    removed.length > 0 ? `removed ${removed.join(", ")}` : null,
+  ].filter(Boolean);
+  await recordAudit({
+    action: "user.powers.changed",
+    actor: admin,
+    subject: userId,
+    summary: `Changed ${who}'s powers: ${changes.join("; ")}.`,
+    detail: { added, removed },
+  });
+
+  refresh();
+  return { ok: true, data: { added, removed } };
 }
 
 /* ------------------------------------------------------------------ */
@@ -203,6 +289,10 @@ export type AllowlistActionResult = { ok: true; said: string } | { ok: false; er
  * No guard beyond the id being an id: going from one admin to two takes
  * nothing away from anybody, which is the same reason `grantAdmin` has no
  * refusal either.
+ *
+ * When the id belongs to an account, this is a promotion like the button on
+ * the member's row, so their list of powers goes the same way, inside
+ * `allowAdmin`'s transaction, and gets the same line (Task 151).
  */
 export async function allowAdminAction(input: {
   discordId: string;
@@ -223,6 +313,9 @@ export async function allowAdminAction(input: {
     summary: `Added ${result.data.discordId} to the admin allowlist.`,
     detail: { discordId: result.data.discordId, promotedNow: result.data.promotedNow },
   });
+  if (result.data.account) {
+    await recordPowersReplaced(admin, result.data.account, result.data.clearedPowers);
+  }
 
   revalidatePath("/admin/users");
   return {

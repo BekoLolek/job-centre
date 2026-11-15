@@ -32,10 +32,11 @@ function cardsOf(width: number): RevealCard[] {
   );
 }
 
-function words(initialHand: RevealCard[] | null, perRole: number): string {
+function words(initialHand: RevealCard[] | null, perRole: number, seated = true): string {
   return renderToStaticMarkup(
     createElement(HandReveal, {
       initialHand,
+      seated,
       format: { format: "6v6", comp: "2-2-2" } as never,
       roles: ROLES,
       perRole,
@@ -67,5 +68,47 @@ describe("the count above a hand", () => {
     expect(said).toContain("5 in each of 3 roles, so 15 in a hand");
     expect(said).toContain("Your 15 are decided");
     expect(said).toContain("Draw my 15");
+  });
+});
+
+/**
+ * Task 149 — the closing sentence is about a team, so it is only for somebody
+ * on one. A hand shown to a holder whose seat has gone keeps "it stands" and
+ * drops the invitation to compare with a team they are not part of.
+ */
+describe("the sentence under a held hand", () => {
+  it("sends a seated holder to compare with their team", () => {
+    const said = words(cardsOf(3), 3, true);
+
+    expect(said).toContain("That is the hand, and it stands.");
+    expect(said).toContain("Compare it with your team");
+  });
+
+  it("says the hand stands, and nothing about a team, to a holder with no seat", () => {
+    const said = words(cardsOf(3), 3, false);
+
+    expect(said).toContain("That is the hand, and it stands.");
+    expect(said).not.toContain("Compare it with your team");
+  });
+});
+
+/**
+ * The same defect, one paragraph up: the line under the comp hands "who plays
+ * what" to a room the reader is in. The comp itself is a fact about the night
+ * and stays for everybody.
+ */
+describe("the sentence above a held hand", () => {
+  it("leaves who plays what to a seated holder and their team", () => {
+    const said = words(cardsOf(3), 3, true);
+
+    expect(said).toContain("6v6 states a 2-2-2 comp.");
+    expect(said).toContain("Who plays what is yours to settle once you can all see what you hold.");
+  });
+
+  it("states the comp, and settles nothing with a holder who has no seat", () => {
+    const said = words(cardsOf(3), 3, false);
+
+    expect(said).toContain("6v6 states a 2-2-2 comp.");
+    expect(said).not.toContain("yours to settle");
   });
 });

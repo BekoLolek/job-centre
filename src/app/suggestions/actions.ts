@@ -16,12 +16,13 @@
  *
  * `suggestions.moderate` is the one power here (R-261 / UC-56): a suggestion's
  * status, and deleting anybody's. An admin has both without holding it.
+ * Deleting **somebody else's** needs `destructive` as well (R-267 / UC-57).
  */
 
 import { revalidatePath } from "next/cache";
 import type { SuggestionStatus } from "@/db/schema";
 import { recordAudit } from "@/lib/audit";
-import { powersOf } from "@/lib/permissions";
+import { destructiveRefusal, powersOf } from "@/lib/permissions";
 import { holds } from "@/lib/permissions-policy";
 import { requirePermission, requireUser } from "@/lib/session-guards";
 import {
@@ -89,6 +90,17 @@ export async function voteSuggestionAction(
  *
  * Whose it was comes from the row's author and not from `mayRemoveAny`: a
  * moderator may remove anybody's, and that includes their own.
+ *
+ * ## The `destructive` modifier (R-267 / UC-57)
+ *
+ * `suggestion.deleted` is in `audit.ts`'s destructive set and
+ * `suggestion.withdrawn` is not, so the modifier is asked exactly when the
+ * line would be the first: the row is somebody else's **and** the power is
+ * what would remove it. Not for a member's own, which no power allowed. And
+ * not for a member without `suggestions.moderate` on somebody else's - the
+ * delete refuses them in its own words, and telling them they also lack
+ * `destructive` would be naming a power to somebody the area never admitted.
+ * Asked before the delete, so the refusal is returned with nothing written.
  */
 export async function deleteSuggestionAction(
   suggestionId: string
@@ -99,10 +111,6 @@ export async function deleteSuggestionAction(
     "suggestions.moderate"
   );
   const doomed = (await listSuggestions(null)).find((row) => row.id === suggestionId);
-
-  const result = await deleteSuggestion(suggestionId, { userId: user.id, mayRemoveAny });
-  if (!result.ok) return result;
-
   /*
    * Whose row it was, and nothing else. The power is deliberately not asked:
    * without it the delete's own `where` clause matched on the author, so a
@@ -110,6 +118,15 @@ export async function deleteSuggestionAction(
    * here, and would read as though holding it decided the answer.
    */
   const own = doomed?.by?.id === user.id;
+
+  if (mayRemoveAny && !own) {
+    const refusal = await destructiveRefusal(user, "suggestion.deleted");
+    if (refusal) return { ok: false, error: refusal };
+  }
+
+  const result = await deleteSuggestion(suggestionId, { userId: user.id, mayRemoveAny });
+  if (!result.ok) return result;
+
   await recordAudit({
     action: own ? "suggestion.withdrawn" : "suggestion.deleted",
     actor: user,

@@ -1,7 +1,8 @@
+import { eq } from "drizzle-orm";
 import { renderToReadableStream } from "react-dom/server";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EventConfig } from "@/db";
-import { type Database, type Hero, games, heroes as heroesTable } from "@/db";
+import { type Database, type Hero, games, heroHands, heroes as heroesTable } from "@/db";
 import { PUBLISHABLE, type TestDatabase, freshDatabase, makeUser } from "@/db/__tests__/helpers";
 import { HERO_ROLES, drawableByRole, listHeroes } from "@/lib/heroes";
 import { HEROES_PER_ROLE } from "@/lib/events-policy";
@@ -12,7 +13,7 @@ import { HEROES_PER_ROLE } from "@/lib/events-policy";
  *
  * `reveal.test.ts` proves what the reveal does with a hand. This file proves
  * the half that one cannot: **that the page hands it the hand the server
- * decided**, and that the four screens which are not a draw are each reached
+ * decided**, and that the five screens which are not a draw are each reached
  * and each say their own thing.
  *
  * ## Why the page is rendered and not just the component
@@ -87,7 +88,8 @@ vi.mock("next/navigation", async (importOriginal) => {
 const { default: DrawPage } = await import("../page");
 const { drawAction } = await import("../actions");
 const { handCards, loadDraw, refusalFor } = await import("../draw");
-const { dealFor, handFor } = await import("@/lib/hero-hands");
+const { HAND_DRAW_OFF, HAND_EVENT_GONE, HAND_NO_GAME, HAND_NOT_STORED, dealFor, handFor } =
+  await import("@/lib/hero-hands");
 const {
   applyToEvent,
   createEvent,
@@ -317,7 +319,7 @@ describe("flattening a stored hand", () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* loadDraw — which of the five screens                               */
+/* loadDraw — which of the six screens                                */
 /* ------------------------------------------------------------------ */
 
 describe("loadDraw picks the screen", () => {
@@ -327,22 +329,37 @@ describe("loadDraw picks the screen", () => {
     return event;
   }
 
-  it("refuses somebody with no seat before reading anything else (UC-39 1a)", async () => {
+  it("refuses somebody with no seat who holds nothing (UC-39 1a)", async () => {
     const fix = await fixture({ seat: false });
+
+    const payload = await loadDraw(await detail(fix.slug), fix.userId, handFor, harness.db);
+
+    expect(payload).toEqual({ kind: "no_seat" });
+  });
+
+  it("asks the reader for the caller's own hand at this event, and no other", async () => {
     /*
-     * The reader throws. A loader that looked a hand up for somebody with no
-     * seat would be reading one person's draw on another's request, and here it
-     * would fail the test rather than pass it quietly.
+     * This replaces a test whose reader threw when asked about somebody with
+     * no seat. That pinned the read *order*, which is what Task 149 says must
+     * not decide the answer: a former seat's hand is found only by reading it.
+     * What the old test was guarding is kept in the form that is still true —
+     * the only hand the loader ever asks for is the one keyed by the member it
+     * was called for, at the event it was called with.
      */
-    const payload = await loadDraw(
+    const fix = await fixture({ seat: false });
+    const asked: [string, string][] = [];
+
+    await loadDraw(
       await detail(fix.slug),
       fix.userId,
-      async () => {
-        throw new Error("read a hand for somebody with no seat");
+      async (eventId, userId) => {
+        asked.push([eventId, userId]);
+        return null;
       },
       harness.db
     );
-    expect(payload).toEqual({ kind: "no_seat" });
+
+    expect(asked).toEqual([[fix.eventId, fix.userId]]);
   });
 
   it("counts a queue place and a pending decision as no seat", async () => {
@@ -829,6 +846,487 @@ function fromList(draws: readonly number[]): () => number {
     return draws[index++];
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Task 145 — the night that draws no heroes (R-269 / UC-58 3a)       */
+/* ------------------------------------------------------------------ */
+
+/** The Format panel's shape with the draw switched off, everything else absent. */
+const DRAW_OFF: EventConfig = { eventShape: { heroes: false } };
+
+/** What the Format panel's save does to the hero half of the shape. */
+async function setShape(
+  eventId: string,
+  shape: { heroes: boolean; heroesPerRole?: number },
+  database: Database = harness.db
+): Promise<void> {
+  const saved = await updateEvent(eventId, { config: { eventShape: shape } }, database);
+  if (!saved.ok) throw new Error(saved.error);
+}
+
+async function removeGame(eventId: string): Promise<void> {
+  const saved = await updateEvent(eventId, { gameId: null }, harness.db);
+  if (!saved.ok) throw new Error(saved.error);
+}
+
+/** The rows themselves — "nothing was written" is asked of the table. */
+async function handRows(eventId: string, database: Database = harness.db) {
+  return database.select().from(heroHands).where(eq(heroHands.eventId, eventId));
+}
+
+async function eventDetail(slug: string, database: Database = harness.db) {
+  const event = await getEventBySlug(slug, {}, database);
+  if (!event) throw new Error("no event");
+  return event;
+}
+
+async function dealOrThrow(fix: Fixture): Promise<void> {
+  const dealt = await dealFor(fix.eventId, fix.userId, undefined, harness.db);
+  if (!dealt.ok) throw new Error(dealt.error);
+}
+
+describe("loadDraw at a night that draws no heroes (R-269 / UC-58 3a)", () => {
+  it("refuses a seated player who holds nothing", async () => {
+    const fix = await fixture({ config: DRAW_OFF });
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    expect(payload).toEqual({ kind: "draw_off" });
+  });
+
+  it("says the draw is off rather than that the game is missing, when both are true", async () => {
+    const fix = await fixture({ game: false, config: DRAW_OFF });
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    expect(payload).toEqual({ kind: "draw_off" });
+  });
+
+  it("still answers no seat first, so the switch tells a stranger nothing", async () => {
+    const fix = await fixture({ seat: false, config: DRAW_OFF });
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    expect(payload).toEqual({ kind: "no_seat" });
+  });
+
+  it("offers the draw again, at the stored width, once it is turned back on", async () => {
+    const fix = await fixture({
+      perRole: 6,
+      config: { eventShape: { heroes: false, heroesPerRole: 5 } },
+    });
+    const off = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    await setShape(fix.eventId, { heroes: true, heroesPerRole: 5 });
+    const on = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    expect(off).toEqual({ kind: "draw_off" });
+    if (on.kind !== "ready") throw new Error(`got ${on.kind}`);
+    expect(on.hand).toBeNull();
+    expect(on.perRole).toBe(5);
+  });
+});
+
+describe("a hand dealt before the night changed under it (R-271 / R-212)", () => {
+  it("is still the holder's hand after the draw is turned off", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    await setShape(fix.eventId, { heroes: false });
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    if (payload.kind !== "ready") throw new Error(`got ${payload.kind}`);
+    expect(payload.hand?.map((card) => card.name)).toEqual(nine);
+    expect(payload.perRole).toBe(3);
+  });
+
+  it("is still the holder's hand after the event loses its game", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    await removeGame(fix.eventId);
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    if (payload.kind !== "ready") throw new Error(`got ${payload.kind}`);
+    expect(payload.hand?.map((card) => card.name)).toEqual(nine);
+  });
+
+  it("is not dealt again, and not rewritten, by a click at a closed draw", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const [before] = await handRows(fix.eventId);
+    await setShape(fix.eventId, { heroes: false });
+
+    const again = await dealFor(fix.eventId, fix.userId, thrower(), harness.db);
+
+    if (!again.ok) throw new Error(again.error);
+    expect(again.alreadyHeld).toBe(true);
+    expect(await handRows(fix.eventId)).toEqual([before]);
+  });
+});
+
+describe("dealFor at a night that draws no heroes (R-269)", () => {
+  it("refuses before any roll, with its own sentence", async () => {
+    const fix = await fixture({ config: DRAW_OFF });
+
+    const result = await dealFor(fix.eventId, fix.userId, thrower(), harness.db);
+
+    expect(result).toEqual({ ok: false, error: HAND_DRAW_OFF });
+  });
+
+  it("says the draw is off rather than that the game is missing, as the page does", async () => {
+    const fix = await fixture({ game: false, config: DRAW_OFF });
+
+    const result = await dealFor(fix.eventId, fix.userId, thrower(), harness.db);
+
+    expect(result).toEqual({ ok: false, error: HAND_DRAW_OFF });
+  });
+
+  /*
+   * The criterion's own words: "asserted on the stored rows, not only on the
+   * answer". A working generator, so a refusal that came back *after* the
+   * insert would leave its row here to be counted.
+   */
+  it("writes no row for the event", async () => {
+    const fix = await fixture({ config: DRAW_OFF });
+
+    await dealFor(fix.eventId, fix.userId, () => 0, harness.db);
+
+    expect(await handRows(fix.eventId)).toEqual([]);
+  });
+
+  it("deals again once the draw is turned back on, and the row is there", async () => {
+    const fix = await fixture({ config: DRAW_OFF });
+    const refused = await dealFor(fix.eventId, fix.userId, () => 0, harness.db);
+    await setShape(fix.eventId, { heroes: true });
+
+    const dealt = await dealFor(fix.eventId, fix.userId, () => 0, harness.db);
+
+    expect(refused.ok).toBe(false);
+    if (!dealt.ok) throw new Error(dealt.error);
+    expect(dealt.alreadyHeld).toBe(false);
+    const rows = await handRows(fix.eventId);
+    expect(rows.map((row) => row.heroIds.length)).toEqual([9]);
+  });
+
+  /*
+   * Five in each role, fifteen ids in the row: the width the event kept while
+   * the draw was off is the width the next deal is made at (R-269's "turning
+   * the draw back on restores the night that was described").
+   */
+  it("deals at the width the event kept while the draw was off", async () => {
+    const fix = await fixture({
+      perRole: 6,
+      config: { eventShape: { heroes: false, heroesPerRole: 5 } },
+    });
+    const refused = await dealFor(fix.eventId, fix.userId, () => 0, harness.db);
+    const rowsWhileOff = await handRows(fix.eventId);
+    await setShape(fix.eventId, { heroes: true, heroesPerRole: 5 });
+
+    const dealt = await dealFor(fix.eventId, fix.userId, () => 0, harness.db);
+
+    expect(refused).toEqual({ ok: false, error: HAND_DRAW_OFF });
+    expect(rowsWhileOff).toEqual([]);
+    expect(dealt.ok).toBe(true);
+    const rows = await handRows(fix.eventId);
+    expect(rows.map((row) => row.heroIds.length)).toEqual([15]);
+  });
+
+  it("shares no wording with the other refusals", () => {
+    expect(typeof HAND_DRAW_OFF).toBe("string");
+    for (const other of [HAND_EVENT_GONE, HAND_NO_GAME, HAND_NOT_STORED]) {
+      expect(other).not.toContain(HAND_DRAW_OFF);
+      expect(HAND_DRAW_OFF).not.toContain(other);
+    }
+  });
+});
+
+describe("the draw action at a night that draws no heroes", () => {
+  it("refuses with the sentence that says so, not the catch-all, and stores nothing", async () => {
+    const fix = await fixture({ config: DRAW_OFF });
+    state.userId = fix.userId;
+
+    const outcome = await drawAction(fix.slug);
+
+    expect(outcome).toEqual({ ok: false, error: HAND_DRAW_OFF });
+    expect(await handRows(fix.eventId)).toEqual([]);
+  });
+
+  it("hands a holder the hand they already had", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    await setShape(fix.eventId, { heroes: false });
+    state.userId = fix.userId;
+
+    const outcome = await drawAction(fix.slug);
+
+    if (!outcome.ok) throw new Error(outcome.error);
+    expect(outcome.alreadyHeld).toBe(true);
+    expect(outcome.cards.map((card) => card.name)).toEqual(nine);
+  });
+});
+
+describe("the page at a night that draws no heroes", () => {
+  it("says the night is not drawing heroes, and that nothing went wrong", async () => {
+    const fix = await fixture({ config: DRAW_OFF });
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).toContain("This night is not drawing heroes");
+    expect(text).toContain("Nothing has gone wrong");
+    expect(text).not.toContain("Draw my");
+  });
+
+  it("does not borrow the missing-game screen's sentence, nor lend it its own", async () => {
+    const closed = await fixture({ config: DRAW_OFF });
+    const gameless = await fixture({ game: false });
+
+    state.userId = closed.userId;
+    const drawOff = words(await render(closed.slug));
+    state.userId = gameless.userId;
+    const noGame = words(await render(gameless.slug));
+
+    expect(drawOff).not.toContain("This event has no game");
+    expect(noGame).not.toContain("not drawing heroes");
+  });
+
+  it("shows a holder all nine, in deal order, and no refusal", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    await setShape(fix.eventId, { heroes: false });
+    state.userId = fix.userId;
+
+    const markup = await render(fix.slug);
+
+    const positions = nine.map((name) => markup.indexOf(name));
+    expect(positions.every((at) => at >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(words(markup)).not.toContain("not drawing heroes");
+  });
+
+  it("shows a holder all nine after the event loses its game", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    await removeGame(fix.eventId);
+    state.userId = fix.userId;
+
+    const markup = await render(fix.slug);
+
+    const positions = nine.map((name) => markup.indexOf(name));
+    expect(positions.every((at) => at >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(words(markup)).not.toContain("This event has no game");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Task 149 — a hand whose holder lost their seat                     */
+/* ------------------------------------------------------------------ */
+
+/** The one application this fixture's player has at its event. */
+async function applicationOf(fix: Fixture) {
+  const [application] = await harness.db.query.applications.findMany({
+    where: (row, { and, eq }) => and(eq(row.eventId, fix.eventId), eq(row.userId, fix.userId)),
+  });
+  if (!application) throw new Error("no application");
+  return application;
+}
+
+/** The member gives the seat up themselves — the case most likely on the night. */
+async function withdraw(fix: Fixture): Promise<void> {
+  const gone = await withdrawApplication(fix.eventId, fix.userId, harness.db);
+  if (!gone.ok) throw new Error(gone.error);
+}
+
+describe("no new hand without a seat (Task 149 criterion 3, pinned before the change)", () => {
+  it("deals nothing to somebody who gave their seat up before drawing", async () => {
+    const fix = await fixture();
+    await withdraw(fix);
+    state.userId = fix.userId;
+
+    const outcome = await drawAction(fix.slug);
+
+    expect(outcome.ok).toBe(false);
+    expect(await handRows(fix.eventId)).toEqual([]);
+  });
+
+  it("refuses a former holder's click, and leaves the one row exactly as it was", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const [before] = await handRows(fix.eventId);
+    await withdraw(fix);
+    state.userId = fix.userId;
+
+    const outcome = await drawAction(fix.slug);
+
+    expect(outcome.ok).toBe(false);
+    expect(await handRows(fix.eventId)).toEqual([before]);
+  });
+});
+
+describe("loadDraw for a player who drew and then lost their seat (Task 149)", () => {
+  it("answers with the hand they hold, named as a former seat's, after they withdraw", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    await withdraw(fix);
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    if (payload.kind !== "former_seat") throw new Error(`got ${payload.kind}`);
+    expect(payload.hand.map((card) => card.name)).toEqual(nine);
+    expect(payload.perRole).toBe(3);
+  });
+
+  it.each(["declined", "waitlisted"] as const)(
+    "answers the same when an admin moved them to %s",
+    async (status) => {
+      const fix = await fixture();
+      await dealOrThrow(fix);
+      const nine = await storedNames(fix.eventId, fix.userId);
+      const moved = await setApplicationStatus(
+        (await applicationOf(fix)).id,
+        status,
+        {},
+        harness.db
+      );
+      if (!moved.ok) throw new Error(moved.error);
+
+      const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+      if (payload.kind !== "former_seat") throw new Error(`got ${payload.kind}`);
+      expect(payload.hand.map((card) => card.name)).toEqual(nine);
+    }
+  );
+
+  it("still answers no seat for somebody who gave it up before drawing", async () => {
+    const fix = await fixture();
+    await withdraw(fix);
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    expect(payload).toEqual({ kind: "no_seat" });
+  });
+
+  it("is an ordinary held hand again once the seat is given back", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    const application = await applicationOf(fix);
+    const out = await setApplicationStatus(application.id, "declined", {}, harness.db);
+    if (!out.ok) throw new Error(out.error);
+    const back = await setApplicationStatus(application.id, "accepted", {}, harness.db);
+    if (!back.ok) throw new Error(back.error);
+
+    const payload = await loadDraw(await eventDetail(fix.slug), fix.userId, handFor, harness.db);
+
+    if (payload.kind !== "ready") throw new Error(`got ${payload.kind}`);
+    expect(payload.hand?.map((card) => card.name)).toEqual(nine);
+  });
+});
+
+describe("the page for a player who drew and then lost their seat (Task 149)", () => {
+  it("shows all nine in deal order, with no button", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    const nine = await storedNames(fix.eventId, fix.userId);
+    await withdraw(fix);
+    state.userId = fix.userId;
+
+    const markup = await render(fix.slug);
+
+    const positions = nine.map((name) => markup.indexOf(name));
+    expect(positions.every((at) => at >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+    expect(markup).not.toContain("Draw my");
+  });
+
+  it("says plainly that they no longer hold a seat, and that the hand is still theirs to see", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    await withdraw(fix);
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).toContain("You no longer hold a seat at this one");
+    expect(text).toContain("it is still yours to see");
+  });
+
+  it("does not tell them there is nothing here to turn over", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    await withdraw(fix);
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).not.toContain("You do not hold a seat at this one");
+    expect(text).not.toContain("there is nothing here to turn over");
+  });
+
+  it("says nothing about a lost seat to a holder who still has theirs", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).not.toContain("You no longer hold a seat at this one");
+  });
+});
+
+describe("the sentence under a hand, for a holder with and without a seat (Task 149)", () => {
+  it("does not send a former seat to compare hands with a team they are not on", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    await withdraw(fix);
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).toContain("That is the hand, and it stands.");
+    expect(text).not.toContain("Compare it with your team");
+  });
+
+  it("does not hand a former seat a decision about who plays what", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    await withdraw(fix);
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).toContain("states a 2-2-2 comp.");
+    expect(text).not.toContain("yours to settle");
+  });
+
+  it("still leaves who plays what to a seated holder", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).toContain("Who plays what is yours to settle once you can all see what you hold.");
+  });
+
+  it("still sends a seated holder to compare hands with their team", async () => {
+    const fix = await fixture();
+    await dealOrThrow(fix);
+    state.userId = fix.userId;
+
+    const text = words(await render(fix.slug));
+
+    expect(text).toContain("Compare it with your team’s before you settle who plays what");
+  });
+});
 
 /* ------------------------------------------------------------------ */
 /* The floor                                                          */

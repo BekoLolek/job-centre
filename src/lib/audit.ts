@@ -162,6 +162,17 @@ export const AUDIT_ACTIONS = {
   "user.admin.granted": "Admin granted",
   "user.admin.revoked": "Admin revoked",
   "user.sessions.ended": "Sessions ended",
+  /*
+   * A member's powers given or taken on the granting screen (R-266 / UC-55).
+   * One heading for both directions, as the screen has one save.
+   *
+   * Deliberately **not** in `DESTRUCTIVE` below, and not by omission. That set
+   * decides who needs the `destructive` power, and granting is the admin
+   * flag's alone (R-264): nobody a power could reach ever writes this line, so
+   * an entry there would refuse nobody. And it is a change of authority, not a
+   * loss of anything stored - the same save gives the powers back.
+   */
+  "user.powers.changed": "Powers changed",
   "user.note": "Note added",
   "template.created": "Template created",
   "template.updated": "Template changed",
@@ -238,7 +249,34 @@ export function actionLabel(action: string): string {
   return (AUDIT_ACTIONS as Record<string, string>)[action] ?? action;
 }
 
-/** The actions worth colouring differently — the ones that took something away. */
+/**
+ * The actions that took something away.
+ *
+ * ## This is an authority list, not only a colour (R-267 / UC-57)
+ *
+ * It began as the set of rows the log colours differently. It is now also the
+ * **one** place that decides which actions need the `destructive` power on top
+ * of the power over their area: `destructiveRefusal` in `permissions.ts` asks
+ * {@link isDestructive} and has no list of its own.
+ *
+ * **In the set and refused are two different facts.** The set decides which
+ * keys *may* be refused; a key is refused **only where a site asks** -
+ * where its action calls `destructiveRefusal` with that key before it writes.
+ * So a line removed here stops a refusal at once, wherever one was asked. A
+ * line added here refuses nobody until its action asks, and most actions do
+ * not. `src/app/__tests__/destructive-modifier.test.ts` is what tracks the
+ * difference: it accounts for every entry by name - refused, or owed and why
+ * - so a new one fails there until somebody has said which it is, and each
+ * owed one has a test that fails if the check is added by eye.
+ *
+ * A row that should stand out without being an authority does not belong
+ * here: it goes in `actionTone` below, as `announcement.pings_everyone` does.
+ *
+ * What belongs: something a member stored, or the site recorded, is gone or
+ * overwritten and the same button does not bring it back. What does not:
+ * switching something off that switches back on with nothing lost, which is
+ * why neither `template.deactivated` nor `game.deactivated` is here.
+ */
 const DESTRUCTIVE: ReadonlySet<string> = new Set([
   "draft.voided",
   "draft.discarded",
@@ -254,7 +292,6 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   "user.admin.revoked",
   // Somebody was signed out of every device they had open (UC-02 4a).
   "user.sessions.ended",
-  "template.deactivated",
   // The row goes. Every event made from it keeps running (UC-28 8a) — a
   // template holds a setup, not history — but the starting point itself is
   // gone, and this is the line that says who removed it.
@@ -278,11 +315,21 @@ const DESTRUCTIVE: ReadonlySet<string> = new Set([
   "suggestion.deleted",
 ]);
 
+/**
+ * Does this action need the `destructive` power as well as its area's?
+ *
+ * The only way to ask the set above from outside this module, and the set is
+ * not exported, so there is nothing to copy a second list from.
+ */
+export function isDestructive(action: string): boolean {
+  return DESTRUCTIVE.has(action);
+}
+
 /** The actions that hand something out. Read next to `DESTRUCTIVE` above. */
 const NOTABLE: ReadonlySet<string> = new Set(["user.admin.granted"]);
 
 export function actionTone(action: string): "union" | "flare" | "muted" {
-  if (DESTRUCTIVE.has(action)) return "flare";
+  if (isDestructive(action)) return "flare";
   if (action === "announcement.failed") return "flare";
   /*
    * Not destructive — nothing is lost — but it is the one audit line that says

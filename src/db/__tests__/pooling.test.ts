@@ -146,6 +146,13 @@ describe("the premise behind an unbounded pool", () => {
       // writer queues behind any transaction whether or not a row is locked.
       // On Neon under READ COMMITTED the lock is what closes the window.
       "admin-games.ts",
+      // Task 151: `grantAdmin` takes the member's row for update before it sets
+      // the flag and clears their power list, so a power save landing in
+      // between cannot write a row the promotion was about to delete — the
+      // dormant rows that would otherwise wake on demotion. Same limitation as
+      // `admin-games.ts` above: pinned by statement, not proved behaviourally,
+      // because PGlite is one connection.
+      "admin-users.ts",
       "championship-results.ts",
       "draft.ts",
       "events.ts",

@@ -38,7 +38,25 @@
  *
  * A summary is stored once and read for ever, so each one is built from what
  * happened and not from the rule that makes it so today: the counts are the
- * library's, and a move that moved nothing writes no line at all.
+ * library's, and a press that changed nothing writes no line at all — a move
+ * with nowhere to go, or a second press of retire or restore. Whether it
+ * changed anything is the library's to say (`moved`, `changed`), never
+ * guessed here.
+ *
+ * ## The one that needs `destructive` as well, and the one that does not yet
+ *
+ * `field.deleted` is in `audit.ts`'s destructive set (R-267 / UC-57), so
+ * `deleteFieldAction` asks `destructiveRefusal` with that key - after the
+ * guard, and before step 1, because a refusal after a write is a refusal that
+ * has already happened.
+ *
+ * `game.ladder` is in that set too and `setRankLadderAction` does **not** ask.
+ * The key is two acts: replacing a ladder members have answered against, which
+ * clears what they stored, and giving a new game its first ladder, which
+ * clears nothing - and there is no other way to give a game one. Asking would
+ * leave a holder of `games.manage` unable to finish adding a game. It is held
+ * open by a test in `src/app/__tests__/destructive-modifier.test.ts` until the
+ * key is split; do not add the check by eye.
  *
  * `/admin/games` and `/me/profile` are revalidated because every one of these
  * edits changes what members are asked, and `/admin/audit` because it now has
@@ -56,6 +74,7 @@ import {
   setHeroRoles,
 } from "@/lib/heroes";
 import { recordAudit } from "@/lib/audit";
+import { destructiveRefusal } from "@/lib/permissions";
 import {
   type AdminResult,
   type FieldInput,
@@ -216,7 +235,8 @@ export async function previewRankLadderAction(
  * Replace a game's rank ladder, and record what it cleared.
  *
  * The one action on this page that deletes what members stored, which is why
- * its action is in `audit.ts`'s destructive set. The count on the line is the
+ * its action is in `audit.ts`'s destructive set - marked, and coloured in the
+ * log, but not yet refused to anybody: see the top of this file. The count on the line is the
  * number of rows the library reports it deleted, not the number the preview
  * forecast. The two can differ, and a stored sentence has to be about what
  * happened.
@@ -352,19 +372,22 @@ export async function retireFieldAction(
   if (!result.ok) return result;
 
   // The summary says what was kept: "retired" on its own invites the reading
-  // that the answers went with the question, and they did not.
-  const { field, gameName, keptAnswers } = result.data;
-  const kept =
-    keptAnswers === 0
-      ? "It is no longer asked; nobody had answered it."
-      : `It is no longer asked, and the ${keptAnswers === 1 ? "1 answer to it is" : `${keptAnswers} answers to it are`} kept.`;
-  await recordAudit({
-    action: "field.retired",
-    actor,
-    subject: field.id,
-    summary: `Retired the question “${field.label}” in ${sectionSaid(gameName)}. ${kept}`,
-    detail: { game: field.gameId, label: field.label, keptAnswers },
-  });
+  // that the answers went with the question, and they did not. A press on a
+  // question already retired is answered the same and writes nothing.
+  const { field, gameName, keptAnswers, changed } = result.data;
+  if (changed) {
+    const kept =
+      keptAnswers === 0
+        ? "It is no longer asked; nobody had answered it."
+        : `It is no longer asked, and the ${keptAnswers === 1 ? "1 answer to it is" : `${keptAnswers} answers to it are`} kept.`;
+    await recordAudit({
+      action: "field.retired",
+      actor,
+      subject: field.id,
+      summary: `Retired the question “${field.label}” in ${sectionSaid(gameName)}. ${kept}`,
+      detail: { game: field.gameId, label: field.label, keptAnswers },
+    });
+  }
 
   refresh();
   return { ok: true, data: { keptAnswers } };
@@ -374,7 +397,8 @@ export async function retireFieldAction(
  * Ask it again. Every answer kept while it was retired comes back with it.
  *
  * The line is `retireFieldAction`'s read backwards, and says what came back
- * for the reason that one says what was kept.
+ * for the reason that one says what was kept. A press on a question already
+ * being asked writes none, as there.
  */
 export async function restoreFieldAction(
   fieldId: string
@@ -384,18 +408,20 @@ export async function restoreFieldAction(
   const result = await restoreField(fieldId);
   if (!result.ok) return result;
 
-  const { field, gameName, restoredAnswers } = result.data;
-  const back =
-    restoredAnswers === 0
-      ? "It is asked again; nobody had answered it."
-      : `It is asked again, and the ${restoredAnswers === 1 ? "1 answer to it is" : `${restoredAnswers} answers to it are`} back with it.`;
-  await recordAudit({
-    action: "field.restored",
-    actor,
-    subject: field.id,
-    summary: `Brought back the question “${field.label}” in ${sectionSaid(gameName)}. ${back}`,
-    detail: { game: field.gameId, label: field.label, restoredAnswers },
-  });
+  const { field, gameName, restoredAnswers, changed } = result.data;
+  if (changed) {
+    const back =
+      restoredAnswers === 0
+        ? "It is asked again; nobody had answered it."
+        : `It is asked again, and the ${restoredAnswers === 1 ? "1 answer to it is" : `${restoredAnswers} answers to it are`} back with it.`;
+    await recordAudit({
+      action: "field.restored",
+      actor,
+      subject: field.id,
+      summary: `Brought back the question “${field.label}” in ${sectionSaid(gameName)}. ${back}`,
+      detail: { game: field.gameId, label: field.label, restoredAnswers },
+    });
+  }
 
   refresh();
   return { ok: true, data: { restoredAnswers } };
@@ -458,6 +484,8 @@ export async function deleteFieldAction(
   fieldId: string
 ): Promise<AdminResult<{ deletedAnswers: number }>> {
   const actor = await requirePermission("games.manage");
+  const refusal = await destructiveRefusal(actor, "field.deleted");
+  if (refusal) return { ok: false, error: refusal };
 
   const result = await deleteField(fieldId);
   if (!result.ok) return result;

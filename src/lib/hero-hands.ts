@@ -52,10 +52,10 @@
  * The decision's first safe shape is "decide everything before you write
  * anything", and {@link dealFor} is that shape taken as far as it goes: **it
  * makes exactly one write, it is the last thing the function does, and every
- * refusal is reached before it.** A missing event, an event with no game, a
- * role too thin to deal from — all three are answered while nothing has been
- * written, so there is nothing for a rollback to undo and no transaction to
- * need one. The read that follows the write cannot refuse on its own behalf
+ * refusal is reached before it.** A missing event, a night that draws no
+ * heroes, an event with no game, a role too thin to deal from — all four are
+ * answered while nothing has been written, so there is nothing for a rollback
+ * to undo and no transaction to need one. The read that follows the write cannot refuse on its own behalf
  * either: it runs only when the insert wrote *nothing*.
  *
  * That ordering is the invariant to preserve. A future edit that writes
@@ -80,6 +80,13 @@
  * Repeating a participation check here would be a second copy of a rule that
  * lives one layer up, and the two would drift. What is here is the pair the
  * *row* is keyed by.
+ *
+ * **Whether the event draws at all is decided here**, and that is not the same
+ * kind of question (R-269 / UC-58 3a). It is a fact about the event row this
+ * function already reads for the game and the width, not about the person —
+ * and {@link dealFor} is the only thing that writes a hand, so it is the only
+ * place "this night deals none" can be true rather than merely shown. The page
+ * says the same sentence a layer up; hiding the page is not what stops a row.
  */
 
 import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
@@ -136,11 +143,22 @@ export type PlayerWithHands = {
  * The event went between the render and the click.
  *
  * Exported so the page and the tests read one string, as the hero writes in
- * `heroes.ts` are. The three below share no phrase with each other on purpose:
+ * `heroes.ts` are. The ones below share no phrase with each other on purpose:
  * a `toContain` on a fragment two of them carried is how a refusal assertion on
  * this plan went green for the wrong reason, so each is asserted whole.
  */
 export const HAND_EVENT_GONE = "That event is no longer here.";
+
+/**
+ * The manager turned the draw off for this event (R-269 / UC-58 3a).
+ *
+ * Worded as a decision about the night and not as a failure: nothing is wrong
+ * and nothing needs fixing, so the sentence does not send anybody to fix it.
+ * The draw page's own screen opens with the same first clause, and the draw
+ * action answers a click with this.
+ */
+export const HAND_DRAW_OFF =
+  "This night is not drawing heroes, so there is no hand to deal you.";
 
 /** No game, so no roster, so nothing to deal. The page's 1b, reached from here. */
 export const HAND_NO_GAME =
@@ -467,6 +485,15 @@ export async function playersWithHands(database: Database = defaultDb): Promise<
  * when reading the two tests that look alike — one covers the read, one covers
  * the conflict, and they are not duplicates of each other.
  *
+ * ## A night that draws no heroes stops the next deal, never a held hand
+ *
+ * The early read is above the {@link HAND_DRAW_OFF} refusal on purpose. Turning
+ * the draw off must not withdraw a hand already dealt (R-271 / R-212), so
+ * somebody who holds one is handed it back exactly as on any other night —
+ * nothing is rolled and nothing is written for them either way. Everybody else
+ * is refused before the hero list is read, before any roll and before the
+ * write, so an event with the draw off cannot gain a row.
+ *
  * ## Randomness
  *
  * Injected, for the reason `heroes-policy.ts` argues at length: a draw that
@@ -491,6 +518,11 @@ export async function dealFor(
     .where(eq(events.id, eventId))
     .limit(1);
   if (!event) return { ok: false, error: HAND_EVENT_GONE };
+
+  // Before the game is asked about: a night with the draw off and no game is
+  // not missing anything, and `loadDraw` answers the two in this order too.
+  const shape = eventShapeFrom(event.config);
+  if (!shape.heroes) return { ok: false, error: HAND_DRAW_OFF };
   if (!event.gameId) return { ok: false, error: HAND_NO_GAME };
 
   // Refuses by name when a role holds fewer than the event's width, before
@@ -501,7 +533,7 @@ export async function dealFor(
   const drawn = drawHand(
     drawableByRole(await listHeroes(event.gameId, database)),
     random,
-    eventShapeFrom(event.config).heroesPerRole
+    shape.heroesPerRole
   );
   if (!drawn.ok) return { ok: false, error: drawn.error };
 

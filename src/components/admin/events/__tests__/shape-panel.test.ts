@@ -166,11 +166,19 @@ describe("the Format panel", () => {
     expect(panel({ accepted: 24 })).toContain("6 per team");
   });
 
-  it("offers one box, not two", () => {
+  it("offers one box for the sizing, not two", () => {
     // R-218: the derived figure is a sentence, never a field. Two number boxes
-    // on this panel would be two places to disagree.
-    const boxes = panel().match(/<input/g) ?? [];
-    expect(boxes.length).toBe(1);
+    // for the sizing would be two places to disagree.
+    //
+    // Counted with the hero draw off, since Task 143: that question has a
+    // number of its own (R-270), which is a second box about a second thing
+    // and not a second box about this one — the next test holds it at one.
+    const sizingOnly = panel({ config: { eventShape: { heroes: false } } });
+    expect((sizingOnly.match(/<input/g) ?? []).length).toBe(1);
+  });
+
+  it("adds exactly one more box for the hero width, and no third", () => {
+    expect((panel().match(/<input/g) ?? []).length).toBe(2);
   });
 
   it("reads the other way round when that is the stored mode", () => {

@@ -11,15 +11,19 @@ import {
   Eyebrow,
   Field,
   Panel,
+  Stepper,
+  Toggle,
   plural,
 } from "@/components/ui";
 import {
   DRAFT_AWARDED_REFUSAL,
   type EventShape,
+  MAX_HEROES_PER_ROLE,
   MAX_PER_TEAM,
   type RosterHolding,
   type SizingMode,
   type TeamFormat,
+  heroWidthProblem,
   rosterBelowAwardedRefusal,
   rosterSizingFrom,
   shapeProblem,
@@ -42,9 +46,11 @@ import {
  * (R-217, R-218 / UC-42 1-4).
  *
  * Three decisions, in the order an admin makes them: **does it have sides**,
- * **is there a draft**, and **how big are the sides**. Nothing else; the
- * bracket shape is the step this panel is careful not to be called the same
- * thing as (see `tabs.ts`, {@link SetupKey}).
+ * **is there a draft**, and **how big are the sides**. Then a fourth that
+ * stands apart from them, because it is asked of a solo night as well: **does
+ * it draw random heroes, and how many in each role** (R-269, R-270 / UC-58).
+ * Nothing else; the bracket shape is the step this panel is careful not to be
+ * called the same thing as (see `tabs.ts`, {@link SetupKey}).
  *
  * ## One figure, and the other as its consequence
  *
@@ -63,7 +69,8 @@ import {
  * (`shapeProblem`), the accepted count being too small to make two sides
  * (`planTeams`, through `sizingConsequence`), the teams already in the way
  * (UC-42 2a), the awarded lots that settle it (UC-42 3a) and a figure below a
- * roster those awards filled (UC-49 1c). The server refuses again anyway. That
+ * roster those awards filled (UC-49 1c), and a hero width outside its bound
+ * (`heroWidthProblem`). The server refuses again anyway. That
  * is not belt-and-braces, it is UC-42 5b: a panel is a screen and a screen is
  * not a guard.
  *
@@ -75,6 +82,14 @@ import {
  * substitutes is a real night, which is why `MAX_PER_TEAM` is 32. The note is
  * deliberately not part of `refusal` below, and
  * `shape-panel-stated-format.test.ts` holds the save row open beside it.
+ *
+ * ## What the hero answers never refuse
+ *
+ * Turning the draw off is never refused, however many hands are already dealt
+ * — they are kept, and the panel says so instead. And a width the game's hero
+ * list cannot deal is not refused here either (UC-58 5a): the list can be
+ * filled in afterwards, and the draw is what refuses a role too thin. The
+ * only refusal the number has is its typo guard, `MAX_HEROES_PER_ROLE`.
  *
  * ## And what it tells the admin they are about to lose
  *
@@ -124,6 +139,9 @@ export default function ShapeTab({
   const [mode, setMode] = useState<SizingMode>(shape.sizing.mode);
   const [value, setValue] = useState(String(shape.sizing.value));
   const [discard, setDiscard] = useState(false);
+  const [heroes, setHeroes] = useState(shape.heroes);
+  // `null` is the box cleared — `Stepper`'s own empty state, and not a width.
+  const [perRole, setPerRole] = useState<number | null>(shape.heroesPerRole);
 
   const typed = Number(value.trim());
   const edited: EventShape = {
@@ -133,10 +151,10 @@ export default function ShapeTab({
     // instead of reading it as a number — `ChampionshipTab`'s `numberFrom` has
     // the argument.
     sizing: { mode, value: Number.isFinite(typed) ? typed : Number.NaN },
-    // Not this panel's to edit yet (R-269, R-270): the event's own answers,
-    // as `eventShapeFrom` resolved them, carried through unchanged.
-    heroes: shape.heroes,
-    heroesPerRole: shape.heroesPerRole,
+    heroes,
+    // `NaN` for a cleared box, for the sizing's reason above: refused as not a
+    // whole number rather than read as a width nobody typed.
+    heroesPerRole: perRole ?? Number.NaN,
   };
 
   const bounds = shapeProblem(edited);
@@ -144,6 +162,9 @@ export default function ShapeTab({
   // The places the edit would leave on a team — the figure the action measures
   // the rosters against, and the one the stated format is read beside.
   const cap = rosterSizingFrom(edited, accepted).cap;
+  // Null whenever the draw is off, so turning it off can never be what stops
+  // a save — whatever the number was left on.
+  const heroProblem = heroWidthProblem(edited);
 
   /*
    * UC-42 2a and 3a and UC-49 1c, asked here in the same words the action
@@ -160,6 +181,7 @@ export default function ShapeTab({
     : losingTeams && !discard
       ? teamsInTheWayRefusal(existingTeams)
       : (bounds ??
+        heroProblem ??
         rosterBelowAwardedRefusal(rosters, cap, draftStarted) ??
         (teamEvent ? consequence.problem : null));
 
@@ -187,6 +209,8 @@ export default function ShapeTab({
         mode,
         value: edited.sizing.value,
         discardTeams: discard,
+        heroes,
+        heroesPerRole: edited.heroesPerRole,
       });
       if (!result.ok) {
         setError(result.error);
@@ -364,6 +388,78 @@ export default function ShapeTab({
             )}
           </div>
         )}
+
+        {/* 4. The hero draw — asked of a solo night too (R-269, R-270 / UC-58 2, 4) */}
+        <div className="space-y-3 border-t border-hair pt-5">
+          <Eyebrow as="h3">Does it draw random heroes?</Eyebrow>
+          <Toggle
+            value={heroes}
+            yesLabel="Random heroes"
+            noLabel="No heroes"
+            onChange={(next) => {
+              // Tapping the lit chip clears a `Toggle`; this question has no
+              // unanswered state to clear to, so the answer stays.
+              setHeroes(next ?? heroes);
+              touch();
+            }}
+          />
+
+          {heroes && (
+            <>
+              {/*
+                No `max` on this one, deliberately. `Stepper` clamps what is
+                typed to its `max`, so handing it the bound would turn a typed
+                33 into a saved 10 — a number nobody chose, with no refusal.
+                Left to `Stepper`'s own ceiling, the 33 stands on the panel and
+                `heroWidthProblem` refuses it in words. The cost is that plus
+                steps past the bound into that same refusal instead of stopping.
+              */}
+              <label className="block max-w-xs">
+                <Eyebrow as="span" className="mb-1 block text-inherit">
+                  Heroes in each role
+                </Eyebrow>
+                <Stepper
+                  value={perRole}
+                  min={1}
+                  suffix="per role"
+                  aria-label="Heroes each player draws in each role"
+                  aria-invalid={heroProblem !== null}
+                  onChange={(next) => {
+                    setPerRole(next);
+                    touch();
+                  }}
+                />
+              </label>
+              <p className="text-12 leading-relaxed text-muted">
+                1 to {MAX_HEROES_PER_ROLE}. A game whose hero list is too short for it is
+                told so at the draw, not here — the list can be filled in afterwards.
+              </p>
+            </>
+          )}
+
+          {/*
+            What the next draw will deal, in the sizing consequence's voice.
+            Nothing is printed for a width that is being refused: the refusal
+            below is the sentence about that number.
+          */}
+          {heroes && heroProblem === null && perRole !== null && (
+            <p className="text-14 leading-relaxed text-chalk/80">
+              <Badge tone="default">{perRole} per role</Badge> <span aria-hidden>→</span>{" "}
+              The next draw deals each player {plural(perRole, "hero", "heroes")} in every
+              role.
+            </p>
+          )}
+          {!heroes && (
+            <p className="text-14 leading-relaxed text-chalk/80">
+              <Badge tone="default">No heroes</Badge> <span aria-hidden>→</span>{" "}
+              <span className="text-muted">
+                The next draw deals nobody a hand: {TAB_LABELS.hands} goes from the rail
+                and the draw page closes. Hands already dealt are kept, and so is the
+                number — turning this back on brings both back.
+              </span>
+            </p>
+          )}
+        </div>
 
         {/* UC-42 2a — the confirmation, not a silent discard */}
         {losingTeams && !losingDraft && (

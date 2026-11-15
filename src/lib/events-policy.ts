@@ -668,6 +668,28 @@ export const HEROES_PER_ROLE = 3;
  */
 export const MAX_PER_TEAM = 32;
 
+/**
+ * The widest hand this will store, and it is a typo guard rather than a rule
+ * about any game — {@link MAX_PER_TEAM}'s argument, for the other number on
+ * the Format panel (R-270).
+ *
+ * One at the bottom because a draw of none is the toggle's answer, not the
+ * number's. Ten at the top because the slip to catch is a doubled or trailing
+ * digit — `33` for `3`, `30` for `3` — and every one of those is past ten,
+ * while ten itself is still inside the thinnest role any hero list on the
+ * site holds (thirteen drawable Strategists), so nothing the bound lets
+ * through is a hand bigger than a real list could deal.
+ *
+ * The slip is **refused, not capped**: the Format panel's number box is given
+ * no ceiling of its own, because `Stepper` clamps to one silently and a typed
+ * 33 saved as 10 is a different wrong answer with nothing said about it.
+ *
+ * It is **not** the check that a particular game can deal the width. A save is
+ * never refused for that (UC-58 5a): the hero list can be filled in
+ * afterwards, and the draw is what refuses a role too thin, by name.
+ */
+export const MAX_HEROES_PER_ROLE = 10;
+
 /** An object off the stored config, or an empty one — never an array. */
 function record(value: SettingValue | undefined): Record<string, SettingValue> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -828,6 +850,32 @@ export function shapeProblem(shape: EventShape): string | null {
   }
   if (value < 1 || value > MAX_PER_TEAM) {
     return `A team holds between 1 and ${MAX_PER_TEAM} players.`;
+  }
+  return null;
+}
+
+/**
+ * Why this hero width cannot be saved, or null when it can (R-270).
+ *
+ * Beside {@link shapeProblem} rather than inside it, for two reasons. That
+ * function answers null for a solo event, and a solo night draws heroes as
+ * readily as a team one. And the Format panel reads `shapeProblem` alone to
+ * decide whether the sizing is sound enough to compare with the stated format
+ * (UC-49 1d) — a hero width has no business silencing that note.
+ *
+ * Nothing is held against an event that does not draw: the number is not on
+ * the panel to be corrected while the toggle is off, and turning the draw off
+ * is never refused.
+ */
+export function heroWidthProblem(shape: EventShape): string | null {
+  if (!shape.heroes) return null;
+
+  const width = shape.heroesPerRole;
+  if (!Number.isInteger(width)) {
+    return "How many heroes a player draws in each role has to be a whole number.";
+  }
+  if (width < 1 || width > MAX_HEROES_PER_ROLE) {
+    return `A player draws between 1 and ${MAX_HEROES_PER_ROLE} heroes in each role.`;
   }
   return null;
 }

@@ -40,7 +40,8 @@
  *
  * Thirteen areas and one modifier. `destructive` reaches nothing by itself: it
  * is required *in addition to* an area's power for the actions `src/lib/audit.ts`
- * already marks destructive (R-267). Nothing enforces that yet.
+ * already marks destructive (R-267). `destructiveRefusal` in `permissions.ts`
+ * is what asks, from each action that writes such a line.
  *
  * These are stored as text, not a Postgres enum, so a new name is a line here
  * and not a migration — the convention `audit_log.action` follows.

@@ -312,7 +312,10 @@ const CLASSIFIED: Record<string, Bucket[]> = {
   ],
   "src/components/admin/TemplateQuestionList.tsx": ["announced"],
   "src/components/admin/TemplatesManager.tsx": ["announced"],
-  "src/components/admin/UsersManager.tsx": ["announced", "announced", "announced"],
+  // Four since Task 131: the page's own error and success, plus the powers
+  // dialog's. None is `standing` — every one of them arrives in answer to
+  // something the admin just pressed, so every one of them interrupts.
+  "src/components/admin/UsersManager.tsx": ["announced", "announced", "announced", "announced"],
   "src/components/admin/events/ApplicantsTab.tsx": [
     "announced",
     "standing",

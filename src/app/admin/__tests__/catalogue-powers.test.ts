@@ -240,8 +240,22 @@ const ROWS = ([...POWERS, "admin"] as const).flatMap((holder) =>
   )
 );
 
-/** A holder reaches their own file. The admin reaches all three. */
-const REACHES = ROWS.filter(([holder, surface]) => holder === "admin" || holder === surface);
+/**
+ * The two here that need `destructive` as well, so the file's power alone no
+ * longer reaches them (Task 129, R-267). What a holder is told instead, and
+ * that `destructive` beside the power does reach them, is
+ * `src/app/__tests__/destructive-modifier.test.ts`'s. Every other export is
+ * the "ordinary things" a holder without it still does - `setRankLadderAction`
+ * among them, whose key is marked destructive but is not refused until it is
+ * split from a game's first ladder.
+ */
+const NEEDS_DESTRUCTIVE = ["deleteFieldAction", "deleteTemplateAction"];
+
+/** A holder reaches their own file, bar those two. The admin reaches all three files whole. */
+const REACHES = ROWS.filter(
+  ([holder, surface, action]) =>
+    holder === "admin" || (holder === surface && !NEEDS_DESTRUCTIVE.includes(action))
+);
 /**
  * Everything else is a refusal - each holder on the two files that are not
  * theirs. These are the rows that fail when a guard quietly accepts a second
@@ -301,12 +315,18 @@ describe("the audit line a holder's write leaves", () => {
   });
 
   it("names the templates.manage holder who deleted a template", async () => {
-    state.userId = ids["templates.manage"];
+    // Deleting needs `destructive` beside the file's power (Task 129, R-267),
+    // so this holder has both. The line must still name them, not the power.
+    const curator = await makeUser(db, { displayName: "A curator trusted with deleting" });
+    for (const power of ["templates.manage", "destructive"]) {
+      await grantPower({ userId: curator, power, grantedByUserId: ids.admin }, db);
+    }
+    state.userId = curator;
 
     await templatesActions.deleteTemplateAction(target.templateId);
 
     expect(await actorsOf("template.deleted", target.templateId)).toEqual([
-      [ids["templates.manage"], "Holder of templates.manage"],
+      [curator, "A curator trusted with deleting"],
     ]);
   });
 

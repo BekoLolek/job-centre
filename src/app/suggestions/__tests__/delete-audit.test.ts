@@ -59,7 +59,11 @@ let handle: TestDatabase;
 let db: Database;
 /** No power at all: may remove only their own. */
 let dana: string;
-/** Holds `suggestions.moderate`, and is not an admin. */
+/**
+ * Holds `suggestions.moderate` and `destructive`, and is not an admin. Both,
+ * because removing somebody else's needs both (Task 129, R-267); what the
+ * second one refuses is `src/app/__tests__/destructive-modifier.test.ts`'s.
+ */
 let moderator: string;
 /** The flag, and no row in `user_permissions`. */
 let admin: string;
@@ -73,10 +77,9 @@ beforeAll(async () => {
   moderator = await makeUser(db, { displayName: "Morgan the moderator" });
   admin = await makeUser(db, { displayName: "Beko" });
   await db.update(users).set({ isAdmin: true }).where(eq(users.id, admin));
-  await grantPower(
-    { userId: moderator, power: "suggestions.moderate", grantedByUserId: admin },
-    db
-  );
+  for (const power of ["suggestions.moderate", "destructive"]) {
+    await grantPower({ userId: moderator, power, grantedByUserId: admin }, db);
+  }
 });
 
 afterAll(async () => {

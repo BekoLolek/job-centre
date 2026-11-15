@@ -40,6 +40,8 @@ import { eq, inArray } from "drizzle-orm";
 import NextAuth, { type DefaultSession, type NextAuthConfig } from "next-auth";
 import Discord from "next-auth/providers/discord";
 import { getAllowlistEntries } from "./admin-allowlist";
+import { recordAudit } from "./audit";
+import { clearPowers } from "./permissions";
 import { ensureHandles } from "./players";
 import {
   SETTING_KEYS,
@@ -256,8 +258,23 @@ async function readAllowlist(): Promise<AllowlistEntry[] | null> {
  * sign-in, so a rename in the server shows up on the site. When a "change your
  * display name" screen lands, this needs a flag to stop it overwriting a name
  * the member chose.
+ *
+ * ## A sign-in that sets the flag replaces their list of powers
+ *
+ * As `grantAdmin` does, and for its reason (Task 151, R-266): rows left in
+ * `user_permissions` under an admin are read by nothing while the flag is on
+ * and by `powersOf` again the day it is revoked. So when the allowlist says
+ * yes, the list is deleted in the transaction that writes the flag. It runs on
+ * every such sign-in, not only the first, which also clears anything stored
+ * before this existed.
+ *
+ * This is the one promotion with no admin behind it, so the line it writes
+ * has no actor - the site writing about itself, as `announcement.failed` is,
+ * and shown as "The system". Nothing deleted, no line.
+ *
+ * Exported for `auth-sign-in-powers.test.ts` and called from nowhere else.
  */
-async function syncUserFromDiscord(
+export async function syncUserFromDiscord(
   userId: string,
   profile: unknown,
   env: AuthEnv = process.env as AuthEnv
@@ -291,7 +308,18 @@ async function syncUserFromDiscord(
   }
 
   try {
-    await db.update(users).set(patch).where(eq(users.id, userId));
+    const cleared = await db.transaction(async (tx) => {
+      await tx.update(users).set(patch).where(eq(users.id, userId));
+      return patch.isAdmin === true ? clearPowers(userId, tx) : [];
+    });
+    if (cleared.length > 0) {
+      await recordAudit({
+        action: "user.powers.changed",
+        subject: userId,
+        summary: `Removed ${patch.displayName ?? "a member"}'s powers: ${cleared.join(", ")}. Signing in made them an admin from the allowlist, and the flag replaces the list.`,
+        detail: { added: [], removed: cleared, replacedByAdminFlag: true, by: "sign-in" },
+      });
+    }
     // And a `/players/[handle]` segment, if they have not got one. Assigned
     // once and never recomputed, so a Discord rename above does not move
     // somebody's public profile out from under every link to it.

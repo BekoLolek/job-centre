@@ -58,11 +58,14 @@ import {
   sessions,
   teamMembers,
   userNotes,
+  userPermissions,
   users,
 } from "@/db";
 import { barAdminUser } from "./admin-allowlist";
 import { NOTE_MAX, revokeRefusal } from "./admin-users-policy";
 import { parseAdminIds } from "./auth-policy";
+import { clearPowers, setPowers } from "./permissions";
+import { type Power, isPower } from "./permissions-policy";
 
 /* ------------------------------------------------------------------ */
 /* Results                                                            */
@@ -134,6 +137,16 @@ export type AdminUserView = {
   eventsPlayed: number;
   /** How many admin notes they have. The body is fetched only when opened. */
   notes: number;
+  /**
+   * The powers stored for them (R-262). Their own list and nothing derived.
+   *
+   * For an admin it is empty: everything that sets the flag deletes the list.
+   * Rows can still be here if they were stored before that was so, or written
+   * by hand. They are in force for nobody while the flag is on and would be
+   * again without it, so the screen names them and offers to clear them
+   * rather than hiding them.
+   */
+  powers: Power[];
 };
 
 export type AdminUsersView = {
@@ -196,9 +209,10 @@ export async function loadAdminUsers(
     .orderBy(desc(users.isAdmin), asc(users.displayName), asc(users.createdAt));
 
   const ids = rows.map((row) => row.id);
-  const [played, noteCounts] = await Promise.all([
+  const [played, noteCounts, powers] = await Promise.all([
     eventsPlayedFor(ids, database),
     noteCountsFor(ids, database),
+    powersFor(ids, database),
   ]);
 
   const decorated: AdminUserView[] = rows.map((row) => ({
@@ -213,6 +227,7 @@ export async function loadAdminUsers(
     lastSeenAt: row.lastSeenAt,
     eventsPlayed: played.get(row.id) ?? 0,
     notes: noteCounts.get(row.id) ?? 0,
+    powers: powers.get(row.id) ?? [],
   }));
 
   const known = new Set(
@@ -326,6 +341,32 @@ async function noteCountsFor(
   return new Map(rows.map((row) => [row.userId, Number(row.total)]));
 }
 
+/**
+ * The powers each of these members holds, in one query.
+ *
+ * `powersOf` in `permissions.ts` is the read for one member; two hundred
+ * members would be two hundred of it. A row outside the vocabulary is dropped
+ * here as it is there, so the screen never offers a name that is not a power.
+ */
+async function powersFor(
+  userIds: readonly string[],
+  database: Database = defaultDb
+): Promise<Map<string, Power[]>> {
+  const out = new Map<string, Power[]>();
+  if (userIds.length === 0) return out;
+
+  const rows = await database
+    .select({ userId: userPermissions.userId, power: userPermissions.power })
+    .from(userPermissions)
+    .where(inArray(userPermissions.userId, [...userIds]));
+
+  for (const row of rows) {
+    if (!isPower(row.power)) continue;
+    out.set(row.userId, [...(out.get(row.userId) ?? []), row.power]);
+  }
+  return out;
+}
+
 /** How many members hold the flag. The number the last-admin rule reads. */
 export async function adminCount(database: Database = defaultDb): Promise<number> {
   const [row] = await database
@@ -355,26 +396,56 @@ export type AdminFlagChange = {
   admins: number;
 };
 
+export type AdminGrant = AdminFlagChange & {
+  /** The list the flag replaced: what this grant deleted, often nothing. */
+  clearedPowers: Power[];
+};
+
+/** One member's row, locked until the transaction ends. */
+async function lockMember(tx: Database, userId: string): Promise<User | null> {
+  const [row] = await tx.select().from(users).where(eq(users.id, userId)).limit(1).for("update");
+  return row ?? null;
+}
+
 /**
  * Grant the admin flag.
  *
  * No rules: going from one admin to two takes nothing away from anybody, and
  * there is no maximum. Granting to somebody who already has it is a no-op that
  * still reports success, so a double click is not an error message.
+ *
+ * **The flag replaces their list of powers** (Task 151, R-266). Whatever was
+ * stored for them is deleted in the same transaction and handed back as
+ * `clearedPowers`, so the action can say so in the audit log. Left in the
+ * table the rows were invisible — an admin has no list on the screen — and
+ * came back into force the moment the flag was revoked. Now a demoted admin
+ * holds nothing until somebody grants it.
+ *
+ * The row is locked first and the list deleted after the flag is set, in one
+ * transaction: `saveMemberPowers` takes the same lock, so a save cannot slip a
+ * row in between this deciding and this writing. It also clears somebody who
+ * already holds the flag.
+ *
+ * The other two things that set the flag do the same in their own
+ * transactions: `allowAdmin` in `admin-allowlist.ts`, and the sign-in in
+ * `auth.ts`, which has no admin behind it and writes its own line.
  */
 export async function grantAdmin(
   userId: string,
   database: Database = defaultDb
-): Promise<AdminUserResult<AdminFlagChange>> {
-  const member = await getMember(userId, database);
-  if (!member) return fail("That member no longer exists.");
+): Promise<AdminUserResult<AdminGrant>> {
+  const granted = await database.transaction(async (tx) => {
+    const member = await lockMember(tx, userId);
+    if (!member) return null;
 
-  if (!member.isAdmin) {
-    await database.update(users).set({ isAdmin: true }).where(eq(users.id, userId));
-  }
+    if (!member.isAdmin) {
+      await tx.update(users).set({ isAdmin: true }).where(eq(users.id, userId));
+    }
+    return { user: { ...member, isAdmin: true }, clearedPowers: await clearPowers(userId, tx) };
+  });
+  if (!granted) return fail("That member no longer exists.");
 
-  const after = await getMember(userId, database);
-  return withData({ user: after ?? member, admins: await adminCount(database) });
+  return withData({ ...granted, admins: await adminCount(database) });
 }
 
 /**
@@ -426,6 +497,75 @@ export async function revokeAdmin(
   return withData({
     user: after ?? { ...member, isAdmin: false },
     admins: await adminCount(database),
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Powers                                                             */
+/* ------------------------------------------------------------------ */
+
+export type PowersChange = {
+  /** The member whose list it is. */
+  user: User;
+  /** What this save gave them that they did not hold. */
+  added: Power[];
+  /** What this save took away. */
+  removed: Power[];
+};
+
+/**
+ * Store a member's list of powers as exactly this (R-262 / UC-55).
+ *
+ * The list is the whole of what they hold afterwards, not a change to it: a
+ * power on it that they lacked is granted, one they held that is not on it is
+ * taken away. `setPowers` does both in one transaction and reports each, and
+ * two empty answers mean the save changed nothing — which is how the action
+ * knows to write no audit line (R-266).
+ *
+ * Three refusals, all before anything is written:
+ *
+ *  - **A member who holds the admin flag has no list to save.** They can do
+ *    everything already; rows for them would change nothing today and would
+ *    quietly become their powers the day the flag is revoked. The one list
+ *    that is accepted for them is the empty one, which is how rows found on
+ *    an admin are cleared (Task 151). The flag is read on a
+ *    locked row inside the transaction that writes, the lock `grantAdmin`
+ *    takes: read beforehand, a promotion committing in the gap would leave
+ *    exactly the rows this refusal exists to prevent.
+ *  - **A name that is not in the vocabulary.** The admin flag is not a power
+ *    and nothing here can set it (R-264): `admin`, or any other name the
+ *    screen did not offer, is refused with the name in the message.
+ *    `setPowers` would throw for it; this is a form, so it gets a sentence.
+ *  - **Something that is not a list of names.** A server action's arguments
+ *    are whatever was posted, not what the type says.
+ *
+ * It does not ask who is saving — the action does, and only an admin may.
+ */
+export async function saveMemberPowers(
+  userId: string,
+  powers: readonly string[],
+  actorId: string,
+  database: Database = defaultDb
+): Promise<AdminUserResult<PowersChange>> {
+  if (!Array.isArray(powers) || powers.some((power) => typeof power !== "string")) {
+    return fail("That is not a list of powers, so nothing was saved.");
+  }
+  const unknown = powers.find((power) => !isPower(power));
+  if (unknown !== undefined) {
+    return fail(`"${unknown}" is not a power, so nothing was saved.`);
+  }
+
+  return database.transaction(async (tx) => {
+    const member = await lockMember(tx, userId);
+    if (!member) return fail("That member no longer exists.");
+    if (member.isAdmin && powers.length > 0) {
+      return fail(
+        `${displayNameOf(member)} is an admin and can already do everything, so there is no list of powers to save.`
+      );
+    }
+
+    const change = await setPowers({ userId, powers, grantedByUserId: actorId }, tx);
+    return withData({ user: member, ...change });
   });
 }
 

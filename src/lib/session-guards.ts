@@ -336,6 +336,20 @@ export async function requireAnyPermission(powers: readonly Power[]): Promise<Us
  * The redirect goes to `/me` rather than to the sign-in page when somebody is
  * signed in but not allowed: sending a logged-in member to a login screen is
  * the most confusing possible answer to "you cannot see this".
+ *
+ * ## The `destructive` modifier does not belong in here (R-267 / UC-57 3a)
+ *
+ * This guard and {@link requireManagerOfChild} never ask for `destructive`,
+ * and must not be taught to. A host's evening is whole: within their one
+ * event they void a lot or clear a result exactly as an admin does, and the
+ * vocabulary of powers is site-wide and does not reach into that. Asking here
+ * would put the modifier on the host too, and on every ordinary action behind
+ * this guard as well.
+ *
+ * It is asked of the one person behind this guard it applies to - a holder of
+ * `events.manage` who is neither an admin nor this event's host - by the
+ * action, on the line after the guard: `destructiveRefusal` in
+ * `permissions.ts`, given the event's id so that it can let the host through.
  */
 export async function requireEventManager(eventId: string): Promise<User> {
   const user = await requireUser();

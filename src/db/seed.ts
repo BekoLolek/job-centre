@@ -16,7 +16,9 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { eq, inArray } from "drizzle-orm";
+import { recordAudit } from "@/lib/audit";
 import { HERO_ROLES } from "@/lib/heroes";
+import { clearPowers } from "@/lib/permissions";
 import {
   type Database,
   type HeroRole,
@@ -351,13 +353,40 @@ export async function seed(
   // --- admin allowlist ---------------------------------------------
   // Only promotes users who already exist; someone on the list who has never
   // signed in has no row yet, and picks the flag up when Auth.js creates one.
+  //
+  // The flag replaces a member's list of powers, here as on the members
+  // screen (Task 151). This runs against a live database - every insert above
+  // is a no-op the second time - so an id newly added to the variable is a
+  // member with a list being promoted with nobody clicking. Left in the table
+  // the list would come back into force when the flag was revoked. One
+  // transaction for the flags and the lists; the lines, which have no actor,
+  // after it.
   const adminIds = parseAdminDiscordIds(env.ADMIN_DISCORD_IDS);
   if (adminIds.length > 0) {
-    const promoted = await database
-      .update(users)
-      .set({ isAdmin: true })
-      .where(inArray(users.discordId, adminIds))
-      .returning({ discordId: users.discordId });
+    const { promoted, replaced } = await database.transaction(async (tx) => {
+      const promoted = await tx
+        .update(users)
+        .set({ isAdmin: true })
+        .where(inArray(users.discordId, adminIds))
+        .returning({ id: users.id, discordId: users.discordId, displayName: users.displayName });
+      const replaced = [];
+      for (const member of promoted) {
+        replaced.push({ member, cleared: await clearPowers(member.id, tx) });
+      }
+      return { promoted, replaced };
+    });
+    for (const { member, cleared } of replaced) {
+      if (cleared.length === 0) continue;
+      await recordAudit(
+        {
+          action: "user.powers.changed",
+          subject: member.id,
+          summary: `Removed ${member.displayName ?? "a member"}'s powers: ${cleared.join(", ")}. The seed made them an admin from ADMIN_DISCORD_IDS, and the flag replaces the list.`,
+          detail: { added: [], removed: cleared, replacedByAdminFlag: true, by: "seed" },
+        },
+        database
+      );
+    }
     summary.adminsPromoted = promoted.length;
     const found = new Set(promoted.map((row) => row.discordId));
     summary.adminsPending = adminIds.filter((id) => !found.has(id));

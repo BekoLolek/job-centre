@@ -36,7 +36,7 @@
  */
 
 import { getEventBySlug } from "@/lib/events";
-import { dealFor, handFor } from "@/lib/hero-hands";
+import { HAND_DRAW_OFF, dealFor, handFor } from "@/lib/hero-hands";
 import { canSeeEvent } from "@/lib/hosting";
 import { getCurrentUser } from "@/lib/session-guards";
 import { handCards, loadDraw } from "./draw";
@@ -80,14 +80,29 @@ export async function drawAction(slug: string): Promise<DrawOutcome> {
    * because the line below already refuses every kind that is not `ready` with
    * the same sentence. Two guards for one fact is one of them going stale.
    *
-   * `too_thin` is the only kind with a sentence worth repeating, because it is
-   * the only one an admin can act on. The rest share the catch-all, which
-   * deliberately shares no phrase with it.
+   * Two kinds have a sentence worth repeating. `too_thin` is the one an admin
+   * can act on. `draw_off` is a click that landed after a manager turned the
+   * draw off (R-269 / UC-58 3a): the player is told the night is not drawing
+   * heroes, in `dealFor`'s own words, rather than that their draw has gone
+   * missing. The rest share the catch-all, which deliberately shares no phrase
+   * with either.
+   *
+   * A seated player who already holds a hand never reaches these: `loadDraw`
+   * answers `ready` for them whatever the event says now, and `dealFor` hands
+   * back the hand that stands.
+   *
+   * `former_seat` — a hand held by somebody whose seat has since gone — is
+   * refused here with the catch-all, on purpose, and never reaches `dealFor`.
+   * The page shows that hand with no button, so a click from one is a stale
+   * screen, and "reload to see where you stand" is exactly right: the reload
+   * shows them the hand and the sentence about the seat. `dealFor` asks about
+   * no seat at all (its docblock says why), so **this line is what keeps a
+   * deal from being attempted for somebody without one**, hand or no hand.
    */
   const payload = await loadDraw(event, user.id, handFor);
-  if (payload.kind !== "ready") {
-    return { ok: false, error: payload.kind === "too_thin" ? payload.refusal : GONE };
-  }
+  if (payload.kind === "too_thin") return { ok: false, error: payload.refusal };
+  if (payload.kind === "draw_off") return { ok: false, error: HAND_DRAW_OFF };
+  if (payload.kind !== "ready") return { ok: false, error: GONE };
 
   const dealt = await dealFor(event.id, user.id, Math.random);
   if (!dealt.ok) return { ok: false, error: dealt.error };

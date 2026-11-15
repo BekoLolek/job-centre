@@ -15,6 +15,30 @@
  * `requireAdmin()` runs inside every action rather than being trusted from the
  * page that rendered the button, because a server action is a public endpoint.
  *
+ * ## One of these needs `destructive` as well, and three deliberately do not yet
+ *
+ * Clearing a match writes `result.cleared`, which `audit.ts` marks destructive
+ * (R-267 / UC-57). `clearMatchAction` asks `destructiveRefusal` with that key
+ * and the match's own event, after the guard and before the write. It is asked
+ * of a holder of `events.manage` and never of the event's host (UC-57 3a).
+ *
+ * `result.override`, `format.stages` and `format.generated` are in that set
+ * too and are **not** asked for here. None of the three keys is one action:
+ *
+ *  - `result.override` is overturning a recorded result and also settling a
+ *    drawn series, which loses nothing and is the only way a drawn knockout
+ *    slot resolves;
+ *  - `format.stages` is every bracket save, the first included;
+ *  - `format.generated` is also a first generation, and a sync that touched
+ *    nothing.
+ *
+ * Asking on any of them would stop a holder running the night, and a modifier
+ * that blocks the ordinary case is not a modifier. The test of it is not how
+ * much the act destroys but whether refusing it leaves another way through.
+ * All three are held open by tests in
+ * `src/app/__tests__/destructive-modifier.test.ts` until the keys are split -
+ * do not add the check to them by eye.
+ *
  * ## Why the whole board comes back from a write
  *
  * Recording a result moves things a long way from the match that was edited:
@@ -69,6 +93,7 @@ import {
 import type { FormatTiming, MatchSlot, StageConfig } from "@/lib/format-policy";
 import { updateEvent } from "@/lib/events";
 import { recordAudit } from "@/lib/audit";
+import { destructiveRefusal } from "@/lib/permissions";
 import { announceMatchResult } from "@/lib/discord";
 import { eventIdOfMatch, eventIdOfStage } from "@/lib/event-scope";
 import {
@@ -604,6 +629,8 @@ export async function clearMatchAction(
   const { user: admin, eventId } = await requireManagerOfChild(() =>
     eventIdOfMatch(matchId)
   );
+  const refusal = await destructiveRefusal(admin, "result.cleared", eventId);
+  if (refusal) return { ok: false, error: refusal };
 
   // The line is read *before* the wipe: afterwards there is nothing left to
   // describe, and "cleared a match" is not a log entry anybody can act on.

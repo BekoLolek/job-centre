@@ -292,6 +292,7 @@ describe("the line a live region reads", () => {
 function reveal(initialHand: RevealCard[] | null): string {
   return renderToStaticMarkup(
     createElement(HandReveal, {
+      seated: true,
       initialHand,
       format: FORMAT,
       roles: ROLES,

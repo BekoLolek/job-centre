@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUDIT_ACTIONS, actionLabel, actionTone } from "@/lib/audit";
+import { AUDIT_ACTIONS, actionLabel, actionTone, isDestructive } from "@/lib/audit";
 
 /**
  * The log's headings, pinned (Task 132).
@@ -67,6 +67,7 @@ const PINNED: Array<[action: string, heading: string]> = [
   ["user.admin.granted", "Admin granted"],
   ["user.admin.revoked", "Admin revoked"],
   ["user.sessions.ended", "Sessions ended"],
+  ["user.powers.changed", "Powers changed"],
   ["user.note", "Note added"],
   ["template.created", "Template created"],
   ["template.updated", "Template changed"],
@@ -238,5 +239,20 @@ describe("the games catalogue in the log's vocabulary", () => {
     "field.moved",
   ])("does not mark %s that way, because nothing is lost by it", (action) => {
     expect(actionTone(action)).toBe("muted");
+  });
+});
+
+describe("switching something off, which switches back on (Task 129)", () => {
+  // The set that colours a row is also the list of what needs the
+  // `destructive` power, so the two "deactivated" actions have to agree - and
+  // they agree on not being in it. Nothing is lost by either and the same
+  // switch undoes it.
+  it.each(["template.deactivated", "game.deactivated"])("does not mark %s destructive", (action) => {
+    expect(isDestructive(action)).toBe(false);
+    expect(actionTone(action)).toBe("muted");
+  });
+
+  it.each(["template.deleted", "field.deleted"])("still marks %s, which does not come back", (action) => {
+    expect(isDestructive(action)).toBe(true);
   });
 });

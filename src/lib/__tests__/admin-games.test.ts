@@ -835,6 +835,35 @@ describe("retiring a question (UC-03 5a)", () => {
     expect(rows.map((row) => row.sort)).toEqual([0, 1, 2]);
   });
 
+  it("says whether a retire retired anything", async () => {
+    const { fieldId } = await answeredQuestion();
+
+    const first = await retireField(fieldId, db, new Date("2026-01-01T00:00:00Z"));
+    const second = await retireField(fieldId, db, new Date("2026-06-01T00:00:00Z"));
+
+    expect(first.ok && first.data.changed).toBe(true);
+    expect(second.ok && second.data.changed).toBe(false);
+    expect(second.ok && second.data.keptAnswers).toBe(1);
+  });
+
+  it("says whether a restore brought anything back", async () => {
+    const { fieldId } = await answeredQuestion();
+    await retireField(fieldId, db);
+
+    const first = await restoreField(fieldId, db);
+    const second = await restoreField(fieldId, db);
+
+    expect(first.ok && first.data.changed).toBe(true);
+    expect(second.ok && second.data.changed).toBe(false);
+    expect(second.ok && second.data.restoredAnswers).toBe(1);
+  });
+
+  it("still refuses to restore a question that does not exist", async () => {
+    const result = await restoreField("00000000-0000-4000-8000-000000000000", db);
+
+    expect(result).toEqual({ ok: false, error: "That question no longer exists." });
+  });
+
   it("takes a second click on retire as a double click, not a fault", async () => {
     const { fieldId } = await answeredQuestion();
     const first = await retireField(fieldId, db, new Date("2026-01-01T00:00:00Z"));

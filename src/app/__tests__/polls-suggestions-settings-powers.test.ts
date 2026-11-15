@@ -443,7 +443,14 @@ describe("settings.integrations", () => {
 
 describe("polls.manage", () => {
   it("posts a poll, closes it and deletes it, and each audit line names the holder", async () => {
-    const holder = as("polls.manage");
+    // Deleting needs `destructive` beside `polls.manage` (Task 129, R-267), so
+    // this holder has both. What the second one refuses when it is missing is
+    // `destructive-modifier.test.ts`'s.
+    const holder = await makeUser(db, { displayName: "A poll-keeper trusted with deleting" });
+    for (const power of ["polls.manage", "destructive"]) {
+      await grantPower({ userId: holder, power, grantedByUserId: admin }, db);
+    }
+    state.userId = holder;
 
     const created = await MODULES.polls.createPollAction(draft("A holder's first poll?"));
     if (!created.ok) throw new Error(created.error);
@@ -452,7 +459,7 @@ describe("polls.manage", () => {
 
     expect(await db.select().from(polls).where(eq(polls.id, created.data.id))).toEqual([]);
     const lines = await db
-      .select({ action: auditLog.action })
+      .select({ action: auditLog.action, name: auditLog.actorName })
       .from(auditLog)
       .where(eq(auditLog.actorUserId, holder));
     expect(lines.map((line) => line.action).sort()).toEqual([
@@ -460,6 +467,9 @@ describe("polls.manage", () => {
       "poll.created",
       "poll.deleted",
     ]);
+    expect(new Set(lines.map((line) => line.name))).toEqual(
+      new Set(["A poll-keeper trusted with deleting"])
+    );
   });
 
   it("previews and changes a poll somebody else posted, and the audit line names the holder", async () => {
@@ -503,8 +513,13 @@ describe("suggestions.moderate", () => {
     expect((await auditFor("suggestion.status")).map((line) => line.actor)).toContain(holder);
   });
 
-  it("deletes a suggestion somebody else made", async () => {
-    as("suggestions.moderate");
+  it("deletes a suggestion somebody else made, holding destructive as well", async () => {
+    // Both, since Task 129 (R-267): `suggestion.deleted` is a destructive action.
+    const both = await makeUser(db, { displayName: "A moderator trusted with deleting" });
+    for (const power of ["suggestions.moderate", "destructive"]) {
+      await grantPower({ userId: both, power, grantedByUserId: admin }, db);
+    }
+    state.userId = both;
     const id = await aSuggestion(member, "One to be moderated away");
 
     const result = await MODULES.suggestions.deleteSuggestionAction(id);

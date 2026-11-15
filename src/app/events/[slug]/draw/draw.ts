@@ -1,8 +1,8 @@
 /**
  * What one player is given about their draw, assembled on the server
- * (R-211, R-213 / UC-39 1, 1a, 1b, 2, 2a, 6, 6a, 7a).
+ * (R-211, R-213 / UC-39 1, 1a, 1b, 2, 2a, 6, 6a, 7a; R-269 / UC-58 3a).
  *
- * The page renders one of five screens and this module decides which. It is a
+ * The page renders one of seven screens and this module decides which. It is a
  * route-local loader for the same reason `draft/room.ts` is one: what it
  * assembles is this screen's answer to "what is in front of you", built out of
  * libraries that each own their own half, and there is nothing in it another
@@ -27,7 +27,7 @@
  * ## Why `handFor` arrives as a parameter
  *
  * {@link loadDraw} takes the stored-hand read rather than importing it. That is
- * not indirection for its own sake: it is how the five screens below are
+ * not indirection for its own sake: it is how the seven screens below are
  * testable as decisions. A hand that is stored, a hand that is not, and a game
  * whose list is too thin are three different answers to one question, and
  * injecting the read means a test states the stored hand instead of arranging a
@@ -71,16 +71,63 @@ export type StoredHandReader = (
 ) => Promise<StoredHand | null>;
 
 /**
- * Which of the five screens, and everything it needs.
+ * Which of the seven screens, and everything it needs.
  *
  * A union rather than a bag of nullable fields, so the page cannot render the
  * draw button on a screen that refused the draw — the thing UC-39 1a and 1b
  * both exist to stop ("told so rather than shown an empty draw").
+ *
+ * ## Which answers refuse a deal, and which one shows a hand
+ *
+ * Two different questions are answered here, and they pull apart the moment a
+ * setting changes after somebody has drawn:
+ *
+ *  - **"May the next hand be dealt?"** `draw_off`, `no_game`, `no_heroes` and
+ *    `too_thin` all say no, each for its own reason, and `ready` with
+ *    `hand: null` says yes. These are only ever given to a player who holds
+ *    nothing.
+ *  - **"What does this player already hold?"** `ready` with a `hand` — and
+ *    nothing else. It is the answer whenever a hand is stored, whatever the
+ *    event says now: the draw turned off, the game taken away, the list
+ *    emptied, the width changed. None of the four refusals above can be given
+ *    to somebody who holds a hand, because none of them is about them.
+ *
+ * `former_seat` is the second question answered for somebody the first no
+ * longer includes: a hand is stored and its holder has no seat now. It is its
+ * own kind, rather than `ready` with a flag or `no_seat` with a hand, so that
+ * neither the page nor the action can treat it as one of those by default —
+ * see {@link loadDraw} for why the hand is shown at all.
+ *
+ * `no_seat` is neither: it is "this page is not yours", and it is only ever
+ * given to somebody who holds nothing here.
  */
 export type DrawPayload =
-  /** UC-39 1a. No seat at this event, so there is no hand to deal them. */
+  /**
+   * UC-39 1a. No seat at this event and no hand from it, so there is nothing
+   * to deal them and nothing of theirs to show.
+   */
   | { kind: "no_seat" }
-  /** The event was never given a game, so there is no list to deal from. */
+  /**
+   * They drew, and then the seat went — withdrawn, declined, or moved to the
+   * queue. The hand is still shown, to its owner, as the record of a draw that
+   * happened (R-212, R-271; the manager's sheet keeps the same row, UC-47 3a).
+   * `hand` is never null here and no draw is on offer: this kind is never
+   * given to somebody who holds nothing, and the action refuses it.
+   */
+  | {
+      kind: "former_seat";
+      format: TeamFormat;
+      roles: readonly HeroRole[];
+      /** The hand's own width, as on a held `ready`. */
+      perRole: number;
+      hand: RevealCard[];
+    }
+  /**
+   * R-269 / UC-58 3a. The manager turned the draw off for this event, so no
+   * hand is dealt on it. A decision, not a fault — the screen says so.
+   */
+  | { kind: "draw_off" }
+  /** The event has no game, so there is no list to deal from. */
   | { kind: "no_game" }
   /**
    * UC-39 1b. The game exists and its hero list is empty. Named, not blank —
@@ -90,10 +137,15 @@ export type DrawPayload =
   | { kind: "no_heroes"; game: string; perRole: number }
   /** UC-39 2a. Refused before any draw, naming every thin role. */
   | { kind: "too_thin"; game: string; refusal: string }
-  /** UC-39 2, 6, 6a. The draw may happen, or already has. */
+  /**
+   * UC-39 2, 6, 6a. The draw may happen (`hand: null`), or already has.
+   *
+   * No game name: the reveal never showed one, and a hand outlives the event's
+   * game (see {@link loadDraw}), so a field the held hand could not always
+   * fill would be the reason to hide it.
+   */
   | {
       kind: "ready";
-      game: string;
       /** The comp the admin chose — stated, never enforced (UC-39 7a). */
       format: TeamFormat;
       /** The roles a hand covers, in deal order, for the copy above the button. */
@@ -205,22 +257,87 @@ async function holdsSeat(
 /**
  * The whole screen for one player.
  *
- * The order of the questions is the order of UC-39's alternate flows, and it is
- * the order the player would want them in: whether this page is theirs at all
- * (1a), whether there is anything to deal from (1b), whether what there is can
- * make a hand (2a), and only then the draw. Each refusal arrives **before** the
- * work the next question would do — the hero list is not read for somebody with
- * no seat.
+ * Two facts about the player come first and are read together: whether they
+ * hold a seat (UC-39 1a) and whether they already hold a hand (6a). Then, only
+ * for a seat holding nothing, the questions about the next deal in the order
+ * the player would want them: whether this night draws heroes (UC-58 3a),
+ * whether there is anything to deal from (1b), whether what there is can make
+ * a hand (2a), and only then the draw. Each of those refusals arrives
+ * **before** the work the next question would do — the hero list is not read
+ * for somebody with no seat, for somebody who holds a hand, or at a night
+ * that deals none.
  *
- * ## A hand already held is answered before the list is asked anything
+ * ## A hand is shown to whoever drew it, seat or no seat — decided, not ordered
  *
- * "Is there enough to deal from" (1b, 2a) is a question about the **next**
- * deal, at the width the event asks for **now**. Somebody who holds a hand is
- * not getting another (R-212), so neither question is theirs — and asking
- * them first hid a hand dealt at three behind "too thin" the moment the event
- * asked for five, which is the setting rewriting what somebody drew (R-271 /
- * UC-58 7a) by another route. So the stored hand is read straight after the
- * seat and the game, and the hero list is not read for its holder at all.
+ * The seat and the stored hand are **both** read before anything is answered,
+ * and the answer is a table of the two:
+ *
+ *  | seat | hand | answer                                              |
+ *  |------|------|-----------------------------------------------------|
+ *  | yes  | yes  | `ready`, with the hand                              |
+ *  | no   | yes  | `former_seat`, with the hand                        |
+ *  | yes  | no   | the questions about the next deal, below            |
+ *  | no   | no   | `no_seat`                                           |
+ *
+ * The second row used to be `no_seat`, and nobody chose that: the seat was
+ * asked first and returned before the hand was read, so a player who drew and
+ * then withdrew — or was declined, or moved to the queue — was told there was
+ * "nothing here to turn over" about nine heroes the manager's Hands tab was
+ * still listing under their name (UC-47 3a). It is the same violation as the
+ * two below: a thing that happened to the player, hidden by a change made
+ * afterwards.
+ *
+ * It is decided for the hand. "The draw happens once and stands" (R-212) has
+ * no clause about still being there on the night, R-271 says what was dealt
+ * stays exactly as it was dealt, and the requirements' own rule is that a hand
+ * is shown "to its owner and to a manager" — the owner, not the seat. The row
+ * is not deleted when a seat goes, so the alternative was a page denying a
+ * record the site keeps and shows to somebody else.
+ *
+ * The argument against — a removed applicant is no longer part of the night —
+ * is true, and it is answered by **saying so** rather than by hiding the
+ * cards: `former_seat` is its own kind, and the page puts one sentence above
+ * the hand. That is the opposite call from the closed draw below, and for the
+ * same reason. "The draw is off" is about a deal the holder is not waiting
+ * for, so beside their cards it would only mislead. "You no longer hold a
+ * seat" is about *them*, and a hand shown without it would read as "you are
+ * still playing", which is the thing that changed.
+ *
+ * What a seat still decides is the **next** deal, and only that: `no_seat`
+ * for somebody holding nothing is UC-39 1a unchanged, and `former_seat` is
+ * not `ready`, so the action never takes it as far as `dealFor`.
+ *
+ * ## A hand already held is answered before the event is asked anything
+ *
+ * Every question after those two reads is about the **next** deal, as the
+ * event stands **now**. Somebody who holds a hand is not getting another (R-212),
+ * so none of them is theirs — and each one asked first is a setting changed
+ * afterwards hiding what somebody drew (R-271 / UC-58 7a):
+ *
+ *  - "Too thin" hid a hand dealt at three the moment the event asked for five.
+ *  - **"This night is not drawing heroes" would hide every hand dealt before
+ *    the manager turned the draw off.** The switch stops the next deal; it
+ *    does not un-deal one. So a holder at a closed draw sees their hand, flat
+ *    and with no button, exactly as on any return visit (UC-39 6a) — and is
+ *    *not* told the draw is off, because that sentence is about a deal they
+ *    are not waiting for, and beside their cards it would read as "these no
+ *    longer count", which nobody decided.
+ *  - **"This event has no game" hid a hand whose event later lost its game.**
+ *    It was asked first only because `ready` used to carry the game's name,
+ *    which nothing rendered. A hand is hero rows, read by id; they belong to
+ *    the game the event had when it dealt, and they are still there. So the
+ *    holder sees the same hand, by the same names, and the page simply has no
+ *    game badge to show above it. `no_game` is now what it says: nothing to
+ *    deal the *next* hand from.
+ *
+ * So neither the event's shape, its game nor the hero list is consulted for a
+ * hand's holder at all — seated or not.
+ *
+ * ## The draw being off outranks the game being missing
+ *
+ * An event with the draw off and no game is refused as `draw_off`. "A manager
+ * can set a game" would send the player to have something fixed that the
+ * manager has already decided not to use.
  *
  * Its `perRole` is the hand's own, counted off the stored roles as
  * `unflatten` rebuilt them, for the same reason: the screen's sentence counts
@@ -232,17 +349,9 @@ export async function loadDraw(
   readHand: StoredHandReader,
   database: Database = defaultDb
 ): Promise<DrawPayload> {
-  if (!(await holdsSeat(database, event.id, userId))) return { kind: "no_seat" };
+  const seated = await holdsSeat(database, event.id, userId);
 
-  const game = event.game;
-  if (!game) return { kind: "no_game" };
-
-  const ready = {
-    kind: "ready",
-    game: game.name,
-    format: teamFormatFrom(event.config),
-    roles: HERO_ROLES,
-  } as const;
+  const shown = { format: teamFormatFrom(event.config), roles: HERO_ROLES } as const;
 
   /*
    * `dealtAt` is read and deliberately not carried. "You already hold these"
@@ -253,11 +362,26 @@ export async function loadDraw(
    */
   const stored = await readHand(event.id, userId, database);
   if (stored) {
-    return { ...ready, perRole: stored.heroes[HERO_ROLES[0]].length, hand: handCards(stored.heroes) };
+    return {
+      // The table in the docblock, rows one and two: the hand either way.
+      kind: seated ? "ready" : "former_seat",
+      ...shown,
+      perRole: stored.heroes[HERO_ROLES[0]].length,
+      hand: handCards(stored.heroes),
+    };
   }
 
-  /* Nothing held, so the questions about the next deal — at the event's width. */
-  const perRole = eventShapeFrom(event.config).heroesPerRole;
+  /* Row four: no seat and nothing held (UC-39 1a). */
+  if (!seated) return { kind: "no_seat" };
+
+  /* Row three: a seat and nothing held, so the next deal — as the event stands. */
+  const shape = eventShapeFrom(event.config);
+  if (!shape.heroes) return { kind: "draw_off" };
+
+  const game = event.game;
+  if (!game) return { kind: "no_game" };
+
+  const perRole = shape.heroesPerRole;
 
   const catalogue = await listHeroes(game.id, database);
   if (catalogue.length === 0) return { kind: "no_heroes", game: game.name, perRole };
@@ -265,5 +389,5 @@ export async function loadDraw(
   const refusal = refusalFor(drawableByRole(catalogue), perRole);
   if (refusal !== null) return { kind: "too_thin", game: game.name, refusal };
 
-  return { ...ready, perRole, hand: null };
+  return { kind: "ready", ...shown, perRole, hand: null };
 }

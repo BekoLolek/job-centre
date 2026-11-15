@@ -345,6 +345,18 @@ describe("restoreFieldAction", () => {
     expect(await lines()).toHaveLength(0);
   });
 
+  it("writes no line for a question that is already being asked, and still answers it", async () => {
+    // A second press, or a press on a page that had not caught up: nothing
+    // was brought back, so the log is not told that something was (Task 147).
+    const id = await addQuestion("Main role");
+    await answer(id);
+
+    const result = unwrap(await restoreFieldAction(id));
+
+    expect(result).toEqual({ restoredAnswers: 1 });
+    expect(await lines()).toHaveLength(0);
+  });
+
   it("refreshes the log", async () => {
     const id = await addRetiredQuestion("Main role");
     unwrap(await restoreFieldAction(id));

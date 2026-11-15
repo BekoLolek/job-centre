@@ -2842,7 +2842,7 @@ record: `docs/decisions/007-permissions.md`.
 | `polls.manage` | Creating, closing and deleting polls |
 | `suggestions.moderate` | A suggestion's status; deleting any |
 | `hosts.approve` | Approving and declining applications to host |
-| `members.read` | The member list, availability, and what people have drawn. **The member list half is not delivered yet** - `/admin/users` is the member list *and* the granting screen in one file, and R-264 keeps granting on the admin flag, so Task 130 left the whole page admin-only. Task 131 splits it; until then this power reaches Availability and Hands only. Found by Task 130, which took the safe side of a contradiction this table and Task 131's criteria had between them |
+| `members.read` | The member list, availability, and what people have drawn. **The member list half is not delivered yet** - `/admin/users` is the member list *and* the granting screen in one file, and R-264 keeps granting on the admin flag, so Task 130 left the whole page admin-only. **Task 131 looked at splitting it and ruled it not cheap** - one `MemberRow` carries grant, revoke, end-sessions, notes and now powers behind one guard, and `loadAdminUsers` returns note counts and allowlist flags a holder has no business seeing, so a read-only list needs its own route, row, loader, guard and tests. So this power reaches Availability and Hands only, the granting screen says exactly that rather than promising the list, and the member-list half is **undelivered** and tracked by Task 152. Found by Task 130, which took the safe side of a contradiction this table and Task 131's criteria had between them |
 | `audit.read` | The audit log |
 | `destructive` | **Required in addition** to the area's power, over the set `audit.ts` already marks. **It admits nobody to anything on its own** - Task 130 first read "/admin admits anybody holding anything" literally and gave a `destructive`-only holder an empty screen; a modifier is not an area power, and Task 129 must not read it as one either |
 
@@ -3199,11 +3199,11 @@ every action checks.
   list. Read every member of it and say, per entry, whether it belongs - and whether anything
   destructive is **missing** from it. Report rather than widen.
 - **Acceptance criteria:**
-  - [ ] A holder of an area power without `destructive` does the ordinary things and is refused the destructive one, with a refusal naming what is missing
-  - [ ] The same holder with `destructive` succeeds, and the audit line still records it as destructive
-  - [ ] An admin, and a host on their own event, are both unaffected
-  - [ ] The mapping from action to "is destructive" has exactly one source - the existing set - proven by a mutation to it changing the refusal
-  - [ ] Every entry in the set is accounted for in the report, and anything destructive but missing is named
+  - [x] A holder of an area power without `destructive` does the ordinary things and is refused the destructive one, with a refusal naming what is missing
+  - [x] The same holder with `destructive` succeeds, and the audit line still records it as destructive
+  - [x] An admin, and a host on their own event, are both unaffected
+  - [x] The mapping from action to "is destructive" has exactly one source - the existing set - proven by a mutation to it changing the refusal
+  - [x] Every entry in the set is accounted for in the report, and anything destructive but missing is named
 - **Inherited from Task 139's sweep, which traced every `.delete(` in `src/lib` to its callers.**
   These deletes **are** reachable from a power and **do** write a line, but under an action that is
   not in `DESTRUCTIVE` - so the modifier would not cover them. Each is a judgement for this task,
@@ -3220,11 +3220,59 @@ every action checks.
   while `template.deactivated` **is**. Task 137 left them disagreeing deliberately rather than
   guessing - nothing is lost either way and both are reversible - so whether they should match is
   this task's call, and it is one line plus two test rows.
+  **The per-key ruling criterion 5 demands, recorded here because a report is not a record.**
+  Task 129 ruled on all eighteen inherited keys; review found the ruling existed only in its report
+  and marked that Blocking, which was right - the criterion says "accounted for in the report", and
+  a report nobody can read afterwards accounts for nothing.
+  - **`poll.updated` - destructive and missing.** It discards votes when options are removed, under
+    a key that also covers renaming a question. The strongest candidate of the eighteen. Task 150.
+  - **Fifteen are the same shape, event-scoped, and wait on a key split:** `team.set`,
+    `team.count`, `team.random`, `event.shape`, `team.roster`, `team.captains`, `draft.pool`,
+    `draft.bid_cleared`, `waiver.revoked`, `event.days`, `event.questions`, `championship.result`,
+    `event.roundScoring`, `result.round`, `application.availability`. Each removes teams, bids,
+    scores or answers under a key that also covers an ordinary edit. **A host is outside the
+    modifier anyway**, so they would bite only an `events.manage` holder - which is why none is
+    urgent and all of them need the key split first. Task 150 is where that happens.
+  - **Two are not destructive:** `settings.guild_gate` and `settings.integrations` are
+    **overwrites, not losses**, and re-enterable. Pointing the guild gate at the wrong server is
+    dangerous and is not the same thing as destroying something; conflating the two would make the
+    set mean "risky" instead of "irreversible", and then it would stop meaning anything.
   **Named as not reachable from a power, with the reason:** `forgetAdmin` and `endSessions` are
   behind `requireAdmin` only and audited anyway; `voteSuggestion`, `votePoll`,
   `saveProfileSection`, `setAvailability` and the application-detail writes are a member changing
   their own data under `requireUser`; `endDevSession` is the dev-login sign-out.
+- **Not seen in a browser:** the eight refused actions still have buttons on their screens, and
+  nobody has checked how each screen shows the refusal - it arrives as the action's error sentence.
+  A holder without `destructive` may be offered a delete that then refuses. Hiding is not
+  permission, so this is not a hole; it is a screen that offers what the server will not do.
 - **Depends on:** Tasks 126, 127, 128. **The delete half needs Task 139** (done) and the ladder
+- **Left over:** nothing from the criteria, and five things worth keeping.
+  **The set was built to colour rows, and only eight of its fifteen entries name an act that is
+  purely destructive.** The task expected to enforce all of them. Four turned out to bundle a
+  destructive act with a harmless one under one key - `game.ladder`, `result.override`,
+  `format.stages`, `format.generated` - and three have nobody to refuse. That smaller number is
+  the finding, not a shortfall.
+  **The rule that decided every one of them, and it is not the obvious rule.** Not *how
+  destructive is this act* but **does refusing it leave another way through**. `draft.discarded`
+  stays enforced because the lot can go to reserve; a game's first ladder has no reserve; settling
+  a drawn series is the only way a drawn knockout slot resolves. A modifier that blocks the
+  ordinary case is not a modifier.
+  **The implementer applied that rule back at the lead, twice, and was right both times.** The
+  lead ruled `result.override` clean; it is not, because the same action breaks a drawn series.
+  The lead left `game.ladder` enforced; a Curator then cannot set a first ladder. Both were
+  reversed. **Three of this task's rulings were the lead's and wrong**, and each was caught by the
+  principle the lead had just stated.
+  **A pin kept in prose did not hold.** The first `OWED` pin was a table in a comment, and a
+  mutant that wired `format.stages` by eye **survived it**. Replaced with behavioural tests. That
+  is the fourth time in this plan a rule kept in prose failed, and the first time an implementer
+  found it in its own work.
+  **And two tests dodged a changed premise instead of meeting it.** When "an area power alone
+  deletes" stopped being true, two tests responded by **swapping the action under test** - delete
+  became deactivate. The same diff's suggestion tests took the right route: keep the delete, grant
+  `destructive` as well. The cost of the dodge was measurable: no test asserted the actor name on
+  a holder's `template.deleted` line until it was put back. **When a change makes a test's premise
+  false, meeting the new premise is the fix; changing what the test is about is how coverage
+  disappears.**
   needs Task 137.
 
 ### Task 130: The admin area admits a holder
@@ -3304,13 +3352,45 @@ every action checks.
   Every change writes an audit line naming the actor, the member and what changed. The existing
   `user.admin.granted` / `.revoked` vocabulary is the neighbour to follow.
 - **Acceptance criteria:**
-  - [ ] Saving stores exactly the marked powers - one added and one removed in the same save, asserted as a set rather than a count
-  - [ ] A preset marks exactly its own powers and does not clear a power the member already held outside it, or clears it, whichever the screen says - and the screen says which
-  - [ ] An admin's entry offers no power list, and the reason is on the screen
-  - [ ] Every save writes one audit line naming actor, subject and the change, and a save that changes nothing writes none
-  - [ ] The screen cannot grant the admin flag, and no power appears that is not in the vocabulary
-  - [ ] A holder of every power still cannot reach this screen
+  - [x] Saving stores exactly the marked powers - one added and one removed in the same save, asserted as a set rather than a count
+  - [x] A preset marks exactly its own powers and does not clear a power the member already held outside it, or clears it, whichever the screen says - and the screen says which
+  - [x] An admin's entry offers no power list, and the reason is on the screen
+  - [x] Every save writes one audit line naming actor, subject and the change, and a save that changes nothing writes none
+  - [x] The screen cannot grant the admin flag, and no power appears that is not in the vocabulary
+  - [x] A holder of every power still cannot reach this screen
+- **Accepted without a test:** four lines that need a browser - the checkbox `onChange`, the
+  preset `onClick` (`UsersManager.tsx:544`), `save` sending `[...marked]` (`:503`), and the
+  success note and error alert. Criterion 2's logic is pinned by the pure `withPreset`, both
+  sentences are pinned by render, and the server stores exactly what it is sent - so what is
+  unproven is the wiring between a click and the payload, which nothing without a DOM can reach.
 - **Depends on:** Tasks 123, 125. Best built after Task 130, so a grant can be seen to do something.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **It stopped twice rather than put a writer in the wrong module.** There was no revoke: the only
+  deletes of `user_permissions` were two test cleanups. It offered two routes, named the trade-off
+  in each, and waited - then built `setPowers` in `permissions.ts` because that module's docblock
+  claims to **be** the stored side of permissions, and a second writer in `admin-users.ts` would
+  have made that sentence false. Five things in this plan have quietly become false by exactly
+  that route.
+  **One transaction, because a save is one decision.** A loop of single-power calls would leave a
+  half-applied list; the atomicity test is genuine rather than simulated - the member really holds
+  a power so the delete really removes a row, and the insert then fails on the **real foreign
+  key**. It is the only killer of the no-transaction mutant, and it only works because the
+  database itself does the failing. Of the three places this section needed a concurrency proof,
+  this is the one that got a real one.
+  **A granter that nothing checked.** It added a test unprompted that `setPowers` records the
+  granter it is handed - and review found the hop above it unguarded: passing `userId` instead of
+  `admin.id` **survived every test**, because the member is a valid foreign key and the audit line
+  names the actor separately. The row would have said the member granted themselves their own
+  powers while the line named the admin: two records of one event disagreeing, with the wrong one
+  in the table `powersOf` reads. One assertion closed it, and the watched failure confirmed only
+  that test caught it - the other 34 passed.
+  **It found the hazard at the seam it had just built**, and it is Task 151: an admin's stored rows
+  survive a promotion and wake on demotion, so somebody holds a power by a decision nobody made
+  at a time nobody chose.
+  **Not proven:** four lines need a browser - the checkbox `onChange`, the preset `onClick`, the
+  save sending the marked set, and the success and error surfaces. The preset logic is pinned by a
+  pure function and both sentences by render, so what is unproven is the wiring between a click
+  and the payload.
 
 ### Task 132: The games catalogue writes no audit line
 
@@ -3619,11 +3699,45 @@ somebody made by hand. If it is ever seen, it is a task of its own and the fix i
   over the same field set, or the clear being narrowed to rank fields and removed names. Decide
   which, and say why, before writing either.
 - **Acceptance criteria:**
-  - [ ] The preview count and the number of answers actually cleared agree, proven by a fixture with a retired rank field holding an answer the ladder edit would invalidate
-  - [ ] Whichever of the two changed, the other is asserted to match it rather than left to drift
-  - [ ] A ladder edit with no retired fields counts exactly as it does today, pinned
-  - [ ] The preview and the clear agree on **which answers they are about**, not only on the retired ones, proven by a fixture holding a stale non-rank answer and an already-off-ladder rank answer
+  - [x] The preview count and the number of answers actually cleared agree, proven by a fixture with a retired rank field holding an answer the ladder edit would invalidate
+  - [x] Whichever of the two changed, the other is asserted to match it rather than left to drift
+  - [x] A ladder edit with no retired fields counts exactly as it does today, pinned
+  - [x] The preview and the clear agree on **which answers they are about**, not only on the retired ones, proven by a fixture holding a stale non-rank answer and an already-off-ladder rank answer
+- **Accepted, with the reason:** the **opposite** race is left open. A member who changes from a
+  kept rank to a **removed** one after the read is not in the id list, so their answer survives an
+  edit naming a rank the game no longer has. It is the same class as a save landing just before
+  the ladder write commits, the member sees it flagged as stale, and closing it would mean
+  re-reading inside the delete rather than narrowing it. The race that was closed is the one that
+  **loses** an answer the member had just chosen; this one leaves a stale answer visible, which is
+  the lesser harm and already surfaced.
+- **Cannot be proven on this harness:** that a **second session's committed write** is seen by the
+  delete. PGlite is one connection, so the test makes the member's write on the transaction's own
+  handle immediately before the delete is sent. What remains is READ COMMITTED re-evaluating the
+  delete's `where` against the latest committed row version on real Postgres - taken on trust, and
+  the test's comment says so. This is the third time this section has hit PGlite's single
+  connection as the ceiling on a concurrency proof (Tasks 137, 138, and 131's atomicity test,
+  which could use a real foreign key instead and therefore did).
 - **Depends on:** Task 122.
+- **Left over:** nothing from the criteria, and three things worth keeping.
+  **Two numbers disagreed in two directions, and both definitions were wrong.** The preview
+  overcounted by including retired fields; the clear overreached by deleting every answer failing
+  validity on **any** active field. The resolution came from documentation rather than preference:
+  retiring keeps every answer (UC-03 5a) and `restoreField` promises they come back, so the
+  preview was wrong; `updateField` deliberately keeps stranded answers (R-09) so reverting a
+  question restores them, so the clear was wrong. One private helper now defines it once, and
+  `clearInvalidAnswers` is deleted because nothing else called it.
+  **It said why it did not take the easy agreement.** Widening the preview to match the clear would
+  have made the numbers agree by warning about, and then deleting, answers R-09 says to keep.
+  Agreement on a number nobody wanted is worse than the mismatch.
+  **A fixture built to distinguish a rule, not to look realistic.** The stale-answer case carries a
+  **free-text answer that spells "Bronze"**, which is the only thing that catches dropping the
+  `type = 'rank'` filter.
+  **And a race closed with an honest ceiling.** The delete now re-checks the value, so a member who
+  moves from a removed rank to a kept one between the read and the delete keeps their answer. The
+  window was opened by injection; what cannot be shown on PGlite's single connection is a
+  **second session's committed write** being seen, and the test says so. The opposite race is left
+  open deliberately, with the distinction recorded: the closed one **loses an answer the member
+  just chose**, the open one leaves a stale answer the member already sees flagged.
 
 ### Task 139: A suggestion can be removed with no record at all
 
@@ -3821,12 +3935,38 @@ exists because `schema-drift.test.ts` refuses an unjournalled `.sql` sitting dir
   **A save is never refused for a width the game cannot deal** (UC-58 5a). The hero list can be
   filled in afterwards; the **draw** is what refuses, and it already does.
 - **Acceptance criteria:**
-  - [ ] The toggle saves, and the number is only offered when it is on
-  - [ ] The number saves, and a width outside the bound is refused on the panel before the round trip, as `ShapeTab`'s other refusals are
-  - [ ] Turning the toggle off and saving is never refused, however many hands exist
-  - [ ] The panel says what the next draw will deal, and says it differently when the toggle is off
-  - [ ] Turning the toggle off takes the Hands tab off the event, proven through the editor rather than in the panel alone
+  - [x] The toggle saves, and the number is only offered when it is on
+  - [x] The number saves, and a width outside the bound is refused on the panel before the round trip, as `ShapeTab`'s other refusals are
+  - [x] Turning the toggle off and saving is never refused, however many hands exist
+  - [x] The panel says what the next draw will deal, and says it differently when the toggle is off
+  - [x] Turning the toggle off takes the Hands tab off the event, proven through the editor rather than in the panel alone
 - **Depends on:** Task 142, and **Task 144's drop deployed** - not merely 144 committed. See the three-deploy table at the top of this section; this dependency is not negotiable.
+- **Left over:** nothing from the criteria, and four things worth keeping. **This is the task the
+  owner asked for**, and it took three deploys to reach because the nine was in a database CHECK.
+  **A reasonable-looking simplification would have silenced another task's work.** Folding
+  `heroProblem` into `bounds` reads as tidier and would have hidden Task 110's stated-format note,
+  because `formatDisagrees` tests `bounds === null`. The implementer saw it and wrote the mutant
+  that proves it. Review then found the protection comes from **this** task's test, not 110's,
+  because 110's fixtures never hold a bad hero width - the reasoning was right and the guard was
+  one file further away than it sounded.
+  **The bound's own justification was being defeated by the control.** `Stepper` clamps typed input,
+  so a typed **33 silently became 10** - legal, saved, unremarked. The docblock justified 1-10 by
+  "the slip to catch is a doubled or trailing digit", and that slip was being corrected into a
+  different wrong answer. Fixed by **not giving `Stepper` a max** rather than editing a shared
+  control, with both consequences declared: plus now steps to eleven and into the refusal, and the
+  floor is still clamped.
+  **A test that could not fail, found by its own author.** "Leaves the three other answers as sent"
+  sent six per team with a draft - which is what an untouched event already holds. Rewritten to
+  send no draft and three teams. Tenth recorded instance in this plan, and the first found by an
+  implementer auditing its own passing tests.
+  **And a test gap proved by mutation rather than argued.** The off-save test stored the default
+  width and only *sent* an illegal one, so it never met the state that would strand a manager:
+  checking the width while the draw goes off **strands exactly that manager and all 93 tests still
+  pass.** Criterion 3 is the one it would be worst to get wrong, and the fixture now stores 33 with
+  four hands dealt.
+  **Not proven:** the panel-to-action link is a source sweep - removing `heroes` from the save call
+  leaves every behavioural test green, because the sweep reads the file from disk. And nothing was
+  seen in a browser.
   Found by Task 142's review: this task is what first lets a width other than three be **saved**,
   and until 144 has replaced the CHECK, `dealFor` would build a hand of that width and Postgres
   would **refuse the insert**. A manager would set five, a player would press draw, and the draw
@@ -3907,12 +4047,30 @@ exists because `schema-drift.test.ts` refuses an unjournalled `.sql` sitting dir
   deal; it never un-deals one, and it must not make a stored hand unreadable to the player who
   holds it - decide what they see and say why.
 - **Acceptance criteria:**
-  - [ ] A player at an event with the draw off is refused, by the page, with a sentence that says the night is not drawing heroes rather than that something went wrong
-  - [ ] `dealFor` refuses before it deals, so no row can be written for an event with the draw off - asserted on the stored rows, not only on the answer
-  - [ ] A hand dealt before the draw was turned off is still readable by the player who holds it, or is deliberately not, with the reason written down
-  - [ ] **And `no_game` stops hiding one too.** Found by Task 144's review: `loadDraw` answers `no_game` **before** it reads a stored hand, so a hand whose event later loses its game is invisible to the player who drew it. Task 144 moved the stored-hand read above the *thinness* check and correctly left this one, because the `ready` payload needs a game name - decide what a hand with no game shows, rather than letting the ordering decide it by accident
-  - [ ] Turning the draw back on deals again, and deals at the stored width
+  - [x] A player at an event with the draw off is refused, by the page, with a sentence that says the night is not drawing heroes rather than that something went wrong
+  - [x] `dealFor` refuses before it deals, so no row can be written for an event with the draw off - asserted on the stored rows, not only on the answer
+  - [x] A hand dealt before the draw was turned off is still readable by the player who holds it, or is deliberately not, with the reason written down
+  - [x] **And `no_game` stops hiding one too.** Found by Task 144's review: `loadDraw` answers `no_game` **before** it reads a stored hand, so a hand whose event later loses its game is invisible to the player who drew it. Task 144 moved the stored-hand read above the *thinness* check and correctly left this one, because the `ready` payload needs a game name - decide what a hand with no game shows, rather than letting the ordering decide it by accident
+  - [x] Turning the draw back on deals again, and deals at the stored width
 - **Depends on:** Task 142.
+- **Left over:** nothing from the criteria, and three things worth keeping.
+  **The refusal had to slot into an order another task had just fixed.** Task 144 reordered
+  `loadDraw` so a setting changed afterwards cannot hide a stored hand; this task's refusal had to
+  go in without undoing that. The order is **seat, stored hand, draw off, no game**, and the two
+  mutants that move the refusal above the held-hand read both die.
+  **It fixed an ordering problem at its cause.** `no_game` was only answered first because `ready`
+  carried a `game: string` field **that nothing rendered** - so the field went, and `no_game` was
+  free to move. Review confirmed nothing read it.
+  **What a holder sees, decided rather than defaulted:** their hand, flat, with no button, and
+  **not** told the draw is off - because beside their cards that sentence would read as "these no
+  longer count". Task 149 then made the **opposite** call for a lost seat, from the same principle:
+  "the draw is off" is about a deal they are not waiting for; "you no longer hold a seat" is about
+  them. Two opposite answers from one rule is better than one answer applied twice.
+  **Two honesty notes kept:** a mutant survived its first run and the test added for it was never
+  run against the pre-implementation source, so the mutant dying is its only proof; and one failure
+  under another mutant could not be reproduced, with no message captured - review found the likely
+  mechanism (vitest's default 5s `testTimeout`, with only `hookTimeout` raised) and it is recorded
+  as load rather than as a fault.
 
 ### Task 146: The floor is a height, and only for buttons that wear the class
 
@@ -3972,3 +4130,201 @@ exists because `schema-drift.test.ts` refuses an unjournalled `.sql` sitting dir
   - [ ] A repeat press of retire or restore writes no line, and the library says whether anything changed rather than the action guessing
   - [ ] The row lock is either proven against two real sessions, or the pin is left with its limitation written beside it
 - **Depends on:** Task 137.
+
+### Task 149: A hand is invisible to a player who lost their seat
+
+- **Serves:** R-271's neighbour. Found by Task 145 and confirmed by its review.
+- **Files:** `src/app/events/[slug]/draw/draw.ts`, the draw page, tests
+- **Do:** `loadDraw` answers `no_seat` before it reads a stored hand, so a player **who drew** and
+  then lost their seat cannot see the hand they hold. Task 145 closed the same shape of gap twice
+  - the draw-off case and the `no_game` case - by reading the stored hand **first**, and correctly
+  left this one, because no criterion of its named it and `no_seat` first is existing UC-39 1a
+  behaviour.
+  It is the same violation as the two that were fixed: a thing that happened to the player is
+  hidden by a change made afterwards by somebody else. **Decide** whether a former seat still
+  shows its hand - the argument for is R-212 ("the draw happens once and stands") and R-271; the
+  argument against is that a removed applicant is no longer part of the night. Either answer is
+  defensible; deciding it by read order is not.
+  **Check the draft room and the Hands tab for the same ordering** before fixing this one in
+  isolation. Task 145's sweep of the draw's own answers found three; this is the fourth, and
+  "reads an identity before it reads what that identity already has" is a shape, not an incident.
+- **Acceptance criteria:**
+  - [x] A player who drew and then lost their seat either sees their hand or is told plainly why they cannot, and the reason is written down
+  - [x] Whatever is chosen, it is a decision in the code rather than a consequence of the order two checks happen to run in
+  - [x] No new hand can be dealt to somebody with no seat, unchanged
+  - [x] Every other screen that reads a seat before reading what the member holds is named, and fixed or excused
+- **Depends on:** Task 145.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **An existing test was enforcing the defect.** "Refuses somebody with no seat before reading
+  anything else" used a reader that **threw if called**, so it pinned the read **order** - which is
+  exactly what criterion 2 says must not decide the answer. Replaced with a recording reader
+  asserting the caller's own hand and no other. A test that enforces the bug is the hardest kind to
+  notice, because it is green and it is about the right subject.
+  **The decision was read out of the requirement, not argued from consistency.**
+  `docs/requirements.md:635` says a hand is shown "to its owner and to a manager" - **owner, not
+  seat** - and R-212/R-271 carry no "still seated" clause. So a former seat sees their hand, and is
+  told the seat has gone.
+  **Criterion 4's sweep found eleven screens and gave each a verdict**, including two excused
+  because the question was already decided elsewhere (`handSheet`'s `former` rows,
+  `saveRoundScores`'s "accepted seats plus anyone the round already records") and one left unproven
+  and named (`participantsFor` for an event with no teams).
+  **And the copy was wrong twice.** A component that had always spoken to somebody on a team now
+  has a reader who is on none: "Compare it with your team's" and then, found on a second reading,
+  "Who plays what is yours to settle once you can all see what you hold". The `seated` prop was
+  made **required** rather than defaulted to true - a default would let a future call site show the
+  team sentence by forgetting the prop, which is how the defect reached a second sentence. A third
+  pass tabulated every remaining sentence a former seat can read, with a verdict each, and found
+  no more.
+
+### Task 150: Five audit keys do two jobs, so they cannot be authorities
+
+- **Serves:** R-267. Found by Task 129's per-entry audit of `DESTRUCTIVE`.
+- **Files:** `src/lib/audit.ts`, `src/app/admin/events/format-actions.ts`, `src/app/polls/actions.ts`, `src/lib/format.ts`, tests
+- **Do:** Task 129 made `DESTRUCTIVE` an authority list and wired ten of its fifteen entries.
+  **Three keys could not be wired, and the reason is the same each time: one key covers both a
+  harmless act and a destructive one**, so requiring `destructive` for it would block the ordinary
+  case and not requiring it leaves the damaging one open. A modifier that blocks the ordinary case
+  is not a modifier.
+  **`format.generated`** is written from four places: a first generation that loses nothing, a
+  rebuild over recorded results, and `auditStageSync` in `src/lib/format.ts`, which fires as a side
+  effect of saving stages and can record that **nothing was touched**.
+  **`format.stages`** is every bracket save, the first one included.
+  **`result.override`** was wired by Task 129 on the lead's ruling and then **taken back out**,
+  because that ruling was wrong: `setWinnerOverrideAction` overturns a recorded result **and
+  breaks a drawn series**, and the second loses nothing and is the only way a drawn knockout slot
+  resolves. As wired, an `events.manage` holder without `destructive` could not settle a draw -
+  ordinary running, blocked by a modifier meant for irreversible things, which is the exact
+  argument used two files away to leave `format.stages` alone.
+  **The test that distinguishes these from `draft.discarded`**, which stays wired: discarding a
+  lot is destructive, but a holder can still send the lot to reserve, so refusing it leaves them
+  able to run the night. The question is not how destructive the act is - it is whether refusing
+  it blocks the ordinary case.
+  **`poll.updated`** is Task 129's strongest "destructive but missing" candidate: it discards
+  votes when options are removed (`lostVotes`), irreversibly, under a key that also covers
+  renaming a question. It is the same shape as `game.ladder`, which Task 129 let stand as broad
+  precisely because splitting it was out of its scope.
+  **Split each into the act that loses something and the act that does not**, then put only the
+  losing one in the set and wire it. The existing keys are in the pinned vocabulary and in stored
+  history, so a rename is a migration of meaning - decide whether old rows keep the old key.
+  **`game.ladder` is the fifth**, and it was **taken back out of the enforced set** for the same
+  reason as `result.override`: every ladder save asks for `destructive`, including a first ladder
+  that clears nothing, and a Curator has **no other route** to set one. Task 129 pointed this out
+  about the lead's own ruling, applying the rule the lead had just given it.
+  **The rule, which this task should keep:** the question is not how destructive an act is, it is
+  **whether refusing it leaves another way through**. `draft.discarded` stays enforced because the
+  lot can go to reserve. A first ladder has no reserve.
+  **And one thing that reads as a regression and is not:** Task 137 marked `game.ladder`
+  destructive *so that this section would have something to require a power for*. It still is
+  destructive, and its audit line still records the clear - but the modifier cannot gate it until
+  the key is split, because the same action also does the harmless thing. 137 was right to mark
+  it; 129 was right not to enforce it.
+- **Acceptance criteria:**
+  - [ ] Each of the five keys becomes two, named so that reading either in the audit log says which happened
+  - [ ] Only the losing half is in `DESTRUCTIVE`, and it is wired; the harmless half is reachable by the area power alone
+  - [ ] A first bracket generation, and a bracket save that changes nothing, are both reachable without `destructive`
+  - [ ] A rebuild over recorded results, and a poll edit that drops votes, both need it
+  - [ ] Settling a drawn series needs no `destructive`; overturning a recorded result does
+  - [ ] A game's **first** ladder needs no `destructive`; a ladder edit that clears stored answers does
+  - [ ] **`draft.voided` is ruled on too.** Task 129 left it enforced and said why it passes the rule - cancelling an open lot has reserve as another way through - but it covers **cancelling an open lot and undoing a settled one** under one key, which is the same two-acts shape as the five above. Decide whether the reserve route is enough to leave it alone, or split it with the rest
+  - [ ] **`host-scope.test.ts`'s override test is strengthened or named as weak.** Found by Task 129: it passes `match.teamAId` from the stored row, which is empty until a result fills it, so it is very likely exercising the "drop the override" path and proving less than its name claims. Task 129 hit the same trap in its own fixture and caught it
+  - [ ] Task 129's `OWED` pin loses these entries because they are enforced, not because the pin was relaxed
+  - [ ] Stored rows under the old keys still render as sentences
+  - [ ] `game.ladder` is either split the same way or left broad with the Curator consequence written down
+- **Depends on:** Task 129.
+
+### Task 151: A demoted admin silently keeps powers nobody granted them
+
+- **Serves:** R-264, R-266. Found by Task 131's build.
+- **Files:** `src/app/admin/users/actions.ts`, `src/lib/permissions.ts`, tests
+- **Do:** the granting screen refuses to edit an admin's power list, correctly - an admin has
+  everything, so a list would be theatre. But **rows stored before the promotion stay in the
+  table**, invisible to everybody, and `powersOf` starts answering with them again the moment the
+  flag is revoked.
+  So: grant somebody `polls.manage`, promote them to admin, demote them later - and they hold
+  `polls.manage` again, granted by a decision nobody made at a time nobody chose, with the audit
+  log showing the original grant and no line for its return. R-266 says every change in authority
+  is answerable afterwards; this one is not, because it is not a change anybody made.
+  **Decide which of three it is**, and the choice is not obvious:
+  - clear the rows on promotion, so the flag replaces them and demotion leaves nothing;
+  - keep them and **say so on the screen**, so an admin's entry shows the dormant list that will
+    wake on demotion;
+  - keep them and clear on **demotion**, which is the same hole moved to a different moment.
+  **Whichever it is, the audit log must say it happened**, because today nothing does.
+- **Acceptance criteria:**
+  - [x] Promoting a member with powers, then demoting them, leaves an authority state somebody chose, proven end to end
+  - [x] Whatever happens to the rows is written to the audit log with the actor who caused it
+  - [x] An admin's entry on the granting screen tells the truth about any dormant rows, whichever way it is resolved
+  - [x] `powersOf` cannot return a power that no live grant explains
+- **Depends on:** Task 131.
+- **Left over:** nothing from the criteria, and four things worth keeping.
+  **The decision turned on one sentence:** `powersOf` only reads rows, so the only way it cannot
+  return an unexplained power is for the row **not to exist**. Keep-and-show leaves the authority
+  restored by the demotion rather than by a grant; clear-on-demotion means `powersOf(admin)`
+  returns dormant rows for the whole time they are an admin. So: clear on promotion, and the flag
+  replaces the list.
+  **There were four promotion paths, and the first fix closed one.** The button, the allowlist
+  panel, **sign-in**, and the **seed**. The implementer reported the sign-in hole against its own
+  work rather than leaving it - a fix that closes three doors and leaves the fourth has not closed
+  the hole, it has made it harder to find.
+  **The seed mattered for a reason worth recording.** Asked to check before touching it, it found
+  the seed's flag write is an `update` of **existing** users while every other step is
+  `onConflictDoNothing` - so it is built to be re-run against a live database, and a member with
+  powers newly added to `ADMIN_DISCORD_IDS` would be promoted with rows intact.
+  **An actorless audit line, on a precedent found this week.** A sign-in promotion has no actor, and
+  Task 129's audit of `DESTRUCTIVE` had just articulated the shape: `announcement.failed` is in the
+  vocabulary because "the site writes it about itself; there is no actor". So the line is written
+  with no actor and `by: "sign-in"`, rather than inventing a fake one or recording nothing - R-266
+  says a change in authority is answerable, and "the allowlist promoted them at sign-in and the
+  stored list was replaced" is an answer.
+  **One trade declared rather than discovered later:** the sign-in's profile write now shares a
+  transaction with the clear, so a failed clear also rolls back that sign-in's profile refresh. The
+  existing catch still lets the sign-in succeed, so the cost is a stale display name for one
+  session against a half-applied authority change. And a mutant that **died by a five-second
+  deadlock rather than its stated reason** was rebuilt rather than counted.
+
+### Task 152: The member list that `members.read` was promised
+
+- **Serves:** R-265. The undelivered half of `members.read`.
+- **Files:** a new route under `src/app/admin/`, a read-only member row, a trimmed loader, tests
+- **Do:** the vocabulary says `members.read` reaches "the member list, availability, and what
+  people have drawn". It reaches the last two. The list is on `/admin/users`, which is the member
+  list **and** the granting screen in one file, and R-264 keeps granting on the admin flag - so
+  Task 130 left the whole page admin-only and Task 131 confirmed, while building it, that
+  splitting is not cheap: one `MemberRow` carries grant, revoke, end-sessions, notes and powers,
+  and `loadAdminUsers` returns note counts and allowlist flags a `members.read` holder has no
+  business seeing.
+  **Two tasks have now looked at this page and judged the same way**, which is the argument for
+  doing it properly rather than a third time: a route of its own, a row that offers nothing, a
+  loader that reads only what the power covers, its own guard, and its own tests.
+  **What the holder must not see** is the list that matters: note counts, allowlist state, the
+  admin flag's controls, and anything that would let them act rather than read.
+- **Acceptance criteria:**
+  - [ ] A `members.read` holder reaches a member list and can do nothing from it, proven over the page's whole offered surface rather than by the absence of one button
+  - [ ] The loader hands down nothing the power does not cover - asserted on the props, not on the markup
+  - [ ] `/admin/users` stays admin-only and unchanged
+  - [ ] The granting screen's description of `members.read` is updated to promise the list, once it is true
+- **Depends on:** Task 131.
+
+### Task 153: Turning the draw off for a night leaves no record
+
+- **Serves:** R-266's neighbour. Found by Task 143.
+- **Files:** `src/app/admin/events/actions.ts`, `src/lib/audit.ts`, tests
+- **Do:** `saveEventShapeAction` logs `event.shape` only when **teams, draft or sizing** moved. So a
+  manager can turn the hero draw off for a whole night, or change how many heroes each player
+  draws, and **nothing is written down**. The Hands tab disappears and the draw page closes for
+  every player at that event, with no line saying who decided it or when.
+  That is the same gap Tasks 132, 137 and 139 closed three times over in the games catalogue and
+  the suggestion box: an act with a visible consequence and no record. Task 143 found it and
+  correctly declined to widen itself.
+  **Decide whether it is a new key or a widening of `event.shape`.** The argument for widening:
+  it is the same panel, the same save, the same kind of decision. The argument for a new key: the
+  hero answers are the only part of that save a **player** notices immediately, and "the format
+  changed" reads as nothing when what happened is "the draw is closed".
+  **The audit-vocabulary pin closes both ways**, so a new key needs its row in the same diff.
+- **Acceptance criteria:**
+  - [ ] Turning the draw off writes a line naming the actor, the event, and that the draw was closed
+  - [ ] Changing only the width writes a line naming both widths
+  - [ ] A save that moves nothing writes nothing, unchanged
+  - [ ] A save that moves teams or sizing **and** the hero answers writes what it writes today plus the hero change, with no second line for one save
+  - [ ] Whichever way it is keyed, a reader of the log can tell "the draw is closed" from "the format changed"
+- **Depends on:** Task 143.

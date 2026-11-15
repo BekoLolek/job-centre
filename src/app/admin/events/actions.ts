@@ -24,6 +24,13 @@
  *    `requireManagerOfChild`): an admin, its host, or a holder of
  *    `events.manage`, which is `canManageEvent`'s answer and decided there.
  *
+ * **One thing here needs `destructive` as well** (R-267 / UC-57): taking an
+ * event out of a season, because `championship.event.removed` is in
+ * `audit.ts`'s destructive set. That is asked of a holder of `events.manage`
+ * and never of the event's host, whose evening is whole - which is why it is
+ * `destructiveRefusal` with the event's id on the line after the guard, and
+ * not something added to `requireEventManager`.
+ *
  * `src/app/__tests__/every-action-is-gated.test.ts` lists this file's guards
  * action by action, so one moving is a visible change.
  *
@@ -88,6 +95,7 @@ import {
   type RoundScoring,
   changedSetupFields,
   eventShapeFrom,
+  heroWidthProblem,
   givenRoundName,
   isSizingMode,
   rosterBelowAwardedRefusal,
@@ -128,6 +136,7 @@ import {
 } from "@/lib/championships";
 import { type PlacementEntry, setPlacements } from "@/lib/championship-results";
 import { recordAudit } from "@/lib/audit";
+import { destructiveRefusal } from "@/lib/permissions";
 import {
   notifyApplicationDecided,
   notifyEventCancelled,
@@ -802,6 +811,10 @@ export type EventShapeFields = {
   value: number;
   /** UC-42 2a: the admin has said the existing teams may go. */
   discardTeams?: boolean;
+  /** R-269: whether the night draws heroes. Absent keeps what is stored. */
+  heroes?: boolean;
+  /** R-270: how many in each role. Absent, or sent with the draw off, keeps what is stored. */
+  heroesPerRole?: number;
 };
 
 /**
@@ -884,20 +897,25 @@ export async function saveEventShapeAction(
   const before = await getEventById(eventId);
   if (!before) return fail("That event no longer exists.");
 
-  // The hero answers (R-269, R-270) are not this form's to change yet, and
-  // the save below writes `config.eventShape` whole — so they are carried from
-  // what the event already holds, which for an event with nothing stored is
-  // the resolver's default: drawing, three per role. Never a literal here.
+  // The save below writes `config.eventShape` whole, so a hero answer
+  // (R-269, R-270) the form did not send is carried from what the event
+  // already holds — for an event with nothing stored, the resolver's default:
+  // drawing, three per role. Never a literal here. The width is carried while
+  // the draw is off as well, whatever was sent: the number is not on the panel
+  // then, so turning the draw off is never refused for it, and turning it back
+  // on restores the night that was described.
   const held = eventShapeFrom(before.config);
+  const heroes = typeof fields.heroes === "boolean" ? fields.heroes : held.heroes;
   const wanted: EventShape = {
     teamEvent: fields.teamEvent,
     draft: fields.draft,
     sizing: { mode: fields.mode, value: fields.value },
-    heroes: held.heroes,
-    heroesPerRole: held.heroesPerRole,
+    heroes,
+    heroesPerRole:
+      heroes && fields.heroesPerRole !== undefined ? fields.heroesPerRole : held.heroesPerRole,
   };
 
-  const bounds = shapeProblem(wanted);
+  const bounds = shapeProblem(wanted) ?? heroWidthProblem(wanted);
   if (bounds) return fail(bounds);
 
   const [existing, lots] = await Promise.all([getTeams(eventId), getDraftHistory(eventId)]);
@@ -1456,6 +1474,8 @@ export async function removeEventFromChampionshipAction(
   eventId: string
 ): Promise<ChampionshipResult<null>> {
   const admin = await requireEventManager(eventId);
+  const refusal = await destructiveRefusal(admin, "championship.event.removed", eventId);
+  if (refusal) return { ok: false, error: refusal };
 
   const result = await removeCountingEvent(eventId);
   if (!result.ok) return result;
